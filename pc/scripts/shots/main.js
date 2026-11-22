@@ -17,7 +17,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const { app, BrowserWindow, ipcMain, desktopCapturer, screen } = require("electron");
 const chrome = require("../../src/window-chrome");
-const { expandUpdateWindowBounds } = require("../../src/update-backdrop");
 
 const arg = (name, fallback) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -62,7 +61,19 @@ function register() {
   ipcMain.handle("approval:current", () => current.approval);
   ipcMain.handle("confirm:current", () => current.confirm);
   ipcMain.handle("update:current", () => current.update);
-  for (const ch of ["approval:decide", "confirm:answer", "update:answer", "login:probe", "login:submit", "login:forget", "login:open", "paused:set", "chat:retry"])
+  for (const ch of [
+    "approval:decide",
+    "confirm:answer",
+    "update:answer",
+    "update:download-latest",
+    "update:retry",
+    "login:probe",
+    "login:submit",
+    "login:forget",
+    "login:open",
+    "paused:set",
+    "chat:retry",
+  ])
     ipcMain.handle(ch, () => null);
   ipcMain.handle("window:local", () => true);
   const fit = (event, height) => {
@@ -76,10 +87,6 @@ function register() {
     return true;
   };
   ipcMain.handle("dialog:fit", (event, { height } = {}) => fit(event, height));
-  ipcMain.handle("update:fit", (event, { height } = {}) => {
-    const pad = expandUpdateWindowBounds({ x: 0, y: 0, width: 0, height: 0 }, FRAME).pad;
-    return fit(event, typeof height === "number" ? height + pad * 2 : height);
-  });
 }
 
 /** 中灰垫底窗口：白边 / 双层边框在它上面最明显。 */
@@ -125,7 +132,7 @@ async function desktopShot(bounds, file) {
   return { sf, crop, thumb: size };
 }
 
-async function open(name, page, options, { fitted = false } = {}) {
+async function open(name, page, options, { fitted = false, query } = {}) {
   const { workArea } = screen.getPrimaryDisplay();
   const win = new BrowserWindow({
     ...options,
@@ -147,7 +154,7 @@ async function open(name, page, options, { fitted = false } = {}) {
     if (fitted) win.once("chisa-fit", go);
     win.once("ready-to-show", () => setTimeout(go, fitted ? 1500 : 0));
   });
-  await win.loadFile(path.join(UI, page), { query: chrome.frameQuery(FRAME) });
+  await win.loadFile(path.join(UI, page), { query: query || chrome.frameQuery(FRAME) });
   await shown;
   win.focus();
   await sleep(900);
@@ -213,10 +220,26 @@ async function run() {
     current.confirm = { id: "c1", title: "解除紧急停止？", description: "解除后，机器人可以再次按这台电脑的权限设置操作它（「询问」的操作仍会先问你）。", confirmLabel: "解除紧急停止" };
     if (!ONLY || ONLY.includes("confirm"))
       await open("confirm", "confirm.html", { ...chrome.dialogWindowOptions(FRAME, { background: background() }), width: 440, height: 260 }, { fitted: true });
-    current.update = { version: "0.1.15", currentVersion: "0.1.14", fullInstall: false };
     if (!ONLY || ONLY.includes("update")) {
-      const updateBox = expandUpdateWindowBounds({ x: 0, y: 0, width: 440, height: 260 }, FRAME);
-      await open("update", "update.html", { ...chrome.dialogWindowOptions(FRAME, { background: background() }), width: updateBox.width, height: updateBox.height }, { fitted: true });
+      const updateBg = dark ? "#111318" : "#ffffff";
+      current.update = {
+        status: "downloading",
+        version: "0.1.180",
+        currentVersion: "0.1.179",
+        percent: 83,
+        fullInstall: false,
+        downloadUrl: "https://github.com/ChisaAlter/ChisaBot/releases/latest",
+      };
+      await open("update", "update.html", chrome.updateWindowOptions({ background: updateBg }), { query: chrome.frameQuery("dwm") });
+      current.update = {
+        status: "downloaded",
+        version: "0.1.180",
+        currentVersion: "0.1.179",
+        percent: 100,
+        fullInstall: false,
+        downloadUrl: "https://github.com/ChisaAlter/ChisaBot/releases/latest",
+      };
+      await open("update-ready", "update.html", chrome.updateWindowOptions({ background: updateBg }), { query: chrome.frameQuery("dwm") });
     }
   }
   bg.destroy();

@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const path = require("node:path");
-const { load, resolveFeed, resolveFeedDetail } = require("../src/build-config");
+const { load, resolveFeed, resolveFeedDetail, feedToDownloadPage, resolveManualDownloadUrl } = require("../src/build-config");
 
 test("committed build-config.json is the generic build (no server, no feed)", () => {
   const c = load(path.join(__dirname, "..", "src", "build-config.json"));
@@ -29,4 +29,26 @@ test("resolveFeedDetail reports which tier the feed came from (local override ca
 
 test("missing file falls back to empty defaults", () => {
   assert.deepStrictEqual(load("/nonexistent/build-config.json"), { serverUrl: "", updateFeed: "", githubRepo: "" });
+});
+
+test("feedToDownloadPage and resolveManualDownloadUrl resolve https manual download links", () => {
+  assert.strictEqual(feedToDownloadPage("https://github.com/ChisaAlter/ChisaBot/releases/latest/download/"), "https://github.com/ChisaAlter/ChisaBot/releases/latest");
+  assert.strictEqual(feedToDownloadPage("https://github.com/ChisaAlter/ChisaBot/releases/latest/download"), "https://github.com/ChisaAlter/ChisaBot/releases/latest");
+  assert.strictEqual(feedToDownloadPage("https://dl.example.com/pc/"), "https://dl.example.com/pc/");
+  assert.strictEqual(feedToDownloadPage("http://insecure.example.com/pc/"), "");
+  assert.strictEqual(feedToDownloadPage("javascript:alert(1)"), "");
+
+  assert.strictEqual(
+    resolveManualDownloadUrl({ githubRepo: "ChisaAlter/ChisaBot" }, {}, { feedUrl: "https://mirror.example.com/pc/" }),
+    "https://mirror.example.com/pc/",
+  );
+  assert.strictEqual(
+    resolveManualDownloadUrl({ githubRepo: "ChisaAlter/ChisaBot" }, {}, { publishUrl: "https://github.com/ChisaAlter/ChisaBot/releases/latest/download/" }),
+    "https://github.com/ChisaAlter/ChisaBot/releases/latest",
+  );
+  assert.strictEqual(
+    resolveManualDownloadUrl({}, {}, { feedUrl: "http://bad.example.com", publishUrl: "https://github.com/ChisaAlter/ChisaBot/releases/latest/download/" }),
+    "https://github.com/ChisaAlter/ChisaBot/releases/latest",
+  );
+  assert.strictEqual(resolveManualDownloadUrl({}, {}, {}), "");
 });

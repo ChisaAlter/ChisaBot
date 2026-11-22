@@ -111,37 +111,47 @@ test("切换：小窗被挪过位置，下次进小窗回到那里", () => {
   assert.deepEqual(win._b, { x: 40, y: 60, width: COMPACT_WIDTH, height: COMPACT_HEIGHT });
 });
 
-const { computeUpdateBounds } = require("../src/update-placement");
+const { computeUpdateWindowBounds, DEFAULT_WIDTH, DEFAULT_HEIGHT } = require("../src/update-placement");
 
-test("更新提示：主窗口可见时在主窗口内水平 + 垂直正中央居中，跟着主窗口", () => {
-  const b = computeUpdateBounds({ chat: { x: 200, y: 100, width: 1280, height: 840 }, chatVisible: true, workArea: AREA, contentHeight: 250 });
-  assert.deepEqual(b, { x: 200 + (1280 - 440) / 2, y: 100 + (840 - 250) / 2, width: 440, height: 250, attached: true });
-});
-
-test("更新提示：主窗口最大化带 -8px 隐形边框时按显示器工作区居中，不偏斜", () => {
-  const workArea = { x: 72, y: 0, width: 1848, height: 1040 };
-  const chat = { x: 64, y: -8, width: 1864, height: 1056 };
-  const b = computeUpdateBounds({ chat, chatVisible: true, workArea, contentHeight: 280 });
+test("更新窗口：主窗口可见时在主窗口内居中打开", () => {
+  const b = computeUpdateWindowBounds({ chat: { x: 200, y: 100, width: 1280, height: 840 }, chatVisible: true, workArea: AREA });
   assert.deepEqual(b, {
-    x: 72 + (1848 - 440) / 2,
-    y: (1040 - 280) / 2,
-    width: 440,
-    height: 280,
-    attached: true,
+    x: 200 + (1280 - DEFAULT_WIDTH) / 2,
+    y: 100 + (840 - DEFAULT_HEIGHT) / 2,
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
   });
 });
 
-test("更新提示：小窗（420 宽）里收窄到 388，仍在窗口内", () => {
-  const chat = { x: 1488, y: 12, width: 420, height: 860 };
-  const b = computeUpdateBounds({ chat, chatVisible: true, workArea: AREA, contentHeight: 300 });
-  assert.equal(b.width, 388);
-  assert.ok(b.x >= chat.x && b.x + b.width <= chat.x + chat.width);
-  assert.ok(b.y + b.height <= chat.y + chat.height);
+test("更新窗口：主窗口最大化带 -8px 隐形边框时按显示器工作区居中，不偏斜", () => {
+  const workArea = { x: 72, y: 0, width: 1848, height: 1040 };
+  const chat = { x: 64, y: -8, width: 1864, height: 1056 };
+  const b = computeUpdateWindowBounds({ chat, chatVisible: true, workArea });
+  assert.deepEqual(b, {
+    x: 72 + (1848 - DEFAULT_WIDTH) / 2,
+    y: (1040 - DEFAULT_HEIGHT) / 2,
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+  });
 });
 
-test("更新提示：主窗口在托盘里时放在工作区右下角", () => {
-  const b = computeUpdateBounds({ chat: null, chatVisible: false, workArea: SECOND, contentHeight: 260 });
-  assert.deepEqual(b, { x: 1920 + 1280 - 440 - 16, y: 680 - 260 - 16, width: 440, height: 260, attached: false });
+test("更新窗口：窄屏/矮屏上夹取宽高并严格留在工作区内", () => {
+  const smallArea = { x: 100, y: 50, width: 800, height: 520 };
+  const b = computeUpdateWindowBounds({ chat: { x: 400, y: 100, width: 500, height: 480 }, chatVisible: true, workArea: smallArea });
+  assert.equal(b.width, 800 - 48);
+  assert.equal(b.height, 520 - 48);
+  assert.ok(b.x >= smallArea.x && b.x + b.width <= smallArea.x + smallArea.width);
+  assert.ok(b.y >= smallArea.y && b.y + b.height <= smallArea.y + smallArea.height);
+});
+
+test("更新窗口：主窗口在托盘里时在工作区正中央居中", () => {
+  const b = computeUpdateWindowBounds({ chat: null, chatVisible: false, workArea: SECOND });
+  assert.deepEqual(b, {
+    x: 1920 + (1280 - DEFAULT_WIDTH) / 2,
+    y: (680 - DEFAULT_HEIGHT) / 2,
+    width: DEFAULT_WIDTH,
+    height: DEFAULT_HEIGHT,
+  });
 });
 
 test("切换动画：animate 走补间，done 之后才解除 applying、宽 resize 才判离小窗", () => {

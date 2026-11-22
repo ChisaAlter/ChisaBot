@@ -157,6 +157,7 @@
 | [149](#149-回复中途阶段感知实时插话与前后端全链路丝滑优化2026-11-20)                                       | 阶段感知 mid-turn 实时插话、无等待实时 SSE + 50ms 写库合批 + DSH 连接池与单跳发送、前端叶子流式与交互预算优化        | 2026-11-20                                                                 |
 | [150](#150-pc-右上角窗口控制键恢复磨砂玻璃角托与高对比图标保护2026-11-21)                                  | PC `.win-ctrls` 恢复四档 `--lg-surface-strong` + `--lg-blur` 磨砂角托、`1.25px` 描边、光学字缘保护并跳过液态位移滤镜 | 2026-11-21                                                                 |
 | [151](#151-聊天思考胶囊玻璃质感统一底部锚定不漂移快照顺序保护与工具只读失败收敛2026-11-22)                 | 状态/思考胶囊恢复四档磨砂模糊、固定底部槽与忙碌态留白收回、叶子流式结束零回缩、快照顺序修复与只读/前置失败收敛   | 2026-11-22                                                                 |
+| [152](#152-pc-独立更新进度窗口极简改版2026-11-22)                                                             | PC 独立更新窗口改为极简纯白/深炭全窗居中进度布局，支持 —/□/×、实时进度、原位重启与手动下载链接                     | 2026-11-22                                                                 |
 
 ## 0. 总原则
 
@@ -894,6 +895,7 @@ Hark 令牌写在 `styles.css` 开头的 `html:root` / `html.dark`（特异度 0
 - 主窗口在托盘里或最小化：放在主窗口所在显示器工作区右下角（留 16px）并置顶，像系统通知。
 - 标题允许折两行（「此更新需要重新安装，以更新图标/组件」在窄窗里不被省略号切掉）。0.1.3 的「重新安装」提示和普通更新提示用同一个窗口。
 - 材质与圆角（`pc/src/ui/update.css`、`pc/src/update-backdrop.js`）：去掉不透明深蓝天空底，改为中性深/浅磨砂玻璃 + `28px` 大圆角（`clip` 模式四边外扩 `28px` 透明投影区，避免投影被窗边裁切；图标块 `16px` 同心圆角）；附着在主窗口上时通过主窗口 `capturePage` 实时截取背后含 `32px` 溢出边的画面做 `blur(24px) saturate(175%)` 磨砂透底，主窗口隐藏到托盘或启用减少透明度时平滑退回不透明磨砂底色。
+- **后续演进（2026-11-22）**：已于 [§152](#152-pc-独立更新进度窗口极简改版2026-11-22) 升级为独立极简全窗更新进度页并移除 `update-backdrop.js`。
 
 ## 37. 关弹窗要跟手：退出动画不重算毛玻璃（2026-10-13）
 
@@ -3106,6 +3108,17 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
   - **只读与前置失败收敛**：为只读内置工具补全 `effect: "read"`，在 `tool-gateway.ts` 新增 `isPreEffectFailure` 将路径/参数/策略/元素未找到等未产生副作用的异常直接按 `failed` 返还模型自纠，真不确定写入失败仍保留 `outcome_unknown`。
   - **工厂卡片防重拉风暴**：`bot-factory-tool.tsx` 仅在实时 `running -> done` 迁移时失效机器人列表缓存，且只读 `ManagedBotsCard` 关闭 `refreshAgents`。
 - **验证**：`app/tests/session-snapshot-order.test.ts`、`app/tests/wave3-smoothness.test.tsx`、`app/tests/reply-steps.test.tsx`、`app/tests/theme-glass-perf.test.tsx`、`app/tests/bot-factory-tool.test.tsx`、`server/tests/tool-gateway-read-effects.test.ts`、`server/tests/wire-events.test.ts` 及真浏览器 `tests/chat-scroll/work-card-jump.mjs` 双视口回归。
+
+---
+
+## 152. PC 独立更新进度窗口极简改版（2026-11-22）
+
+- **目标与窗口形态**：将 `pc/src/ui/update.html` 从依附主窗口的小尺寸磨砂弹窗改造为独立可缩放/可最小化/可最大化的无边框顶层窗口（`pc/src/window-chrome.js` `UPDATE_SIZE` 默认 `880×600`、最小 `420×380`，初始居中由 `pc/src/update-placement.js` `computeUpdateWindowBounds` 计算并裁去 Windows `-8px` 隐形边框）。右上角配置 Windows 标准 `— / □ / ×` 控制键（macOS 走原生红绿灯 `titleBarStyle: "hiddenInset"`）；发现新版本开始下载（`onAvailable`）时自动弹出一次，关闭窗口记入 `dismissedDownloadVersion` 且不打断后台下载与主窗口聊天，可随时从托盘菜单或网页「设置 → 版本与更新 / 设备 → 本机」点击「查看更新进度」重新唤起。移除旧 `pc/src/update-backdrop.js` 与 `update:fit` 主窗随动截图链路。
+- **极简视觉与状态机**：
+  - 浅色采用纯净白底 `#ffffff`、深色采用炭黑底 `#111318`，关闭天空渐变与星星层，画面垂直与水平居中单列：68px 圆形 ChisaBot 图标（`logo.png`）→ 双色标题行（主墨色动作词 + 浅灰品牌名，全简体中文，如「正在更新 ChisaBot」）→ 副标题（「你的机器人全程继续运行」）→ `248×7px` 圆角胶囊进度条（亮蓝 `#1680fa` / 深色 `#3b9eff` 填充）→ `tabular-nums` 居中百分比（如 `83%`）→ 100% 校验通过后原位出现「稍后」与「立即重启」（外壳指纹变化时保留「此更新需要重新安装，以更新图标/组件」与「重新安装」）→ 底部灰色下划线链接「下载最新版本」。
+  - `pc/src/ui/update.js` 通过纯函数 `deriveUpdateView` 集中驱动 `checking` / `available` / `downloading` / `verifying` / `downloaded` / `error` / `none` / `idle` 全部状态；预加载桥通过 `update:state` 与 `window:local-maximized` 实时同步。
+- **安全手动下载链接**：`pc/src/build-config.js` 的 `feedToDownloadPage` 与 `resolveManualDownloadUrl` 按 `当前更新源 → resolveFeed → publish.url` 顺序解析 `https://` 地址，并将 GitHub Releases generic 源 `.../releases/latest/download/` 规范转换为 `.../releases/latest`；主进程 `update:download-latest` 校验 `https://` 后调用 `shell.openExternal`。
+- **验证**：`pc/test/update-window.check.js`、`pc/test/build-config.check.js`、`pc/test/window-chrome.check.js`、`pc/test/compact.check.js`、`pc/test/update.check.js`、`app/tests/pc-local-web-version.test.tsx` 与 Electron 实机截图验收（`pc/scripts/shots/main.js --only=update`）。
 
 
 

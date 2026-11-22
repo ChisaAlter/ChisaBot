@@ -1,17 +1,15 @@
 "use strict";
 /**
- * 「新版本已下载」提示窗放在哪（DESIGN.md §36.5）。
+ * 独立更新进度窗口的初始居中位置与边界夹取（DESIGN.md §152）。
  *
- * 主窗口看得见时：当主窗口的子窗口，在主窗口可见区域（最大化时裁到当前显示器工作区内，排除 Windows
- * thickFrame 的 -8px 屏幕外隐形边框）做水平 + 垂直正中央居中，宽 = min(440, 可见宽 − 32)，
- * 跟着主窗口移动 / 改大小 / 进出小窗；不再置顶到所有程序上面，也不压住输入框。
- * 主窗口隐藏到托盘或最小化时：放在主窗口所在显示器工作区的右下角（留 16px），置顶，像系统通知一样。
- * 纯函数，pc/test/compact.check.js 里测。
+ * 主窗口可见时优先居中落在主窗口可见区域（最大化时裁掉 Windows thickFrame 的 -8px 隐形边框）；
+ * 主窗口隐藏或最小化时居中落在工作区，并确保窗口宽高不超出工作区、不遮挡任务栏。
  */
-const MAX_WIDTH = 440;
-const MIN_WIDTH = 320;
-const TOP_INSET = 64; // 保留导出兼容
-const MARGIN = 16;
+const DEFAULT_WIDTH = 880;
+const DEFAULT_HEIGHT = 600;
+const MIN_WIDTH = 420;
+const MIN_HEIGHT = 380;
+const MARGIN = 24;
 
 function visibleChatBox(chat, workArea) {
   if (!workArea || !(workArea.width > 0) || !(workArea.height > 0)) return chat;
@@ -23,24 +21,24 @@ function visibleChatBox(chat, workArea) {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function computeUpdateBounds({ chat, chatVisible, workArea, contentHeight = 260 }) {
-  const height = Math.round(Math.min(Math.max(contentHeight, 200), 460));
-  if (chat && chatVisible) {
-    const box = visibleChatBox(chat, workArea);
-    const width = Math.round(Math.max(Math.min(MAX_WIDTH, box.width - MARGIN * 2), Math.min(MIN_WIDTH, box.width)));
-    const clampedHeight = Math.min(height, Math.max(200, box.height - MARGIN * 2));
-    const x = Math.round(box.x + (box.width - width) / 2);
-    const y = Math.round(box.y + Math.max(0, (box.height - clampedHeight) / 2));
-    return { x, y, width, height: clampedHeight, attached: true };
-  }
-  const width = MAX_WIDTH;
+function computeUpdateWindowBounds({ chat, chatVisible, workArea, width = DEFAULT_WIDTH, height = DEFAULT_HEIGHT }) {
+  const maxW = Math.max(MIN_WIDTH, workArea.width - MARGIN * 2);
+  const maxH = Math.max(MIN_HEIGHT, workArea.height - MARGIN * 2);
+  const w = Math.round(Math.min(width, maxW, workArea.width));
+  const h = Math.round(Math.min(height, maxH, workArea.height));
+  const anchor = chat && chatVisible ? visibleChatBox(chat, workArea) : workArea;
+  const rawX = Math.round(anchor.x + (anchor.width - w) / 2);
+  const rawY = Math.round(anchor.y + (anchor.height - h) / 2);
+  const minX = workArea.x;
+  const maxX = workArea.x + Math.max(0, workArea.width - w);
+  const minY = workArea.y;
+  const maxY = workArea.y + Math.max(0, workArea.height - h);
   return {
-    x: workArea.x + workArea.width - width - MARGIN,
-    y: workArea.y + workArea.height - height - MARGIN,
-    width,
-    height,
-    attached: false,
+    x: Math.min(maxX, Math.max(minX, rawX)),
+    y: Math.min(maxY, Math.max(minY, rawY)),
+    width: w,
+    height: h,
   };
 }
 
-module.exports = { computeUpdateBounds, visibleChatBox, MAX_WIDTH, TOP_INSET, MARGIN };
+module.exports = { computeUpdateWindowBounds, visibleChatBox, DEFAULT_WIDTH, DEFAULT_HEIGHT, MIN_WIDTH, MIN_HEIGHT, MARGIN };

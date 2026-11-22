@@ -16,7 +16,8 @@ const CHANNELS = new Set([
   "confirm:answer",
   "update:current",
   "update:answer",
-  "update:fit",
+  "update:download-latest",
+  "update:retry",
   "dialog:fit",
   "window:local",
 ]);
@@ -31,9 +32,14 @@ contextBridge.exposeInMainWorld("chisa", {
     ipcRenderer.on("state:changed", listener);
     return () => ipcRenderer.removeListener("state:changed", listener);
   },
-  onUpdateBackdrop(callback) {
+  onUpdateState(callback) {
     const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("update:backdrop", listener);
-    return () => ipcRenderer.removeListener("update:backdrop", listener);
+    ipcRenderer.on("update:state", listener);
+    return () => ipcRenderer.removeListener("update:state", listener);
+  },
+  onWindowMaximized(callback) {
+    const listener = (_event, value) => callback(Boolean(value));
+    ipcRenderer.on("window:local-maximized", listener);
+    return () => ipcRenderer.removeListener("window:local-maximized", listener);
   },
 });

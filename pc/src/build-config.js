@@ -36,4 +36,26 @@ function resolveFeed(build, local = {}) {
   return resolveFeedDetail(build, local).url;
 }
 
-module.exports = { load, resolveFeed, resolveFeedDetail };
+/**
+ * 把更新源地址转成浏览器可打开的「下载最新版本」页面 URL（仅接受 https://）：
+ * GitHub Releases generic 源 `.../releases/latest/download/` 直接打开会 404，需去掉尾段 `/download/`。
+ */
+function feedToDownloadPage(url) {
+  const raw = typeof url === "string" ? url.trim() : "";
+  if (!/^https:\/\//i.test(raw)) return "";
+  const gh = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/latest\/download\/?$/i.exec(raw);
+  if (gh) return `https://github.com/${gh[1]}/releases/latest`;
+  return raw;
+}
+
+/** 按「当前生效更新源 → resolveFeed → 打包 publish.url」顺序解析手动下载页 URL。 */
+function resolveManualDownloadUrl(build = {}, local = {}, { feedUrl = "", publishUrl = "" } = {}) {
+  const candidates = [feedUrl, resolveFeed(build, local), publishUrl];
+  for (const candidate of candidates) {
+    const page = feedToDownloadPage(candidate);
+    if (page) return page;
+  }
+  return "";
+}
+
+module.exports = { load, resolveFeed, resolveFeedDetail, feedToDownloadPage, resolveManualDownloadUrl };

@@ -324,3 +324,77 @@ test("ClientUpdateSection displays desktop & server versions and triggers deskto
     expect(installed).toBe(1);
   });
 });
+
+test("ClientUpdateSection opens the update progress window while downloading", async () => {
+  setBundledPcVersionForTest("0.1.179");
+  let openedProgress = 0;
+  const localState: PcLocalState = {
+    version: "0.1.179",
+    platform: "win32",
+    hostname: "dev-pc",
+    serverUrl: `http://127.0.0.1:${serverPort}`,
+    deviceId: "dev-1",
+    agentState: "online",
+    statusText: "在线",
+    tokenProtected: true,
+    localPaused: false,
+    forceLocalApproval: false,
+    autoStart: true,
+    startHidden: false,
+    autoUpdate: true,
+    update: {
+      supported: true,
+      status: "downloading",
+      version: "0.1.180",
+      percent: 83,
+      signing: true,
+    },
+    webUi: {
+      hasLocalBundle: true,
+      mode: "local",
+      bundledVersion: "0.1.179",
+      serverVersion: "0.1.180",
+    },
+  };
+  (window as { chisabotPC?: PcBridge }).chisabotPC = {
+    state: async () => localState,
+    setLocal: async () => localState,
+    pickFolders: async () => [],
+    logout: async () => true,
+    installUpdate: async () => {
+      openedProgress += 1;
+      return true;
+    },
+    onChange: () => () => {},
+  };
+
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+    },
+  });
+  queryClient.setQueryData(["app-version"], {
+    version: "0.1.180",
+    buildId: "srv-0.1.180",
+  });
+
+  const rootRoute = createRootRoute({
+    component: () => (
+      <QueryClientProvider client={queryClient}>
+        <ClientUpdateSection />
+      </QueryClientProvider>
+    ),
+  });
+  const router = createRouter({
+    routeTree: rootRoute,
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  await router.load();
+  const view = render(<RouterProvider router={router} />);
+
+  const progressBtn = await view.findByRole("button", { name: "查看更新进度" });
+  fireEvent.click(progressBtn);
+  await waitFor(() => {
+    expect(openedProgress).toBe(1);
+  });
+});

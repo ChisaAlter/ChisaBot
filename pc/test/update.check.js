@@ -246,9 +246,11 @@ test("scheduled checks follow the 自动更新 switch", () => {
 test("update IPC goes through the source checks", () => {
   const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
   for (const ch of ["pc:check-update", "pc:install-update"]) assert.ok(main.includes(`handleWeb("${ch}"`), ch);
-  for (const ch of ["update:current", "update:answer"]) assert.ok(main.includes(`handleLocal("${ch}"`), ch);
+  for (const ch of ["update:current", "update:answer", "update:retry", "update:download-latest"]) assert.ok(main.includes(`handleLocal("${ch}"`), ch);
   const preload = fs.readFileSync(path.join(__dirname, "..", "src", "preload.js"), "utf8");
-  assert.ok(preload.includes('"update:answer"'));
+  for (const symbol of ['"update:answer"', '"update:retry"', '"update:download-latest"', "onUpdateState", "onWindowMaximized"]) {
+    assert.ok(preload.includes(symbol), symbol);
+  }
   const web = fs.readFileSync(path.join(__dirname, "..", "src", "web-preload.js"), "utf8");
   assert.ok(web.includes('ipcRenderer.invoke("pc:install-update")'));
 });

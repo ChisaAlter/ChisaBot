@@ -1486,14 +1486,17 @@ function PcUpdateRows({
           >
             {"立即重启以安装"}
           </Button>
+        ) : update.status === "downloading" || update.status === "verifying" ? (
+          <Button
+            onClick={() => void install.run()}
+            size="sm"
+            variant="outline"
+          >
+            {"查看更新进度"}
+          </Button>
         ) : (
           <Button
-            disabled={
-              !update.supported ||
-              update.status === "checking" ||
-              update.status === "downloading" ||
-              update.status === "verifying"
-            }
+            disabled={!update.supported || update.status === "checking"}
             feedback={{
               pending: "检查中…",
               success: "已检查",

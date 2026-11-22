@@ -19,6 +19,8 @@
 const WINDOW_RADIUS = 8;
 /** 登录窗尺寸（DIP）：固定大小，不能拖边调整。 */
 const LOGIN_SIZE = { width: 460, height: 760 };
+/** 独立更新进度窗口尺寸（DIP）：可调整大小与最大化，保持极简全窗居中布局的最低可读尺寸。 */
+const UPDATE_SIZE = { width: 880, height: 600, minWidth: 420, minHeight: 380 };
 
 /** Windows 版本号 "10.0.22631" → 22631；拿不到时 0。 */
 function windowsBuild(release) {
@@ -74,9 +76,31 @@ function loginWindowOptions(mode, opts = {}) {
   };
 }
 
-/** 本机确认 / 审批 / 更新提示：同一套窗框，自己没有最小化。 */
+/** 本机确认 / 审批：同一套窗框，自己没有最小化。 */
 function dialogWindowOptions(mode, opts) {
   return { ...chromeOptions(mode, opts), minimizable: false };
+}
+
+/** 独立更新进度窗口：无边框、白底/炭黑底、支持调整大小与最大化（DESIGN.md §152）。 */
+function updateWindowOptions({ background = "#ffffff" } = {}) {
+  return {
+    width: UPDATE_SIZE.width,
+    height: UPDATE_SIZE.height,
+    minWidth: UPDATE_SIZE.minWidth,
+    minHeight: UPDATE_SIZE.minHeight,
+    frame: false,
+    titleBarStyle: "hiddenInset",
+    thickFrame: true,
+    transparent: false,
+    hasShadow: true,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    fullscreenable: false,
+    autoHideMenuBar: true,
+    backgroundColor: background,
+    title: "更新 ChisaBot",
+  };
 }
 
 /** 交给页面的查询参数：页面据此决定要不要自己裁圆角（chrome.js 读 ?frame=）。 */
@@ -96,12 +120,14 @@ function fitHeight(height, { min = 160, max = 640 } = {}) {
 module.exports = {
   WINDOW_RADIUS,
   LOGIN_SIZE,
+  UPDATE_SIZE,
   windowsBuild,
   frameMode,
   loginHeight,
   chromeOptions,
   loginWindowOptions,
   dialogWindowOptions,
+  updateWindowOptions,
   frameQuery,
   fitHeight,
 };

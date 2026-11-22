@@ -1,234 +1,267 @@
 /*
- * 在线更新提示窗（update.html）：对齐主窗口的磨砂 + 大圆角玻璃质感。
- * 加载顺序在 chrome.css 之后，仅作用于 body.update-page，不影响登录 / 审批 / 本机确认。
+ * 独立更新进度窗口（DESIGN.md §152）：极简纯白/深炭全窗居中进度布局。
+ * 加载在 chrome.css 之后，仅作用于 body.update-page，不影响登录 / 审批 / 本机确认。
  */
-:root {
-  --r-update: 28px;
-  --update-shadow-pad: 28px;
-}
-
-/* 去掉 skyglass-tokens 的不透明天空渐变与星星层、chrome.css 的 8px 裁切与深色硬边，由 .update-card 自己承载大圆角与投影。 */
 body.update-page,
 .dark body.update-page {
-  background: transparent;
-  background-color: transparent;
-  border-radius: 0;
-  clip-path: none;
+  margin: 0;
   padding: 0;
+  height: 100%;
+  min-height: 100vh;
+  background: #ffffff;
+  background-image: none;
+  color: #1d1d1f;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
 }
+
+.dark body.update-page {
+  background: #111318;
+  background-image: none;
+  color: #f5f5f7;
+}
+
 body.update-page::before,
 html[data-frame="clip"] body.update-page::after {
   display: none;
 }
 
-html[data-frame="clip"] body.update-page {
-  padding: var(--update-shadow-pad);
+/* 顶部拖动条与 Windows 窗口按钮（高对比度，自适应亮暗底）。 */
+.update-page .win-ctrl {
+  color: #1d1d1f;
 }
 
-.update-page .update-card {
-  position: relative;
-  padding: 0;
-  overflow: hidden;
-  background: transparent;
-  backdrop-filter: none;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
+.update-page .win-ctrl:hover {
+  background: rgba(17, 24, 39, 0.06);
 }
 
-html[data-frame="clip"] .update-page .update-card {
-  border-radius: var(--r-update);
-  box-shadow:
-    0 8px 20px rgba(15, 23, 42, 0.14),
-    0 2px 6px rgba(15, 23, 42, 0.08);
+.update-page .win-ctrl:active {
+  background: rgba(17, 24, 39, 0.11);
 }
 
-html[data-frame="clip"].dark .update-page .update-card {
-  box-shadow:
-    0 8px 20px rgba(0, 0, 0, 0.36),
-    0 2px 6px rgba(0, 0, 0, 0.22);
+.dark .update-page .win-ctrl {
+  color: rgba(245, 245, 247, 0.9);
 }
 
-/* 底层实时主窗口背景切片：附着于主窗口时由主进程 capturePage 推送，配合 32px 溢出边做平滑高斯模糊。 */
-.update-backdrop {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 0;
+.dark .update-page .win-ctrl:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
-.update-backdrop-img {
-  position: absolute;
-  max-width: none;
+.dark .update-page .win-ctrl:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.update-page .win-ctrl.is-close:hover,
+.dark .update-page .win-ctrl.is-close:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}
+
+.update-page .win-ctrl.is-close:active,
+.dark .update-page .win-ctrl.is-close:active {
+  background: #c84031;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.update-page .win-ctrl .ico-restore {
+  display: none;
+}
+
+html[data-maximized="true"] .update-page .win-ctrl .ico-max {
+  display: none;
+}
+
+html[data-maximized="true"] .update-page .win-ctrl .ico-restore {
   display: block;
-  filter: blur(24px) saturate(175%);
-  opacity: 0;
-  transition: opacity 160ms var(--ease-out);
-  will-change: opacity;
 }
 
-.update-card.has-backdrop .update-backdrop-img {
-  opacity: 1;
-}
-
-/* 磨砂罩层 + 柔和顶部高光：中性灰白/深炭磨砂（去深蓝天底），贴近主窗口无硬边框的悬浮毛玻璃质感。 */
-.update-frost {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  z-index: 1;
-  background: linear-gradient(
-    150deg,
-    rgba(255, 255, 255, 0.92) 0%,
-    rgba(245, 247, 251, 0.94) 100%
-  );
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    inset 0 0 0 1px rgba(29, 29, 31, 0.08);
-}
-
-.update-card.has-backdrop .update-frost {
-  background: linear-gradient(
-    150deg,
-    rgba(255, 255, 255, 0.66) 0%,
-    rgba(246, 248, 252, 0.54) 54%,
-    rgba(255, 255, 255, 0.64) 100%
-  );
-}
-
-.dark .update-frost {
-  background: linear-gradient(
-    150deg,
-    rgba(38, 40, 46, 0.9) 0%,
-    rgba(26, 28, 34, 0.92) 100%
-  );
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.15),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.07);
-}
-
-.dark .update-card.has-backdrop .update-frost {
-  background: linear-gradient(
-    150deg,
-    rgba(32, 33, 38, 0.54) 0%,
-    rgba(22, 23, 28, 0.46) 54%,
-    rgba(28, 29, 34, 0.54) 100%
-  );
-}
-
-.update-content {
-  position: relative;
-  z-index: 2;
+/* 居中舞台与单列堆叠。 */
+.update-stage {
   flex: 1;
   min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 24px 36px;
+}
+
+.update-stack {
+  width: 100%;
+  max-width: 440px;
   display: flex;
   flex-direction: column;
-  padding: 24px 26px 22px;
+  align-items: center;
+  text-align: center;
 }
 
-.update-page.is-measuring .update-content {
-  flex: none;
+.update-mark {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: #f5f5f7;
+  box-shadow: 0 0 0 1px rgba(17, 24, 39, 0.08);
 }
 
-/* 图标块：与 28px 卡片圆角形成同心曲率。 */
-.update-page .sg-ico.is-accent {
-  width: 42px;
-  height: 42px;
-  border-radius: 16px;
-  color: #2563eb;
-  background: rgba(47, 116, 240, 0.12);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+.dark .update-mark {
+  background: #1b1e26;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
-.dark .update-page .sg-ico.is-accent {
-  color: #93c5fd;
-  background: rgba(96, 165, 250, 0.2);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+.update-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
-/* 文案层级与光学微投影（对齐主窗口磨砂可读性，避免亮壁纸透出时字缘发虚）。 */
-.update-page .t-eyebrow {
-  color: rgba(29, 29, 31, 0.56);
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.45);
-}
-
-.update-page .dialog-title {
-  color: #1d1d1f;
+.update-title {
+  margin: 22px 0 0;
+  font-size: 16px;
+  line-height: 1.4;
+  font-weight: 600;
   letter-spacing: -0.01em;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.45);
+  color: #1d1d1f;
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
 }
 
-.update-page .dialog-desc {
-  margin: 14px 0 18px;
-  color: rgba(29, 29, 31, 0.78);
-  line-height: 1.62;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.4);
+.dark .update-title {
+  color: #f5f5f7;
 }
 
-.dark .update-page .t-eyebrow {
-  color: rgba(235, 240, 248, 0.72);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.36);
+.update-title-brand {
+  color: #8e8e93;
+  font-weight: 500;
 }
 
-.dark .update-page .dialog-title {
-  color: #ffffff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.42);
+.dark .update-title-brand {
+  color: #8e939e;
 }
 
-.dark .update-page .dialog-desc {
-  color: rgba(242, 245, 250, 0.88);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.36);
+.update-subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #8e8e93;
+  text-wrap: pretty;
 }
 
-/* 按钮：磨砂次按钮 + 实心高对比主按钮，胶囊圆角与 24px 大圆角卡片协调。 */
-.update-page .dialog-f {
+.dark .update-subtitle {
+  color: #9aa0ad;
+}
+
+/* 圆角胶囊进度条。 */
+.update-progress {
+  margin-top: 22px;
+  width: 248px;
+  max-width: 100%;
+  height: 7px;
+  border-radius: 9999px;
+  background: #e5e7eb;
+  overflow: hidden;
+  position: relative;
+}
+
+.dark .update-progress {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 9999px;
+  background: #1680fa;
+  transition: width 220ms var(--ease-out);
+}
+
+.dark .update-progress-fill {
+  background: #3b9eff;
+}
+
+.update-progress[data-mode="indeterminate"] .update-progress-fill {
+  width: 38%;
+  position: relative;
+  animation: update-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes update-indeterminate {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
+}
+
+.update-percent {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: #374151;
+  font-variant-numeric: tabular-nums;
+}
+
+.dark .update-percent {
+  color: #d1d5db;
+}
+
+/* 原位操作按钮区：下载中隐藏，100% 校验通过后原位出现。 */
+.update-actions {
+  margin-top: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
   gap: 10px;
 }
 
-.update-page .dialog-f .btn {
-  height: 38px;
-  padding: 0 20px;
+.update-actions .btn {
+  height: 36px;
   min-width: 100px;
-  text-shadow: none;
+  padding: 0 20px;
+  box-shadow: none;
 }
 
 .update-page .btn.outline {
   color: #1d1d1f;
-  background: rgba(29, 29, 31, 0.06);
-  border-color: rgba(29, 29, 31, 0.1);
+  background: transparent;
+  border-color: rgba(17, 24, 39, 0.14);
 }
 
 .update-page .btn.outline:hover {
-  background: rgba(29, 29, 31, 0.11);
+  background: rgba(17, 24, 39, 0.05);
 }
 
 .dark .update-page .btn.outline {
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.14);
+  color: rgba(245, 245, 247, 0.92);
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.16);
 }
 
 .dark .update-page .btn.outline:hover {
-  background: rgba(255, 255, 255, 0.17);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .update-page .btn:not(.outline) {
   color: #ffffff;
   background: #1d1d1f;
-  box-shadow: 0 4px 14px rgba(29, 29, 31, 0.18);
 }
 
 .update-page .btn:not(.outline):hover {
-  background: #2c2c30;
+  background: #2f3035;
 }
 
 .dark .update-page .btn:not(.outline) {
-  color: #16181d;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+  color: #111318;
+  background: #f5f5f7;
 }
 
 .dark .update-page .btn:not(.outline):hover {
@@ -245,14 +278,68 @@ html[data-frame="clip"].dark .update-page .update-card {
   color: #ffffff;
 }
 
-@media (prefers-reduced-transparency: reduce) {
-  .update-backdrop {
-    display: none;
+/* 底部灰色下划线下载链接。 */
+.update-download-link {
+  margin-top: 18px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #8e8e93;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out);
+}
+
+.update-download-link:hover {
+  color: #1d1d1f;
+}
+
+.dark .update-download-link {
+  color: #8e939e;
+}
+
+.dark .update-download-link:hover {
+  color: #f5f5f7;
+}
+
+.update-download-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(22, 128, 250, 0.35);
+}
+
+@media (max-height: 440px) {
+  .update-stage {
+    padding: 44px 20px 20px;
   }
-  .update-frost,
-  .update-card.has-backdrop .update-frost,
-  .dark .update-frost,
-  .dark .update-card.has-backdrop .update-frost {
-    background: var(--glass-bg-solid);
+  .update-mark {
+    width: 56px;
+    height: 56px;
+  }
+  .update-title {
+    margin-top: 16px;
+  }
+  .update-progress {
+    margin-top: 16px;
+  }
+  .update-actions {
+    margin-top: 14px;
+  }
+  .update-download-link {
+    margin-top: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-progress-fill {
+    transition: none;
+  }
+  .update-progress[data-mode="indeterminate"] .update-progress-fill {
+    animation: none;
+    transform: translateX(0);
+    width: 50%;
   }
 }
