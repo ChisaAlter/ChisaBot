@@ -2990,7 +2990,6 @@ button.chat-bottom-pill:hover {
   .glass-topbar { padding: 0 12px; }
   .glass-seg { padding: 3px; gap: 2px; }
   .glass-seg-item { padding: 6px 13px; font-size: 14px; }
-  .glass-topbar .glass-avatar { width: 40px !important; height: 40px !important; font-size: 14px !important; }
 }
 @media (max-width: 360px) {
   .glass-seg-item { padding: 6px 10px; font-size: 13px; }
@@ -4197,7 +4196,6 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 /* 搜索展开时，被它盖住的页面操作和面板开关淡出（不透过玻璃看到半个图标）。 */
 .glass-topbar-end :is(.topbar-ctx, .topbar-divider) { transition: opacity var(--dur-1) var(--ease-std); }
 .glass-topbar-end:has(.topbar-search[data-open]) :is(.topbar-ctx, .topbar-divider) { opacity: 0; pointer-events: none; }
-.glass-topbar .glass-avatar { width: 32px !important; height: 32px !important; font-size: 12px !important; }
 .topbar-ctx { display: flex; align-items: center; gap: 4px; }
 .topbar-ctx:empty { display: none; }
 .topbar-divider { width: 1px; height: 18px; margin: 0 6px; background: var(--line-strong); flex: none; }
@@ -11792,9 +11790,8 @@ html[data-sky-off] #sky-root #skyph {
 }
 
 /* —— 顶栏（#374 回退）：电脑上只有品牌文字 + PC 窗口按钮；身份只在左栏底部的账号卡，搜索会话在左栏卡片顶部，
-   左栏开关在左栏卡片右上角（收起时在 80px 列顶）。手机顶栏不变：左 ☰ ｜ 右 搜索 + 头像，都是不叠模糊的圆钮（.glass.is-flat）。 —— */
-.hk-circle,
-.hk-avatar-btn {
+   左栏开关在左栏卡片右上角（收起时在 80px 列顶）。手机顶栏：左 ☰（带待处理红点）｜右 🔍 搜索，账号统一在左栏抽屉底部账号卡。 —— */
+.hk-circle {
   position: relative;
   flex: none;
   display: grid;
@@ -11809,18 +11806,17 @@ html[data-sky-off] #sky-root #skyph {
   transition: scale var(--t-fast, 120ms) var(--t-ease, ease), background-color var(--t-fast, 120ms) var(--t-ease, ease);
 }
 .hk-circle-ico { width: 20px; height: 20px; }
-.hk-avatar-btn .glass-avatar-dot { right: 1px; top: 1px; }
-:is(.hk-circle, .hk-avatar-btn):active { scale: var(--press-scale, 0.96); }
-:is(.hk-circle, .hk-avatar-btn):hover { background: color-mix(in srgb, var(--glass-bg) 92%, var(--text)); }
-.hk-circle:focus-visible,
-.hk-avatar-btn:focus-visible { box-shadow: var(--glass-highlight), 0 0 0 2px var(--accent-color); }
+.hk-circle:active { scale: var(--press-scale, 0.96); }
+.hk-circle:hover { background: color-mix(in srgb, var(--glass-bg) 92%, var(--text)); }
+.hk-circle:focus-visible { box-shadow: var(--glass-highlight), 0 0 0 2px var(--accent-color); }
 /* 手机顶栏 ☰ / 🔍 改幽灵钮：白玻璃圆点在天空渐变上是一块突兀的白斑，平常只留墨色图标，
    悬停 / 按下才浮现一层浅玻璃底；焦点描边沿用上面的 accent 规则。 */
 .hk-top-ico { background: transparent; box-shadow: none; color: var(--ink-2); }
 .hk-top-ico:hover { background: var(--glass-hover); color: var(--ink-1); }
 .hk-top-ico:active { background: var(--glass-hover); color: var(--ink-1); }
+.hk-top-ico .glass-avatar-dot { top: 6px; right: 6px; width: 8px; height: 8px; box-shadow: 0 0 0 1.5px var(--glass-bg-solid); }
 .glass-topbar[data-sidebar="collapsed"] .glass-topbar-start { width: auto; }
-/* 手机布局（含 PC 小窗 < 768px）：左 菜单 ｜ 中 留空 ｜ 右 搜索 + 头像，和 #374 时一样；圆钮不参与窗口拖动。 */
+/* 手机布局（含 PC 小窗 < 768px）：左 菜单 ｜ 中 留空 ｜ 右 搜索；圆钮不参与窗口拖动。 */
 @media (max-width: 767px) {
   .glass-topbar[data-scope] { grid-template-columns: auto minmax(0, 1fr) auto; }
   .glass-topbar[data-scope] .glass-topbar-start { width: auto; }
@@ -11829,7 +11825,7 @@ html[data-sky-off] #sky-root #skyph {
 html[data-phone] .glass-topbar[data-scope] { grid-template-columns: auto minmax(0, 1fr) auto; }
 html[data-phone] .glass-topbar[data-scope] .glass-topbar-start { width: auto; }
 html[data-phone] .glass-topbar[data-scope] .glass-topbar-end { gap: 8px; }
-html[data-desktop] .glass-topbar :is(.hk-circle, .hk-avatar-btn, .brand-mark-btn) {
+html[data-desktop] .glass-topbar :is(.hk-circle, .brand-mark-btn) {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }

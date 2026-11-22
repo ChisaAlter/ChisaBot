@@ -12,7 +12,9 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { SkyBackground } from "@/components/sky-background";
 import { ThemeProvider, useTheme } from "@/components/theme-provider";
 import {
+  flushAppearanceWrites,
   reloadAppearanceFromStorage,
+  resetAppearanceDefaults,
   SKY_SOURCE_STORAGE_KEY,
 } from "@/lib/appearance";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
@@ -24,7 +26,12 @@ import {
 import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetAppearanceDefaults();
+  flushAppearanceWrites();
+  window.localStorage.clear();
+});
 afterAll(async () => {
   await settleReactWork();
   await GlobalRegistrator.unregister();

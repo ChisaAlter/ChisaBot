@@ -1,6 +1,5 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useRef } from "react";
-import { AccountMenu } from "@/components/layout/account-menu";
 import { GlassTopBar, type ShellScope } from "@/components/layout/glass-topbar";
 import { PhoneGestures } from "@/components/layout/phone-gestures";
 import { SidebarShell } from "@/components/layout/sidebar-shell";
@@ -42,10 +41,7 @@ export function GlassShell({
         iconWidth="80px"
         width="276px"
       >
-        <GlassTopBar
-          account={<AccountMenu placement="topbar" />}
-          scope={scope}
-        />
+        <GlassTopBar scope={scope} />
         <SearchHotkey scope={scope} />
         <DrawerCloser />
         <CloseDrawerOnScope scope={scope} />

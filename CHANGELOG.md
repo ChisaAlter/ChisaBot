@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **手机端顶栏移除重复头像并将待处理红点迁至抽屉按钮**：
+  - 移除手机端 `.glass-topbar` 右上角与左栏抽屉底部 `AccountCard` 重复的头像入口（`glass-shell.tsx` · `glass-topbar.tsx` · `account-menu.tsx`），手机顶栏统一收敛为「左 `☰` 抽屉 ｜ 右 `🔍` 搜索会话」。
+  - 抽取共享计数模块 `app/src/lib/pending-actions.ts`，在手机模式将待处理红点挂到左上角 `☰` 抽屉按钮上，清理 `.hk-avatar-btn` 与 `.glass-topbar .glass-avatar` 残留样式并同步 `app/tests/pc-layout-topbar.test.ts` 与 `app/tests/mobile-topbar.test.tsx`。
+
 - **手机端与 Web 端体验全面修复及长对话尾读 / 桌面流畅度护栏（DESIGN.md §153）**：
   - 服务端 `server/src/thread-messages-delta.ts` 与前端 `app/src/lib/conversations/thread-messages.ts`、`channel-chat.tsx` 支持冷启动及重试 `?tail=120` 尾片优先首读（512 KiB 预算，至少保留 20 条）并后台静默补齐较早历史，将重试读超时放宽至 45s；修复 `SkyBackground` 与 `ThemeProvider` 运行时切换深浅主题时 `--ink-1` / `--glass-bg` 滞后一拍的跨端缺陷（`appearance.ts` · `sky-background.tsx` · `theme-provider.tsx`）。
   - Android 外壳（`WebScreen.kt`）支持 Edge-to-Edge 全屏壁纸与 `--safe-*` / `--android-safe-*` 首帧及运行时安全区注入（键盘弹出底边距自动归零）与 `ChisaAndroid.setTheme` 状态栏深浅图标实时同步；公网 `/login` 修复暗色横屏下半露白并扩大窄屏复选框热区。
