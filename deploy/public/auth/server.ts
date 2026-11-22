@@ -362,6 +362,7 @@ export function createAuthApp(config: AuthConfig) {
   if (config.databasePath !== ":memory:") chmodSync(config.databasePath, 0o600);
   let inFlight = 0;
   let cleanedAt = -Infinity;
+  let closed = false;
   // Brief, bounded diagnostics stay on this server. No messages, URLs, credentials or full UA.
   const startupReports: StartupReport[] = [];
   const startupCounts = new Map<string, { count: number; at: number }>();
@@ -373,6 +374,7 @@ export function createAuthApp(config: AuthConfig) {
       if (value.at <= cutoff) startupCounts.delete(key);
   }
   function clean(force = false) {
+    if (closed) return;
     const time = now();
     if (!force && time - cleanedAt < 60_000) return;
     db.query(
@@ -388,6 +390,15 @@ export function createAuthApp(config: AuthConfig) {
     ).run(time - 7 * 24 * 3600_000);
     cleanedAt = time;
   }
+  // 将每 60s 的 4 条 SQLite DELETE 移出鉴权请求热路径，避免尾延迟写锁抖动；close() 时清理。
+  const cleanTimer = setInterval(() => {
+    try {
+      clean(true);
+    } catch {
+      // 后台清理失败不影响在线鉴权，下个周期重试。
+    }
+  }, 60_000);
+  cleanTimer.unref();
   type AccountRow = {
     id: string;
     username: string;
@@ -482,7 +493,6 @@ export function createAuthApp(config: AuthConfig) {
   }
   /** 这个请求是谁（会话有效时）；否则 null。 */
   async function authenticated(request: Request): Promise<Principal | null> {
-    clean();
     const token = sessionToken(request);
     if (!token) return null;
     const hash = digest(token);
@@ -538,10 +548,15 @@ export function createAuthApp(config: AuthConfig) {
       db.query("DELETE FROM sessions WHERE token_hash = ?").run(digest(token));
   }
   function attempt(key: string) {
+    const current = now();
     db.query(`INSERT INTO attempts (client_key, count, expires_at) VALUES (?, 1, ?)
-      ON CONFLICT(client_key) DO UPDATE SET count = count + 1`).run(
+      ON CONFLICT(client_key) DO UPDATE SET
+        count = CASE WHEN attempts.expires_at <= ? THEN 1 ELSE attempts.count + 1 END,
+        expires_at = CASE WHEN attempts.expires_at <= ? THEN excluded.expires_at ELSE attempts.expires_at END`).run(
       key,
-      now() + WINDOW,
+      current + WINDOW,
+      current,
+      current,
     );
   }
   /** 签发会话：principal 是管理员（config.json）还是朋友账号，决定 user_id 与凭据指纹。 */
@@ -663,7 +678,6 @@ export function createAuthApp(config: AuthConfig) {
         { ok: false, error: "登录请求来源无效，请确认服务器地址。" },
         403,
       );
-    clean();
     const clientKey = digest(`client:${clientAddress(request.headers)}`);
     const failures = db
       .query(
@@ -1109,7 +1123,6 @@ export function createAuthApp(config: AuthConfig) {
   }
   async function invite(request: Request): Promise<Response> {
     if (!multi) return json({ ok: false, error: "这个链接无效。" }, 404);
-    clean();
     const clientKey = digest(`client:${clientAddress(request.headers)}`);
     if (request.method === "GET") {
       const limited = tooMany(clientKey);
@@ -1394,7 +1407,6 @@ export function createAuthApp(config: AuthConfig) {
         revoke(request);
         return json({ ok: true }, 200, sessionHeaders("", 0));
       }
-      clean();
       const text = await request.text();
       if (Buffer.byteLength(text) > 4096)
         return json({ ok: false, error: "请求过长。" }, 413);
@@ -1479,7 +1491,15 @@ export function createAuthApp(config: AuthConfig) {
       );
     }
   }
-  return { fetch, close: () => db.close() };
+  return {
+    fetch,
+    close: () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(cleanTimer);
+      db.close();
+    },
+  };
 }
 
 if (import.meta.main) {

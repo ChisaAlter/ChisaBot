@@ -20,7 +20,7 @@ services:
       - ./auth:/auth:ro
       - ./auth-data:/auth-data:rw
     healthcheck:
-      test: [CMD, /usr/local/bin/bun, -e, "const r=await fetch('http://127.0.0.1:3002/_internal/health');process.exit(r.ok?0:1)"]
+      test: [CMD, /usr/bin/curl, -fsS, --max-time, "3", -o, /dev/null, http://127.0.0.1:3002/_internal/health]
       interval: 20s
       timeout: 5s
       retries: 3

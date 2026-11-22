@@ -31,6 +31,7 @@ android {
         // http 只放行局域网 / 环回地址（GatewayAuth.normalize → privateHost）；ALLOW_LOCAL_HTTP 现在只控制登录页
         // 「直接打开（无登录网关的服务器）」按钮，不再决定 http 白名单。
         buildConfigField("boolean", "ALLOW_LOCAL_HTTP", "false")
+        resourceConfigurations += setOf("zh", "en")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

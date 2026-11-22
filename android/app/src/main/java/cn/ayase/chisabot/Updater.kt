@@ -7,20 +7,23 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
-import kotlin.concurrent.thread
 
 /**
  * APK 在线更新。更新源是一个 JSON（BuildConfig.UPDATE_FEED：构建期 CHISABOT_ANDROID_UPDATE_FEED，
@@ -31,7 +34,7 @@ import kotlin.concurrent.thread
  */
 class Updater(private val activity: Activity) {
 
-    private val main = Handler(Looper.getMainLooper())
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var waitingForPermission: File? = null
     @Volatile private var downloading = false
 
@@ -45,10 +48,10 @@ class Updater(private val activity: Activity) {
             if (!silent) toast("这个版本没有配置更新源")
             return
         }
-        thread(name = "update-check") {
+        ioScope.launch {
             val release = runCatching { fetch() }.getOrNull()
-            main.post {
-                if (!alive()) return@post
+            withContext(Dispatchers.Main) {
+                if (!alive()) return@withContext
                 when {
                     release == null -> if (!silent) toast("检查更新失败")
                     release.code <= BuildConfig.VERSION_CODE -> if (!silent) toast("已是最新版本 ${BuildConfig.VERSION_NAME}")
@@ -62,7 +65,7 @@ class Updater(private val activity: Activity) {
         val apk = waitingForPermission ?: return
         if (canInstall()) {
             waitingForPermission = null
-            install(apk)
+            installWithIoVerify(apk)
         }
     }
 
@@ -74,7 +77,11 @@ class Updater(private val activity: Activity) {
             useCaches = false
             setRequestProperty("Cache-Control", "no-cache")
         }
-        val text = conn.inputStream.bufferedReader().use { it.readText() }
+        val text = try {
+            conn.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            conn.disconnect()
+        }
         val j = JSONObject(text)
         return Release(
             version = j.getString("version"),
@@ -116,7 +123,7 @@ class Updater(private val activity: Activity) {
             .setCancelable(false)
             .show()
 
-        thread(name = "update-download") {
+        ioScope.launch {
             val dir = File(activity.cacheDir, "updates").apply { mkdirs() }
             dir.listFiles()?.forEach { it.delete() }
             val out = File(dir, "ChisaBot-Android-${r.version}.apk")
@@ -125,42 +132,58 @@ class Updater(private val activity: Activity) {
                     connectTimeout = 15_000
                     readTimeout = 30_000
                 }
-                val total = conn.contentLengthLong
                 val md = MessageDigest.getInstance("SHA-256")
-                conn.inputStream.use { input ->
-                    out.outputStream().use { output ->
-                        val buf = ByteArray(64 * 1024)
-                        var done = 0L
-                        var last = -1
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            output.write(buf, 0, n)
-                            md.update(buf, 0, n)
-                            done += n
-                            if (total > 0) {
-                                val pct = (done * 100 / total).toInt()
-                                if (pct != last) {
-                                    last = pct
-                                    main.post {
-                                        if (alive() && dialog.isShowing) {
-                                            bar.progress = pct
-                                            label.text = "正在下载… $pct%"
+                try {
+                    val total = conn.contentLengthLong
+                    conn.inputStream.use { input ->
+                        out.outputStream().use { output ->
+                            val buf = ByteArray(64 * 1024)
+                            var done = 0L
+                            var last = -1
+                            var lastUiAt = 0L
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n < 0) break
+                                output.write(buf, 0, n)
+                                md.update(buf, 0, n)
+                                done += n
+                                if (total > 0) {
+                                    val pct = (done * 100 / total).toInt()
+                                    val nowMs = SystemClock.uptimeMillis()
+                                    if (pct != last && (nowMs - lastUiAt >= 100L || pct >= 100)) {
+                                        last = pct
+                                        lastUiAt = nowMs
+                                        withContext(Dispatchers.Main) {
+                                            if (alive() && dialog.isShowing) {
+                                                bar.progress = pct
+                                                label.text = "正在下载… $pct%"
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                } finally {
+                    conn.disconnect()
                 }
                 val hex = md.digest().joinToString("") { "%02x".format(it) }
                 check(hex == r.sha256) { "校验失败（sha256 不一致）" }
+                // 将 getPackageArchiveInfo APK 证书解析放在 Dispatchers.IO，避免阻塞 UI 线程 100–500ms。
+                signatureProblem(out)
             }
-            main.post {
+            withContext(Dispatchers.Main) {
                 downloading = false
                 if (alive() && dialog.isShowing) runCatching { dialog.dismiss() }
-                if (!alive()) return@post
-                result.onSuccess { install(out) }.onFailure {
+                if (!alive()) return@withContext
+                result.onSuccess { sigError ->
+                    if (sigError != null) {
+                        out.delete()
+                        toast(sigError)
+                    } else {
+                        launchInstaller(out)
+                    }
+                }.onFailure {
                     out.delete()
                     toast("更新下载失败：${it.message}")
                 }
@@ -171,9 +194,24 @@ class Updater(private val activity: Activity) {
     private fun canInstall(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.O || activity.packageManager.canRequestPackageInstalls()
 
-    private fun install(apk: File) {
+    /** 在 Dispatchers.IO 复验 APK 签名后再切主线程拉起系统安装器（如从未知来源权限页返回时）。 */
+    private fun installWithIoVerify(apk: File) {
+        ioScope.launch {
+            val sigError = signatureProblem(apk)
+            withContext(Dispatchers.Main) {
+                if (!alive()) return@withContext
+                if (sigError != null) {
+                    apk.delete()
+                    toast(sigError)
+                } else {
+                    launchInstaller(apk)
+                }
+            }
+        }
+    }
+
+    private fun launchInstaller(apk: File) {
         if (!alive()) return
-        signatureProblem(apk)?.let { apk.delete(); toast(it); return }
         if (!canInstall()) {
             waitingForPermission = apk
             AlertDialog.Builder(activity)

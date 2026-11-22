@@ -50,6 +50,11 @@ for (const port of ["8443", "443", "9443"]) {
     );
     const origin = `https://chat.example.test${port === "443" ? "" : `:${port}`}`;
     expect(configuration).toContain(`listen ${port} ssl;`);
+    expect(configuration).toContain("http2 on;");
+    expect(configuration).toContain("sendfile on;");
+    expect(configuration).toContain("upstream chisabot_api {");
+    expect(configuration).toContain("upstream chisabot_auth {");
+    expect(configuration).toContain("keepalive_timeout 8s;");
     expect(configuration).toContain(`"${origin}" 1;`);
     expect(configuration).toContain(
       `~^cross-site:(GET|HEAD):[a-z-]*:${port}/p/ 1;`,

@@ -85,14 +85,16 @@ COPY agent-computer/bun.lock agent-computer/bun.lock
 RUN cd agent-computer && bun install --frozen-lockfile
 
 # A second tree with the build-time dependencies left out, for the runtime stage to take. Vite,
-# biome and the test tooling are a gigabyte that nothing in a running container imports.
+# biome, typescript and the test tooling are a gigabyte that nothing in a running container imports.
 RUN mkdir -p /prod && cp package.json bun.lock /prod/ \
   && cp -r patches /prod/patches \
-  && cd /prod && mkdir -p app server \
+  && cd /prod && mkdir -p app server agent-computer \
   && cp /src/app/package.json app/package.json \
   && cp /src/server/package.json server/package.json \
   && bun install --frozen-lockfile --production --omit=peer --linker hoisted \
-  && mkdir -p /prod/server/node_modules
+  && mkdir -p /prod/server/node_modules \
+  && cp /src/agent-computer/package.json /src/agent-computer/bun.lock /prod/agent-computer/ \
+  && cd /prod/agent-computer && bun install --frozen-lockfile --production
 
 
 FROM deps AS app-build
@@ -152,6 +154,10 @@ RUN case "${TARGETARCH}" in \
   && rm /tmp/s6-overlay-*.tar.xz
 
 WORKDIR /app
+# Pre-create the empty directory skeleton owned by apiuser so every subsequent COPY --chown
+# writes directly as apiuser:apiuser without an overlayfs-doubling `chown -R /app` layer later.
+RUN mkdir -p /app/server /app/runtime/dsh /app/deploy/dsh /app/agent-computer /app/pc/src /app/scripts /app/app \
+  && chown -R apiuser:apiuser /app
 
 # BOTH HALVES OF THE TREE COME FROM /prod. A workspace install is two directories, not one: the
 # packages it could hoist go to the root `node_modules`, and a per-workspace `node_modules` sits
@@ -161,29 +167,27 @@ WORKDIR /app
 # emptied, along with the two `.bin` shims pointing at it. Every dependency `server/package.json`
 # declares resolves from the /prod half; the ones it does not declare are absent now rather than
 # present and broken.
-COPY --from=deps /prod/node_modules node_modules
-COPY --from=deps /prod/server/node_modules server/node_modules
-COPY --from=deps /src/package.json package.json
-COPY --from=deps /src/bun.lock bun.lock
-# The browser's tree is a separate install root with its own lockfile rather than a workspace of the
-# one above, so there is no /prod half of it to take and it ships as resolved, `typescript` included.
-# Pruning it would mean a second `--production` install in the stage above.
-COPY --from=deps /src/agent-computer/node_modules agent-computer/node_modules
+COPY --chown=apiuser:apiuser --from=deps /prod/node_modules node_modules
+COPY --chown=apiuser:apiuser --from=deps /prod/server/node_modules server/node_modules
+COPY --chown=apiuser:apiuser --from=deps /src/package.json package.json
+COPY --chown=apiuser:apiuser --from=deps /src/bun.lock bun.lock
+COPY --chown=apiuser:apiuser --from=deps /prod/agent-computer/node_modules agent-computer/node_modules
 
-COPY server server
-COPY shared shared
-COPY examples examples
-COPY --from=dsh-deps /runtime/dsh/node_modules runtime/dsh/node_modules
-COPY runtime/dsh/package.json runtime/dsh/package-lock.json runtime/dsh/
-COPY runtime/dsh/src runtime/dsh/src
-COPY deploy/dsh deploy/dsh
+COPY --chown=apiuser:apiuser server server
+COPY --chown=apiuser:apiuser shared shared
+COPY --chown=apiuser:apiuser examples examples
+COPY --chown=apiuser:apiuser --from=dsh-deps /runtime/dsh/node_modules runtime/dsh/node_modules
+COPY --chown=apiuser:apiuser runtime/dsh/package.json runtime/dsh/package-lock.json runtime/dsh/
+COPY --chown=apiuser:apiuser runtime/dsh/src runtime/dsh/src
+COPY --chown=apiuser:apiuser deploy/dsh deploy/dsh
 RUN node deploy/dsh/compatibility.mjs --print > deploy/dsh/runtime-compat.json \
+  && chown apiuser:apiuser deploy/dsh/runtime-compat.json \
   && bun -e 'await import("@ag-ui/client"); await import("./runtime/dsh/src/client.mjs")'
 RUN mkdir -p /var/lib/chisabot-dsh && chown apiuser:apiuser /var/lib/chisabot-dsh
 ENV CHISABOT_DSH_ROOT=/var/lib/chisabot-dsh
-COPY agent-computer/src agent-computer/src
-COPY pc/src/agent-runtime pc/src/agent-runtime
-COPY agent-computer/package.json agent-computer/package.json
+COPY --chown=apiuser:apiuser agent-computer/src agent-computer/src
+COPY --chown=apiuser:apiuser pc/src/agent-runtime pc/src/agent-runtime
+COPY --chown=apiuser:apiuser agent-computer/package.json agent-computer/package.json
 
 # `bun run composio:smoke`, because the manifest copied above carries that entry and the question it
 # answers belongs here rather than on a laptop: it asks what THIS deployment's Composio key can see,
@@ -196,60 +200,31 @@ COPY agent-computer/package.json agent-computer/package.json
 # is not in the image; `generate:app-config` writes a file the build has already baked into
 # `app/dist`. Copying the directory ships four more entries with nothing to do here, to fix one that
 # has something to do.
-COPY scripts/composio-smoke.ts scripts/composio-smoke.ts
+COPY --chown=apiuser:apiuser scripts/composio-smoke.ts scripts/composio-smoke.ts
 
 # The built app, served by the API on the same origin. There is no CORS in this server, so this is
 # not a convenience: two origins would simply fail.
-COPY --from=app-build /src/app/dist app/dist
+COPY --chown=apiuser:apiuser --from=app-build /src/app/dist app/dist
 ENV APP_DIST_DIR=/app/app/dist
 
 COPY docker/s6 /etc/s6-overlay
 
-# PostgreSQL, for the deployment that wants one thing to run rather than two.
+# Single apt layer installing embedded PostgreSQL 16 + pgvector, Python + Office libs for the Bot's
+# shell (DESIGN.md §101.7), and sudo constrained strictly to `/usr/local/bin/chisabot-apt`.
 #
-# OFF UNLESS ASKED FOR. Set `EMBEDDED_POSTGRES=on` and the container runs its own; leave it and
-# `DATABASE_URL` points wherever you like. The trade is the one you would expect: a database inside
-# a container lives and dies with that container unless /var/lib/postgresql is a mounted volume, and
-# the audit trail is the thing you would be losing.
+# PostgreSQL stays OFF unless `EMBEDDED_POSTGRES=on` is set (leave it off for managed DATABASE_URL).
+# `sudo` is restricted to `/usr/local/bin/chisabot-apt` (not `NOPASSWD: ALL`): `pwuser` can run
+# `apt-get update` and install named packages, never `sudo cat /proc/1/environ` or arbitrary flags.
+# Run with `--security-opt no-new-privileges` where supported; per-Bot computers + gVisor remain
+# the isolation boundary for untrusted model code.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       postgresql-16 postgresql-16-pgvector \
+      python3 python3-pip python3-venv python-is-python3 python3-openpyxl python3-docx \
+      sudo \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /var/lib/postgresql/data /var/run/postgresql \
-  && chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql
-
-# Python for the Bot's own shell (DESIGN.md §101.7). "Write a script and run it" is one of the first
-# things people ask a Bot to do, and Python is what they mean by it; without an interpreter the Bot
-# fell back to Node and answered with Python it never ran (2026-10-18 real-use test). venv and pip
-# come with it, so `python -m venv` + pip works without sudo (Ubuntu's system pip is PEP 668-locked).
-# Common Office tasks work immediately with the system Python; missing libraries led the Bot to
-# hand-build OOXML and skip real numeric verification in the continuous Web acceptance run.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 python3-pip python3-venv python-is-python3 python3-openpyxl python3-docx \
+  && chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql \
   && python -c 'import openpyxl, docx' \
-  && rm -rf /var/lib/apt/lists/*
-
-# A Bot can install what a task needs, and nothing else as root.
-#
-# `sudo` without a password, because a package manager that cannot install is not one, and "install a
-# tool then use it" is the whole point of giving a Bot a shell.
-#
-# THE PACKAGE MANAGERS, NOT ALL. This was `NOPASSWD: ALL`, and the comment below it explained what
-# that cost: a Bot could become root inside its container. It then named the two conditions that make
-# that acceptable — the container being one Bot's alone, and not holding a database — and this image
-# meets neither. The supervisor is deliberately not in it, so every Bot shares one computer, and
-# `EMBEDDED_POSTGRES=on` is a documented way to run it. So root here read another Bot's workspace, the
-# API's environment, and the audit database that records what it did.
-#
-# Naming the commands keeps the feature and removes that. `apt-get install` still works, which is what
-# the tool description tells a model to run. `sudo cat /proc/1/environ` does not.
-#
-# WHAT THIS IS NOT. It is a floor, not a boundary. Root is one CVE away and a shared container is not
-# an isolation story for code a model wrote: that needs a computer per Bot and a sandbox under it,
-# which is why per-Bot computers and gVisor are not optional extras next to this feature. Run the
-# image with `--security-opt no-new-privileges` where the platform allows, which turns setuid off
-# entirely for anything not named here.
-RUN apt-get update && apt-get install -y --no-install-recommends sudo \
-  && rm -rf /var/lib/apt/lists/* \
   && printf '%s\n' \
     '#!/bin/sh' \
     'set -eu' \
@@ -338,8 +313,7 @@ RUN mkdir -p /usr/local/etc \
 ENV PATH="${PATH}:/workspace/.npm-global/bin"
 
 RUN mkdir -p /workspace /profiles \
-  && chown -R pwuser:pwuser /workspace /profiles \
-  && chown -R apiuser:apiuser /app
+  && chown -R pwuser:pwuser /workspace /profiles
 
 # Where the embedded database answers, when there is one. Overridden by whatever you set, so an
 # external database needs no special case: set DATABASE_URL and EMBEDDED_POSTGRES stays off.
@@ -353,7 +327,7 @@ EXPOSE 3001
 # One port out. The browser's 4100 is deliberately not exposed: it holds real logins and its only
 # caller is the process next to it.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
-  CMD bun -e "const r = await fetch('http://127.0.0.1:3001/health'); process.exit(r.ok ? 0 : 1)"
+  CMD curl -fsS --max-time 3 http://127.0.0.1:3001/health >/dev/null
 
 ENTRYPOINT ["/init"]
 
@@ -380,7 +354,8 @@ ARG CHISABOT_BUILD=dev
 ARG CHISABOT_BUILT_AT=
 ARG CHISABOT_IMAGE=
 RUN printf '{"version":"%s","commit":"%s","buildId":"%s","builtAt":"%s","image":"%s"}\n' \
-    "$CHISABOT_VERSION" "$CHISABOT_COMMIT" "$CHISABOT_BUILD" "$CHISABOT_BUILT_AT" "$CHISABOT_IMAGE" > /app/build-info.json
+    "$CHISABOT_VERSION" "$CHISABOT_COMMIT" "$CHISABOT_BUILD" "$CHISABOT_BUILT_AT" "$CHISABOT_IMAGE" > /app/build-info.json \
+  && chown apiuser:apiuser /app/build-info.json
 LABEL org.opencontainers.image.title="ChisaBot" \
       org.opencontainers.image.revision="${CHISABOT_COMMIT}" \
       org.opencontainers.image.version="${CHISABOT_VERSION}" \

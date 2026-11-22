@@ -47,9 +47,9 @@ assert_local_caller_clears() {
   conf=$1
   label=$2
   test -f "$conf" || fail "missing $label ($conf)"
-  passes=$(grep -c 'proxy_pass http://127.0.0.1:3001;' "$conf" || true)
+  passes=$(grep -Ec '^[[:space:]]*proxy_pass[[:space:]]+http://(127\.0\.0\.1:3001|chisabot_api)([/;]|$)' "$conf" || true)
   clears=$(grep -c 'proxy_set_header X-ChisaBot-Local-Caller "";' "$conf" || true)
-  [ "$passes" -gt 0 ] || fail "$label has no app proxy_pass to :3001"
+  [ "$passes" -ge 6 ] || fail "$label has too few app proxy_pass to :3001/chisabot_api ($passes < 6)"
   [ "$clears" -ge "$passes" ] || fail "$label Local-Caller clears ($clears) < app proxies ($passes) — template drifted or live conf stale"
   ok "$label Local-Caller cleared on $passes app proxies"
 }
