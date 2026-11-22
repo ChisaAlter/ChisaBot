@@ -1,5 +1,5 @@
 import { IconArrowRight, IconChevronRight, IconExternalLink } from "@tabler/icons-react";
-import { Link, type LinkOptions, useRouterState } from "@tanstack/react-router";
+import { Link, type LinkOptions, useRouter, useRouterState } from "@tanstack/react-router";
 import type * as React from "react";
 import { useRef, useState } from "react";
 import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
@@ -241,6 +241,7 @@ function CollapsibleGroup({ group, anyHere, first }: { group: RailGroup; anyHere
 
 function NavRow({ item }: { item: RailItem }) {
   const closeDrawer = useCloseMobileDrawer();
+  const router = useRouter();
   const body = (
     <>
       <span className="nav-row-ico">
@@ -267,6 +268,7 @@ function NavRow({ item }: { item: RailItem }) {
       activeProps={{ className: "is-on" }}
       className="nav-row"
       onClick={closeDrawer}
+      onPointerDown={() => void router.preloadRoute(item.linkOptions as never).catch(() => undefined)}
     >
       {body}
     </Link>
@@ -278,10 +280,18 @@ function NavRow({ item }: { item: RailItem }) {
  * （DESIGN-v4，三个区域同一位置）。
  */
 function RailFooter({ link }: { link?: { label: string; to: string; search?: Record<string, unknown>; icon: React.ComponentType<{ className?: string }> } }) {
+  const router = useRouter();
   if (!link) return null;
   return (
     <div className="rail-foot">
-      <Link className="rail-switch" search={link.search as never} to={link.to}>
+      <Link
+        className="rail-switch"
+        onPointerDown={() =>
+          void router.preloadRoute({ to: link.to, search: link.search as never } as never).catch(() => undefined)
+        }
+        search={link.search as never}
+        to={link.to}
+      >
         <link.icon className="size-[17px] shrink-0" />
         <span className="min-w-0 flex-1 truncate">{link.label}</span>
         <IconArrowRight className="rail-switch-arrow size-4" />

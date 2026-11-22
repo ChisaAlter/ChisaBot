@@ -1,5 +1,7 @@
 ## Unreleased
 
+- **手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复**：`.chat-msg-action[data-held]` 改用 `display: none` 并以 `.chat-msg-actions` `min-height: 26px` 固定行高，消除回复中幽灵撤回图标与「引用」偏移；`composer.tsx` 与 `styles.css`（`.model-pill` `flex-shrink: 0` + `@container (max-width: 480px)` `flex-wrap`）解决手机端输入框工具栏挤压重叠；`section-rail.tsx` / `account-menu.tsx` 补充按下路由预加载，并优化 `html[data-phone]` 切页 `page-in-phone` 无位移淡入、`touch-action: manipulation` 与抽屉 `will-change: transform`（`styles.css` · `composer.tsx` · `section-rail.tsx` · `account-menu.tsx` · `mobile-chat-ui-fixes.test.tsx`）。
+
 ## 0.1.181 — 2026-11-22
 
 - 全端发版：`0.1.181`，Android `versionCode 361`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `fdb6a75dfc274c7b`；含非破坏性索引迁移 `0070_core_performance_indexes.sql`（自动执行），公网 Nginx 同步建议更新以启用 HTTP/2 与 keepalive。

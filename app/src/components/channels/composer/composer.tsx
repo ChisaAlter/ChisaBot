@@ -3107,7 +3107,7 @@ function ComposerImpl({
             />
             {/* One toolbar inside the frame: only attach on the left; model pill, context ring and send on the right (DESIGN.md §25). */}
             <div className="glass-composer-toolbar">
-              <div className="flex min-w-0 items-center gap-1.5">
+              <div className="glass-composer-toolbar-start flex items-center gap-1.5">
                 {attachButton}
                 {leadingControl}
                 <Button
@@ -3126,9 +3126,9 @@ function ComposerImpl({
                   <IconSparkles className="size-[16px]" />
                 </Button>
               </div>
-              <div className="flex min-w-0 items-center gap-1.5">
+              <div className="glass-composer-toolbar-end flex items-center gap-1.5">
                 {modelControl ? (
-                  <div className="flex min-w-0 items-center">
+                  <div className="flex shrink-0 items-center">
                     {modelControl}
                   </div>
                 ) : null}
@@ -3216,7 +3216,7 @@ function ComposerImpl({
           </div>
 
           <div className="glass-composer-toolbar">
-            <div className="flex min-w-0 items-center gap-1.5">
+            <div className="glass-composer-toolbar-start flex items-center gap-1.5">
               {attachmentsEnabled || handsOff ? (
                 <Button
                   aria-label={"附加文件"}
@@ -3247,11 +3247,11 @@ function ComposerImpl({
                 <IconSparkles className="size-[16px]" />
               </Button>
               {modelControl ? (
-                <div className="flex min-w-0 items-center">{modelControl}</div>
+                <div className="flex shrink-0 items-center">{modelControl}</div>
               ) : null}
             </div>
 
-            <div className="flex shrink-0 items-center gap-1.5">
+            <div className="glass-composer-toolbar-end flex shrink-0 items-center gap-1.5">
               <DictationButton dictation={dictation} disabled={disabled} />
               {uploadHint}
               {busySendPill}
@@ -3335,7 +3335,7 @@ const BusySendModePill = memo(function BusySendModePill() {
           : "当前回复中模式：排到下一轮，点击改为立即插话引导"
       }
       className={cn(
-        "inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium transition-colors",
+        "busy-send-pill inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium transition-colors",
         isSteer
           ? "border-primary/35 bg-primary/10 text-primary hover:bg-primary/15"
           : "border-border/60 bg-muted/60 text-muted-foreground hover:text-foreground",

@@ -125,6 +125,8 @@ export function AccountMenu({
           preloadAccountDialogs();
           setLeaving(false);
           void router.preloadRoute({ to: "/settings" }).catch(() => undefined);
+          void router.preloadRoute({ to: "/approvals" }).catch(() => undefined);
+          void router.preloadRoute({ to: "/settings/schedules" }).catch(() => undefined);
         }
         setOpen(next);
       }}

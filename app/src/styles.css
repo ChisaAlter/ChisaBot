@@ -1758,10 +1758,12 @@ html[data-sky-ease] body::before {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
   min-width: 0;
   max-width: 160px;
   height: 28px;
   padding: 0 7px 0 4px;
+  overflow: hidden;
   border-radius: 999px;
   border: 1px solid rgba(22, 24, 29, 0.07);
   background: rgba(255, 255, 255, 0.55);
@@ -2409,13 +2411,16 @@ html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
 
 .chat-msg-actions {
   display: flex;
+  align-items: center;
+  min-height: 26px;
   gap: 4px;
   margin-top: 4px;
   opacity: 0;
   transition: opacity 0.15s ease;
 }
-/* 在回答时：按钮留着位置但看不见（§68.4，不让每条消息在发送那一刻矮一截）。 */
-.chat-msg-action[data-held] { visibility: hidden; }
+/* 在回答时：动作行靠 min-height: 26px 保住行高（§68.4，发送那一刻每条消息不矮一截）；
+   被挂起的动作本身 display: none，既避免占据水平位置把「引用」挤远，又防止 .btn-face 的 visibility: visible 穿透显示孤立图标。 */
+.chat-msg-action[data-held] { display: none; }
 /* 隔离单条消息行的布局与样式失效传播，不启用 content-visibility 以保持滚动锚点精确。 */
 [data-slot="message-scroller-item"] { contain: layout style; }
 [data-slot="message-scroller-item"]:hover .chat-msg-actions,
@@ -4930,10 +4935,44 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 .glass-composer-send[data-testid="composer-stop"]:hover { transform: translateY(-1px); }
 
 .glass-composer { container-type: inline-size; }
-/* 窄卡片：模型按钮只剩提供方标记 + 箭头（名字在悬停提示和下拉里）。 */
-@container (max-width: 420px) {
-  .glass-composer .model-pill { gap: 3px; padding: 0 5px 0 4px; }
-  .glass-composer .model-pill-name { display: none; }
+/* 窄输入框（手机等 <= 480px）：模型与上下文收窄为图标、工具栏允许换行且右侧组靠右，避免按钮挤压重叠。 */
+@container (max-width: 480px) {
+  .glass-composer-toolbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    column-gap: 4px;
+  }
+  .glass-composer-toolbar-start,
+  .glass-composer-toolbar-end {
+    gap: 4px;
+  }
+  .glass-composer-toolbar-end {
+    margin-left: auto;
+  }
+  .glass-composer-toolbar .glass-composer-icon {
+    width: 30px !important;
+    height: 30px !important;
+  }
+  .glass-composer .model-pill {
+    gap: 2px;
+    padding: 0 5px 0 4px;
+  }
+  .glass-composer .model-pill-name {
+    display: none;
+  }
+  .glass-composer .context-meter-text {
+    display: none;
+  }
+  .glass-composer .context-meter {
+    min-width: 26px;
+    height: 28px;
+    padding: 0 3px;
+  }
+  .glass-composer .busy-send-pill {
+    height: 28px;
+    padding: 0 8px;
+    gap: 3px;
+  }
 }
 
 /* ---------- 上下文读数 ---------- */
@@ -4968,10 +5007,6 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 .context-ring { flex-shrink: 0; }
 /* CB-100c：圆环旁的可见读数。窄输入框里只留圆环（读数仍在 aria-label 和悬停提示里）。 */
 .context-meter-text { font-size: 11px; line-height: 1; letter-spacing: 0; }
-@container (max-width: 420px) {
-  .glass-composer .context-meter-text { display: none; }
-  .glass-composer .context-meter { padding: 0; }
-}
 /* §78.1 小饼图：轨道一圈细线，扇形淡墨色（不到一半时更淡），70% 以上琥珀、90% 以上红。 */
 .context-ring-track { stroke: rgba(22, 36, 62, 0.28); }
 .dark .context-ring-track { stroke: rgba(255, 255, 255, 0.3); }
@@ -6736,6 +6771,34 @@ html[data-phone] [data-slot="dialog-content"] {
 }
 /* 页面不横向滚动：内容区里超宽的东西（表格、代码）自己横向滚。 */
 html[data-phone] .glass-main { overflow-x: hidden; }
+html[data-phone] .glass-composer:not(.glass-composer-pill) {
+  padding: 10px 10px 8px;
+}
+html[data-phone] :is(a, button, [role="button"], [role="menuitem"], [role="tab"]) {
+  touch-action: manipulation;
+}
+@keyframes page-in-phone {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+html[data-phone] .page,
+html[data-phone] .magpie-console {
+  animation: page-in-phone 140ms var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-phone] .page,
+  html[data-phone] .magpie-console {
+    animation: none;
+  }
+}
+html[data-phone] .page-scroll {
+  overscroll-behavior-y: contain;
+  contain: layout style;
+}
+html[data-phone] .kept-chat[data-switching="true"] {
+  opacity: 1;
+  transition: none;
+}
 
 /* 横屏手机（高度只有 ~390）：顶栏收矮、输入框最多 3 行；键盘开着时顶栏让位给消息。 */
 @media (orientation: landscape) {
@@ -9325,6 +9388,7 @@ html[data-desktop] body[data-has-sheet] .desk-strip .win-ctrls { pointer-events:
   padding: 0 0 0 var(--safe-l);
   border-radius: 0 var(--hk-drawer-radius) var(--hk-drawer-radius) 0;
   overflow: hidden;
+  will-change: transform;
   transition-property: transform;
   transition-duration: 200ms;
   transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复**：
+  - 修复回复期间用户消息下 `.chat-msg-action[data-held]` 沿用 `visibility: hidden` 占宽并被 `.btn-face` 穿透漏出孤立撤回图标的问题（改用 `display: none` 并在 `.chat-msg-actions` 锁 `min-height: 26px` 保住行高，消除「引用」左侧跑远及幽灵撤回图标）。
+  - 修复手机端 `.glass-composer-toolbar` 按钮多时未换行且缺少收缩/裁切约束导致的模型选择器与上下文圆环冲突（`composer.tsx` 划分 `glass-composer-toolbar-start` / `glass-composer-toolbar-end` 与 `busy-send-pill`，`styles.css` 为 `.model-pill` 补充 `flex-shrink: 0; overflow: hidden` 并在 `@container (max-width: 480px)` 下整洁换行收紧）。
+  - 优化手机 WebView 切页流畅度：`section-rail.tsx` 与 `account-menu.tsx` 为触控链路补充按下即预加载路由，并在 `styles.css` 为 `html[data-phone]` 添加 `touch-action: manipulation`、无位移纯淡入 `@keyframes page-in-phone`、`.page-scroll` containment、`.kept-chat[data-switching="true"]` 去半透闪烁及抽屉 `will-change: transform`。
+
 ## 0.1.181 — 2026-11-22
 
 全端版本 `0.1.181`，Android `versionCode 361`：全栈性能优化全面落地（前端滚动/重渲染/首屏拆包/4K 壁纸、服务端 16 条核心表索引迁移与流式/微基准热点、后台退避唤醒与零拷贝、DSH POSIX 宿主锁与零落盘凭据复用、`agent-computer` 直播与驱逐、PC 常驻 STA helper 提速 `131×` 与并行冷启、Nginx HTTP/2 + keepalive、Android 遮挡云朵隐藏与键盘重组隔离及 Dockerfile 瘦身），并同步发布 PC 独立更新进度窗口（DESIGN.md §152）与手机/Web/桌面端体验护栏（DESIGN.md §153）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `fdb6a75dfc274c7b`；含非破坏性索引迁移 `0070_core_performance_indexes.sql`（自动执行，无需手动干预）。
