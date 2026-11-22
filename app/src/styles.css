@@ -6714,7 +6714,6 @@ html[data-phone] .glass-composer-bar :is(button, .glass-composer-icon, .glass-co
 html[data-phone] body[data-page-scrolled] .glass-topbar {
   background: var(--glass-2);
   backdrop-filter: var(--glass-filter);
-  -webkit-backdrop-filter: var(--glass-filter);
   border-bottom: 1px solid var(--line);
   pointer-events: auto;
 }
