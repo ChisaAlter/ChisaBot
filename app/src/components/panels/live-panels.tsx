@@ -605,50 +605,29 @@ function DataSourcePanel({
   );
 }
 
-function LivePanelCard({
+const EMPTY_PANELS: LivePanel[] = [];
+
+function LivePanelMenuContent({
   panel,
+  busy,
+  hasDataSources,
+  onRefresh,
+  onOpenSources,
   onRemove,
-  collapsed,
-  onToggleCollapse,
-  grip,
+  onProblem,
+  patchLocal,
+  invalidate,
 }: {
   panel: LivePanel;
+  busy: boolean;
+  hasDataSources: boolean;
+  onRefresh: () => void;
+  onOpenSources: () => void;
   onRemove: (p: LivePanel) => void;
-  /** 折叠只留标题行：不渲染内容、不取数（看板把状态存在 panelLayout 里）。 */
-  collapsed: boolean;
-  onToggleCollapse: () => void;
-  /** 标题左边的拖动握把（PanelBoard 给的）。 */
-  grip: ReactNode;
+  onProblem: (message: string | null) => void;
+  patchLocal: (patch: Partial<LivePanel>) => void;
+  invalidate: () => Promise<void>;
 }) {
-  const queryClient = useQueryClient();
-  const [problem, setProblem] = useState<string | null>(null);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
-  const closeSources = useCallback(() => setSourcesOpen(false), []);
-  const dataSources = panel.dataSources ?? NO_LIVE_SOURCES;
-  // 折叠就收起「数据来源…」小弹层：只留标题行。
-  if (collapsed && sourcesOpen) setSourcesOpen(false);
-  // 直连数据源：卡片可见且没折叠时轮询；折叠时 active=false，一次请求都不发。
-  const live = useLiveValues(panel, !collapsed);
-  const key = livePanelKeys.list(panel.botId);
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: key });
-  // 乐观更新（DESIGN.md §34.6）：先改界面，请求失败再退回并说明原因。
-  const patchLocal = (patch: Partial<LivePanel>) =>
-    queryClient.setQueryData<LivePanel[]>(key, (old) =>
-      old?.map((p) => (p.id === panel.id ? { ...p, ...patch } : p)),
-    );
-  const refresh = useMutation({
-    mutationFn: () =>
-      client(`/api/live-panels/${panel.id}/refresh`, {
-        method: "POST",
-        fallback: "刷新失败",
-      }),
-    onMutate: () => {
-      setProblem(null);
-      patchLocal({ refreshing: true });
-    },
-    onSettled: invalidate,
-    onError: (e) => setProblem(e instanceof Error ? e.message : "刷新失败"),
-  });
   const undoEdit = useMutation({
     mutationFn: () =>
       client(`/api/live-panels/${panel.id}/undo-edit`, {
@@ -656,7 +635,7 @@ function LivePanelCard({
         fallback: "撤销失败",
       }),
     onSuccess: invalidate,
-    onError: (e) => setProblem(e instanceof Error ? e.message : "撤销失败"),
+    onError: (e) => onProblem(e instanceof Error ? e.message : "撤销失败"),
   });
   const setCadence = useMutation({
     mutationFn: (minutes: number | null) =>
@@ -672,7 +651,7 @@ function LivePanelCard({
     },
     onError: (e, _m, ctx) => {
       if (ctx) patchLocal({ refreshMinutes: ctx.before });
-      setProblem(e instanceof Error ? e.message : "修改失败");
+      onProblem(e instanceof Error ? e.message : "修改失败");
     },
     onSettled: invalidate,
   });
@@ -713,11 +692,190 @@ function LivePanelCard({
     },
     onError: (e, _m, ctx) => {
       if (ctx) patchLocal({ refreshModel: ctx.before });
-      setProblem(e instanceof Error ? e.message : "修改刷新模型失败");
+      onProblem(e instanceof Error ? e.message : "修改刷新模型失败");
     },
     onSettled: invalidate,
   });
   const icon = "size-[18px] shrink-0";
+
+  return (
+    <DropdownMenuContent
+      align="end"
+      className="glass-pop sg-menu w-[224px]"
+      side="bottom"
+      sideOffset={6}
+    >
+      <DropdownMenuItem className="glass-mi" disabled={busy} onClick={onRefresh}>
+        <IconRefresh className={icon} />
+        <span className="min-w-0 flex-1">{busy ? "正在刷新…" : "立即刷新"}</span>
+      </DropdownMenuItem>
+      <DropdownMenuSeparator className="glass-sep" />
+      <DropdownMenuGroup>
+        <DropdownMenuLabel className="glass-mi-label">
+          {"自动刷新"}
+        </DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          onValueChange={(v) => {
+            if (v !== "at") setCadence.mutate(v === "off" ? null : Number(v));
+          }}
+          value={
+            panel.refreshAt
+              ? "at"
+              : panel.refreshMinutes == null
+                ? "off"
+                : String(panel.refreshMinutes)
+          }
+        >
+          {(
+            [
+              // 机器人按用户说的「每天几点」设的固定时刻；选别的频率就取消它。
+              ...(panel.refreshAt
+                ? ([["at", `每天 ${panel.refreshAt}`]] as const)
+                : []),
+              ["60", "每小时"],
+              ["360", "每 6 小时"],
+              ["1440", "每天"],
+              ["off", "不自动刷新"],
+            ] as const
+          ).map(([value, label]) => (
+            <DropdownMenuRadioItem
+              className="glass-mi"
+              closeOnClick
+              key={value}
+              value={value}
+            >
+              {label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator className="glass-sep" />
+      <DropdownMenuGroup data-testid="panel-model-group">
+        <DropdownMenuLabel className="glass-mi-label">
+          {"刷新模型（省配额）"}
+        </DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          onValueChange={(v) => {
+            setPanelModel.mutate(v === "__default__" ? null : v);
+          }}
+          value={panel.refreshModel || "__default__"}
+        >
+          <DropdownMenuRadioItem
+            className="glass-mi"
+            closeOnClick
+            value="__default__"
+          >
+            {"跟随机器人主模型"}
+          </DropdownMenuRadioItem>
+          {modelChoices.map((m) => (
+            <DropdownMenuRadioItem
+              className="glass-mi"
+              closeOnClick
+              key={m.id}
+              value={m.id}
+            >
+              <span className="truncate">{m.label || m.id}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator className="glass-sep" />
+      <DropdownMenuItem
+        className="glass-mi"
+        onClick={() => prefillPanelEdit(panel.title)}
+      >
+        <IconWand className={icon} />
+        <span className="min-w-0 flex-1">{"让 AI 修改…"}</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        className="glass-mi"
+        disabled={!hasDataSources}
+        onClick={onOpenSources}
+      >
+        <IconDatabase className={icon} />
+        <span className="min-w-0 flex-1">{"数据来源…"}</span>
+      </DropdownMenuItem>
+      <DropdownMenuSeparator className="glass-sep" />
+      {panel.canUndoEdit ? (
+        <DropdownMenuItem
+          className="glass-mi"
+          onClick={() => undoEdit.mutate()}
+        >
+          <IconArrowBackUp className={icon} />
+          <span className="min-w-0 flex-1">{"撤销上次修改"}</span>
+        </DropdownMenuItem>
+      ) : null}
+      <DropdownMenuItem
+        className="glass-mi is-danger"
+        onClick={() => onRemove(panel)}
+        variant="destructive"
+      >
+        <IconTrash className={icon} />
+        <span className="min-w-0 flex-1">{"删除面板"}</span>
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  );
+}
+
+const LivePanelCard = memo(function LivePanelCard({
+  active = true,
+  panel,
+  onRemove,
+  collapsed,
+  onToggleCollapse,
+  grip,
+}: {
+  /** 右栏展开且停在「面板」标签时为 true；不可见时停掉直连数据源轮询。 */
+  active?: boolean;
+  panel: LivePanel;
+  onRemove: (p: LivePanel) => void;
+  /** 折叠只留标题行：不渲染内容、不取数（看板把状态存在 panelLayout 里）。 */
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+  /** 标题左边的拖动握把（PanelBoard 给的）。 */
+  grip: ReactNode;
+}) {
+  const queryClient = useQueryClient();
+  const [problem, setProblem] = useState<string | null>(null);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeSources = useCallback(() => setSourcesOpen(false), []);
+  const openSources = useCallback(() => setSourcesOpen(true), []);
+  const dataSources = panel.dataSources ?? NO_LIVE_SOURCES;
+  // 折叠就收起「数据来源…」小弹层：只留标题行。
+  if (collapsed && sourcesOpen) setSourcesOpen(false);
+  // 直连数据源：右栏活跃且卡片没折叠时轮询；折叠、切标签或藏起右栏时 active=false，一次请求都不发。
+  const live = useLiveValues(panel, active && !collapsed);
+  const key = useMemo(() => livePanelKeys.list(panel.botId), [panel.botId]);
+  const invalidate = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: key }),
+    [key, queryClient],
+  );
+  // 乐观更新（DESIGN.md §34.6）：先改界面，请求失败再退回并说明原因。
+  const patchLocal = useCallback(
+    (patch: Partial<LivePanel>) =>
+      queryClient.setQueryData<LivePanel[]>(key, (old) =>
+        old?.map((p) => (p.id === panel.id ? { ...p, ...patch } : p)),
+      ),
+    [key, panel.id, queryClient],
+  );
+  const refresh = useMutation({
+    mutationFn: () =>
+      client(`/api/live-panels/${panel.id}/refresh`, {
+        method: "POST",
+        fallback: "刷新失败",
+      }),
+    onMutate: () => {
+      setProblem(null);
+      patchLocal({ refreshing: true });
+    },
+    onSettled: invalidate,
+    onError: (e) => setProblem(e instanceof Error ? e.message : "刷新失败"),
+  });
+  const refreshMutate = refresh.mutate;
+  const handleRefresh = useCallback(() => {
+    refreshMutate();
+  }, [refreshMutate]);
 
   const busy = panel.refreshing || refresh.isPending;
   const building = panel.status === "building" || (!panel.spec && busy);
@@ -772,7 +930,7 @@ function LivePanelCard({
             {`⚡ ${panel.refreshModel.split("/").pop()}`}
           </span>
         ) : null}
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>
           <DropdownMenuTrigger
             render={
               <button
@@ -784,128 +942,19 @@ function LivePanelCard({
           >
             <IconDots className="size-4" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            className="glass-pop sg-menu w-[224px]"
-            side="bottom"
-            sideOffset={6}
-          >
-            <DropdownMenuItem
-              className="glass-mi"
-              disabled={busy}
-              onClick={() => refresh.mutate()}
-            >
-              <IconRefresh className={icon} />
-              <span className="min-w-0 flex-1">
-                {busy ? "正在刷新…" : "立即刷新"}
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator className="glass-sep" />
-            <DropdownMenuGroup>
-              <DropdownMenuLabel className="glass-mi-label">
-                {"自动刷新"}
-              </DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                onValueChange={(v) => {
-                  if (v !== "at")
-                    setCadence.mutate(v === "off" ? null : Number(v));
-                }}
-                value={
-                  panel.refreshAt
-                    ? "at"
-                    : panel.refreshMinutes == null
-                      ? "off"
-                      : String(panel.refreshMinutes)
-                }
-              >
-                {(
-                  [
-                    // 机器人按用户说的「每天几点」设的固定时刻；选别的频率就取消它。
-                    ...(panel.refreshAt
-                      ? ([["at", `每天 ${panel.refreshAt}`]] as const)
-                      : []),
-                    ["60", "每小时"],
-                    ["360", "每 6 小时"],
-                    ["1440", "每天"],
-                    ["off", "不自动刷新"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <DropdownMenuRadioItem
-                    className="glass-mi"
-                    closeOnClick
-                    key={value}
-                    value={value}
-                  >
-                    {label}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator className="glass-sep" />
-            <DropdownMenuGroup data-testid="panel-model-group">
-              <DropdownMenuLabel className="glass-mi-label">
-                {"刷新模型（省配额）"}
-              </DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                onValueChange={(v) => {
-                  setPanelModel.mutate(v === "__default__" ? null : v);
-                }}
-                value={panel.refreshModel || "__default__"}
-              >
-                <DropdownMenuRadioItem
-                  className="glass-mi"
-                  closeOnClick
-                  value="__default__"
-                >
-                  {"跟随机器人主模型"}
-                </DropdownMenuRadioItem>
-                {modelChoices.map((m) => (
-                  <DropdownMenuRadioItem
-                    className="glass-mi"
-                    closeOnClick
-                    key={m.id}
-                    value={m.id}
-                  >
-                    <span className="truncate">{m.label || m.id}</span>
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator className="glass-sep" />
-            <DropdownMenuItem
-              className="glass-mi"
-              onClick={() => prefillPanelEdit(panel.title)}
-            >
-              <IconWand className={icon} />
-              <span className="min-w-0 flex-1">{"让 AI 修改…"}</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="glass-mi"
-              disabled={dataSources.length === 0}
-              onClick={() => setSourcesOpen(true)}
-            >
-              <IconDatabase className={icon} />
-              <span className="min-w-0 flex-1">{"数据来源…"}</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator className="glass-sep" />
-            {panel.canUndoEdit ? (
-              <DropdownMenuItem
-                className="glass-mi"
-                onClick={() => undoEdit.mutate()}
-              >
-                <IconArrowBackUp className={icon} />
-                <span className="min-w-0 flex-1">{"撤销上次修改"}</span>
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem
-              className="glass-mi is-danger"
-              onClick={() => onRemove(panel)}
-              variant="destructive"
-            >
-              <IconTrash className={icon} />
-              <span className="min-w-0 flex-1">{"删除面板"}</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
+          {menuOpen ? (
+            <LivePanelMenuContent
+              busy={busy}
+              hasDataSources={dataSources.length > 0}
+              invalidate={invalidate}
+              onOpenSources={openSources}
+              onProblem={setProblem}
+              onRefresh={handleRefresh}
+              onRemove={onRemove}
+              panel={panel}
+              patchLocal={patchLocal}
+            />
+          ) : null}
         </DropdownMenu>
       </header>
 
@@ -927,7 +976,7 @@ function LivePanelCard({
           ) : panel.spec ? (
             <LiveBody
               live={live.values}
-              onRefresh={() => refresh.mutate()}
+              onRefresh={handleRefresh}
               spec={panel.spec}
               title={panel.title}
             />
@@ -952,7 +1001,7 @@ function LivePanelCard({
       )}
     </article>
   );
-}
+});
 
 /**
  * 右栏面板标签里的实时面板列表。删除是乐观的（DESIGN.md §34.6）：点「删除面板」卡片立刻淡出、
@@ -962,15 +1011,18 @@ function LivePanelCard({
  * `width` 是右栏实测内容宽度，`drawer` 是窄窗口抽屉（永远单列）。
  */
 export function LivePanelList({
+  active = true,
   botId,
   width = 0,
   drawer = false,
 }: {
+  /** 右栏展开且停在「面板」标签时为 true；折叠、切标签或离屏时暂停列表与直连源轮询。 */
+  active?: boolean;
   botId: string;
   width?: number;
   drawer?: boolean;
 }) {
-  const list = useLivePanels(botId);
+  const list = useLivePanels(botId, { active });
   const queryClient = useQueryClient();
   const key = livePanelKeys.list(botId);
   // 撤销可能在删除请求回来之前就点了：先等删除落地，再恢复，服务端顺序不会反。
@@ -1024,18 +1076,26 @@ export function LivePanelList({
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   });
+  const removeMutate = remove.mutate;
+  const handleRemove = useCallback(
+    (panel: LivePanel) => {
+      removeMutate(panel);
+    },
+    [removeMutate],
+  );
   return (
     <PanelBoard
       botId={botId}
       drawer={drawer}
       key={botId}
-      panels={list.data ?? []}
+      panels={list.data ?? EMPTY_PANELS}
       width={width}
       renderCard={(panel, chrome) => (
         <LivePanelCard
+          active={active}
           collapsed={chrome.collapsed}
           grip={chrome.grip}
-          onRemove={(p) => remove.mutate(p)}
+          onRemove={handleRemove}
           onToggleCollapse={chrome.toggleCollapsed}
           panel={panel}
         />

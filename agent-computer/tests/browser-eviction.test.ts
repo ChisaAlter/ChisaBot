@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { chooseEvictions, chooseIdle } from "../src/browser-eviction";
+import {
+  chooseEvictions,
+  chooseIdle,
+  createCapEnforcer,
+} from "../src/browser-eviction";
 import { numberFromEnv } from "../src/env";
 
 /**
@@ -152,5 +156,101 @@ describe("reading the limits an operator set", () => {
       if (previous === undefined) delete process.env.COMPUTER_BROWSER_IDLE_MS;
       else process.env.COMPUTER_BROWSER_IDLE_MS = previous;
     }
+  });
+});
+
+describe("async cap eviction with hard watermark", () => {
+  test("returns immediately when above maxLive within hard watermark and evicts asynchronously", async () => {
+    const live = new Map<string, { usedAt: number }>([
+      ["bot-0", { usedAt: 100 }],
+      ["bot-1", { usedAt: 200 }],
+      ["bot-2", { usedAt: 300 }],
+    ]);
+    let inFlight = 0;
+    const evicted: string[] = [];
+    const gates: (() => void)[] = [];
+
+    const enforcer = createCapEnforcer({
+      maxLive: 2,
+      hardCapSlack: 2, // hardCap = 4
+      listEntries: () => [...live.entries()],
+      inFlightCount: () => inFlight,
+      evict: async (botId) => {
+        live.delete(botId);
+        inFlight += 1;
+        evicted.push(botId);
+        await new Promise<void>((resolve) => gates.push(resolve));
+        inFlight -= 1;
+      },
+    });
+
+    // 3 browsers (max=2, hardCap=4): enforce() must NOT block on slow closeAndWait.
+    let returned = false;
+    await enforcer.enforce().then(() => {
+      returned = true;
+    });
+    expect(returned).toBe(true);
+    expect(evicted).toEqual(["bot-0"]);
+    expect(inFlight).toBe(1);
+
+    // Concurrent enforce() is reentrancy-guarded and does not double-evict bot-0.
+    live.set("bot-3", { usedAt: 400 }); // live(3) + inFlight(1) === 4 <= hardCap(4)
+    await enforcer.enforce();
+    expect(evicted).toEqual(["bot-0"]);
+
+    // Release first close -> background loop picks up bot-1 automatically.
+    gates.shift()?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(evicted).toEqual(["bot-0", "bot-1"]);
+    gates.shift()?.();
+    await enforcer.settled();
+    expect([...live.keys()].sort()).toEqual(["bot-2", "bot-3"]);
+    expect(inFlight).toBe(0);
+  });
+
+  test("blocks synchronously when burst concurrency exceeds hard watermark (MAX + 2)", async () => {
+    const live = new Map<string, { usedAt: number }>([
+      ["bot-0", { usedAt: 100 }],
+      ["bot-1", { usedAt: 200 }],
+      ["bot-2", { usedAt: 300 }],
+      ["bot-3", { usedAt: 400 }],
+      ["bot-4", { usedAt: 500 }],
+    ]);
+    let inFlight = 0;
+    const gates: (() => void)[] = [];
+
+    const enforcer = createCapEnforcer({
+      maxLive: 2,
+      hardCapSlack: 2, // hardCap = 4; starting with 5 exceeds hardCap!
+      listEntries: () => [...live.entries()],
+      inFlightCount: () => inFlight,
+      evict: async (botId) => {
+        live.delete(botId);
+        inFlight += 1;
+        await new Promise<void>((resolve) => gates.push(resolve));
+        inFlight -= 1;
+      },
+    });
+
+    let unblocked = false;
+    const waiting = enforcer.enforce().then(() => {
+      unblocked = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // Still blocked because live(4) + inFlight(1) === 5 > hardCap(4) until first close finishes!
+    expect(unblocked).toBe(false);
+
+    // Finishing the first eviction drops total to 4 <= hardCap(4) and unblocks caller.
+    gates.shift()?.();
+    await waiting;
+    expect(unblocked).toBe(true);
+
+    // Drain remaining background evictions cleanly.
+    while (gates.length > 0) {
+      gates.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await enforcer.settled();
+    expect(live.size).toBe(2);
   });
 });

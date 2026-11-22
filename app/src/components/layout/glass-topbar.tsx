@@ -67,6 +67,7 @@ export function GlassAvatar({
         <img
           alt=""
           className="glass-avatar-img"
+          decoding="async"
           draggable={false}
           src={user.image}
         />

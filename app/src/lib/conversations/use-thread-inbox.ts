@@ -60,10 +60,23 @@ export function useThreadInbox(
     (_key, signal) => {
       if (!threadId) return;
       const reconcile = () => {
-        const ids = new Set(agent.messages.map((message) => message.id));
-        for (const item of queuedFor(threadId))
-          if (item.status !== "paused" && ids.has(item.id))
-            markRead(threadId, item.id);
+        const queued = queuedFor(threadId);
+        if (queued.length === 0) return;
+        let pending: Set<string> | null = null;
+        for (const item of queued) {
+          if (item.status !== "paused") {
+            if (!pending) pending = new Set();
+            pending.add(item.id);
+          }
+        }
+        if (!pending) return;
+        const messages = agent.messages;
+        for (let i = messages.length - 1; i >= 0 && pending.size > 0; i--) {
+          const id = messages[i]?.id;
+          if (id !== undefined && pending.delete(id)) {
+            markRead(threadId, id);
+          }
+        }
       };
       let flushing = false;
       let failed = false;
@@ -195,38 +208,59 @@ export function useThreadInbox(
       let serverRunning = false;
       let busy = false;
       let sync: ThreadSync | null = null;
+      const hasAnyMissingId = (needed: Set<string>) => {
+        if (needed.size === 0) return false;
+        const messages = agent.messages;
+        for (let i = messages.length - 1; i >= 0 && needed.size > 0; i--) {
+          const id = messages[i]?.id;
+          if (id !== undefined) needed.delete(id);
+        }
+        return needed.size > 0;
+      };
       /** 有任务交回来的那条消息（结果，或用户在卡片上停掉后的「已停止」）还没出现在这边。 */
       const resultMissing = () => {
         const workers =
           queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ??
           [];
-        const have = new Set(agent.messages.map((message) => message.id));
-        return workers.some(
-          (worker) =>
-            Boolean(worker.resultMessageId) &&
+        if (workers.length === 0) return false;
+        const now = Date.now();
+        const needed = new Set<string>();
+        for (const worker of workers) {
+          if (
             typeof worker.resultMessageId === "string" &&
-            !have.has(worker.resultMessageId) &&
-            Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) <
-              10 * 60_000,
-        );
+            worker.resultMessageId.length > 0 &&
+            now - Date.parse(worker.finishedAt ?? worker.createdAt) <
+              10 * 60_000
+          ) {
+            needed.add(worker.resultMessageId);
+          }
+        }
+        return hasAnyMissingId(needed);
       };
       const workersNeedSync = () => {
         const workers =
           queryClient.getQueryData<WorkerView[]>(workerKeys.thread(threadId)) ??
           [];
-        const have = new Set(agent.messages.map((message) => message.id));
-        return workers.some(
-          (worker) =>
-            ACTIVE_WORKER.includes(worker.status) ||
-            // 停掉的任务：只有用户在卡片上停的才有交回的「已停止」消息（有 resultMessageId），要等它出现。
-            (Date.now() - Date.parse(worker.finishedAt ?? worker.createdAt) <
-              10 * 60_000 &&
-              (worker.status === "cancelled"
-                ? Boolean(
-                    worker.resultMessageId && !have.has(worker.resultMessageId),
-                  )
-                : !worker.resultMessageId || !have.has(worker.resultMessageId))),
-        );
+        if (workers.length === 0) return false;
+        const now = Date.now();
+        const needed = new Set<string>();
+        for (const worker of workers) {
+          if (ACTIVE_WORKER.includes(worker.status)) return true;
+          if (
+            now - Date.parse(worker.finishedAt ?? worker.createdAt) >=
+            10 * 60_000
+          )
+            continue;
+          // 停掉的任务：只有用户在卡片上停的才有交回的「已停止」消息（有 resultMessageId），要等它出现。
+          if (worker.status === "cancelled") {
+            if (worker.resultMessageId) needed.add(worker.resultMessageId);
+          } else if (!worker.resultMessageId) {
+            return true;
+          } else {
+            needed.add(worker.resultMessageId);
+          }
+        }
+        return hasAnyMissingId(needed);
       };
       const pull = async () => {
         try {

@@ -27,9 +27,3 @@ export {
   useInterval,
   useTimeout,
 } from "./use-timers";
-export {
-  type UseVoiceCallOptions,
-  type UseVoiceCallResult,
-  useVoiceCall,
-  type VoiceSubtitleEntry,
-} from "./use-voice-call";

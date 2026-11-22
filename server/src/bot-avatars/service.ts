@@ -229,21 +229,74 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
     ]);
   }
 
+  function matchesIfNoneMatch(
+    header: string | undefined,
+    version: string,
+  ): boolean {
+    if (!header) return false;
+    const trimmed = header.trim();
+    if (!trimmed) return false;
+    if (trimmed === "*") return true;
+    const expected = `"${version}"`;
+    for (const part of trimmed.split(",")) {
+      const token = part.trim();
+      if (token === expected || token === `W/${expected}`) return true;
+    }
+    return false;
+  }
+
+  async function imageMeta(
+    actor: AgentActor,
+    agentId: string,
+  ): Promise<{ mime: string; sizeBytes: number | null; version: string } | null> {
+    await visible(actor, agentId);
+    const rows = await sql.unsafe<
+      { mime: string | null; size_bytes: number | null; version: string }[]
+    >(
+      "SELECT mime, size_bytes, version FROM chisabot_bot_avatars WHERE agent_id = $1 AND kind = 'image'",
+      [agentId],
+    );
+    const row = rows[0];
+    return row?.mime
+      ? { mime: row.mime, sizeBytes: row.size_bytes, version: row.version }
+      : null;
+  }
+
+  async function imageVersion(
+    actor: AgentActor,
+    agentId: string,
+  ): Promise<string | null> {
+    await visible(actor, agentId);
+    const rows = await sql.unsafe<{ version: string }[]>(
+      "SELECT version FROM chisabot_bot_avatars WHERE agent_id = $1 AND kind = 'image'",
+      [agentId],
+    );
+    return rows[0]?.version ?? null;
+  }
+
   async function image(
     actor: AgentActor,
     agentId: string,
   ): Promise<{ bytes: Buffer; mime: string; version: string } | null> {
     await visible(actor, agentId);
     const rows = await sql.unsafe<
-      { image: Buffer | null; mime: string | null; version: string }[]
+      { image: Buffer | Uint8Array | null; mime: string | null; version: string }[]
     >(
       "SELECT image, mime, version FROM chisabot_bot_avatars WHERE agent_id = $1 AND kind = 'image'",
       [agentId],
     );
     const row = rows[0];
-    return row?.image && row.mime
-      ? { bytes: Buffer.from(row.image), mime: row.mime, version: row.version }
-      : null;
+    if (!row?.image || !row.mime) return null;
+    const bytes = Buffer.isBuffer(row.image)
+      ? row.image
+      : row.image instanceof Uint8Array
+        ? Buffer.from(
+            row.image.buffer,
+            row.image.byteOffset,
+            row.image.byteLength,
+          )
+        : Buffer.from(row.image);
+    return { bytes, mime: row.mime, version: row.version };
   }
 
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
@@ -257,25 +310,71 @@ export function createBotAvatars(database: Database, agents: BotAvatarAgents) {
     });
     app.get("/", async (c) => c.json({ avatars: await listFor(c.var.actor) }));
     app.get("/:agentId/image", async (c) => {
-      const found = await image(c.var.actor, c.req.param("agentId"));
+      const agentId = c.req.param("agentId");
+      const ifNoneMatch = c.req.header("if-none-match");
+      if (ifNoneMatch) {
+        const version = await imageVersion(c.var.actor, agentId);
+        if (!version) return c.json({ error: "这个机器人没有上传头像。" }, 404);
+        if (matchesIfNoneMatch(ifNoneMatch, version)) {
+          const fresh = c.req.query("v") === version;
+          return new Response(null, {
+            status: 304,
+            headers: {
+              "x-content-type-options": "nosniff",
+              "content-security-policy": "sandbox; default-src 'none'",
+              etag: `"${version}"`,
+              "cache-control": fresh
+                ? "private, max-age=31536000, immutable"
+                : "private, no-cache",
+            },
+          });
+        }
+      }
+      if (c.req.method === "HEAD") {
+        const meta = await imageMeta(c.var.actor, agentId);
+        if (!meta) return c.json({ error: "这个机器人没有上传头像。" }, 404);
+        if (meta.sizeBytes !== null) {
+          const fresh = c.req.query("v") === meta.version;
+          return new Response(null, {
+            headers: {
+              "content-type": meta.mime,
+              "content-length": String(meta.sizeBytes),
+              "x-content-type-options": "nosniff",
+              "content-security-policy": "sandbox; default-src 'none'",
+              etag: `"${meta.version}"`,
+              "cache-control": fresh
+                ? "private, max-age=31536000, immutable"
+                : "private, no-cache",
+            },
+          });
+        }
+      }
+      const found = await image(c.var.actor, agentId);
       if (!found) return c.json({ error: "这个机器人没有上传头像。" }, 404);
       const fresh = c.req.query("v") === found.version;
-      return new Response(
-        c.req.method === "HEAD" ? null : new Uint8Array(found.bytes),
-        {
-          headers: {
-            "content-type": found.mime,
-            "content-length": String(found.bytes.length),
-            "x-content-type-options": "nosniff",
-            "content-security-policy": "sandbox; default-src 'none'",
-            etag: `"${found.version}"`,
-            // 带对版本号的网址内容永远不变；不带或版本旧了就每次问。
-            "cache-control": fresh
-              ? "private, max-age=31536000, immutable"
-              : "private, no-cache",
-          },
+      const bodyView =
+        c.req.method === "HEAD"
+          ? null
+          : found.bytes.buffer instanceof ArrayBuffer
+            ? new Uint8Array(
+                found.bytes.buffer,
+                found.bytes.byteOffset,
+                found.bytes.byteLength,
+              )
+            : new Uint8Array(found.bytes);
+      return new Response(bodyView, {
+        headers: {
+          "content-type": found.mime,
+          "content-length": String(found.bytes.length),
+          "x-content-type-options": "nosniff",
+          "content-security-policy": "sandbox; default-src 'none'",
+          etag: `"${found.version}"`,
+          // 带对版本号的网址内容永远不变；不带或版本旧了就每次问。
+          "cache-control": fresh
+            ? "private, max-age=31536000, immutable"
+            : "private, no-cache",
         },
-      );
+      });
     });
     app.put(
       "/:agentId/image",

@@ -14,6 +14,7 @@ import {
   closeInterruptedRun,
   createLocalConversations,
   type LocalConversationBackend,
+  SNAPSHOT_CHECKPOINT_MS,
 } from "../src/local-conversations";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
@@ -294,7 +295,7 @@ suite("durable conversation checkpoints", () => {
         delta: "B",
       });
       await deltaCommitted.promise;
-      await Bun.sleep(300); // Let the older checkpoint queue behind the blocked event acknowledgment.
+      await Bun.sleep(SNAPSHOT_CHECKPOINT_MS + 100); // Let the older checkpoint queue behind the blocked event acknowledgment.
       releaseDelta.resolve();
       await checkpointWritten.promise;
       expect(

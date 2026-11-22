@@ -17,6 +17,7 @@
 const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
+const fsp = require("node:fs/promises");
 const {
   app,
   BrowserWindow,
@@ -39,50 +40,12 @@ const {
   systemPreferences,
 } = require("electron");
 const { pathToFileURL, fileURLToPath } = require("node:url");
-const { createConfig } = require("./config");
-const { createNodeAgent, invalidTokenHint, INVALID_TOKEN_DETAIL } = require("./agent/core");
-const { parseProxyList, describeProxy, createProxyAgent, createAgentFetch } = require("./agent/proxy");
-const { createOps } = require("./agent/ops");
-const { attachAgentRuntime } = require("./agent-runtime/attach");
-const auth = require("./agent/auth");
-const { ensureEnrolled } = require("./agent/enrollment");
-const { createUpdater, compareVersion, DEFAULT_PUSH_GAP_MS, DEFAULT_WAKE_GAP_MS } = require("./updater");
-const updateSignature = require("./update-signature");
 const shellRefresh = require("./shell-refresh");
-const { animateWindowBounds, createCompactController } = require("./compact-window");
-const { computeUpdateWindowBounds } = require("./update-placement");
 const windowChrome = require("./window-chrome");
-const { createLocalWebController } = require("./local-web");
 const desktopPrefs = require("./desktop-prefs");
-const { createDesktopBrowserBridgeClient } = require("./browser-bridge");
-const { createAccessibilityBridge } = require("./accessibility-bridge");
-const { createDiagnosticsRingBuffer } = require("./diagnostics-log");
 const buildConfig = require("./build-config");
-const BUILD = buildConfig.load();
 const pkg = require("../package.json");
 
-const PARTITION = "persist:chisabot";
-/** 本机小窗口的窗框（DESIGN.md §91）：Windows 上透明窗口 + 网页裁圆角（clip），macOS 系统圆角（dwm）。 */
-const FRAME = windowChrome.frameMode({ platform: process.platform, override: process.env.CHISABOT_WINDOW_FRAME });
-const ASSETS = path.join(__dirname, "..", "assets");
-/**
- * 窗口 / 任务栏图标：Windows 上用多尺寸 .ico（resources/icons/chisabot-<哈希>.ico，开发运行时 build/icon.ico），
- * 标题栏 16px、任务栏 24/32px、Alt+Tab 48px 都有对应尺寸，不是从 512px 的 PNG 缩出来的；其它系统用 PNG。
- */
-const WINDOW_ICON = (() => {
-  if (process.platform === "win32") {
-    const packaged = shellRefresh.findIcon({ resourcesPath: process.resourcesPath });
-    if (packaged) return packaged;
-    const dev = path.join(__dirname, "..", "build", "icon.ico");
-    if (fs.existsSync(dev)) return dev;
-  }
-  return path.join(ASSETS, "icon.png");
-})();
-const UI = path.join(__dirname, "ui");
-const HIDDEN = process.argv.includes("--hidden");
-/** 外壳指纹与客户端代码指纹（scripts/shell-fingerprint.js 打包前写入）：决定直接网页刷新、普通更新还是重新安装。 */
-const SHELL_HASH = shellRefresh.loadFingerprint();
-const CLIENT_HASH = shellRefresh.loadClientFingerprint();
 const APP_USER_MODEL_ID = "cn.ayase.chisabot.pc";
 
 /**
@@ -110,7 +73,97 @@ if (bootstrapDesktopPrefs.timezone) {
 }
 
 if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
-if (!app.requestSingleInstanceLock()) app.quit();
+// 尽早抢占单实例锁：二次实例在加载重型业务/桥接模块之前直接退出。
+const HAS_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
+if (!HAS_SINGLE_INSTANCE_LOCK) app.quit();
+
+const { createConfig } = require("./config");
+const { parseProxyList, describeProxy, createProxyAgent, createAgentFetch } = require("./agent/proxy");
+const auth = require("./agent/auth");
+const { ensureEnrolled } = require("./agent/enrollment");
+const { animateWindowBounds, createCompactController } = require("./compact-window");
+const { createLocalWebController } = require("./local-web");
+const { createDiagnosticsRingBuffer } = require("./diagnostics-log");
+const BUILD = buildConfig.load();
+
+// 重型桥接与节点模块按需懒加载，缩短冷启动首屏路径。
+let nodeAgentMod = null;
+let opsMod = null;
+let agentRuntimeMod = null;
+let updaterMod = null;
+let updatePlacementMod = null;
+let winPsHelperMod = null;
+let accessibilityBridgeInstance = null;
+let browserBridgeInstance = null;
+
+function getNodeAgentMod() {
+  if (!nodeAgentMod) nodeAgentMod = require("./agent/core");
+  return nodeAgentMod;
+}
+
+function getOpsMod() {
+  if (!opsMod) opsMod = require("./agent/ops");
+  return opsMod;
+}
+
+function getAgentRuntimeMod() {
+  if (!agentRuntimeMod) agentRuntimeMod = require("./agent-runtime/attach");
+  return agentRuntimeMod;
+}
+
+function getUpdaterMod() {
+  if (!updaterMod) updaterMod = require("./updater");
+  return updaterMod;
+}
+
+function getUpdatePlacementMod() {
+  if (!updatePlacementMod) updatePlacementMod = require("./update-placement");
+  return updatePlacementMod;
+}
+
+function disposeResidentWinHelper() {
+  if (!winPsHelperMod) {
+    try {
+      const resolved = require.resolve("./agent/win-ps-helper");
+      winPsHelperMod = require.cache[resolved]?.exports || null;
+    } catch {
+      winPsHelperMod = null;
+    }
+  }
+  winPsHelperMod?.disposeSharedWinPsHelper?.({ sync: true });
+}
+
+const PARTITION = "persist:chisabot";
+/** 本机小窗口的窗框（DESIGN.md §91）：Windows 上透明窗口 + 网页裁圆角（clip），macOS 系统圆角（dwm）。 */
+const FRAME = windowChrome.frameMode({ platform: process.platform, override: process.env.CHISABOT_WINDOW_FRAME });
+const ASSETS = path.join(__dirname, "..", "assets");
+/**
+ * 窗口 / 任务栏图标：Windows 上用多尺寸 .ico（resources/icons/chisabot-<哈希>.ico，开发运行时 build/icon.ico），
+ * 标题栏 16px、任务栏 24/32px、Alt+Tab 48px 都有对应尺寸，不是从 512px 的 PNG 缩出来的；其它系统用 PNG。
+ */
+const WINDOW_ICON = (() => {
+  if (process.platform === "win32") {
+    const packaged = shellRefresh.findIcon({ resourcesPath: process.resourcesPath });
+    if (packaged) return packaged;
+    const dev = path.join(__dirname, "..", "build", "icon.ico");
+    if (fs.existsSync(dev)) return dev;
+  }
+  return path.join(ASSETS, "icon.png");
+})();
+const UI = path.join(__dirname, "ui");
+const HIDDEN = process.argv.includes("--hidden");
+/** 外壳指纹与客户端代码指纹（scripts/shell-fingerprint.js 打包前写入）：单次读盘解析。 */
+const { SHELL_HASH, CLIENT_HASH } = (() => {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(__dirname, "shell-fingerprint.json"), "utf8"));
+    return {
+      SHELL_HASH: typeof parsed.hash === "string" && parsed.hash ? parsed.hash : "",
+      CLIENT_HASH: typeof parsed.clientHash === "string" && parsed.clientHash ? parsed.clientHash : "",
+    };
+  } catch {
+    return { SHELL_HASH: "", CLIENT_HASH: "" };
+  }
+})();
 
 const DEEP_LINK_ID_RE = /^[A-Za-z0-9._:-]{1,200}$/;
 
@@ -210,20 +263,34 @@ let currentApproval = null;
 let updater = null;
 let updateWindow = null;
 const diagnosticsLog = createDiagnosticsRingBuffer();
-const accessibilityBridge = createAccessibilityBridge();
-const browserBridge = createDesktopBrowserBridgeClient({
-  getGrantedScopes: () => (Array.isArray(agent?.device?.grantedScopes) ? agent.device.grantedScopes : []),
-  confirmApproval: (req) =>
-    confirmLocal({
-      title: req.kind === "passkey_forward" ? "允许本机通行密钥验证？" : "允许导入单域名登录态？",
-      description:
-        req.kind === "passkey_forward"
-          ? `云端浏览器请求在本机完成 ${req.origin}（rpId: ${req.rpId}）的通行密钥 ${req.ceremonyKind} 操作。`
-          : `云端浏览器请求从「${req.profileLabel}」导入 ${req.origin} 的登录 Cookie（仅限该单一域名）。`,
-      confirmLabel: "允许本次",
-    }),
-  log: (entry) => diagnosticsLog.record(entry),
-});
+
+function getAccessibilityBridge() {
+  if (!accessibilityBridgeInstance) {
+    const { createAccessibilityBridge } = require("./accessibility-bridge");
+    accessibilityBridgeInstance = createAccessibilityBridge();
+  }
+  return accessibilityBridgeInstance;
+}
+
+function getBrowserBridge() {
+  if (!browserBridgeInstance) {
+    const { createDesktopBrowserBridgeClient } = require("./browser-bridge");
+    browserBridgeInstance = createDesktopBrowserBridgeClient({
+      getGrantedScopes: () => (Array.isArray(agent?.device?.grantedScopes) ? agent.device.grantedScopes : []),
+      confirmApproval: (req) =>
+        confirmLocal({
+          title: req.kind === "passkey_forward" ? "允许本机通行密钥验证？" : "允许导入单域名登录态？",
+          description:
+            req.kind === "passkey_forward"
+              ? `云端浏览器请求在本机完成 ${req.origin}（rpId: ${req.rpId}）的通行密钥 ${req.ceremonyKind} 操作。`
+              : `云端浏览器请求从「${req.profileLabel}」导入 ${req.origin} 的登录 Cookie（仅限该单一域名）。`,
+          confirmLabel: "允许本次",
+        }),
+      log: (entry) => diagnosticsLog.record(entry),
+    });
+  }
+  return browserBridgeInstance;
+}
 
 function clientInfo() {
   return {
@@ -352,15 +419,18 @@ async function cookieHeaderFor(origin) {
   return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
 }
 
-/** 启动 / 托盘打开时：会话还有效就直接进入，过期了去本机登录页；连不上时照常打开主窗口（会显示离线页）。 */
+/** 启动 / 托盘打开时：会话探测与版本探测并行执行，过期去本机登录页，断网走离线页（零闪屏）。 */
 async function sessionStatus() {
   const origin = serverOrigin();
   if (!origin) return "login";
   try {
     const cookieHeader = await cookieHeaderFor(origin);
-    const result = await auth.probe({ fetchImpl: netFetch, serverUrl: origin, cookieHeader, timeoutMs: 6000 });
-    if (result.gateway && !result.authenticated) return "login";
-    await localWeb.probeVersion({ origin, fetchImpl: netFetch, cookieHeader, timeoutMs: 2500 });
+    const [authOutcome] = await Promise.allSettled([
+      auth.probe({ fetchImpl: netFetch, serverUrl: origin, cookieHeader, timeoutMs: 3000 }),
+      localWeb.probeVersion({ origin, fetchImpl: netFetch, cookieHeader, timeoutMs: 2500 }),
+    ]);
+    if (authOutcome.status !== "fulfilled") return "offline";
+    if (authOutcome.value.gateway && !authOutcome.value.authenticated) return "login";
     return "ok";
   } catch {
     return "offline";
@@ -368,15 +438,47 @@ async function sessionStatus() {
 }
 
 let entering = null;
+let prewarmedChatWindow = null;
+
+function disposePrewarmedChatWindow() {
+  if (prewarmedChatWindow && !prewarmedChatWindow.isDestroyed()) {
+    try {
+      prewarmedChatWindow.destroy();
+    } catch {}
+  }
+  prewarmedChatWindow = null;
+}
+
 function openApp(pathname) {
   if (windows.chat && !windows.chat.isDestroyed()) return openChat(pathname);
   if (!config.get().serverUrl) return openLogin();
-  if (!entering)
+  if (!entering) {
+    // 并行预建隐藏 BrowserWindow（绝不 show），提前启动渲染进程壳；探测完再决定加载或销毁。
+    if (!prewarmedChatWindow || prewarmedChatWindow.isDestroyed()) {
+      try {
+        prewarmedChatWindow = openChat(null, { prewarmOnly: true });
+      } catch {
+        prewarmedChatWindow = null;
+      }
+    }
     entering = sessionStatus()
-      .then((status) => (status === "login" ? openLogin("expired") : openChat(pathname, { offline: status === "offline" })))
+      .then((status) => {
+        const prewarmed = prewarmedChatWindow;
+        prewarmedChatWindow = null;
+        if (status === "login") {
+          if (prewarmed && !prewarmed.isDestroyed()) prewarmed.destroy();
+          return openLogin("expired");
+        }
+        return openChat(pathname, {
+          offline: status === "offline",
+          prewarmedWin: prewarmed && !prewarmed.isDestroyed() ? prewarmed : null,
+        });
+      })
       .finally(() => {
         entering = null;
+        disposePrewarmedChatWindow();
       });
+  }
   return entering;
 }
 
@@ -402,12 +504,19 @@ function rememberWebPath(url) {
   lastWebPath = parsed.pathname + parsed.search + parsed.hash;
 }
 
+let cachedServerUrlRaw = "";
+let cachedServerOriginValue = "";
+
 function serverOrigin() {
+  const raw = (config.peek ? config.peek().serverUrl : config.get().serverUrl) || "";
+  if (raw === cachedServerUrlRaw) return cachedServerOriginValue;
+  cachedServerUrlRaw = raw;
   try {
-    return new URL(config.get().serverUrl).origin;
+    cachedServerOriginValue = raw ? new URL(raw).origin : "";
   } catch {
-    return "";
+    cachedServerOriginValue = "";
   }
+  return cachedServerOriginValue;
 }
 
 function isServerUrl(url) {
@@ -462,42 +571,51 @@ function handleDeepLinkUrl(rawUrl) {
 function openChat(pathname, options) {
   const { serverUrl } = config.get();
   if (!serverUrl) return openLogin();
-  const effectivePath = pathname || pendingDeepLink?.pathname || null;
-  const target = effectivePath ? `${serverOrigin()}${effectivePath}` : null;
-  if (windows.chat && !windows.chat.isDestroyed()) {
+  if (!options?.prewarmOnly && windows.chat && !windows.chat.isDestroyed()) {
+    if (options?.prewarmedWin && !options.prewarmedWin.isDestroyed() && options.prewarmedWin !== windows.chat) {
+      options.prewarmedWin.destroy();
+    }
+    const effectivePath = pathname || pendingDeepLink?.pathname || null;
+    const target = effectivePath ? `${serverOrigin()}${effectivePath}` : null;
     if (target && !chatOffline) windows.chat.loadURL(target);
     else if (effectivePath) lastWebPath = effectivePath;
     focusMainWindow(windows.chat);
     return windows.chat;
   }
-  chatDomReady = false;
-  const win = new BrowserWindow({
-    width: 1280,
-    height: 840,
-    minWidth: 380,
-    minHeight: 560,
-    show: false,
-    title: "ChisaBot",
-    icon: WINDOW_ICON,
-    autoHideMenuBar: true,
-    // 无边框：网页顶栏就是标题栏（拖动区 + 网页里的最小化 / 最大化 / 关闭，DESIGN-v3 §3）。
-    // 不透明窗口 + thickFrame：Windows 11 由系统画圆角（约 8px）和窗口阴影，拖边调整大小、
-    // Win+方向键贴靠、最大化都是系统行为；Windows 10 上是方角。网页不再自己画圆角。
-    // macOS：hiddenInset 出原生红绿灯（左上，网页隐藏自己的 Windows 式按钮）；Windows / Linux 忽略此项。
-    frame: false,
-    titleBarStyle: "hiddenInset",
-    thickFrame: true,
-    backgroundColor: windowBackground(),
-    webPreferences: {
-      partition: PARTITION,
-      preload: path.join(__dirname, "web-preload.js"),
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      spellcheck: config.get().spellcheck !== false,
-    },
-  });
+  const win =
+    options?.prewarmedWin && !options.prewarmedWin.isDestroyed()
+      ? options.prewarmedWin
+      : new BrowserWindow({
+          width: 1280,
+          height: 840,
+          minWidth: 380,
+          minHeight: 560,
+          show: false,
+          title: "ChisaBot",
+          icon: WINDOW_ICON,
+          autoHideMenuBar: true,
+          // 无边框：网页顶栏就是标题栏（拖动区 + 网页里的最小化 / 最大化 / 关闭，DESIGN-v3 §3）。
+          // 不透明窗口 + thickFrame：Windows 11 由系统画圆角（约 8px）和窗口阴影，拖边调整大小、
+          // Win+方向键贴靠、最大化都是系统行为；Windows 10 上是方角。网页不再自己画圆角。
+          // macOS：hiddenInset 出原生红绿灯（左上，网页隐藏自己的 Windows 式按钮）；Windows / Linux 忽略此项。
+          frame: false,
+          titleBarStyle: "hiddenInset",
+          thickFrame: true,
+          backgroundColor: windowBackground(),
+          webPreferences: {
+            partition: PARTITION,
+            preload: path.join(__dirname, "web-preload.js"),
+            contextIsolation: true,
+            sandbox: true,
+            nodeIntegration: false,
+            spellcheck: config.get().spellcheck !== false,
+          },
+        });
   win.setMenu(null);
+  if (options?.prewarmOnly) return win;
+  const effectivePath = pathname || pendingDeepLink?.pathname || null;
+  const target = effectivePath ? `${serverOrigin()}${effectivePath}` : null;
+  chatDomReady = false;
   win.webContents.on("context-menu", (_event, params) => {
     const template = desktopPrefs.buildContextMenuTemplate(params, {
       openExternal: (url) => shell.openExternal(url),
@@ -576,7 +694,7 @@ function openChat(pathname, options) {
   // 小窗模式（DESIGN.md §36）：Ctrl+Shift+M 在主窗口里随时可用（网页、离线页都一样，旧网页没有按钮也能切）。
   compactWindows().watch(win);
   win.on("focus", () => {
-    void updater?.nudge({ reason: "focus", minGapMs: DEFAULT_WAKE_GAP_MS });
+    if (updater) void updater.nudge({ reason: "focus", minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS });
   });
   win.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown" || !(input.control || input.meta) || !input.shift || input.alt) return;
@@ -677,8 +795,10 @@ function statusText() {
       return agent?.fullAccess ? "在线 · 完全访问" : "在线";
     case "connecting":
       return "正在连接…";
-    case "revoked":
+    case "revoked": {
+      const { INVALID_TOKEN_DETAIL, invalidTokenHint } = getNodeAgentMod();
       return agentDetail === INVALID_TOKEN_DETAIL ? invalidTokenHint(agent?.invalidTokenRetryMs) : "已被撤销，请重新登记这台电脑";
+    }
     default: {
       // 把真实原因写出来（以前一律「离线（自动重连中）」，看不出是被拦、超时还是代理问题）。
       const why = agent?.lastError || agentDetail;
@@ -846,6 +966,9 @@ function startAgent() {
   if (agent) agent.stop();
   const local = config.get();
   if (!local.serverUrl || !config.getToken()) return refreshTray();
+  const { createOps } = getOpsMod();
+  const { attachAgentRuntime } = getAgentRuntimeMod();
+  const { createNodeAgent } = getNodeAgentMod();
   const ops = createOps({
     clientVersion: pkg.version,
     hooks: {
@@ -878,7 +1001,7 @@ function startAgent() {
         agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision: { approved: false, reason: "本机 Cookie 导入审批请求已过期。" } });
         return true;
       }
-      void browserBridge
+      void getBrowserBridge()
         .handleCookieApprovalRequest(message)
         .then((decision) => {
           agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision });
@@ -899,7 +1022,7 @@ function startAgent() {
         agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result: { ok: false, error: "本机 Passkey 转发请求已过期。" } });
         return true;
       }
-      void browserBridge
+      void getBrowserBridge()
         .handleWebAuthnRequest(message)
         .then((result) => {
           agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result });
@@ -938,6 +1061,7 @@ function startAgent() {
     diagnosticsLog.record({ category: "connection", event: "agent_state", message: event?.state || "unknown", detail: event?.detail ? { detail: event.detail } : undefined });
     refreshTray();
     if (event && event.state === "online" && config.get().autoUpdate !== false) {
+      ensureUpdaterStarted();
       void updater?.check();
     }
   });
@@ -965,7 +1089,8 @@ function startAgent() {
       outcome: "succeeded",
       summary: `收到服务器更新推送${version ? `（${version}）` : ""}${reason ? ` · ${reason}` : ""}`,
     });
-    void updater?.nudge({ version, reason: reason || "server_push", minGapMs: DEFAULT_PUSH_GAP_MS });
+    ensureUpdaterStarted();
+    void updater?.nudge({ version, reason: reason || "server_push", minGapMs: getUpdaterMod().DEFAULT_PUSH_GAP_MS });
   });
   agent.events.on("revoked", () => {
     refreshTray();
@@ -1178,6 +1303,7 @@ function sendUpdateState() {
 }
 
 function startUpdater() {
+  if (updater) return updater;
   let autoUpdater = null;
   if (app.isPackaged) {
     try {
@@ -1186,6 +1312,8 @@ function startUpdater() {
       autoUpdater = null;
     }
   }
+  const { createUpdater } = getUpdaterMod();
+  const updateSignature = require("./update-signature");
   const feed = buildConfig.resolveFeedDetail(BUILD, config.get());
   let lastUpdaterTrayKey = "";
   updater = createUpdater({
@@ -1235,6 +1363,11 @@ function startUpdater() {
   setInterval(() => {
     if (updater?.state.status === "downloaded" && Date.now() - updatePromptAt >= UPDATE_REMIND_MS) promptUpdate(updater.state.version);
   }, UPDATE_REMIND_TICK_MS).unref();
+  return updater;
+}
+
+function ensureUpdaterStarted() {
+  return updater || startUpdater();
 }
 
 /** 待安装提醒：距离上次弹窗超过这么久就再弹一次。 */
@@ -1266,6 +1399,7 @@ function openUpdateWindow({ focus = true, allowIdle = false } = {}) {
   const chat = windows.chat && !windows.chat.isDestroyed() ? windows.chat : null;
   const chatVisible = Boolean(chat?.isVisible() && !chat.isMinimized());
   const workArea = (chat ? screen.getDisplayMatching(chat.getBounds()) : screen.getPrimaryDisplay()).workArea;
+  const { computeUpdateWindowBounds } = getUpdatePlacementMod();
   const bounds = computeUpdateWindowBounds({ chat: chat ? chat.getBounds() : null, chatVisible, workArea });
   updateWindow = new BrowserWindow({
     ...windowChrome.updateWindowOptions({ background: updateWindowBackground() }),
@@ -1685,7 +1819,8 @@ function registerIpc() {
   });
   handleLocal("update:retry", async () => {
     dismissedDownloadVersion = "";
-    return updater ? updater.check() : currentUpdatePayload();
+    const activeUpdater = ensureUpdaterStarted();
+    return activeUpdater ? activeUpdater.check() : currentUpdatePayload();
   });
   handleLocal("update:download-latest", () => {
     const url = manualUpdateDownloadUrl();
@@ -1785,7 +1920,8 @@ function registerIpc() {
     return { status: "reconnecting", message: "正在重新连接…", state: webLocalState() };
   });
   handleWeb("pc:check-update", async () => {
-    const next = updater ? await updater.check() : { supported: false, status: "idle" };
+    const activeUpdater = ensureUpdaterStarted();
+    const next = activeUpdater ? await activeUpdater.check() : { supported: false, status: "idle" };
     if (["downloading", "verifying", "downloaded"].includes(next?.status)) {
       dismissedDownloadVersion = "";
       openUpdateWindow({ focus: true });
@@ -1827,10 +1963,10 @@ function registerIpc() {
     diagnosticsLog.buildExportPayload({
       clientVersion: pkg.version,
       agentState: agent?.state || "offline",
-      accessibilityGrants: accessibilityBridge.authorizer.snapshot().grants.length,
+      accessibilityGrants: getAccessibilityBridge().authorizer.snapshot().grants.length,
     }),
   );
-  handleWeb("pc:browser-profiles", () => browserBridge.discoverProfiles());
+  handleWeb("pc:browser-profiles", () => getBrowserBridge().discoverProfiles());
 }
 
 // ---------- 生命周期 ----------
@@ -1854,10 +1990,12 @@ app.on("window-all-closed", () => {
 });
 app.on("before-quit", (event) => {
   quitting = true;
+  disposePrewarmedChatWindow();
   try {
     globalShortcut?.unregisterAll?.();
   } catch {}
   agent?.stop();
+  disposeResidentWinHelper();
   // 下载好（并验签通过）的更新而用户选了「稍后」：退出这一刻静默安装。需要重新安装（换了图标 / 组件）的走重新安装；
   // 普通更新在启用验签时也由这里安装（electron-updater 自己的退出安装没挂，见 updater.js）。
   const outcome = updater?.installOnQuit();
@@ -1868,35 +2006,113 @@ app.on("before-quit", (event) => {
   }
   if (outcome)
     config?.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_install", outcome: "succeeded", summary: `${updater.state.fullInstall ? "退出时重新安装" : "退出时安装"} ${updater.state.version || ""}` });
+  config?.flushAuditSync?.();
 });
 
 // ---------- 外壳刷新（src/shell-refresh.js） ----------
 // 新版本第一次启动且外壳指纹变了：把指向本程序的桌面 / 开始菜单 / 任务栏快捷方式按新 exe 重写，刷新图标缓存。
 
-function refreshShellIfChanged() {
+async function scanShortcutsAsync({ desktopDir, appData }) {
+  const roots = [];
+  if (desktopDir) roots.push([desktopDir, 0]);
+  if (appData) {
+    roots.push([path.win32.join(appData, "Microsoft", "Windows", "Start Menu", "Programs"), 1]);
+    roots.push([path.win32.join(appData, "Microsoft", "Internet Explorer", "Quick Launch", "User Pinned", "TaskBar"), 0]);
+  }
+  const dirEntries = new Map();
+  const dirPaths = new Set();
+
+  async function walk(dir, depth) {
+    let entries;
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const names = [];
+    const subdirs = [];
+    for (const entry of entries) {
+      names.push(entry.name);
+      if (depth > 0 && entry.isDirectory()) {
+        const full = path.win32.join(dir, entry.name);
+        dirPaths.add(full);
+        subdirs.push(full);
+      }
+    }
+    dirEntries.set(dir, names);
+    if (subdirs.length > 0) {
+      await Promise.all(subdirs.map((sub) => walk(sub, depth - 1)));
+    }
+  }
+
+  await Promise.all(roots.map(([dir, depth]) => walk(dir, depth)));
+  return shellRefresh.scanShortcuts({
+    desktopDir,
+    appData,
+    readdir: (dir) => dirEntries.get(dir) || [],
+    isDir: (p) => dirPaths.has(p),
+  });
+}
+
+function dedupeWinPaths(list) {
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    if (!item) continue;
+    const key = path.win32.normalize(String(item)).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+async function refreshShellIfChanged() {
   if (process.platform !== "win32" || !app.isPackaged) return;
   const last = config.get().shellHash || "";
   const icon = shellRefresh.findIcon({ resourcesPath: process.resourcesPath });
   const desktopDir = app.getPath("desktop");
-  const candidates = [
-    ...shellRefresh.shortcutCandidates({
-      desktopDir,
-      appData: process.env.APPDATA,
-      shortcutName: pkg.build?.nsis?.shortcutName || pkg.productName || "ChisaBot",
-    }),
-    ...shellRefresh.scanShortcuts({ desktopDir, appData: process.env.APPDATA }),
-  ];
+  const defaultCandidates = shellRefresh.shortcutCandidates({
+    desktopDir,
+    appData: process.env.APPDATA,
+    shortcutName: pkg.build?.nsis?.shortcutName || pkg.productName || "ChisaBot",
+  });
+  const scannedCandidates = await scanShortcutsAsync({ desktopDir, appData: process.env.APPDATA });
+  const candidates = dedupeWinPaths([...defaultCandidates, ...scannedCandidates]);
+  const existingPairs = await Promise.all(
+    candidates.map(async (link) => [
+      link,
+      await fsp.access(link).then(
+        () => true,
+        () => false,
+      ),
+    ]),
+  );
+  const existingLinks = [];
+  const existingSet = new Set();
+  for (const [link, ok] of existingPairs) {
+    if (ok) {
+      existingLinks.push(link);
+      existingSet.add(path.win32.normalize(link).toLowerCase());
+    }
+  }
+  const fastExists = (p) => {
+    const key = path.win32.normalize(String(p)).toLowerCase();
+    if (existingSet.has(key)) return true;
+    return fs.existsSync(p);
+  };
   // 指纹没变也看一眼：有快捷方式的图标还不是这份 .ico（或指向已不存在的旧安装位置）就修。
   const changed = shellRefresh.needsShellRefresh({ current: SHELL_HASH, last });
-  if (!changed && !shellRefresh.staleShortcuts({ shell, execPath: process.execPath, icon, candidates }).length) return;
+  if (!changed && !shellRefresh.staleShortcuts({ shell, exists: fastExists, execPath: process.execPath, icon, candidates: existingLinks }).length) return;
   let result = { updated: [], cacheRefreshed: false };
   try {
     result = shellRefresh.refreshShell({
       shell,
+      exists: fastExists,
       execPath: process.execPath,
       icon,
       appUserModelId: APP_USER_MODEL_ID,
-      candidates,
+      candidates: existingLinks,
       systemRoot: process.env.SystemRoot || process.env.windir,
       osRelease: os.release(),
       run: (cmd, args) => {
@@ -1924,7 +2140,8 @@ const localWeb = createLocalWebController({
   getServerOrigin: serverOrigin,
   onModeChange: ({ origin, mode, prevMode, serverVersion }) => {
     broadcast();
-    if (serverVersion && compareVersion(serverVersion, pkg.version) > 0) {
+    if (serverVersion && getUpdaterMod().compareVersion(serverVersion, pkg.version) > 0) {
+      ensureUpdaterStarted();
       void updater?.nudge({ version: serverVersion, reason: "server_version", minGapMs: 30_000 });
     }
     // 探测/嗅探可能晚于页面加载（窗口里还是内置旧前端）：local→remote 一旦翻转就重载聊天窗口，
@@ -1936,33 +2153,33 @@ const localWeb = createLocalWebController({
 });
 
 app.whenReady().then(() => {
+  if (!HAS_SINGLE_INSTANCE_LOCK) return;
   const ses = session.fromPartition(PARTITION);
   localWeb.installSessionProtocol(ses);
-  let cachedEgressPolicy = null;
+  let activeEgressPolicy = desktopPrefs.compileEgressPolicy({
+    serverOrigin: "",
+    allowedDomains: [],
+  });
   let cachedEgressOrigin = "";
-  let cachedEgressDomainsKey = "";
-  const getEgressPolicy = () => {
+  let cachedEgressDomainsKey = "\0__uninit__";
+  const refreshEgressPolicy = () => {
     const origin = serverOrigin();
-    const domains = config?.get().allowedEgressDomains || [];
-    const domainsKey = Array.isArray(domains) ? domains.join("\0") : "";
-    if (
-      !cachedEgressPolicy ||
-      cachedEgressOrigin !== origin ||
-      cachedEgressDomainsKey !== domainsKey
-    ) {
-      cachedEgressOrigin = origin;
-      cachedEgressDomainsKey = domainsKey;
-      cachedEgressPolicy = desktopPrefs.compileEgressPolicy({
-        serverOrigin: origin,
-        allowedDomains: domains,
-      });
-    }
-    return cachedEgressPolicy;
+    const raw = config?.peek ? config.peek() : config?.get();
+    const domains = Array.isArray(raw?.allowedEgressDomains) ? raw.allowedEgressDomains : [];
+    const domainsKey = domains.join("\0");
+    if (origin === cachedEgressOrigin && domainsKey === cachedEgressDomainsKey) return;
+    cachedEgressOrigin = origin;
+    cachedEgressDomainsKey = domainsKey;
+    activeEgressPolicy = desktopPrefs.compileEgressPolicy({
+      serverOrigin: origin,
+      allowedDomains: domains,
+    });
   };
   // 出口域名白名单：仅放行已配 server origin、loopback 与显式放行域名，防恶意渲染脚本外泄。
+  // 热路径直接读取配置变更时预编译的策略引用，零 config.get() 拷贝与零 URL 重复构造。
   ses.webRequest.onBeforeRequest((details, callback) => {
     const allowed = desktopPrefs.isEgressUrlAllowed(details.url, {
-      policy: getEgressPolicy(),
+      policy: activeEgressPolicy,
     });
     callback({ cancel: !allowed });
   });
@@ -2000,20 +2217,21 @@ app.whenReady().then(() => {
   // 休眠唤醒 / 解锁后网络往往刚恢复，旧连接可能已经半死：立刻重连，不等退避和看门狗；顺手节流补查一次更新。
   powerMonitor.on("resume", () => {
     agent?.reconnectNow();
-    void updater?.nudge({ reason: "resume", minGapMs: DEFAULT_WAKE_GAP_MS });
+    if (updater) void updater.nudge({ reason: "resume", minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS });
   });
   powerMonitor.on("unlock-screen", () => {
     agent?.reconnectNow();
-    void updater?.nudge({ reason: "unlock", minGapMs: DEFAULT_WAKE_GAP_MS });
+    if (updater) void updater.nudge({ reason: "unlock", minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS });
   });
   config = createConfig({ dir: app.getPath("userData"), safeStorage });
+  refreshEgressPolicy();
+  config.onChange(() => refreshEgressPolicy());
   try {
     ses.setSpellCheckerEnabled?.(config.get().spellcheck !== false);
   } catch {}
   const appearance = config.get().appearance || {};
   nativeTheme.themeSource = typeof appearance.dark === "boolean" ? (appearance.dark ? "dark" : "light") : "system";
   registerIpc();
-  startUpdater();
   // 全局快捷键 Alt+Space 呼出 ChisaBot 随手问浮窗（Spotlight 模式）
   try {
     globalShortcut?.register?.("Alt+Space", () => {
@@ -2029,10 +2247,8 @@ app.whenReady().then(() => {
     });
   } catch {}
   setTimeout(() => {
-    try {
-      refreshShellIfChanged();
-    } catch {}
-  }, 3000);
+    void refreshShellIfChanged().catch(() => {});
+  }, 3000).unref();
   tray = new Tray(trayIcon("offline"));
   tray.on("click", () => void openApp());
   tray.on("double-click", () => void openApp());
@@ -2046,4 +2262,10 @@ app.whenReady().then(() => {
   } else {
     openLogin();
   }
+  // 将更新器初始化延后至主窗口开始加载之后，避免阻塞冷启动首帧（尤其是 macOS codesign 检查）。
+  setTimeout(() => {
+    try {
+      ensureUpdaterStarted();
+    } catch {}
+  }, 1500).unref();
 });

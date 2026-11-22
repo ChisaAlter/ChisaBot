@@ -439,9 +439,32 @@ export type StoredMcpEnhancementRow = {
   updatedBy: string | null;
 };
 
+export type StoredMcpEnhancementMetaRow = {
+  serverId: string;
+  customInstructions: string;
+  disabledTools: string[];
+};
+
+export type StoredMcpEnhancementRuntimeRow = {
+  serverId: string;
+  transport: McpTransportMode;
+  customInstructions: string;
+  disabledTools: string[];
+  encryptedHeaders: string | null;
+  encryptedOAuth: string | null;
+};
+
 export type McpEnhancementStorage = {
   ensure(): Promise<void>;
   get(serverId: string): Promise<StoredMcpEnhancementRow | null>;
+  /** 批量轻量元数据投影：仅查 disabled_tools 与 custom_instructions，不拉 last_good_tools 与加密凭据。 */
+  getBatchMeta?(
+    serverIds: readonly string[],
+  ): Promise<Map<string, StoredMcpEnhancementMetaRow>>;
+  /** 单条运行时投影：跳过大体积 last_good_tools JSONB。 */
+  getRuntime?(
+    serverId: string,
+  ): Promise<StoredMcpEnhancementRuntimeRow | null>;
   list(): Promise<StoredMcpEnhancementRow[]>;
   upsert(row: StoredMcpEnhancementRow): Promise<void>;
   /** 仅定向更新 OAuth 密文与时间戳，避免刷新期间覆盖并发修改的 disabledTools/customInstructions/customHeaders。 */
@@ -544,6 +567,68 @@ export function createPgMcpEnhancementStorage(
       return rows[0] ? mapRow(rows[0]) : null;
     },
 
+    async getBatchMeta(serverIds) {
+      const uniqueIds = [...new Set(serverIds.filter(Boolean))];
+      const out = new Map<string, StoredMcpEnhancementMetaRow>();
+      if (uniqueIds.length === 0) return out;
+      const placeholders = uniqueIds.map((_, index) => `$${index + 1}`).join(", ");
+      const rows = await sql.unsafe<
+        Pick<
+          PgEnhancementRow,
+          "server_id" | "custom_instructions" | "disabled_tools"
+        >[]
+      >(
+        `SELECT server_id, custom_instructions, disabled_tools
+         FROM chisabot_mcp_enhancements
+         WHERE server_id IN (${placeholders})`,
+        uniqueIds,
+      );
+      for (const row of rows) {
+        const disabledRaw = parseJsonCol<unknown>(row.disabled_tools);
+        out.set(row.server_id, {
+          serverId: row.server_id,
+          customInstructions: row.custom_instructions ?? "",
+          disabledTools: Array.isArray(disabledRaw)
+            ? disabledRaw.filter((item): item is string => typeof item === "string")
+            : [],
+        });
+      }
+      return out;
+    },
+
+    async getRuntime(serverId) {
+      const rows = await sql.unsafe<
+        Pick<
+          PgEnhancementRow,
+          | "server_id"
+          | "transport"
+          | "custom_instructions"
+          | "disabled_tools"
+          | "encrypted_headers"
+          | "encrypted_oauth"
+        >[]
+      >(
+        `SELECT server_id, transport, custom_instructions, disabled_tools,
+                encrypted_headers, encrypted_oauth
+         FROM chisabot_mcp_enhancements
+         WHERE server_id = $1`,
+        [serverId],
+      );
+      const row = rows[0];
+      if (!row) return null;
+      const disabledRaw = parseJsonCol<unknown>(row.disabled_tools);
+      return {
+        serverId: row.server_id,
+        transport: row.transport === "sse" ? "sse" : "streamable-http",
+        customInstructions: row.custom_instructions ?? "",
+        disabledTools: Array.isArray(disabledRaw)
+          ? disabledRaw.filter((item): item is string => typeof item === "string")
+          : [],
+        encryptedHeaders: row.encrypted_headers ?? null,
+        encryptedOAuth: row.encrypted_oauth ?? null,
+      };
+    },
+
     async list() {
       const rows = await sql.unsafe<PgEnhancementRow[]>(
         `SELECT server_id, transport, custom_instructions, disabled_tools,
@@ -626,6 +711,31 @@ export function createMemoryMcpEnhancementStorage(): McpEnhancementStorage {
           }
         : null;
     },
+    async getBatchMeta(serverIds) {
+      const out = new Map<string, StoredMcpEnhancementMetaRow>();
+      for (const serverId of new Set(serverIds)) {
+        const found = rows.get(serverId);
+        if (!found) continue;
+        out.set(serverId, {
+          serverId: found.serverId,
+          customInstructions: found.customInstructions,
+          disabledTools: [...found.disabledTools],
+        });
+      }
+      return out;
+    },
+    async getRuntime(serverId) {
+      const found = rows.get(serverId);
+      if (!found) return null;
+      return {
+        serverId: found.serverId,
+        transport: found.transport,
+        customInstructions: found.customInstructions,
+        disabledTools: [...found.disabledTools],
+        encryptedHeaders: found.encryptedHeaders,
+        encryptedOAuth: found.encryptedOAuth,
+      };
+    },
     async list() {
       return [...rows.values()].map((r) => ({
         ...r,
@@ -666,11 +776,18 @@ export type McpConnectionOverlay = {
   customInstructions: string;
 };
 
+export type McpServerEnhancementMeta = {
+  disabledTools: ReadonlySet<string>;
+  customInstructions: string;
+};
+
 export type McpEnhancementStoreOptions = {
   storage: McpEnhancementStorage;
   encryptionKey: string;
   now?: () => number;
   refreshFetch?: (url: string, init: RequestInit) => Promise<Response>;
+  /** 仅用于只读非敏感元数据（disabledTools / customInstructions）的短缓存 TTL，默认 5s；严禁缓存任何凭据。 */
+  metaCacheTtlMs?: number;
 };
 
 function defaultRow(serverId: string): StoredMcpEnhancementRow {
@@ -700,9 +817,87 @@ function assertHttpsPublicUrl(raw: string, label: string): string {
   return verdict.url.toString();
 }
 
+const DEFAULT_META_CACHE_TTL_MS = 5_000;
+const MAX_META_CACHE_ENTRIES = 512;
+const EMPTY_DISABLED_TOOLS: ReadonlySet<string> = new Set();
+
 export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
   const { storage, encryptionKey } = options;
   const nowFn = options.now ?? Date.now;
+  const metaCacheTtlMs = options.metaCacheTtlMs ?? DEFAULT_META_CACHE_TTL_MS;
+  /**
+   * 仅缓存只读非敏感元数据（disabledTools / customInstructions）；
+   * 绝对红线：严禁缓存任何解密后的 OAuth Token 或自定义 Header 明文凭据。
+   */
+  const metaCache = new Map<
+    string,
+    { meta: McpServerEnhancementMeta; expiresAt: number }
+  >();
+
+  function setCachedMeta(serverId: string, meta: McpServerEnhancementMeta) {
+    if (metaCacheTtlMs <= 0) return;
+    metaCache.delete(serverId);
+    metaCache.set(serverId, { meta, expiresAt: nowFn() + metaCacheTtlMs });
+    if (metaCache.size <= MAX_META_CACHE_ENTRIES) return;
+    const oldest = metaCache.keys().next().value;
+    if (oldest !== undefined) metaCache.delete(oldest);
+  }
+
+  function invalidateMeta(serverId: string) {
+    metaCache.delete(serverId);
+  }
+
+  async function metadataForServers(
+    serverIds: readonly string[],
+  ): Promise<Map<string, McpServerEnhancementMeta>> {
+    const uniqueIds = [...new Set(serverIds.filter(Boolean))];
+    const out = new Map<string, McpServerEnhancementMeta>();
+    if (uniqueIds.length === 0) return out;
+    const now = nowFn();
+    const misses: string[] = [];
+    for (const serverId of uniqueIds) {
+      const cached = metaCache.get(serverId);
+      if (metaCacheTtlMs > 0 && cached && now < cached.expiresAt) {
+        out.set(serverId, cached.meta);
+      } else {
+        misses.push(serverId);
+      }
+    }
+    if (misses.length === 0) return out;
+    let fetched: Map<string, StoredMcpEnhancementMetaRow>;
+    if (storage.getBatchMeta) {
+      fetched = await storage.getBatchMeta(misses);
+    } else {
+      fetched = new Map();
+      const loaded = await Promise.all(misses.map((id) => storage.get(id)));
+      for (const row of loaded) {
+        if (!row) continue;
+        fetched.set(row.serverId, {
+          serverId: row.serverId,
+          customInstructions: row.customInstructions,
+          disabledTools: row.disabledTools,
+        });
+      }
+    }
+    for (const serverId of misses) {
+      const row = fetched.get(serverId);
+      const meta: McpServerEnhancementMeta = row
+        ? {
+            disabledTools:
+              row.disabledTools.length > 0
+                ? new Set(row.disabledTools)
+                : EMPTY_DISABLED_TOOLS,
+            customInstructions: row.customInstructions,
+          }
+        : {
+            disabledTools: EMPTY_DISABLED_TOOLS,
+            customInstructions: "",
+          };
+      setCachedMeta(serverId, meta);
+      out.set(serverId, meta);
+    }
+    return out;
+  }
 
   async function unsealHeaders(
     encrypted: string | null,
@@ -1033,14 +1228,17 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
       }
 
       await storage.upsert(next);
+      invalidateMeta(serverId);
       return toView(next);
     },
 
-    /** 解析单个 MCP 连接器的增强传输层配置、解密后的自定义 Header 与自动刷新的 OAuth2 头。 */
+    /** 解析单个 MCP 连接器的增强传输层配置、解密后的自定义 Header 与自动刷新的 OAuth2 头（不读 last_good_tools，且绝不缓存明文凭据）。 */
     async resolveConnectionOverlay(
       serverId: string,
     ): Promise<McpConnectionOverlay> {
-      const row = await storage.get(serverId);
+      const row = storage.getRuntime
+        ? await storage.getRuntime(serverId)
+        : await storage.get(serverId);
       if (!row) {
         return {
           transport: "streamable-http",
@@ -1049,8 +1247,11 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
           customInstructions: "",
         };
       }
-      const extraHeaders = await unsealHeaders(row.encryptedHeaders);
-      let oauth = await unsealOAuth(row.encryptedOAuth);
+      const [extraHeaders, initialOAuth] = await Promise.all([
+        unsealHeaders(row.encryptedHeaders),
+        unsealOAuth(row.encryptedOAuth),
+      ]);
+      let oauth = initialOAuth;
 
       if (
         oauth?.refreshToken &&
@@ -1150,11 +1351,15 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
 
     /** 是否在增强表中持有任何加密 Header 或 OAuth2 凭据（供跨源修改 MCP 地址门禁校验）。 */
     async hasCredentials(serverId: string): Promise<boolean> {
-      const row = await storage.get(serverId);
+      const row = storage.getRuntime
+        ? await storage.getRuntime(serverId)
+        : await storage.get(serverId);
       if (!row) return false;
-      const headers = await unsealHeaders(row.encryptedHeaders);
+      const [headers, oauth] = await Promise.all([
+        unsealHeaders(row.encryptedHeaders),
+        unsealOAuth(row.encryptedOAuth),
+      ]);
       if (Object.keys(headers).length > 0) return true;
-      const oauth = await unsealOAuth(row.encryptedOAuth);
       return Boolean(
         oauth?.accessToken || oauth?.refreshToken || oauth?.clientSecret,
       );
@@ -1171,40 +1376,42 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
         updatedAt: new Date(nowFn()).toISOString(),
         updatedBy: actorId,
       });
+      invalidateMeta(serverId);
     },
 
+    metadataForServers,
+
     async isToolDisabled(serverId: string, toolName: string): Promise<boolean> {
-      const row = await storage.get(serverId);
-      if (!row) return false;
-      return row.disabledTools.includes(toolName);
+      const meta = (await metadataForServers([serverId])).get(serverId);
+      return meta ? meta.disabledTools.has(toolName) : false;
     },
 
     async disabledToolsMap(
       serverIds: readonly string[],
     ): Promise<Map<string, ReadonlySet<string>>> {
+      const meta = await metadataForServers(serverIds);
       const out = new Map<string, ReadonlySet<string>>();
-      await Promise.all(
-        [...new Set(serverIds)].map(async (serverId) => {
-          const row = await storage.get(serverId);
-          if (row && row.disabledTools.length > 0) {
-            out.set(serverId, new Set(row.disabledTools));
-          }
-        }),
-      );
+      for (const [serverId, entry] of meta.entries()) {
+        if (entry.disabledTools.size > 0) {
+          out.set(serverId, entry.disabledTools);
+        }
+      }
       return out;
     },
 
     async customInstructionsForServers(
       serverIds: readonly string[],
     ): Promise<Array<{ serverId: string; customInstructions: string }>> {
+      const uniqueIds = [...new Set(serverIds.filter(Boolean))];
+      const meta = await metadataForServers(uniqueIds);
       const results: Array<{ serverId: string; customInstructions: string }> =
         [];
-      for (const serverId of [...new Set(serverIds)]) {
-        const row = await storage.get(serverId);
-        if (row && row.customInstructions.trim().length > 0) {
+      for (const serverId of uniqueIds) {
+        const text = meta.get(serverId)?.customInstructions.trim() ?? "";
+        if (text.length > 0) {
           results.push({
             serverId,
-            customInstructions: row.customInstructions.trim(),
+            customInstructions: text,
           });
         }
       }
@@ -1275,6 +1482,7 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
 
     async remove(serverId: string): Promise<void> {
       await storage.delete(serverId);
+      invalidateMeta(serverId);
     },
   };
 }

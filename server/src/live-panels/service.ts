@@ -701,6 +701,7 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
     }
   }
   let timer: ReturnType<typeof setInterval> | undefined;
+  let initialTimer: ReturnType<typeof setTimeout> | undefined;
 
   /**
    * 用户点了「交还」：因为「计算机正由你接管」而推迟的面板马上重刷（2026-10-13 实测：交还后卡片上
@@ -1259,12 +1260,23 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
           (n) => n && log({ type: "live-panel-orphan-leases", released: n }),
         )
         .catch(() => {});
-      timer ??= setInterval(() => void sweep(), 60_000);
-      setTimeout(() => void sweep(), 15_000);
+      if (!timer) {
+        timer = setInterval(() => void sweep(), 60_000);
+        timer.unref?.();
+      }
+      if (!initialTimer) {
+        initialTimer = setTimeout(() => {
+          initialTimer = undefined;
+          void sweep();
+        }, 15_000);
+        initialTimer.unref?.();
+      }
     },
     stop() {
       if (timer) clearInterval(timer);
       timer = undefined;
+      if (initialTimer) clearTimeout(initialTimer);
+      initialTimer = undefined;
       for (const controller of running.values())
         controller.abort(new Error("服务器重启"));
     },

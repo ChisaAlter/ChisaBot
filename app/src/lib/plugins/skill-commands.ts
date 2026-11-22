@@ -1,15 +1,87 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { CommandOption } from "@/components/channels/composer";
+import { useExternalConnection } from "@/hooks";
 import { chisaSkillsQueryOptions } from "@/lib/chisa-skills";
-import { agentPluginsQueryOptions } from "@/lib/plugins/queries";
+import { useKeptVisibility } from "@/lib/kept-visible";
+import { agentPluginsQueryOptions, pluginKeys } from "@/lib/plugins/queries";
+
+const SKILL_COMMANDS_POLL_MS = 15_000;
 
 /**
  * Granted skills + user/shared ChisaSkills as `/` menu commands. Each one inserts a chip, not composer text.
  */
 export function useSkillCommands(agentId: string): CommandOption[] {
-  const { data } = useQuery(agentPluginsQueryOptions(agentId));
-  const { data: chisaSkills } = useQuery(chisaSkillsQueryOptions());
+  const queryClient = useQueryClient();
+  // 用非重渲可见性 store 门控轮询：ChannelChat 调用本 Hook，读 KeptVisibleContext 会导致进出设置重画整棵聊天树。
+  const visibility = useKeptVisibility();
+  const { data } = useQuery({
+    ...agentPluginsQueryOptions(agentId),
+    refetchInterval: false,
+    refetchIntervalInBackground: false,
+  });
+  const { data: chisaSkills } = useQuery({
+    ...chisaSkillsQueryOptions(),
+    refetchOnWindowFocus: () => (visibility.get() ? "always" : false),
+  });
+
+  useExternalConnection(agentId ? `skill-commands:${agentId}` : false, () => {
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let wasHidden = !visibility.get();
+    const isPageVisible = () =>
+      typeof document === "undefined" || document.visibilityState !== "hidden";
+    const stop = () => {
+      if (timer !== undefined) {
+        clearInterval(timer);
+        timer = undefined;
+      }
+    };
+    const pollNowIfStale = () => {
+      const state = queryClient.getQueryState(pluginKeys.forAgent(agentId));
+      const lastAttemptAt = Math.max(
+        state?.dataUpdatedAt ?? 0,
+        state?.errorUpdatedAt ?? 0,
+      );
+      // 15 秒窗口内刚拉过（含 404 等错误退避）：快速切频道回来不立刻重发，避免切换风暴。
+      if (lastAttemptAt > 0 && Date.now() - lastAttemptAt < SKILL_COMMANDS_POLL_MS) {
+        return;
+      }
+      void queryClient.invalidateQueries({
+        queryKey: pluginKeys.forAgent(agentId),
+        refetchType: "active",
+      });
+    };
+    const sync = () => {
+      const active = visibility.get() && isPageVisible();
+      if (!active) {
+        wasHidden = true;
+        stop();
+        return;
+      }
+      if (wasHidden) {
+        wasHidden = false;
+        pollNowIfStale();
+      }
+      if (timer === undefined) {
+        timer = setInterval(() => {
+          if (!visibility.get() || !isPageVisible()) {
+            stop();
+            return;
+          }
+          pollNowIfStale();
+        }, SKILL_COMMANDS_POLL_MS);
+      }
+    };
+    sync();
+    const unsubscribeVisibility = visibility.subscribe(sync);
+    const hasDocument = typeof document !== "undefined";
+    if (hasDocument) document.addEventListener("visibilitychange", sync);
+    return () => {
+      stop();
+      unsubscribeVisibility();
+      if (hasDocument) document.removeEventListener("visibilitychange", sync);
+    };
+  });
 
   return useMemo(() => {
     const bySlug = new Map<

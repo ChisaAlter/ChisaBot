@@ -126,6 +126,7 @@ export function ScreenshotCard({
         <img
           alt={`${host || "页面"}的截图`}
           data-shot-source={local ? "local" : "server"}
+          decoding="async"
           onError={() => {
             if (!local) setRemoteGone(true);
           }}

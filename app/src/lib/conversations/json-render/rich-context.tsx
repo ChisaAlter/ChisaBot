@@ -11,6 +11,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useExternalConnection, useMediaQuery, useTimeout } from "@/hooks";
+import { useKeptVisible } from "@/lib/kept-visible";
 import { cn } from "@/lib/utils";
 import {
   canTween,
@@ -196,39 +197,114 @@ export function choiceOptionsOf(
   return [...found];
 }
 
-/* ── 共用的时钟：整页一个 setInterval，倒计时 / 时钟 / 相对时间都订阅它，不各开各的定时器 ── */
+/* ── 共用的时钟：整页一个 setInterval，倒计时 / 时钟 / 相对时间都订阅它，离屏/后台自动暂停 ── */
 
 const listeners = new Set<() => void>();
 let ticker: ReturnType<typeof setInterval> | undefined;
+let visibilityBound = false;
 let nowSecond = Math.floor(Date.now() / 1000);
-function subscribe(listener: () => void) {
+
+function isDocumentHidden(): boolean {
+  return typeof document !== "undefined" && document.hidden === true;
+}
+
+function refreshNowAndNotify() {
+  const next = Math.floor(Date.now() / 1000);
+  if (next === nowSecond) return;
+  nowSecond = next;
+  for (const listener of [...listeners]) listener();
+}
+
+function stopTicker() {
+  if (ticker !== undefined) {
+    clearInterval(ticker);
+    ticker = undefined;
+  }
+}
+
+function startTicker() {
+  if (ticker !== undefined || listeners.size === 0 || isDocumentHidden()) {
+    return;
+  }
+  nowSecond = Math.floor(Date.now() / 1000);
+  ticker = setInterval(() => {
+    if (isDocumentHidden()) {
+      stopTicker();
+      return;
+    }
+    refreshNowAndNotify();
+  }, 250);
+}
+
+function onVisibilityChange() {
+  if (isDocumentHidden()) {
+    stopTicker();
+    return;
+  }
+  refreshNowAndNotify();
+  startTicker();
+}
+
+function ensureVisibilityListener() {
+  if (visibilityBound || typeof document === "undefined") return;
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  visibilityBound = true;
+}
+
+function teardownVisibilityListener() {
+  if (!visibilityBound || typeof document === "undefined") return;
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+  visibilityBound = false;
+}
+
+function subscribeActive(listener: () => void) {
   listeners.add(listener);
-  if (!ticker) {
-    nowSecond = Math.floor(Date.now() / 1000);
-    ticker = setInterval(() => {
-      const next = Math.floor(Date.now() / 1000);
-      if (next === nowSecond) return;
-      nowSecond = next;
-      for (const l of listeners) l();
-    }, 250);
+  ensureVisibilityListener();
+  if (!isDocumentHidden()) {
+    const current = Math.floor(Date.now() / 1000);
+    if (current !== nowSecond) nowSecond = current;
+    startTicker();
   }
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0 && ticker) {
-      clearInterval(ticker);
-      ticker = undefined;
+    if (listeners.size === 0) {
+      stopTicker();
+      teardownVisibilityListener();
     }
   };
 }
 
+function subscribePaused(_listener: () => void) {
+  return () => {};
+}
+
 /**
  * 当前时间（毫秒），按 granularity 秒取整后才触发重渲染：倒计时用 1，相对时间用 15 / 60。
- * 页面在后台时浏览器会放慢定时器，回到前台第一下就追上。
+ * 所在 KeepAlive 槽位隐藏或页面在后台时暂停定时唤醒；切回可见或前台时立刻刷新当前时间。
  */
 export function useNow(granularitySeconds = 1): number {
+  const visible = useKeptVisible();
+  const prevVisibleRef = useRef(visible);
+  const frozenBucketRef = useRef(
+    Math.floor(Date.now() / 1000 / granularitySeconds),
+  );
+  if (
+    visible &&
+    (!prevVisibleRef.current || listeners.size === 0) &&
+    !isDocumentHidden()
+  ) {
+    const fresh = Math.floor(Date.now() / 1000);
+    if (fresh !== nowSecond) nowSecond = fresh;
+  }
+  prevVisibleRef.current = visible;
   const second = useSyncExternalStore(
-    subscribe,
-    () => Math.floor(nowSecond / granularitySeconds),
+    visible ? subscribeActive : subscribePaused,
+    () => {
+      if (!visible) return frozenBucketRef.current;
+      const bucket = Math.floor(nowSecond / granularitySeconds);
+      frozenBucketRef.current = bucket;
+      return bucket;
+    },
     () => Math.floor(Date.now() / 1000 / granularitySeconds),
   );
   return second * granularitySeconds * 1000 || Date.now();

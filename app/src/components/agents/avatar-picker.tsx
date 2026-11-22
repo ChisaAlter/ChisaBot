@@ -796,6 +796,7 @@ function AvatarCropper({
         <img
           alt=""
           className="bot-ava-crop-img"
+          decoding="async"
           draggable={false}
           src={image.src}
           style={{

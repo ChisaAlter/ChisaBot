@@ -1,5 +1,5 @@
 import type { Message } from "@ag-ui/core";
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { draftFilesAccepted, draftFilesSubmitting } from "../chat/ui-memory";
 import { type ClientOptions, tryClient } from "../client";
 
@@ -77,13 +77,37 @@ function rememberOwn(id: string) {
 const queues = new Map<string, QueuedMessage[]>();
 /** 刚被读进去的消息 id → 读到的时间（「已读取」标记几秒后淡出）。 */
 const readAt = new Map<string, number>();
+const readMarkListeners = new Map<string, Set<() => void>>();
 const listeners = new Set<() => void>();
 const EMPTY: QueuedMessage[] = [];
-let version = 0;
 
 function emit() {
-  version++;
   for (const listener of listeners) listener();
+}
+
+function subscribeReadMark(messageId: string, listener: () => void) {
+  let bucket = readMarkListeners.get(messageId);
+  if (!bucket) {
+    bucket = new Set();
+    readMarkListeners.set(messageId, bucket);
+  }
+  bucket.add(listener);
+  return () => {
+    const current = readMarkListeners.get(messageId);
+    current?.delete(listener);
+    if (current && current.size === 0) readMarkListeners.delete(messageId);
+  };
+}
+
+function notifyReadMark(messageId: string) {
+  const bucket = readMarkListeners.get(messageId);
+  if (!bucket) return;
+  for (const listener of [...bucket]) listener();
+}
+
+function isReadMarked(messageId: string): boolean {
+  const at = readAt.get(messageId);
+  return at !== undefined && Date.now() - at < 6_000;
 }
 
 function subscribe(listener: () => void) {
@@ -138,15 +162,17 @@ export function useQueuedMessages(
   );
 }
 
-/** 「已读取」标记要不要画（读到后 6 秒内）。 */
+/** 「已读取」标记要不要画（读到后 6 秒内），按单条 messageId 分桶订阅避免全局广播重渲。 */
 export function useReadMark(messageId: string): boolean {
-  useSyncExternalStore(
-    subscribe,
-    () => version,
-    () => 0,
+  const subscribeForMessage = useCallback(
+    (listener: () => void) => subscribeReadMark(messageId, listener),
+    [messageId],
   );
-  const at = readAt.get(messageId);
-  return at !== undefined && Date.now() - at < 6_000;
+  return useSyncExternalStore(
+    subscribeForMessage,
+    () => isReadMarked(messageId),
+    () => false,
+  );
 }
 
 /** How long a send typed during Stop waits for the stopped turn to wind down (CB-104). */
@@ -399,12 +425,17 @@ export async function withdrawMessage(
 
 /** 这条已经出现在对话记录里了：从排队里拿掉，挂几秒「已读取」。 */
 export function markRead(threadId: string, id: string) {
-  readAt.set(id, Date.now());
-  set(
-    threadId,
-    queuedFor(threadId).filter((other) => other.id !== id),
-  );
-  setTimeout(emit, 6_100);
+  const stamped = Date.now();
+  readAt.set(id, stamped);
+  notifyReadMark(id);
+  const current = queuedFor(threadId);
+  const next = current.filter((other) => other.id !== id);
+  if (next.length !== current.length) set(threadId, next);
+  setTimeout(() => {
+    if (readAt.get(id) !== stamped) return;
+    readAt.delete(id);
+    notifyReadMark(id);
+  }, 6_100);
 }
 
 /** 运行结束、还在排队的：交给调用方当普通消息发出去，并从排队里拿掉。 */
@@ -529,11 +560,10 @@ export function applyInboxState(threadId: string, state: InboxState) {
       (order.get(b.id) ?? Number.MAX_SAFE_INTEGER),
   );
   // CB-104: a supplement held by Stop got no reply — it must not keep a 「已读取」 mark.
-  let unmarked = false;
   for (const item of next)
-    if (item.status === "paused" && readAt.delete(item.id)) unmarked = true;
+    if (item.status === "paused" && readAt.delete(item.id))
+      notifyReadMark(item.id);
   if (JSON.stringify(next) !== JSON.stringify(current)) set(threadId, next);
-  else if (unmarked) emit();
 }
 
 /**

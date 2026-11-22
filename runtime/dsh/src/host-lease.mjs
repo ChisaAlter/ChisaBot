@@ -2,10 +2,27 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { createServer } from "node:net";
-import { fileURLToPath } from "node:url";
 
 const conflict = () =>
   new Error("Another Host still owns this account runtime home.");
+
+/** Lightweight POSIX holder under `flock --no-fork`: prints handshake, then blocks on stdin EOF. */
+export const LINUX_LOCK_HOLDER_ARGS = [
+  "/bin/sh",
+  "-c",
+  'printf "locked\\n"; exec cat >/dev/null',
+];
+
+export function buildFlockArgs(canonical) {
+  return [
+    "--nonblock",
+    "--conflict-exit-code",
+    "73",
+    "--no-fork",
+    `${canonical}/host.lock`,
+    ...LINUX_LOCK_HOLDER_ARGS,
+  ];
+}
 
 /** Kernel ownership expires with the process, independently of copied PID files or PID reuse. */
 export async function acquireHostLease(home, onLost) {
@@ -25,21 +42,12 @@ export async function acquireHostLease(home, onLost) {
     server.unref();
     return () => new Promise((resolve) => server.close(resolve));
   }
-  // flock owns the file descriptor; the helper exits when the Host's pipe closes, including
+  // flock owns the file descriptor; the POSIX helper exits when the Host's pipe closes, including
   // SIGKILL/container exit. The lock file stays in place and never needs stale-file deletion.
-  const child = spawn(
-    "flock",
-    [
-      "--nonblock",
-      "--conflict-exit-code",
-      "73",
-      "--no-fork",
-      `${canonical}/host.lock`,
-      process.execPath,
-      fileURLToPath(new URL("./lease-holder.mjs", import.meta.url)),
-    ],
-    { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
-  );
+  const child = spawn("flock", buildFlockArgs(canonical), {
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   let released = false;
   let ready = false;
   const exited = new Promise((resolve) => child.once("exit", resolve));

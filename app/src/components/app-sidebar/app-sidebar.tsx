@@ -814,6 +814,23 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     () => new Set(roster.map((bot) => bot.id)),
     [roster],
   );
+  // 预建 botId → 最新单聊索引，将侧栏渲染从 O(B×C) 线性全扫降至 O(C)。
+  const latestChannelByBot = useMemo(() => {
+    const map = new Map<string, ChannelSummary>();
+    for (const channel of channels.data ?? []) {
+      if (channel.agentIds.length !== 1) continue;
+      const botId = channel.agentIds[0];
+      if (!botId) continue;
+      const previous = map.get(botId);
+      if (
+        !previous ||
+        (channel.lastMessageAt ?? "") > (previous.lastMessageAt ?? "")
+      ) {
+        map.set(botId, channel);
+      }
+    }
+    return map;
+  }, [channels.data]);
   // 空闲时预取主机器人和左栏前几个的对话，切过去就是现成的（DESIGN.md §83）。
   usePrefetchBotChats(orderedIds, channels.data, routeBotId);
   const handleToggleMain = useCallback(
@@ -821,8 +838,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     [setMainBot],
   );
 
+  const botNameById = useMemo(
+    () => new Map((agents.data ?? []).map((bot) => [bot.id, bot.name])),
+    [agents.data],
+  );
   const botNameOf = (id: string | null | undefined) =>
-    id ? (agents.data ?? []).find((bot) => bot.id === id)?.name : undefined;
+    id ? botNameById.get(id) : undefined;
   const searching = search.trim().length > 0;
   const titleMatches = searching
     ? pinnedFirst(matchingChannels(channels.data, search))
@@ -849,7 +870,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       bot={bot}
       canReplaceMain={isMain && others.length > 0}
       key={bot.id}
-      latest={latestChannelFor(bot.id, channels.data)}
+      latest={latestChannelByBot.get(bot.id)}
       main={isMain}
       onToggleMain={handleToggleMain}
       selected={selectedBotId === bot.id}
@@ -866,8 +887,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <BotMiniRail
           attentionById={attentionById}
           bots={railBots}
-          channels={channels.data}
           knownIds={knownIds}
+          latestChannelByBot={latestChannelByBot}
           mainBotId={mainBot?.id}
           onToggleMain={handleToggleMain}
           selectedBotId={selectedBotId}
@@ -1092,7 +1113,7 @@ function BotMiniRail({
   knownIds,
   mainBotId,
   selectedBotId,
-  channels,
+  latestChannelByBot,
   attentionById,
   onToggleMain,
 }: {
@@ -1100,7 +1121,7 @@ function BotMiniRail({
   knownIds: Set<string>;
   mainBotId: string | undefined;
   selectedBotId: string | null | undefined;
-  channels: ChannelSummary[] | undefined;
+  latestChannelByBot: Map<string, ChannelSummary>;
   attentionById: Map<string, BotAttention>;
   onToggleMain: (botId: string, isMain: boolean) => void;
 }) {
@@ -1130,7 +1151,7 @@ function BotMiniRail({
               bot={bot}
               canReplaceMain={bot.id === mainBotId && bots.length > 1}
               key={bot.id}
-              latest={latestChannelFor(bot.id, channels)}
+              latest={latestChannelByBot.get(bot.id)}
               main={bot.id === mainBotId}
               onToggleMain={onToggleMain}
               selected={selectedBotId === bot.id}

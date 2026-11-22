@@ -44,6 +44,8 @@ describe("searchChannelMessages hit meta (CB-106)", () => {
     const hits = await searchChannelMessages(database, actor, "番茄");
     expect(calls[0]).toContain("t.agent_id");
     expect(calls[0]).toContain("t.updated_at");
+    expect(calls[0]).toContain("FROM channel_memberships cm");
+    expect(calls[0]).toContain("LEFT JOIN LATERAL");
     expect(
       hits.map((h) => [h.channelId, h.messageId, h.agentId, h.updatedAt]),
     ).toEqual([

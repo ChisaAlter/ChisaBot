@@ -10,4 +10,7 @@ fi
 exec s6-setuidgid postgres /usr/lib/postgresql/16/bin/postgres \
   -D /var/lib/postgresql/data \
   -c listen_addresses=127.0.0.1 \
-  -c port=5432
+  -c port=5432 \
+  -c "jit=${EMBEDDED_PG_JIT:-off}" \
+  -c "random_page_cost=${EMBEDDED_PG_RANDOM_PAGE_COST:-1.1}" \
+  -c "checkpoint_completion_target=${EMBEDDED_PG_CHECKPOINT_COMPLETION_TARGET:-0.9}"

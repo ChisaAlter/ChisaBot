@@ -13,7 +13,7 @@ import {
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import DOMPurify from "dompurify";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import {
   memo,
   type ReactNode,
@@ -21,6 +21,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { DiagramZoom, svgNaturalWidth } from "@/components/chat/diagram-zoom";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
@@ -79,6 +80,78 @@ const ARRIVE_ZERO_TRANSITION = {
   ease: EASE_OUT,
 } as const;
 
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+let sharedReducedMotionSource: {
+  from: typeof window.matchMedia;
+  mql: MediaQueryList;
+} | null = null;
+const reducedMotionListeners = new Set<() => void>();
+let activeReducedMotionMql: MediaQueryList | null = null;
+const notifyReducedMotion = () => {
+  for (const listener of reducedMotionListeners) listener();
+};
+
+function getReducedMotionMql(): MediaQueryList | null {
+  if (
+    typeof window === "undefined" ||
+    typeof window.matchMedia !== "function"
+  ) {
+    return null;
+  }
+  if (sharedReducedMotionSource?.from !== window.matchMedia) {
+    sharedReducedMotionSource = {
+      from: window.matchMedia,
+      mql: window.matchMedia(REDUCED_MOTION_QUERY),
+    };
+  }
+  return sharedReducedMotionSource.mql;
+}
+
+function subscribeReducedMotion(listener: () => void): () => void {
+  const mql = getReducedMotionMql();
+  if (mql && activeReducedMotionMql !== mql) {
+    activeReducedMotionMql?.removeEventListener?.(
+      "change",
+      notifyReducedMotion,
+    );
+    activeReducedMotionMql = mql;
+    if (reducedMotionListeners.size > 0) {
+      activeReducedMotionMql.addEventListener?.("change", notifyReducedMotion);
+    }
+  }
+  const wasEmpty = reducedMotionListeners.size === 0;
+  reducedMotionListeners.add(listener);
+  if (wasEmpty && activeReducedMotionMql) {
+    activeReducedMotionMql.addEventListener?.("change", notifyReducedMotion);
+  }
+  return () => {
+    reducedMotionListeners.delete(listener);
+    if (reducedMotionListeners.size === 0 && activeReducedMotionMql) {
+      activeReducedMotionMql.removeEventListener?.(
+        "change",
+        notifyReducedMotion,
+      );
+      activeReducedMotionMql = null;
+    }
+  };
+}
+
+function getReducedMotionSnapshot(): boolean {
+  return Boolean(getReducedMotionMql()?.matches);
+}
+
+function getReducedMotionServerSnapshot(): boolean {
+  return false;
+}
+
+function useSharedReducedMotion(): boolean {
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    getReducedMotionSnapshot,
+    getReducedMotionServerSnapshot,
+  );
+}
+
 export const BotBubbles = memo(function BotBubbles({
   text,
   components = EMPTY_COMPONENTS,
@@ -104,7 +177,7 @@ export const BotBubbles = memo(function BotBubbles({
 }) {
   const effectiveReplyText = replyToText ?? replyTo?.text;
   const effectiveReplyId = replyToId ?? replyTo?.id;
-  const display = useDisplayText(text);
+  const display = useDisplayText(text, streaming);
   const [expanded, setExpanded] = useState(false);
   const foldState = useMemo(
     () =>
@@ -129,7 +202,7 @@ export const BotBubbles = memo(function BotBubbles({
   // 第一次渲染时已经在的气泡排队淡入；之后流式新增的不排队。
   const initial = useRef<number | null>(null);
   if (initial.current === null) initial.current = segments.length;
-  const reduce = useReducedMotion();
+  const reduce = useSharedReducedMotion();
   if (segments.length === 0) {
     return effectiveReplyText ? (
       <div className="chat-bubbles" data-cb-turn={tone}>
@@ -195,6 +268,10 @@ export type ParsedStatusCard = {
 };
 
 export function normalizeDirectiveCards(raw: string): string {
+  // 快速路径：不含 CR、指令块或站内操作胶囊时与原文逐字符等价，跳过逐行 split 与正则扫描。
+  if (!raw.includes("\r") && !raw.includes(":::") && !raw.includes("](/")) {
+    return raw;
+  }
   const normalizedNewlines = raw.replace(/\r\n?/g, "\n");
   const rawLines = normalizedNewlines.split("\n");
   const step1: string[] = [];

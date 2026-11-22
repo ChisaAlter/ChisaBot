@@ -10,6 +10,7 @@ export function PluginLogo({ logo }: { logo?: string | null }) {
       alt=""
       src={logo}
       className="size-6 object-contain"
+      decoding="async"
       referrerPolicy="no-referrer"
       loading="lazy"
       onError={() => setFailedUrl(logo)}

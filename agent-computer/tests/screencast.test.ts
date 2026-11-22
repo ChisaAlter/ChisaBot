@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Page } from "playwright";
 import { egressClassHeaders } from "../src/egress";
 import {
+  DEFAULT_MIN_FRAME_INTERVAL_MS,
   egressDocumentProblem,
   type InputMessage,
   navigationProblem,
@@ -651,5 +652,77 @@ describe("立刻重载被拦的页仍按目的地分类", () => {
         "http://10.0.0.1/",
       ),
     ).toBe("出于安全原因不允许访问内网地址。");
+  });
+});
+
+describe("33ms ack throttling while keeping everyNthFrame: 1", () => {
+  test("keeps everyNthFrame=1, acks idle clicks immediately, and delays rapid 60fps acks without dropping frames", async () => {
+    const handlers = new Map<string, (event: unknown) => void>();
+    const sent: { method: string; params: Record<string, unknown> }[] = [];
+    const client = {
+      on(event: string, listener: (payload: unknown) => void) {
+        handlers.set(event, listener);
+      },
+      async send(method: string, params: Record<string, unknown> = {}) {
+        sent.push({ method, params });
+        if (method === "Page.captureScreenshot") return {};
+        return undefined;
+      },
+      async detach() {},
+    };
+    const page = {
+      context: () => ({ newCDPSession: async () => client }),
+      url: () => "https://example.test/",
+    } as unknown as Page;
+
+    let clock = 1_000;
+    const frames: unknown[] = [];
+    const cast = await startScreencast(page, (frame) => frames.push(frame), {
+      now: () => clock,
+    });
+
+    const startCall = sent.find((c) => c.method === "Page.startScreencast");
+    expect(startCall?.params.everyNthFrame).toBe(1);
+    expect(DEFAULT_MIN_FRAME_INTERVAL_MS).toBe(33);
+
+    const emitFrame = (sessionId: number, data: string) => {
+      handlers.get("Page.screencastFrame")?.({
+        data,
+        sessionId,
+        metadata: { deviceWidth: 1280, deviceHeight: 800 },
+      });
+    };
+    const acks = () =>
+      sent
+        .filter((c) => c.method === "Page.screencastFrameAck")
+        .map((c) => c.params.sessionId);
+
+    // Frame 1 (first frame): delivered and acked immediately.
+    emitFrame(1, "F1");
+    expect(frames).toHaveLength(1);
+    expect(acks()).toEqual([1]);
+
+    // Frame 2 arrives 10ms later (60fps animation): delivered immediately, ack delayed by ~23ms.
+    clock += 10;
+    emitFrame(2, "F2");
+    expect(frames).toHaveLength(2);
+    expect(acks()).toEqual([1]);
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(acks()).toEqual([1, 2]);
+
+    // Frame 3 arrives after an idle pause (> 33ms, e.g. user click): acked immediately.
+    clock += 100;
+    emitFrame(3, "F3");
+    expect(frames).toHaveLength(3);
+    expect(acks()).toEqual([1, 2, 3]);
+
+    // Frame 4 arrives 5ms later and cast stops before timer fires: delayed ack is cancelled.
+    clock += 5;
+    emitFrame(4, "F4");
+    expect(acks()).toEqual([1, 2, 3]);
+    await cast.stop();
+    await new Promise((resolve) => setTimeout(resolve, 45));
+    expect(acks()).toEqual([1, 2, 3]);
   });
 });

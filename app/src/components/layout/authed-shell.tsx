@@ -1,5 +1,13 @@
 import { Outlet, useRouter, useRouterState } from "@tanstack/react-router";
-import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { CHANNEL_ROUTE_ID } from "@/components/channels/chat-search";
 import { GlassShell, scopeOfPath } from "@/components/layout/glass-shell";
 import type { ShellScope } from "@/components/layout/glass-topbar";
@@ -209,6 +217,34 @@ const sameAddress = (a: ChatAddress, b: ChatAddress) =>
 const KeptChannelPage = memo(ChannelPage);
 const chatKey = (a: ChatAddress) => a.channelId;
 
+type LandingHint = {
+  loading: boolean;
+  channelId: string | null;
+};
+
+/**
+ * 仅在 `/` 路由挂载时订阅 `useLanding()`（`channelListQueryOptions` + `agentListQueryOptions` + `useMainBot`），
+ * 避免聊天/设置路由下任意频道的 WebSocket 更新或乐观发消息触发整个 `ChatStage` 重渲。
+ */
+function LandingChannelProbe({
+  onChange,
+}: {
+  onChange: (hint: LandingHint) => void;
+}) {
+  const landing = useLanding();
+  const loading = landing.state === "loading";
+  const channelId =
+    landing.state === "ready" && landing.target.to === "/channel/$channelId"
+      ? landing.target.params.channelId
+      : null;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  useLayoutEffect(() => {
+    onChangeRef.current({ loading, channelId });
+  }, [loading, channelId]);
+  return null;
+}
+
 /** 主区：留着的聊天 + 当前路由（`KeepAliveStage`，DESIGN.md §98）。`/` 正在跳到聊天时，留着的聊天照样露着。 */
 function ChatStage({ pathname }: { pathname: string }) {
   const routeAddress = useChatAddress();
@@ -229,11 +265,18 @@ function ChatStage({ pathname }: { pathname: string }) {
     clearPendingBot();
   });
   // `/` 正在跳的那段（最近的对话）正是留着的这段时才先露着；跳向别的机器人 / 空聊天时不露，免得闪一下别人的对话。
-  const landing = useLanding();
-  const landingChannel =
-    landing.state === "ready" && landing.target.to === "/channel/$channelId"
-      ? landing.target.params.channelId
-      : null;
+  const isLanding = pathname === "/";
+  const [landingHint, setLandingHint] = useState<LandingHint | null>(null);
+  if (!isLanding && landingHint !== null) setLandingHint(null);
+  const handleLandingChange = useCallback((next: LandingHint) => {
+    setLandingHint((previous) =>
+      previous &&
+      previous.loading === next.loading &&
+      previous.channelId === next.channelId
+        ? previous
+        : next,
+    );
+  }, []);
   // 还没发过的草稿对话（A1）：只有去新话题页时藏起来就卸载（随即回收，`draft-channel.ts`）；去设置等别的页面照常留
   // 10 分钟，回来图和上传都在。
   const keptTtl = useCallback(
@@ -241,36 +284,43 @@ function ChatStage({ pathname }: { pathname: string }) {
     [pathname],
   );
   return (
-    <KeepAliveStage
-      address={address}
-      switching={switching}
-      idleVisible={(kept) =>
-        pathname === "/tasks" ||
-        (pathname === "/" &&
-          (landing.state === "loading" || landingChannel === kept.channelId))
-      }
-      ttlMs={keptTtl}
-      renderKept={(kept, { visible, epoch }) => (
-        <KeptChannelPage
-          channelId={kept.channelId}
-          epoch={epoch}
-          /*
-           * 换一段对话就是换一页（2026-10-22）：`ChannelPage` 自己也有「这段对话的」状态——历史对话弹窗开着没有、
-           * 计算机自动切标签上一个机器人是不是在干活。不按 channelId 分开的话，从左栏换机器人时那两样都跟着过去了
-           * （弹窗突然开在新机器人上）。聊天本身由下面 `ChannelBody` 的 `key={channel.id}` 换，这里只是把壳也换掉。
-           */
-          key={kept.channelId}
-          settings={kept.settings}
-          side={kept.side}
-          visible={visible}
-          watch={kept.watch}
-        />
-      )}
-      // 一段对话一段（LRU，§98.6）：同一段里只是 ?settings / ?watch 变了不算换一段。
-      keyOf={chatKey}
-      same={sameAddress}
-    >
-      <Outlet />
-    </KeepAliveStage>
+    <>
+      {isLanding ? (
+        <LandingChannelProbe onChange={handleLandingChange} />
+      ) : null}
+      <KeepAliveStage
+        address={address}
+        switching={switching}
+        idleVisible={(kept) =>
+          pathname === "/tasks" ||
+          (isLanding &&
+            (landingHint === null ||
+              landingHint.loading ||
+              landingHint.channelId === kept.channelId))
+        }
+        ttlMs={keptTtl}
+        renderKept={(kept, { visible, epoch }) => (
+          <KeptChannelPage
+            channelId={kept.channelId}
+            epoch={epoch}
+            /*
+             * 换一段对话就是换一页（2026-10-22）：`ChannelPage` 自己也有「这段对话的」状态——历史对话弹窗开着没有、
+             * 计算机自动切标签上一个机器人是不是在干活。不按 channelId 分开的话，从左栏换机器人时那两样都跟着过去了
+             * （弹窗突然开在新机器人上）。聊天本身由下面 `ChannelBody` 的 `key={channel.id}` 换，这里只是把壳也换掉。
+             */
+            key={kept.channelId}
+            settings={kept.settings}
+            side={kept.side}
+            visible={visible}
+            watch={kept.watch}
+          />
+        )}
+        // 一段对话一段（LRU，§98.6）：同一段里只是 ?settings / ?watch 变了不算换一段。
+        keyOf={chatKey}
+        same={sameAddress}
+      >
+        <Outlet />
+      </KeepAliveStage>
+    </>
   );
 }

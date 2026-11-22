@@ -165,6 +165,7 @@ function FramePreview({
     <img
       alt="这一步结束时的画面"
       className="activity-frame"
+      decoding="async"
       src={`data:image/png;base64,${state}`}
     />
   );

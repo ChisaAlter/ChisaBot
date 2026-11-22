@@ -130,10 +130,14 @@ export function createChannelEventHub(
     },
 
     deliver(event) {
+      let payload: string | undefined;
       for (const userId of event.memberIds) {
-        for (const send of connections.get(userId) ?? []) {
+        const sends = connections.get(userId);
+        if (!sends || sends.size === 0) continue;
+        payload ??= JSON.stringify(event);
+        for (const send of sends) {
           try {
-            send(JSON.stringify(event));
+            send(payload);
           } catch {
             // A connection that cannot be written to is one that is closing. Its own close handler
             // detaches it; failing here would deny the event to everybody after it in the set.

@@ -78,22 +78,46 @@ services:
 });
 
 describe("nginx Local-Caller clear", () => {
-  test("missing clear is detected; present passes", () => {
-    const bad = `
+  test("missing clear is detected for direct and upstream proxies; 0 proxies fails closed", () => {
+    const badDirect = `
         location / {
             proxy_pass http://127.0.0.1:3001;
             proxy_set_header X-ChisaBot-Identity $cb_identity;
         }
 `;
-    expect(nginxClearsLocalCallerForAppProxies(bad).ok).toBe(false);
+    expect(nginxClearsLocalCallerForAppProxies(badDirect).ok).toBe(false);
+    const badUpstream = `
+        location / {
+            proxy_pass http://chisabot_api;
+            proxy_set_header X-ChisaBot-Identity $cb_identity;
+        }
+`;
+    expect(nginxClearsLocalCallerForAppProxies(badUpstream)).toEqual({
+      ok: false,
+      proxies: 1,
+      missingNear: ["location /"],
+    });
+    expect(nginxClearsLocalCallerForAppProxies("server { listen 8443 ssl; }")).toEqual({
+      ok: false,
+      proxies: 0,
+      missingNear: [],
+    });
     const good = `
         location / {
             proxy_pass http://127.0.0.1:3001;
             proxy_set_header X-ChisaBot-Local-Caller "";
             proxy_set_header X-ChisaBot-Identity $cb_identity;
         }
+        location ^~ /assets/ {
+            proxy_pass http://chisabot_api;
+            proxy_set_header X-ChisaBot-Local-Caller "";
+        }
 `;
-    expect(nginxClearsLocalCallerForAppProxies(good).ok).toBe(true);
+    expect(nginxClearsLocalCallerForAppProxies(good)).toEqual({
+      ok: true,
+      proxies: 2,
+      missingNear: [],
+    });
   });
 });
 

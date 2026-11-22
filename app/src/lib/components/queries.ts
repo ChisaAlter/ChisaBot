@@ -54,9 +54,10 @@ export function agentComponentsQueryOptions(agentId: string | undefined) {
   return queryOptions({
     queryKey: componentKeys.forAgent(agentId ?? ""),
     enabled: Boolean(agentId),
-    refetchInterval: 5_000,
-    // 切机器人再切回来不立刻重读（DESIGN.md §83）：轮询本来就每 5 秒读一次。
-    staleTime: 5_000,
+    refetchInterval: 45_000,
+    refetchIntervalInBackground: false,
+    // 切机器人再切回来不立刻重读（DESIGN.md §83）：低频管理配置，服务端执行期本就强校验授权。
+    staleTime: 45_000,
     // Refetched when the tab is looked at again, so a grant changed on another screen is not waiting
     // out an interval before it shows.
     refetchOnWindowFocus: true,

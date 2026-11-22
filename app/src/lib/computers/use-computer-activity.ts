@@ -4,10 +4,11 @@
  * 实时用 SSE（/activity/stream，cookie 认证）；断了就退回轮询——有进行中的步骤时 3 秒一次，
  * 否则 15 秒一次。服务端没有这个接口（老部署，404）时 `legacy` 为 true，界面退回浏览器内存里的旧记录。
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { useExternalConnection, useInterval } from "@/hooks";
-import { objectConnectionKey } from "@/lib/connection-key";
 import { tryClient } from "@/lib/client";
+import { objectConnectionKey } from "@/lib/connection-key";
+import { useKeptVisible } from "@/lib/kept-visible";
 
 export type ActivityStep = {
   id: string;
@@ -66,35 +67,66 @@ export type ComputerActivityState = {
 
 const FRESH_MS = 2_400;
 
+function subscribePageVisible(callback: () => void): () => void {
+  if (typeof document === "undefined") return () => {};
+  document.addEventListener("visibilitychange", callback);
+  return () => document.removeEventListener("visibilitychange", callback);
+}
+
+function getPageVisible(): boolean {
+  return (
+    typeof document === "undefined" || document.visibilityState !== "hidden"
+  );
+}
+
+function usePageVisible(): boolean {
+  return useSyncExternalStore(subscribePageVisible, getPageVisible, () => true);
+}
+
 export function useComputerActivity(
   computerId: string,
   options: { threadId?: string; limit?: number } = {},
 ): ComputerActivityState {
+  const keptVisible = useKeptVisible();
+  const pageVisible = usePageVisible();
+  const active = keptVisible && pageVisible;
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const [steps, setSteps] = useState<ActivityStep[]>([]);
   const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [legacy, setLegacy] = useState(false);
+  const legacyRef = useRef(legacy);
+  legacyRef.current = legacy;
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [retentionDays, setRetentionDays] = useState(90);
   const known = useRef(new Set<string>());
   const paged = useRef(false);
+  const freshTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const limit = options.limit ?? 50;
   const base = `/api/computers/${encodeURIComponent(computerId)}/activity`;
   const query = options.threadId
     ? `&thread=${encodeURIComponent(options.threadId)}`
     : "";
 
+  useExternalConnection("computer-activity-fresh-timers", () => () => {
+    for (const timer of freshTimers.current) clearTimeout(timer);
+    freshTimers.current.clear();
+  });
+
   const markFresh = useCallback((ids: string[]) => {
     if (!ids.length) return;
     setFresh((previous) => new Set([...previous, ...ids]));
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      freshTimers.current.delete(timer);
       setFresh((previous) => {
         const next = new Set(previous);
         for (const id of ids) next.delete(id);
         return next;
       });
     }, FRESH_MS);
+    freshTimers.current.add(timer);
   }, []);
 
   const absorb = useCallback(
@@ -159,6 +191,9 @@ export function useComputerActivity(
       .catch(() => undefined);
   }, [absorb, cursor, fetchPage]);
 
+  const needsRefreshRef = useRef(false);
+  const wasInactiveRef = useRef(!active);
+
   useExternalConnection(objectConnectionKey(refresh), () => {
     known.current = new Set();
     paged.current = false;
@@ -166,15 +201,38 @@ export function useComputerActivity(
     setCursor(null);
     setLoading(true);
     setLegacy(false);
-    refresh();
+    if (activeRef.current) {
+      needsRefreshRef.current = false;
+      refresh();
+    } else {
+      needsRefreshRef.current = true;
+    }
     // refresh 只随电脑 / 对话变化（base、query），所以这就是「换电脑 / 换对话时重来」。
   });
 
-  // 实时：SSE；不可用时轮询。
+  // 从隐藏 / 切标签 / 后台返回时补拉一次，避免切走期间漏掉新步骤（老部署 404 已降级为 legacy 时不再重复请求）。
+  useExternalConnection(
+    active ? `active:${objectConnectionKey(refresh)}` : false,
+    () => {
+      if (
+        !legacyRef.current &&
+        (wasInactiveRef.current || needsRefreshRef.current)
+      ) {
+        wasInactiveRef.current = false;
+        needsRefreshRef.current = false;
+        refresh();
+      }
+      return () => {
+        wasInactiveRef.current = true;
+      };
+    },
+  );
+
+  // 实时：SSE；不可用时轮询。不可见 / 后台标签时暂停 SSE 与轮询。
   const running = steps.some((step) => step.status === "running");
   const [live, setLive] = useState(false);
   useExternalConnection(
-    legacy || typeof EventSource === "undefined"
+    !active || legacy || typeof EventSource === "undefined"
       ? false
       : `${base}\0${objectConnectionKey(absorb)}`,
     () => {
@@ -200,7 +258,7 @@ export function useComputerActivity(
 
   useInterval(
     refresh,
-    legacy || live ? null : running ? 3_000 : 15_000,
+    !active || legacy || live ? null : running ? 3_000 : 15_000,
     objectConnectionKey(refresh),
   );
 

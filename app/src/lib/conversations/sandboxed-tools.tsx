@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 import * as z from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { RefusedCard } from "@/components/gallery/refused";
@@ -10,7 +10,7 @@ import {
   type GrantedComponent,
 } from "@/lib/components/queries";
 import { useDeclaredBotId } from "@/lib/conversations/active-bot";
-import { useBotOnScreen } from "@/lib/kept-visible";
+import { useBotOnScreen, useKeptVisibility } from "@/lib/kept-visible";
 import {
   type PublishedSandboxed,
   publishedSandboxedQueryOptions,
@@ -20,6 +20,9 @@ import {
   NOT_SHOWN_TAIL,
 } from "../../../../shared/component-markers";
 
+const PUBLISHED_SANDBOXED_POLL_MS = 30_000;
+const AGENT_COMPONENTS_POLL_MS = 45_000;
+
 /**
  * Browser-authored components use the same component grants as compiled gallery components, but
  * render published runtime markup in the SDK sandbox.
@@ -28,19 +31,37 @@ export function SandboxedTools() {
   // Grants are fetched only once a surface has declared its Bot; the placeholder is not one the
   // server knows, and asking would 404 on every poll.
   const declared = useDeclaredBotId();
-  const { data: published } = useQuery(publishedSandboxedQueryOptions());
-  // 这个机器人的聊天被外壳藏着时不轮询授权（DESIGN.md §98.3）；调用时服务端照样再查。
+  // 仅门控 refetchInterval（用非重渲 useKeptVisibility，避免切频道重渲或翻转 enabled 导致重发请求）。
+  const visibility = useKeptVisibility();
   const declaredOnScreen = useBotOnScreen(declared);
+  const declaredOnScreenRef = useRef(declaredOnScreen);
+  declaredOnScreenRef.current = declaredOnScreen;
+  const { data: published } = useQuery({
+    ...publishedSandboxedQueryOptions(),
+    refetchInterval: () =>
+      visibility.get() && declaredOnScreenRef.current
+        ? PUBLISHED_SANDBOXED_POLL_MS
+        : false,
+    refetchIntervalInBackground: false,
+  });
   const { data: granted } = useQuery({
     ...agentComponentsQueryOptions(declared),
-    ...(declaredOnScreen ? {} : { refetchInterval: false as const }),
+    refetchInterval: () =>
+      visibility.get() && declaredOnScreenRef.current
+        ? AGENT_COMPONENTS_POLL_MS
+        : false,
+    refetchIntervalInBackground: false,
   });
 
-  const held = new Map(
-    (granted ?? []).map((component: GrantedComponent) => [
-      component.name,
-      component.description,
-    ]),
+  const held = useMemo(
+    () =>
+      new Map(
+        (granted ?? []).map((component: GrantedComponent) => [
+          component.name,
+          component.description,
+        ]),
+      ),
+    [granted],
   );
 
   return (
@@ -56,18 +77,28 @@ export function SandboxedTools() {
   );
 }
 
+const parametersCache = new WeakMap<Record<string, unknown>, z.ZodObject>();
+
 /** Convert an author's JSON Schema to SDK parameters; unreadable schemas fall back to catchall. */
 function parametersFor(schema: Record<string, unknown>) {
+  const cached = parametersCache.get(schema);
+  if (cached) return cached;
+  let result: z.ZodObject;
   try {
     const converted = z.fromJSONSchema(schema as never);
-    if (converted instanceof z.ZodObject) return converted;
+    result =
+      converted instanceof z.ZodObject
+        ? converted
+        : z.object({}).catchall(z.unknown());
   } catch {
     // Unreadable author schemas fall back to permissive arguments and server-side checks.
+    result = z.object({}).catchall(z.unknown());
   }
-  return z.object({}).catchall(z.unknown());
+  parametersCache.set(schema, result);
+  return result;
 }
 
-function SandboxedTool({
+const SandboxedTool = memo(function SandboxedTool({
   component,
   description,
 }: {
@@ -75,6 +106,10 @@ function SandboxedTool({
   description: string | undefined;
 }) {
   const isHeld = description !== undefined;
+  const parameters = useMemo(
+    () => parametersFor(component.argumentSchema),
+    [component.argumentSchema],
+  );
 
   const render = useCallback(
     // Sandboxed tools are server-owned: a refused call is answered by the server, and its stored
@@ -129,9 +164,9 @@ function SandboxedTool({
 
   useRenderTool({
     name: component.name,
-    parameters: parametersFor(component.argumentSchema),
+    parameters,
     render,
   });
 
   return null;
-}
+});

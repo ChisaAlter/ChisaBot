@@ -23,10 +23,10 @@ describe("normalizeMessageSearchParam (DOG-04)", () => {
 
 describe("chatSearchSchema message (DOG-04)", () => {
   test("parses ?message= into search.message", () => {
-    expect(chatSearchSchema.parse({ message: "abc" }).message).toBe("abc");
-    expect(chatSearchSchema.parse({ message: "  " }).message).toBeUndefined();
-    expect(chatSearchSchema.parse({ watch: true }).message).toBeUndefined();
-    expect(chatSearchSchema.parse({ settings: true, message: "m1" })).toEqual({
+    expect(chatSearchSchema({ message: "abc" }).message).toBe("abc");
+    expect(chatSearchSchema({ message: "  " }).message).toBeUndefined();
+    expect(chatSearchSchema({ watch: true }).message).toBeUndefined();
+    expect(chatSearchSchema({ settings: true, message: "m1" })).toEqual({
       settings: true,
       message: "m1",
     });

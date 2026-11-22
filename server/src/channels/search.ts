@@ -51,14 +51,22 @@ function textOf(content: unknown): string {
   return parts.join("\n");
 }
 
+const SEARCH_YIELD_BATCH_SIZE = 15;
+const MAX_CANDIDATE_MESSAGES_PER_CHANNEL = 5;
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 /** 从消息正文里抽出含 needle 的一小段，并标出高亮区间。 */
 export function snippetAround(
   haystack: string,
   needle: string,
   radius = 48,
+  lowerNeedle?: string,
 ): { snippet: string; highlight: { start: number; end: number } } | null {
   const lower = haystack.toLowerCase();
-  const n = needle.toLowerCase();
+  const n = lowerNeedle ?? needle.toLowerCase();
   const at = lower.indexOf(n);
   if (at < 0) return null;
   const start = Math.max(0, at - radius);
@@ -85,16 +93,40 @@ export async function searchChannelMessages(
 ): Promise<ChannelSearchHit[]> {
   const needle = query.trim();
   if (!needle || needle.length > 100) return [];
+  const lowerNeedle = needle.toLowerCase();
   const max = Math.min(Math.max(limit, 1), 50);
   const pattern = `%${needle.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
 
+  // 利用 channel_memberships(user_id, channel_id) 先收敛当前用户频道，再由 PG LATERAL 仅投影最近若干条命中消息，
+  // 避免把整条会话的多 MB messages JSONB 传回 JS 解包。
   const rows = await database.$client.unsafe<SearchRow[]>(
-    `SELECT c.id AS channel_id, c.name, c.summary, m.thread_id, t.agent_id, t.updated_at, t.messages
-     FROM channels c
-     INNER JOIN channel_memberships cm ON cm.channel_id = c.id AND cm.user_id = $1
+    `SELECT c.id AS channel_id, c.name, c.summary, m.thread_id, t.agent_id, t.updated_at,
+            COALESCE(matched.messages, '[]'::jsonb) AS messages
+     FROM channel_memberships cm
+     INNER JOIN channels c ON c.id = cm.channel_id AND c.deleted_at IS NULL
      INNER JOIN chisabot_channel_mappings m ON m.channel_id = c.id AND m.user_id = $1
      INNER JOIN chisabot_local_threads t ON t.id = m.thread_id AND t.owner_user_id = $1
-     WHERE c.deleted_at IS NULL
+     LEFT JOIN LATERAL (
+       SELECT jsonb_agg(sub.elem ORDER BY sub.ord ASC) AS messages
+       FROM (
+         SELECT arr.elem, arr.ord
+         FROM jsonb_array_elements(t.messages) WITH ORDINALITY AS arr(elem, ord)
+         WHERE (
+           (jsonb_typeof(arr.elem->'content') = 'string' AND arr.elem->>'content' ILIKE $2 ESCAPE '\\')
+           OR (
+             jsonb_typeof(arr.elem->'content') = 'array'
+             AND EXISTS (
+               SELECT 1
+               FROM jsonb_array_elements(arr.elem->'content') part
+               WHERE part->>'type' = 'text' AND part->>'text' ILIKE $2 ESCAPE '\\'
+             )
+           )
+         )
+         ORDER BY arr.ord DESC
+         LIMIT ${MAX_CANDIDATE_MESSAGES_PER_CHANNEL}
+       ) sub
+     ) matched ON true
+     WHERE cm.user_id = $1
        AND t.messages::text ILIKE $2 ESCAPE '\\'
      ORDER BY COALESCE(c.last_message_at, c.created_at) DESC
      LIMIT $3`,
@@ -103,8 +135,13 @@ export async function searchChannelMessages(
 
   const hits: ChannelSearchHit[] = [];
   const seen = new Set<string>();
-  for (const row of rows) {
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     if (hits.length >= max) break;
+    if (rowIndex > 0 && rowIndex % SEARCH_YIELD_BATCH_SIZE === 0) {
+      await yieldToEventLoop();
+    }
+    const row = rows[rowIndex];
+    if (!row) continue;
     let messages: StoredMessage[] = [];
     if (Array.isArray(row.messages)) messages = row.messages;
     else if (typeof row.messages === "string") {
@@ -123,7 +160,7 @@ export async function searchChannelMessages(
       const searchable = body.startsWith("⟦chisabot:")
         ? body.replace(/^⟦[^⟧]*⟧\n?/, "")
         : body;
-      const found = snippetAround(searchable, needle);
+      const found = snippetAround(searchable, needle, 48, lowerNeedle);
       if (!found) continue;
       const key = `${row.channel_id}:${message.id ?? i}`;
       if (seen.has(key)) continue;

@@ -124,22 +124,31 @@ export function extractComposePortLines(yamlText: string): string[] {
   return lines;
 }
 
-/** nginx.conf must clear Local-Caller on every proxy_pass to the app (3001). */
+/** nginx.conf must clear Local-Caller on every proxy_pass to the app (3001 / chisabot_api). */
 export function nginxClearsLocalCallerForAppProxies(nginxConf: string): {
   ok: boolean;
+  proxies: number;
   missingNear: string[];
 } {
   const missingNear: string[] = [];
+  let proxies = 0;
   const blocks = nginxConf.split(/(?=location\s)/);
   for (const block of blocks) {
-    if (!/proxy_pass\s+http:\/\/127\.0\.0\.1:3001/.test(block)) continue;
+    if (!/^\s*location\s/.test(block)) continue;
+    if (
+      !/proxy_pass\s+http:\/\/(?:127\.0\.0\.1:3001|chisabot_api)(?:[;/]|\s)/.test(
+        block,
+      )
+    )
+      continue;
+    proxies++;
     if (!/proxy_set_header\s+X-ChisaBot-Local-Caller\s+""\s*;/.test(block)) {
       const loc =
         /^\s*location[^\n{]+/.exec(block)?.[0]?.trim() ?? "unknown location";
       missingNear.push(loc);
     }
   }
-  return { ok: missingNear.length === 0, missingNear };
+  return { ok: proxies > 0 && missingNear.length === 0, proxies, missingNear };
 }
 
 /**

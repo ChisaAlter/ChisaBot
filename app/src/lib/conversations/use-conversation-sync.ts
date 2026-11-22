@@ -28,45 +28,134 @@ const KNOWN_TOOL_EVENTS = new Set([
 ]);
 
 type Msg = { id: string };
+
+function deepEqualSnapshotValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (
+    typeof a !== "object" ||
+    typeof b !== "object" ||
+    a === null ||
+    b === null
+  ) {
+    return false;
+  }
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqualSnapshotValue(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (Array.isArray(b)) return false;
+  const objA = a as Record<string, unknown>;
+  const objB = b as Record<string, unknown>;
+  let definedA = 0;
+  for (const key in objA) {
+    if (!Object.hasOwn(objA, key)) continue;
+    const valA = objA[key];
+    if (valA === undefined) continue;
+    definedA++;
+    if (!Object.hasOwn(objB, key) || !deepEqualSnapshotValue(valA, objB[key])) {
+      return false;
+    }
+  }
+  let definedB = 0;
+  for (const key in objB) {
+    if (!Object.hasOwn(objB, key)) continue;
+    if (objB[key] !== undefined) definedB++;
+  }
+  return definedA === definedB;
+}
+
 /** 把快照里这台没有的消息按快照里的位置插进来（跟在它前面最近一条这台也有的消息后面）；这台已有的不动、不删。 */
 export function mergeSnapshot<T extends Msg>(
   local: readonly T[],
   snapshot: readonly T[],
   replaceExisting = false,
 ): T[] {
-  const result = [...local];
-  const index = new Map(result.map((message, at) => [message.id, at]));
+  if (snapshot.length === 0) return local as T[];
+  const localIndex = new Map<string, number>();
+  for (let i = 0; i < local.length; i++) {
+    const item = local[i];
+    if (item) localIndex.set(item.id, i);
+  }
+
+  let replaced: T[] | null = null;
+  let leading: T[] | null = null;
+  let afterLocal: Map<number, T[]> | null = null;
+  let inserted: Map<
+    string,
+    { list: T[]; offset: number; anchor: number | null }
+  > | null = null;
+  let currentAnchor: number | null = null;
   let changed = false;
+
   for (let at = 0; at < snapshot.length; at++) {
     const message = snapshot[at];
     if (!message) continue;
-    const existing = index.get(message.id);
+    const existing = localIndex.get(message.id);
     if (existing !== undefined) {
-      if (
-        replaceExisting &&
-        JSON.stringify(result[existing]) !== JSON.stringify(message)
-      ) {
-        result[existing] = message;
-        changed = true;
+      if (replaceExisting) {
+        const current = replaced ? replaced[existing] : local[existing];
+        if (!deepEqualSnapshotValue(current, message)) {
+          if (!replaced) replaced = [...local];
+          replaced[existing] = message;
+          changed = true;
+        }
       }
+      currentAnchor = existing;
       continue;
     }
-    let insertAt = 0;
-    for (let back = at - 1; back >= 0; back--) {
-      const prev = snapshot[back];
-      const position = prev ? index.get(prev.id) : undefined;
-      if (position !== undefined) {
-        insertAt = position + 1;
-        break;
+    const prior = inserted?.get(message.id);
+    if (prior) {
+      if (
+        replaceExisting &&
+        !deepEqualSnapshotValue(prior.list[prior.offset], message)
+      ) {
+        prior.list[prior.offset] = message;
+        changed = true;
       }
+      currentAnchor = prior.anchor;
+      continue;
     }
-    result.splice(insertAt, 0, message);
+
+    let bucket: T[];
+    if (currentAnchor === null) {
+      if (!leading) leading = [];
+      bucket = leading;
+    } else {
+      if (!afterLocal) afterLocal = new Map();
+      let list = afterLocal.get(currentAnchor);
+      if (!list) {
+        list = [];
+        afterLocal.set(currentAnchor, list);
+      }
+      bucket = list;
+    }
+    const offset = bucket.length;
+    bucket.push(message);
+    if (!inserted) inserted = new Map();
+    inserted.set(message.id, { list: bucket, offset, anchor: currentAnchor });
     changed = true;
-    index.clear();
-    for (const [position, item] of result.entries())
-      index.set(item.id, position);
   }
-  return changed ? result : (local as T[]);
+
+  if (!changed) return local as T[];
+  if (!leading && !afterLocal) return replaced ?? (local as T[]);
+
+  const base = replaced ?? local;
+  const result: T[] = [];
+  if (leading) {
+    for (const item of leading) result.push(item);
+  }
+  for (let i = 0; i < base.length; i++) {
+    const item = base[i];
+    if (item !== undefined) result.push(item);
+    const tail = afterLocal?.get(i);
+    if (tail) {
+      for (const extra of tail) result.push(extra);
+    }
+  }
+  return result;
 }
 
 /**

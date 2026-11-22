@@ -287,6 +287,7 @@ export function Lightbox({
           <img
             alt={image.alt || image.name || "图片"}
             className="rp-lightbox-img"
+            decoding="async"
             draggable={false}
             key={image.src}
             onError={() => setFailed((f) => ({ ...f, [index]: true }))}

@@ -574,7 +574,9 @@ const config = loadConfig();
 // Read with the rest of the configuration, where an empty variable is an absent one. See
 // `serverPort` in config.ts for what `process.env.PORT ?? …` did with `PORT=` instead.
 const port = config.port;
-const database = createDatabase(config.databaseUrl);
+const database = createDatabase(config.databaseUrl, {
+  max: config.databasePoolMax,
+});
 const localBackend = await createLocalConversations(database);
 // Every dispatch point asks this database whether its person paused the Bot. See agents/lifecycle.ts.
 configureBotLifecycle({ database });

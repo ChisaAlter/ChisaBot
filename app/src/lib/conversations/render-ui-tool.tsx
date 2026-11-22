@@ -45,33 +45,77 @@ type RenderUiFinal =
   | { kind: "empty" }
   | { kind: "card"; spec: Spec };
 
+const RENDER_UI_FINAL_CACHE_MAX = 64;
+const renderUiFinalCache = new Map<string, RenderUiFinal>();
+const specArgCache = new Map<string, string | undefined>();
+
+function lruGet<V>(cache: Map<string, V>, key: string): V | undefined {
+  if (!cache.has(key)) return undefined;
+  const hit = cache.get(key);
+  if (hit !== undefined) {
+    cache.delete(key);
+    cache.set(key, hit);
+  }
+  return hit;
+}
+
+function lruSet<V>(cache: Map<string, V>, key: string, value: V): void {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  if (cache.size > RENDER_UI_FINAL_CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+}
+
+export function clearRenderUiFinalCache(): void {
+  renderUiFinalCache.clear();
+  specArgCache.clear();
+}
+
 export function renderUiFinal(
   source: string | undefined,
   result: string | undefined,
 ): RenderUiFinal {
-  const verdict = inspectRenderUiSpec(source ?? "");
   const refused =
     typeof result === "string" && result.startsWith(REFUSAL_MARKER);
-  if (refused || !verdict.ok)
-    return { kind: "failed", issues: verdict.ok ? [] : verdict.issues };
-  // 先宽容处理（跳过坏节点、修正参数别名），与服务器校验的是同一份；写完后剪掉空区块。
-  const spec = source
-    ? pruneEmptySections(
-        sanitizeRenderUiSpec(parseRenderUiSpec(source, false))?.spec ?? null,
-      )
-    : null;
-  return spec?.root && spec.elements?.[spec.root]
-    ? { kind: "card", spec }
-    : { kind: "empty" };
+  const cacheKey = `${refused ? "1" : "0"}\0${source ?? ""}`;
+  const cached = lruGet(renderUiFinalCache, cacheKey);
+  if (cached) return cached;
+
+  const verdict = inspectRenderUiSpec(source ?? "");
+  let computed: RenderUiFinal;
+  if (refused || !verdict.ok) {
+    computed = { kind: "failed", issues: verdict.ok ? [] : verdict.issues };
+  } else {
+    // inspectRenderUiSpec 已执行 parseRenderUiSpec(source, false) 与 sanitizeRenderUiSpec，
+    // 直接复用其规范并剪掉空区块，避免同一份 JSONL 重复解析。
+    const spec = source ? pruneEmptySections(verdict.spec) : null;
+    computed =
+      spec?.root && spec.elements?.[spec.root]
+        ? { kind: "card", spec }
+        : { kind: "empty" };
+  }
+  lruSet(renderUiFinalCache, cacheKey, computed);
+  return computed;
 }
 
 function specArgument(args: string): string | undefined {
+  if (specArgCache.has(args)) {
+    const value = specArgCache.get(args);
+    specArgCache.delete(args);
+    specArgCache.set(args, value);
+    return value;
+  }
+  let value: string | undefined;
   try {
     const parsed = JSON.parse(args) as { spec?: unknown } | null;
-    return typeof parsed?.spec === "string" ? parsed.spec : undefined;
+    value = typeof parsed?.spec === "string" ? parsed.spec : undefined;
   } catch {
-    return undefined;
+    value = undefined;
   }
+  lruSet(specArgCache, args, value);
+  return value;
 }
 
 /** render_ui 完成后画没画出卡片（格式有误的那一行、画不出东西的都不算）。 */

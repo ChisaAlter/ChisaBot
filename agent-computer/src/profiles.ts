@@ -37,7 +37,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type BrowserContext, chromium, type Page } from "playwright";
 import { profileDirectoryFor } from "./bot-id";
-import { chooseEvictions, chooseIdle } from "./browser-eviction";
+import { chooseIdle, createCapEnforcer } from "./browser-eviction";
 import { browserRuntimeFromEnv } from "./browser-runtime";
 import { egressFor, egressLabel } from "./egress";
 import { numberFromEnv, settleWithin, withDeadline } from "./env";
@@ -49,13 +49,13 @@ import {
 } from "./session-cookies";
 import { whileNavigating } from "./start-page";
 import {
+  createTabMetadataCache,
   findTab,
   MAX_TABS,
   neighbourAfterClose,
   openTabs,
   RESTORE_TABS,
   readSavedTabs,
-  restorableUrl,
   type SavedTabs,
   savedTabsFrom,
   TAB_LIMIT_MESSAGE,
@@ -322,14 +322,23 @@ const IDLE_SWEEP_MS = 60_000;
  * Awaited before the context closes, so a follow loop cannot squeeze a relaunch into the gap.
  */
 export type BrowserClosed = (botId: string) => void | Promise<void>;
+export type TabsChanged = (botId: string) => void;
 
-export function createProfiles(root: string, onClosed: BrowserClosed) {
+export function createProfiles(
+  root: string,
+  onClosed: BrowserClosed,
+  onTabsChanged?: TabsChanged,
+) {
   type LiveBrowser = {
     context: BrowserContext;
     page: Page;
     startedAt: string;
     /** When this Bot last asked for its page. Decides what the cap and the sweep close. */
     usedAt: number;
+    /** Monotonic version incremented whenever tabs open, close, navigate, load, switch, or gain a favicon. */
+    tabsVersion: number;
+    /** Increment `tabsVersion` and notify live-screen watchers without polling CDP. */
+    bumpTabs: () => void;
     /** Point `page` at whatever is open now. Called on every page opening and closing. */
     retarget: () => void;
     /**
@@ -419,12 +428,20 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
    *
    * Least recently used first, which is the Bot that has been quiet longest. Called after a launch
    * rather than before, so the Bot that just asked is never the one closed.
+   *
+   * Exceeding `MAX_LIVE_BROWSERS` by 1-2 browsers evicts asynchronously (reentrancy-guarded) so
+   * the caller gets its new page without blocking 2-12s on `closeAndWait`; exceeding the hard
+   * watermark (`MAX_LIVE_BROWSERS + 2`) waits synchronously to prevent burst OOM.
    */
-  const enforceCap = async (): Promise<void> => {
-    for (const botId of chooseEvictions(live.entries(), MAX_LIVE_BROWSERS)) {
+  const capEnforcer = createCapEnforcer({
+    maxLive: MAX_LIVE_BROWSERS,
+    listEntries: () => [...live.entries()],
+    inFlightCount: () => closing.size,
+    evict: async (botId) => {
       await evict(botId, "the cap on running browsers was reached");
-    }
-  };
+    },
+  });
+  const enforceCap = (): Promise<void> => capEnforcer.enforce();
 
   /**
    * Close browsers nothing has touched for a while.
@@ -511,38 +528,15 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
     })().catch(() => undefined);
   }
 
-  async function describeTab(page: Page, active: boolean): Promise<TabInfo> {
-    const url = page.url();
-    const title = await within(page.title(), 800, "");
-    return {
-      id: tabIdOf(page),
-      url,
-      title: tabTitle(url, title),
-      active,
-      ...(await faviconOf(page)),
-    };
-  }
+  const tabMetaCache = createTabMetadataCache<Page>();
 
   /** 网页自己声明的图标，经浏览器自己的网络（同一个代理）取回，转成 data:，按地址缓存。 */
   const icons = new Map<string, string | null>();
-  async function faviconOf(page: Page): Promise<{ favicon?: string }> {
-    const url = page.url();
-    if (!restorableUrl(url)) return {};
-    let href: string | null = null;
-    try {
-      href = await within(
-        page.evaluate(() => {
-          const link = document.querySelector<HTMLLinkElement>(
-            'link[rel~="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]',
-          );
-          return link?.href || new URL("/favicon.ico", location.href).href;
-        }),
-        600,
-        null as string | null,
-      );
-    } catch {
-      href = null;
-    }
+  function faviconFromHref(
+    botId: string,
+    page: Page,
+    href: string | null,
+  ): { favicon?: string } {
     if (!href || !/^https?:\/\//i.test(href)) return {};
     if (icons.has(href)) {
       const known = icons.get(href);
@@ -557,7 +551,7 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
       try {
         const response = await page
           .context()
-          .request.get(href as string, { timeout: 4_000, maxRedirects: 3 });
+          .request.get(href, { timeout: 4_000, maxRedirects: 3 });
         if (!response.ok()) return;
         const body = await response.body();
         if (body.length === 0 || body.length > 64 * 1024) return;
@@ -572,15 +566,51 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
             : body[0] === 0x89
               ? "image/png"
               : "image/x-icon";
-        icons.set(
-          href as string,
-          `data:${mime};base64,${body.toString("base64")}`,
-        );
+        icons.set(href, `data:${mime};base64,${body.toString("base64")}`);
+        live.get(botId)?.bumpTabs();
       } catch {
         // 拿不到就画首字母。
       }
     })();
     return {};
+  }
+
+  async function describeTab(
+    botId: string,
+    page: Page,
+    active: boolean,
+    refresh?: boolean,
+  ): Promise<TabInfo> {
+    const resolved = await tabMetaCache.resolve(
+      page,
+      {
+        readTitle: (target) => within(target.title(), 800, ""),
+        readFaviconHref: async (target) => {
+          try {
+            return await within(
+              target.evaluate(() => {
+                const link = document.querySelector<HTMLLinkElement>(
+                  'link[rel~="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]',
+                );
+                return link?.href || new URL("/favicon.ico", location.href).href;
+              }),
+              600,
+              null as string | null,
+            );
+          } catch {
+            return null;
+          }
+        },
+      },
+      { refresh },
+    );
+    return {
+      id: tabIdOf(page),
+      url: resolved.url,
+      title: tabTitle(resolved.url, resolved.title),
+      active,
+      ...faviconFromHref(botId, page, resolved.faviconHref),
+    };
   }
 
   /** 正在运行的浏览器；没在运行就拉起来（开 / 切 / 关标签都要真的浏览器）。 */
@@ -716,12 +746,19 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
           page,
           startedAt: new Date().toISOString(),
           usedAt: Date.now(),
+          tabsVersion: 1,
+          bumpTabs: () => {},
           retarget: () => {},
           tabsChanged: () => {},
           ...(sessionCookies ? { sessionCookies } : {}),
         };
+        record.bumpTabs = () => {
+          record.tabsVersion += 1;
+          onTabsChanged?.(botId);
+        };
         let saveTimer: ReturnType<typeof setTimeout> | undefined;
         record.tabsChanged = () => {
+          record.bumpTabs();
           if (LOCAL_CHROME) return;
           if (saveTimer) clearTimeout(saveTimer);
           saveTimer = setTimeout(() => {
@@ -740,7 +777,18 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
         };
         const watchPage = (watched: Page) => {
           watched.on("framenavigated", (frame) => {
-            if (frame === watched.mainFrame()) record.tabsChanged();
+            if (frame === watched.mainFrame()) {
+              tabMetaCache.invalidate(watched);
+              record.tabsChanged();
+            }
+          });
+          watched.on("domcontentloaded", () => {
+            tabMetaCache.invalidate(watched);
+            record.bumpTabs();
+          });
+          watched.on("load", () => {
+            tabMetaCache.invalidate(watched, { keepFavicon: true });
+            record.bumpTabs();
           });
         };
         watchPage(page);
@@ -753,6 +801,7 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
           const next = pinned ?? chooseLivePage(context.pages());
           if (!next || next === record.page) return;
           record.page = next;
+          record.bumpTabs();
           console.info(
             JSON.stringify({
               type: "computer-page-changed",
@@ -772,11 +821,13 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
           // A popup closes itself when it succeeds, and the record must move back to the opener
           // rather than leave a closed page to be read as a dead browser.
           opened.on("close", () => {
+            tabMetaCache.delete(opened);
             record.retarget();
             record.tabsChanged();
           });
         });
         page.on("close", () => {
+          tabMetaCache.delete(page);
           record.retarget();
           record.tabsChanged();
         });
@@ -944,11 +995,19 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
       return sweepIdle();
     },
 
+    /** Monotonic tab metadata version for event-driven live-screen pushes; 0 when not running. */
+    tabsVersion(botId: string): number {
+      return live.get(botId)?.tabsVersion ?? 0;
+    },
+
     /**
      * 这个机器人的标签。浏览器没在运行时不去拉起它，只列出上次保存的（running: false），
      * 所以界面轮询标签不会把一个已经关掉的浏览器重新打开。
      */
-    async tabs(botId: string): Promise<TabsView> {
+    async tabs(
+      botId: string,
+      options?: { refresh?: boolean },
+    ): Promise<TabsView> {
       const record = live.get(botId);
       if (!record?.context.browser()?.isConnected()) {
         const saved = LOCAL_CHROME
@@ -969,7 +1028,9 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
       record.retarget();
       const pages = openTabs(record.context.pages());
       const tabs = await Promise.all(
-        pages.map((p) => describeTab(p, p === record.page)),
+        pages.map((p) =>
+          describeTab(botId, p, p === record.page, options?.refresh),
+        ),
       );
       return {
         running: true,

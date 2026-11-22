@@ -41,7 +41,7 @@ import { agentListQueryOptions } from "@/lib/agents/queries";
 import { dispatchComposerPrefill } from "@/lib/chat/quote-event";
 import { setBotUi } from "@/lib/chat/ui-memory";
 import { matchesHotkey } from "@/lib/hotkeys/hotkeys";
-import { useKeptVisible } from "@/lib/kept-visible";
+import { KeptVisibleContext, useKeptVisible } from "@/lib/kept-visible";
 import {
   lastHistoryEventWasPop,
   type OverlayCloseReason,
@@ -72,9 +72,8 @@ import { cn } from "@/lib/utils";
 import { useLivePanels } from "./live-panels-query";
 import {
   RailTasksActiveContext,
-  TasksRailCard,
   useRailTasksSummary,
-} from "./tasks-rail-card";
+} from "./rail-tasks-summary";
 
 const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
@@ -300,7 +299,8 @@ export function PanelRail({ className }: { className?: string }) {
    * 第一次加载时已有的卡片不算。
    */
   const railBotId = widthBot;
-  const live = useLivePanels(railBotId, { active: railVisible });
+  // 只观察共享缓存以检测新建面板（轮询节奏统一由当前可见且停在「面板」标签的 PanelRailBody / LivePanelList 控制）。
+  const live = useLivePanels(railBotId, { active: false });
   const seenPanels = useRef<{ bot?: string; ids: Set<string> } | null>(null);
   const liveItemsKey = live.data
     ? live.data.map((p) => `${p.id}:${p.status}`).join("\0")
@@ -587,6 +587,9 @@ function PanelRailBody({
   const hasLive = (liveList.data?.length ?? 0) > 0;
   const [liveMounted, setLiveMounted] = useState(hasLive);
   if (hasLive && !liveMounted) setLiveMounted(true);
+  // 「任务」卡片连同其 43 KB 样式表与详情弹窗仅在打开任务标签时按需加载，避免拖重全站首屏外壳。
+  const [tasksMounted, setTasksMounted] = useState(tab === "tasks");
+  if (tab === "tasks" && !tasksMounted) setTasksMounted(true);
 
   /*
    * 右栏顶部选项卡：「面板 | 任务 | 计算机（按需）」。
@@ -667,7 +670,12 @@ function PanelRailBody({
           ) : (
             <>
               {liveMounted || hasLive ? (
-                <LivePanelList botId={botId} drawer={drawer} width={width} />
+                <LivePanelList
+                  active={active && tab === "panels"}
+                  botId={botId}
+                  drawer={drawer}
+                  width={width}
+                />
               ) : null}
               {liveList.isSuccess && (liveList.data?.length ?? 0) === 0 ? (
                 <div className="rail-empty flex flex-col items-center gap-2.5">
@@ -707,14 +715,14 @@ function PanelRailBody({
       >
         <div className="glass-rail-scroll relative flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
           <RailTasksActiveContext.Provider value={active && tab === "tasks"}>
-            <TasksRailCard />
+            {tasksMounted ? <TasksRailCard /> : null}
           </RailTasksActiveContext.Provider>
         </div>
       </div>
 
       {canComputer && chat ? (
         <RailComputerPane
-          active={tab === "computer"}
+          active={active && tab === "computer"}
           agentId={chat.agentId}
           fallbackName={chat.fallbackName}
         />
@@ -867,7 +875,9 @@ function RailComputerPane({
       data-active={active}
       hidden={!active}
     >
-      <ComputerViewPanel agentId={agentId} name={name} variant="rail" />
+      <KeptVisibleContext.Provider value={active}>
+        <ComputerViewPanel agentId={agentId} name={name} variant="rail" />
+      </KeptVisibleContext.Provider>
     </div>
   );
 }
@@ -890,12 +900,19 @@ const ComputerViewPanel = lazyPart<{
 
 /** 实时面板卡片（json-render 渲染、图表、菜单）同理：数据在 live-panels-query 里先取，卡片按需加载。 */
 const LivePanelList = lazyPart<{
+  active?: boolean;
   botId: string;
   width?: number;
   drawer?: boolean;
 }>(
   () => import("./live-panels").then((m) => m.LivePanelList),
   <Skeleton className="h-24 w-full" />,
+);
+
+/** 右栏「任务」卡及其 43 KB 样式表：角标由 rail-tasks-summary 轻量查询驱动，卡片本体打开「任务」标签时再下载。 */
+const TasksRailCard = lazyPart(
+  () => import("./tasks-rail-card").then((m) => m.TasksRailCard),
+  <Skeleton className="h-28 w-full rounded-2xl" />,
 );
 
 function RailNote({ children }: { children: React.ReactNode }) {

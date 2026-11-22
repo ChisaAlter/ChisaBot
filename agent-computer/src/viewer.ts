@@ -49,7 +49,30 @@ export type ScreenViewer = {
   socket: unknown;
   notify: (reason: string) => void;
   send: (frame: unknown) => void;
+  /** Optional fast path receiving a frame serialized once across all viewers in `broadcast`. */
+  sendEncoded?: (encoded: string, frame: unknown) => void;
 };
+
+/** Single-connection backpressure limit for droppable live video frames (512 KiB). */
+export const MAX_VIEWER_BUFFERED_BYTES = 512 * 1024;
+
+/**
+ * Drop only video frames for a slow viewer whose socket buffer exceeded the high-water mark.
+ * Control / state payloads (`tabs`, `navigation`, `error`, `ping`) are never dropped, and a
+ * slow viewer never stalls other viewers or the screencast ack loop.
+ */
+export function shouldDropViewerFrame(
+  bufferedBytes: number,
+  frame: unknown,
+  maxBufferedBytes = MAX_VIEWER_BUFFERED_BYTES,
+): boolean {
+  if (bufferedBytes <= maxBufferedBytes) return false;
+  return (
+    Boolean(frame) &&
+    typeof frame === "object" &&
+    (frame as { type?: unknown }).type === "frame"
+  );
+}
 
 export type ViewerSlot = {
   /**
@@ -108,6 +131,7 @@ export function createViewerSlot(): ViewerSlot {
   let cast: Screencast | undefined;
   let cancelFollow: (() => void) | undefined;
   let lastFrame: unknown;
+  let lastEncoded: string | undefined;
   /*
    * Teardowns still running. Occupancy counts them, because a browser whose cast is still stopping is
    * not yet a Bot nobody is watching, and the session sweep reading otherwise would drop the control
@@ -132,15 +156,24 @@ export function createViewerSlot(): ViewerSlot {
     cancelFollow?.();
     cancelFollow = undefined;
     lastFrame = undefined;
+    lastEncoded = undefined;
     const current = cast;
     cast = undefined;
     return stopCast(current);
   }
 
   /** Best effort: a socket can be gone, and one dead window must not stop the others' frames. */
-  function deliver(viewer: ScreenViewer, frame: unknown): void {
+  function deliver(
+    viewer: ScreenViewer,
+    frame: unknown,
+    encoded?: string,
+  ): void {
     try {
-      viewer.send(frame);
+      if (viewer.sendEncoded !== undefined && encoded !== undefined) {
+        viewer.sendEncoded(encoded, frame);
+      } else {
+        viewer.send(frame);
+      }
     } catch {
       // The close handler would remove it, but a send can fail before that arrives and the last
       // viewer failing must still stop the cast rather than leave it encoding for nobody.
@@ -153,7 +186,14 @@ export function createViewerSlot(): ViewerSlot {
   return {
     join(viewer) {
       watching.set(viewer.socket, viewer);
-      if (lastFrame !== undefined) deliver(viewer, lastFrame);
+      if (lastFrame !== undefined) {
+        let encoded = lastEncoded;
+        if (viewer.sendEncoded !== undefined && encoded === undefined) {
+          encoded = JSON.stringify(lastFrame);
+          lastEncoded = encoded;
+        }
+        deliver(viewer, lastFrame, encoded);
+      }
       return watching.size === 1;
     },
 
@@ -171,6 +211,7 @@ export function createViewerSlot(): ViewerSlot {
       cancelFollow?.();
       cancelFollow = undefined;
       lastFrame = undefined;
+      lastEncoded = undefined;
       for (const viewer of all) {
         try {
           viewer.notify(reason);
@@ -226,9 +267,20 @@ export function createViewerSlot(): ViewerSlot {
     },
 
     broadcast(frame) {
-      if (frame && typeof frame === "object" && (frame as { type?: unknown }).type === "frame")
+      const isFrame =
+        Boolean(frame) &&
+        typeof frame === "object" &&
+        (frame as { type?: unknown }).type === "frame";
+      const currentViewers = [...watching.values()];
+      const needsEncoded = currentViewers.some(
+        (viewer) => viewer.sendEncoded !== undefined,
+      );
+      const encoded = needsEncoded ? JSON.stringify(frame) : undefined;
+      if (isFrame) {
         lastFrame = frame;
-      for (const viewer of [...watching.values()]) deliver(viewer, frame);
+        lastEncoded = encoded;
+      }
+      for (const viewer of currentViewers) deliver(viewer, frame, encoded);
     },
 
     latest() {

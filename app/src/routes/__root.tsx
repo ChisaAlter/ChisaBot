@@ -11,13 +11,24 @@ import { DesktopStrip } from "@/components/layout/desktop-strip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfirmHost } from "@/components/ui/confirm";
+import { AfterIdle, lazyPart } from "@/components/ui/lazy-part";
 import { PageLoaderHost } from "@/components/ui/page-loader";
 import { Toaster } from "@/components/ui/toast";
-import { UpdateBanner } from "@/components/update-banner";
-import { InstallHint } from "@/components/install-hint";
-import { PcLinkHint } from "@/components/pc-link-hint";
 import type { RouterContext } from "../router-context";
-import "@fontsource-variable/inter/wght.css";
+
+/*
+ * 根部低频提示横幅（有新版本、PWA 安装指引、PC 节点断连）不阻塞首屏渲染：
+ * 首屏画完且浏览器空闲后再下载挂载（与 `_authed.tsx` 同模式，DESIGN.md §41.5）。
+ */
+const UpdateBanner = lazyPart(() =>
+  import("@/components/update-banner").then((m) => m.UpdateBanner),
+);
+const InstallHint = lazyPart(() =>
+  import("@/components/install-hint").then((m) => m.InstallHint),
+);
+const PcLinkHint = lazyPart(() =>
+  import("@/components/pc-link-hint").then((m) => m.PcLinkHint),
+);
 
 export const Route = createRootRouteWithContext<RouterContext>()({
   component: RootComponent,
@@ -137,9 +148,11 @@ function RootComponent() {
           <ConfirmHost />
           <PageLoaderHost />
           <Toaster />
-          <UpdateBanner />
-          <InstallHint />
-          <PcLinkHint />
+          <AfterIdle>
+            <UpdateBanner />
+            <InstallHint />
+            <PcLinkHint />
+          </AfterIdle>
         </TooltipProvider>
       </ThemeProvider>
       </MotionConfig>

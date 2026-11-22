@@ -1,4 +1,4 @@
-import { type ComponentProps, memo, useContext, useRef } from "react";
+import { type ComponentProps, memo, useContext, useMemo, useRef } from "react";
 import {
   Block,
   type BlockProps,
@@ -13,6 +13,116 @@ import { STREAMDOWN_ZH } from "@/lib/chat/streamdown-zh";
 import { useSmoothText } from "@/lib/chat/use-smooth-text";
 import { workspaceLinks } from "@/lib/chat/workspace-links";
 import { useDeclaredBotId } from "@/lib/conversations/active-bot";
+
+const FENCE_LINE_RE = /^ {0,3}(?:```|~~~)/gm;
+const BACKTICK_FENCE_RE = /```/g;
+const COMPLEX_FENCE_RE = /`{4,}|~{3,}/;
+const ANCHOR_TAG_RE = /<a\s/i;
+const SEAL_MIN_CHUNK = 256;
+
+export function preprocessMarkdownText(
+  markdown: string,
+  bot: string | undefined,
+  origin: string,
+): string {
+  return workspaceLinks(
+    cjkFriendlyEmphasis(escapeUnknownTags(markdown)),
+    bot,
+    origin,
+  );
+}
+
+/**
+ * 流式 Markdown 三步预处理（escapeUnknownTags → cjkFriendlyEmphasis → workspaceLinks）增量封口器：
+ * 在安全的空行段落边界封口稳定前缀，避免 60fps 流式长回复每帧对全文重复跑三连正则。
+ * 与整段重跑结果保持严格逐字符等价；非安全边界自动回退整段处理。
+ */
+export function createIncrementalMarkdownPreprocess() {
+  let stableRaw = "";
+  let stableOut = "";
+  let lastRaw = "";
+  let lastOut = "";
+  let lastBot: string | undefined;
+  let lastOrigin = "";
+  let hasLast = false;
+
+  const reset = () => {
+    stableRaw = "";
+    stableOut = "";
+    hasLast = false;
+  };
+
+  return (
+    markdown: string,
+    bot: string | undefined,
+    origin: string,
+    live: boolean,
+  ): string => {
+    if (hasLast && markdown === lastRaw && bot === lastBot && origin === lastOrigin) {
+      return lastOut;
+    }
+    if (bot !== lastBot || origin !== lastOrigin) {
+      reset();
+    }
+    if (!live) {
+      reset();
+      const full = preprocessMarkdownText(markdown, bot, origin);
+      lastRaw = markdown;
+      lastOut = full;
+      lastBot = bot;
+      lastOrigin = origin;
+      hasLast = true;
+      return full;
+    }
+    if (stableRaw.length > 0 && !markdown.startsWith(stableRaw)) {
+      reset();
+    }
+    // 尝试将稳定前缀推进到最后一个安全的 `\n\n` 段落边界
+    if (markdown.length - stableRaw.length >= SEAL_MIN_CHUNK) {
+      let searchFrom = markdown.length - 1;
+      while (searchFrom > stableRaw.length + 1) {
+        const boundary = markdown.lastIndexOf("\n\n", searchFrom);
+        if (boundary <= stableRaw.length) break;
+        const candidateEnd = boundary + 2;
+        const nextChar = markdown[candidateEnd];
+        const prevChar = boundary > 0 ? markdown[boundary - 1] : "";
+        if (
+          nextChar !== undefined &&
+          !/\s/.test(nextChar) &&
+          prevChar !== "(" &&
+          prevChar !== "["
+        ) {
+          const added = markdown.slice(stableRaw.length, candidateEnd);
+          if (
+            !COMPLEX_FENCE_RE.test(added) &&
+            !ANCHOR_TAG_RE.test(added)
+          ) {
+            const fenceLines = added.match(FENCE_LINE_RE)?.length ?? 0;
+            const backticks = added.match(BACKTICK_FENCE_RE)?.length ?? 0;
+            if (fenceLines === backticks && backticks % 2 === 0) {
+              stableOut += preprocessMarkdownText(added, bot, origin);
+              stableRaw = markdown.slice(0, candidateEnd);
+              break;
+            }
+          }
+        }
+        searchFrom = boundary - 1;
+      }
+    }
+    const tailRaw =
+      stableRaw.length > 0 ? markdown.slice(stableRaw.length) : markdown;
+    const out =
+      stableRaw.length > 0
+        ? stableOut + preprocessMarkdownText(tailRaw, bot, origin)
+        : preprocessMarkdownText(tailRaw, bot, origin);
+    lastRaw = markdown;
+    lastOut = out;
+    lastBot = bot;
+    lastOrigin = origin;
+    hasLast = true;
+    return out;
+  };
+}
 
 /**
  * Streamdown 的块组件换成带解析缓存的版本（md-cache.ts）：渲染仍交给 Streamdown 自己的 `Block`，
@@ -58,6 +168,19 @@ export const SmoothStreamdown = memo(function SmoothStreamdown({
   if (streaming === false) tail.current.live = false;
   else if (streaming === true || children !== first.current)
     tail.current.live = true;
+  const isLive = tail.current.live;
+  const incPreprocessRef = useRef<ReturnType<
+    typeof createIncrementalMarkdownPreprocess
+  > | null>(null);
+  const processed = useMemo(() => {
+    if (!isLive) {
+      return preprocessMarkdownText(shown, bot, origin);
+    }
+    if (!incPreprocessRef.current) {
+      incPreprocessRef.current = createIncrementalMarkdownPreprocess();
+    }
+    return incPreprocessRef.current(shown, bot, origin, true);
+  }, [shown, bot, origin, isLive]);
   const incRef = useRef<ReturnType<typeof createIncrementalBlockParser> | null>(
     null,
   );
@@ -79,11 +202,7 @@ export const SmoothStreamdown = memo(function SmoothStreamdown({
         parseMarkdownIntoBlocksFn={split}
         {...props}
       >
-        {workspaceLinks(
-          cjkFriendlyEmphasis(escapeUnknownTags(shown)),
-          bot,
-          origin,
-        )}
+        {processed}
       </Streamdown>
     </MdTailContext.Provider>
   );

@@ -24,9 +24,9 @@ done
 # 2) nginx clears Local-Caller on every app proxy
 NGINX=deploy/public/nginx.conf
 test -f "$NGINX" || fail "missing $NGINX"
-passes=$(grep -c 'proxy_pass http://127.0.0.1:3001;' "$NGINX" || true)
+passes=$(grep -Ec '^[[:space:]]*proxy_pass[[:space:]]+http://(127\.0\.0\.1:3001|chisabot_api)([/;]|$)' "$NGINX" || true)
 clears=$(grep -c 'proxy_set_header X-ChisaBot-Local-Caller "";' "$NGINX" || true)
-[ "$passes" -gt 0 ] || fail "nginx has no app proxy_pass"
+[ "$passes" -ge 6 ] || fail "nginx has too few app proxy_pass ($passes < 6)"
 [ "$clears" -ge "$passes" ] || fail "nginx Local-Caller clears ($clears) < app proxies ($passes)"
 # 审计 #5：真实客户端 IP 只从 Cloudflare 网段的 CF-Connecting-IP 取
 grep -Eq '^[[:space:]]*real_ip_header[[:space:]]+CF-Connecting-IP;' "$NGINX" || fail "nginx has no real_ip_header CF-Connecting-IP"
