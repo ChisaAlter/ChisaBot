@@ -158,6 +158,7 @@
 | [150](#150-pc-右上角窗口控制键恢复磨砂玻璃角托与高对比图标保护2026-11-21)                                  | PC `.win-ctrls` 恢复四档 `--lg-surface-strong` + `--lg-blur` 磨砂角托、`1.25px` 描边、光学字缘保护并跳过液态位移滤镜 | 2026-11-21                                                                 |
 | [151](#151-聊天思考胶囊玻璃质感统一底部锚定不漂移快照顺序保护与工具只读失败收敛2026-11-22)                 | 状态/思考胶囊恢复四档磨砂模糊、固定底部槽与忙碌态留白收回、叶子流式结束零回缩、快照顺序修复与只读/前置失败收敛   | 2026-11-22                                                                 |
 | [152](#152-pc-独立更新进度窗口极简改版2026-11-22)                                                             | PC 独立更新窗口改为极简纯白/深炭全窗居中进度布局，支持 —/□/×、实时进度、原位重启与手动下载链接                     | 2026-11-22                                                                 |
+| [153](#153-桌面端全面流畅度治理windows-小窗原子落位与竖屏面板零回跳2026-11-22)                               | 桌面端全面流畅度治理、Windows 小窗单步原子落位、竖屏面板开关零回跳、滚动区轻磨砂与防复发性能红线                     | 2026-11-22                                                                 |
 
 ## 0. 总原则
 
@@ -3119,6 +3120,25 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
   - `pc/src/ui/update.js` 通过纯函数 `deriveUpdateView` 集中驱动 `checking` / `available` / `downloading` / `verifying` / `downloaded` / `error` / `none` / `idle` 全部状态；预加载桥通过 `update:state` 与 `window:local-maximized` 实时同步。
 - **安全手动下载链接**：`pc/src/build-config.js` 的 `feedToDownloadPage` 与 `resolveManualDownloadUrl` 按 `当前更新源 → resolveFeed → publish.url` 顺序解析 `https://` 地址，并将 GitHub Releases generic 源 `.../releases/latest/download/` 规范转换为 `.../releases/latest`；主进程 `update:download-latest` 校验 `https://` 后调用 `shell.openExternal`。
 - **验证**：`pc/test/update-window.check.js`、`pc/test/build-config.check.js`、`pc/test/window-chrome.check.js`、`pc/test/compact.check.js`、`pc/test/update.check.js`、`app/tests/pc-local-web-version.test.tsx` 与 Electron 实机截图验收（`pc/scripts/shots/main.js --only=update`）。
+
+---
+
+## 153. 桌面端全面流畅度治理、Windows 小窗原子落位与竖屏面板零回跳（2026-11-22）
+
+- **背景与四大域根因**：针对桌面端「竖屏/小窗切换卡死数秒、竖屏开关面板后对话记录先倒退再平滑滑回、常规滚动/打字/弹窗/流式回复整体卡顿」三类高频体验问题开展全链路代码与 Chrome Trace 实机审计，完整根因清单与硬红线沉淀于 [docs/desktop-performance-guardrails.md](docs/desktop-performance-guardrails.md)：
+  1. **PC Electron 壳层**：Windows 小窗切换用 16ms `setTimeout` 循环调用 15 次 `win.setBounds()`（触发连续 Win32 重排与全屏磨砂重绘，且最大化进出二次闪跳）；`local-web.js` 热路径同步 `fs.existsSync`/`statSync` 与全站 API/SSE 经主进程 JS 逐块拷贝；`onBeforeRequest` 逐请求 `new URL` + 正则白名单；更新下载进度高频同步读盘 `refreshTray()`；前端双份 `useDesktopWindow()` 250ms 轮询双写 `<html>`。
+  2. **竖屏滚动与锚点回跳**：`< 1280px` 面板 Sheet 开关卸载重挂带 `presenceRef("has-narrow-rail")` 的按钮导致消息列 `padding-right` 切换（`30↔16px`），触发 Blink 锚定抑制且 `SettleAtEnd.reflowed()` 仅判 `clientWidth` 漏判；宽度重排支路走 `smooth` 且 `MessageScroller.handleResize` 传 `behavior: "auto"` 在 `.scroll-smooth` 下退化为平滑滚动重启；`ResizeObserver` 默认 `content-box` 漏检 `--chat-composer-h` 改 `padding-bottom`；滚动热路径 `We()` 反复 `getComputedStyle`、`K(s)` 无脏检查写属性与 `onScroll` 写后读 `getBoundingClientRect()` 触发数十次全树样式重算。
+  3. **渲染合成、玻璃材质与 CSS/DOM**：滚动区百余条气泡叠加 `20px/28px` 大半径 `backdrop-filter` 且 `liquid` 未跳过气泡/卡片触发 SVG 透镜风暴；`liquid-glass.ts` 在默认 `mist` 下仍常驻全树 `MutationObserver` + 捕获 `scroll` 扫描 59 选择器，`liquid` 模式下 `sample()` 读写交错引发 O(N) 强排；全屏弹窗/抽屉/灯箱遮罩叠加 `backdrop-blur-*`、菜单/浮层/`.hk-drawer` 缺 `glass-hold`；`html[data-resizing]` 缺纯过渡抑制且气泡挂 7 项 `@property` 过渡；`.glass-shell` 双层模糊 `text-shadow` 波及长文气泡；壁纸态冗余 4 层背景与天空 1s `tick()` 未停；历史气泡残留 `<motion.div>` `transform: translateY(0px)` 合成层；大容器 `:has()` 与 7 层重投影残留。
+  4. **React 重渲染与主线程阻塞**：`ActiveBotProvider` 伪 `useRef` 与 `ConversationScopeProvider` 裸 rest 对象击穿 5 层 `React.memo` 唤醒所有保活频道；`useThreadActivity` 非稳定引用导致连接重建与收件箱守卫失效；`ChannelChat` 订阅未过滤全仓 `QueryCache`；隐藏/折叠右栏持续 2.5s–5s 轮询；`ChatTranscript` 未记忆化、`compactTurns` $O(N^2)$ 与逐气泡查 `speechStatus`；`ToggleTip` 热路径调用 `flushSync`；`ComposerDock` 全子树 `MutationObserver` 与拖拽每帧 `setState`；`ui-memory.ts` 150ms 全量剪枝写 `localStorage`；`AppSidebar` 行未 `memo` 与菜单预挂载及 `ThemeProvider`/`RichUiProvider` 未记忆化。
+- **方案落地与视觉边界取舍**：
+  - **Windows 小窗收敛为单步原子落位**：在 §138 基础上将 Windows/Linux 小窗切换由 240ms/16ms JS 补间收敛为单次原子 `win.setBounds(target)`（不碰 `opacity`），消除最大化二次闪跳，macOS 保留原生动画；`local-web.js` 启用启动预建内存索引、有界 LRU 缓存与非导航流量 `ses.fetch` 零拷贝直通；预编译出网白名单并缓存托盘图标与去重刷新；`useDesktopWindow()` 收口为单一 `useSyncExternalStore` 实例。
+  - **竖屏面板开关零回跳契约**：`PanelRail` 顶层以 `usePresenceFlag("has-narrow-rail", "body", !wide)` 固定占位，保证 `< 1280px` 开关抽屉全程 `padding-right` 不变；`SettleAtEnd` 与 `MessageScrollerContent` 统一 `border-box` 观测净内容宽，宽度重排与 `handleResize` 一律走 `behavior: "instant"`；`MessageScroller` 缓存块向 padding、脏检查去重属性并改为 Read-before-Write。
+  - **保留 §147/§148 磨砂质感前提下分层降载**：大面板/输入框/角托维持四档原模糊与拉伸期零黑闪（`html[data-resizing]` 仅关 `transition: none`，严禁切实底或关模糊）；滚动区气泡与对话卡片以 0 特异度 `:where` 收敛为轻磨砂（`mist` `8px` / `frosted` `10px` / `crystal` `6px`）并禁气泡内二次嵌套模糊；菜单/小浮层收敛至 `12px` 并补全退出去模糊与 `glass-hold`；全屏遮罩移除 `backdrop-blur-*` 保留轻暗罩；`liquid-glass.ts` 非液态休眠、气泡/卡片入 `LENS_SKIP_SELECTOR`、位移图降采样且 `sample()` 三阶段读写分离；长文气泡豁免 `text-shadow`、历史气泡改普通 `<div>`、壁纸态隐藏冗余层并暂停引擎后台 `setInterval`、清零大容器 `:has()`。
+  - **React 状态与渲染链路稳态化**：拆分稳定 Context、记忆化 Provider/Hook 与消息管线（`compactTurns` $O(N)$、顶层按需 `speechStatus`）、过滤 `QueryCache`、按可见性门控右栏轮询、移除 `ToggleTip` 的 `flushSync`、拖拽直写 DOM style、写盘防抖放宽至 600ms 并延迟挂载未打开的侧栏菜单。
+- **实测结果与自动门禁**：
+  - 实机 Chrome/Edge 复测：Windows 小窗进出总耗时 **`5,371 → 547ms (-90%)`** / **`3,746 → 631ms (-83%)`**；`420×860` 开关面板 **`Δsh 1,980px → 0px`、`maxGap 0px`、`smoothCalls = 0`**；`liquid` 流式 **`2.2 → 49 fps (+2127%)`**、`p95 -96%`；`mist` 滚动 **`3.6 → 7.3 fps (+103%)`**（复测最优 `10.6`）、`p95 -55%`；桌面 `1280×840` 1x CPU 弹窗+侧栏 **`maxInpMs 240 → 184ms`**、`paint -71%`；双视口截图抽检确认磨砂质感自然且背景气泡零位移。
+  - 门禁覆盖：`app/tests/narrow-rail-sheet-stability.test.tsx`、`app/tests/settle-reflow-instant.test.tsx`、`app/tests/runtime-render-stability.test.tsx`、`app/tests/liquid-glass-screen-ink.test.ts`、`app/tests/no-container-has.test.ts`、`app/tests/desktop-window-edge-clip.test.tsx`、`pc/test/compact.check.js`、`pc/test/local-web.check.js` 及真浏览器脚本 `tests/chat-scroll/portrait-panel-jump.mjs`、`tests/chat-scroll/work-card-jump.mjs`。
+
 
 
 

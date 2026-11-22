@@ -13,6 +13,7 @@
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { compareVersion } = require("./updater");
 
 const META_NAME = "chisabot-web-meta.json";
@@ -20,6 +21,13 @@ const META_NAME = "chisabot-web-meta.json";
 /** 这些前缀永远由服务端/网关直接处理，即使在本地前端模式下也绝不拦截到本地文件。 */
 const SERVER_ONLY_PREFIX_RE =
   /^\/(?:api|auth|login|sign|sign-in|logout|p|downloads|magpie|magpie-admin|workspace|node-agent|_chisabot|_internal|v1|v1beta)(?:\/|$)/;
+/** 需要保留原生 302 重定向语义（触发 webContents will-redirect / Set-Cookie）的鉴权与会话路径。 */
+const REDIRECT_SENSITIVE_PREFIX_RE =
+  /^\/(?:auth|login|sign|sign-in|logout)(?:\/|$)/;
+
+/** 本地 bundle 内存缓存阈值：单文件上限 2 MiB，总缓存上限 24 MiB。 */
+const MAX_CACHE_FILE_BYTES = 2 * 1024 * 1024;
+const MAX_CACHE_TOTAL_BYTES = 24 * 1024 * 1024;
 
 const MIME_BY_EXT = {
   ".html": "text/html; charset=utf-8",
@@ -104,6 +112,68 @@ function readBundleMeta(bundleDir, localVersion, fsImpl = fs) {
     hasLocalBundle,
     bundledVersion: metaVersion || String(localVersion || "").trim(),
   };
+}
+
+/** 启动时预建本地 bundle 文件路由索引表（规范化 POSIX 路径 → 绝对文件路径），消除请求热路径同步 stat。 */
+function buildBundleFileIndex(bundleDir, fsImpl = fs) {
+  if (!bundleDir || typeof fsImpl.readdirSync !== "function") return null;
+  const rootDir = path.resolve(bundleDir);
+  const index = new Map();
+  const walk = (dir, posixPrefix) => {
+    let entries;
+    try {
+      entries = fsImpl.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const name = typeof entry === "string" ? entry : entry.name;
+      if (!name || name === "." || name === "..") continue;
+      const full = path.join(dir, name);
+      const nextPosix = `${posixPrefix}/${name}`;
+      let isDir = false;
+      let isFile = false;
+      if (typeof entry === "object" && entry !== null) {
+        isDir = typeof entry.isDirectory === "function" && entry.isDirectory();
+        isFile = typeof entry.isFile === "function" && entry.isFile();
+      } else {
+        try {
+          const st = fsImpl.statSync(full);
+          isDir = st.isDirectory();
+          isFile = st.isFile();
+        } catch {
+          continue;
+        }
+      }
+      if (isDir) {
+        walk(full, nextPosix);
+      } else if (isFile) {
+        index.set(nextPosix, full);
+      }
+    }
+  };
+  walk(rootDir, "");
+  return index;
+}
+
+/** 用预建索引表 O(1) 解析 URL pathname，拒绝 `..` 逃逸、反斜杠与空字节。 */
+function lookupIndexedBundleFile(bundleIndex, pathname) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname || "/");
+  } catch {
+    return null;
+  }
+  if (!decoded || decoded.includes("\0") || decoded.includes("\\")) return null;
+  const segments = decoded.split("/");
+  const clean = [];
+  for (const seg of segments) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") return null;
+    clean.push(seg);
+  }
+  if (clean.length === 0) return null;
+  return bundleIndex.get(`/${clean.join("/")}`) || null;
 }
 
 /** 将 URL pathname 安全映射到本地 web-bundle 目录下的普通文件，阻止 `..` 逃逸与空字节。 */
@@ -194,7 +264,60 @@ function createLocalWebController({
     localVersion,
     fsImpl,
   );
+  const bundleIndex = hasLocalBundle
+    ? buildBundleFileIndex(resolvedBundleDir, fsImpl)
+    : null;
+  const indexHtmlPath = hasLocalBundle
+    ? bundleIndex?.get("/index.html") || path.join(resolvedBundleDir, "index.html")
+    : "";
+  /** 有界内存字节缓存（LRU 插入序）：热静态资源零磁盘 I/O，超出上限按最旧淘汰。 */
+  const fileCache = new Map();
+  const inflightReads = new Map();
+  let fileCacheBytes = 0;
   const serverVersions = new Map();
+
+  function rememberFileBytes(filePath, bytes) {
+    if (!bytes || bytes.byteLength > MAX_CACHE_FILE_BYTES) return;
+    if (fileCache.has(filePath)) {
+      const prev = fileCache.get(filePath);
+      fileCacheBytes -= prev.byteLength;
+      fileCache.delete(filePath);
+    }
+    while (
+      fileCache.size > 0 &&
+      fileCacheBytes + bytes.byteLength > MAX_CACHE_TOTAL_BYTES
+    ) {
+      const oldestKey = fileCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      const oldest = fileCache.get(oldestKey);
+      fileCache.delete(oldestKey);
+      fileCacheBytes -= oldest.byteLength;
+    }
+    fileCache.set(filePath, bytes);
+    fileCacheBytes += bytes.byteLength;
+  }
+
+  async function readBundleBytes(filePath) {
+    const cached = fileCache.get(filePath);
+    if (cached) {
+      fileCache.delete(filePath);
+      fileCache.set(filePath, cached);
+      return cached;
+    }
+    const existing = inflightReads.get(filePath);
+    if (existing) return existing;
+    const task = fsp
+      .readFile(filePath)
+      .then((bytes) => {
+        rememberFileBytes(filePath, bytes);
+        return bytes;
+      })
+      .finally(() => {
+        inflightReads.delete(filePath);
+      });
+    inflightReads.set(filePath, task);
+    return task;
+  }
 
   function activeMode(origin) {
     if (!hasLocalBundle || !origin) return "remote";
@@ -328,11 +451,9 @@ function createLocalWebController({
     }
 
     if (parsed.pathname !== "/") {
-      const filePath = resolveBundleFile(
-        resolvedBundleDir,
-        parsed.pathname,
-        fsImpl,
-      );
+      const filePath = bundleIndex
+        ? lookupIndexedBundleFile(bundleIndex, parsed.pathname)
+        : resolveBundleFile(resolvedBundleDir, parsed.pathname, fsImpl);
       if (filePath) {
         return {
           action: "local-file",
@@ -371,7 +492,7 @@ function createLocalWebController({
         sameServer: true,
         pathname: parsed.pathname,
         origin: parsed.origin,
-        filePath: path.join(resolvedBundleDir, "index.html"),
+        filePath: indexHtmlPath || path.join(resolvedBundleDir, "index.html"),
         contentType: "text/html; charset=utf-8",
         cacheControl: "no-cache",
       };
@@ -513,12 +634,91 @@ function createLocalWebController({
     });
   }
 
+  function needsManualRedirect(request, decision) {
+    if (!decision.sameServer) return false;
+    if (REDIRECT_SENSITIVE_PREFIX_RE.test(decision.pathname)) return true;
+    const dest = readHeader(request.headers, "sec-fetch-dest").toLowerCase();
+    const mode = readHeader(request.headers, "sec-fetch-mode").toLowerCase();
+    const upgradeReq = readHeader(request.headers, "upgrade-insecure-requests");
+    return dest === "document" || mode === "navigate" || upgradeReq === "1";
+  }
+
+  function resolveDirectFetch(ses) {
+    if (ses && typeof ses.fetch === "function") {
+      return (input, init) => ses.fetch(input, init);
+    }
+    if (netImpl && typeof netImpl.fetch === "function") {
+      return (input, init) => netImpl.fetch(input, init);
+    }
+    return null;
+  }
+
+  /**
+   * 零 JS chunk 拷贝透传（Electron Session.fetch / net.fetch + bypassCustomProtocolHandlers）：
+   * 适用于非导航 API / 静态资源 / SSE / 外域请求；不经 EventEmitter 逐块过桥。
+   * 对需要 302 will-redirect 语义的文档导航与鉴权路径仍走 forwardWithNetRequest（Electron fetch manual redirect 会 reject）。
+   */
+  async function forwardWithDirectFetch(request, directFetch, decision) {
+    const method = String(request.method || "GET").toUpperCase();
+    const sniffVersion =
+      decision.sameServer &&
+      method === "GET" &&
+      decision.pathname === "/api/version";
+    let fetchInput = request;
+    if (
+      decision.sameServer &&
+      method !== "GET" &&
+      method !== "HEAD" &&
+      decision.origin &&
+      !readHeader(request.headers, "origin")
+    ) {
+      const headers = new Headers(request.headers);
+      headers.set("Origin", decision.origin);
+      fetchInput = new Request(request, { headers });
+    }
+    const response = await directFetch(fetchInput, {
+      bypassCustomProtocolHandlers: true,
+    });
+    if (sniffVersion && response.status >= 200 && response.status < 300) {
+      try {
+        const cloned = response.clone();
+        void cloned
+          .json()
+          .then((parsed) => {
+            if (typeof parsed?.version === "string") {
+              recordServerVersion(decision.origin, parsed.version);
+            }
+          })
+          .catch(() => {});
+      } catch {}
+    }
+    const enc = readHeader(response.headers, "content-encoding")
+      .trim()
+      .toLowerCase();
+    const isEncoded = Boolean(enc && enc !== "identity");
+    if (method !== "HEAD" && !NO_BODY_STATUS.has(response.status) && isEncoded) {
+      const outHeaders = new Headers(response.headers);
+      outHeaders.delete("content-encoding");
+      outHeaders.delete("content-length");
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: outHeaders,
+      });
+    }
+    return response;
+  }
+
   function installSessionProtocol(ses) {
     if (!ses?.protocol || typeof ses.protocol.handle !== "function") {
       return false;
     }
+    // 无本地内置前端时无需劫持全站 http/https，直接走 Chromium 原生网络管线。
+    if (!hasLocalBundle) return false;
     if (installedSessions.has(ses)) return false;
     installedSessions.add(ses);
+
+    const directFetch = resolveDirectFetch(ses);
 
     const handle = async (request) => {
       const decision = classifyRequest({
@@ -529,10 +729,19 @@ function createLocalWebController({
 
       if (decision.action === "local-file") {
         try {
-          const bytes = await fsp.readFile(decision.filePath);
           const isHead =
             String(request.method || "GET").toUpperCase() === "HEAD";
-          return new Response(isHead ? null : bytes, {
+          if (isHead) {
+            return new Response(null, {
+              status: 200,
+              headers: {
+                "content-type": decision.contentType,
+                "cache-control": decision.cacheControl,
+              },
+            });
+          }
+          const bytes = await readBundleBytes(decision.filePath);
+          return new Response(bytes, {
             status: 200,
             headers: {
               "content-type": decision.contentType,
@@ -540,8 +749,19 @@ function createLocalWebController({
             },
           });
         } catch {
-          // 读取失败时回落网络透传，避免白屏。
+          // 读本地缓存失败时尝试直接流式 file:// 或回落网络透传，避免白屏。
+          if (directFetch) {
+            try {
+              return await directFetch(pathToFileURL(decision.filePath).href, {
+                bypassCustomProtocolHandlers: true,
+              });
+            } catch {}
+          }
         }
+      }
+
+      if (directFetch && !needsManualRedirect(request, decision)) {
+        return forwardWithDirectFetch(request, directFetch, decision);
       }
 
       return forwardWithNetRequest(request, ses, decision);

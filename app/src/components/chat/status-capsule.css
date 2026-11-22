@@ -44,6 +44,7 @@
   border: 2px solid color-mix(in srgb, var(--accent-blue) 22%, transparent);
   border-top-color: var(--accent-blue);
   animation: rs-spin 0.9s linear infinite;
+  will-change: transform;
 }
 .rs-capsule-label {
   min-width: 0;

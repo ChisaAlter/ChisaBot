@@ -9,13 +9,15 @@ import {
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Component,
+  type ErrorInfo,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   useCallback,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
-import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { ToggleTip } from "@/components/layout/glass-topbar";
 import {
   DropdownMenu,
@@ -33,11 +35,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { useCurrentBotChat } from "@/lib/agents/bot-chat-context";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { dispatchComposerPrefill } from "@/lib/chat/quote-event";
 import { setBotUi } from "@/lib/chat/ui-memory";
 import { matchesHotkey } from "@/lib/hotkeys/hotkeys";
+import { useKeptVisible } from "@/lib/kept-visible";
 import {
   lastHistoryEventWasPop,
   type OverlayCloseReason,
@@ -63,10 +67,14 @@ import {
   readStoredPreference,
   writeStoredPreference,
 } from "@/lib/preference-storage";
-import { presenceRef } from "@/lib/presence-flag";
+import { usePresenceFlag } from "@/lib/presence-flag";
 import { cn } from "@/lib/utils";
 import { useLivePanels } from "./live-panels-query";
-import { TasksRailCard, useRailTasksSummary } from "./tasks-rail-card";
+import {
+  RailTasksActiveContext,
+  TasksRailCard,
+  useRailTasksSummary,
+} from "./tasks-rail-card";
 
 const WIDTH_KEY = "chisabot-panel-rail-width";
 const MIN_WIDTH = 300;
@@ -235,6 +243,12 @@ export function PanelRail({ className }: { className?: string }) {
 
   const wide = useWideForRail();
   const sheetOpen = usePanelSheetOpen();
+  const onScreen = useKeptVisible();
+  const railVisible = (wide ? open : sheetOpen) && onScreen;
+  // 窄窗口（< 1280px）期间全程保持 body[data-has-narrow-rail]：以前绑在条件渲染的 .rail-tab.is-narrow 上，
+  // 开关面板抽屉会反复卸载/重挂该属性，改写 [data-testid="chat-transcript"] 的 padding-right，
+  // 抑制浏览器 overflow-anchor 并触发整列重折行与回跳下滑。
+  usePresenceFlag("has-narrow-rail", "body", !wide);
   // 谁打开的抽屉：关掉后把焦点还给它。右边缘把手打开时它自己已被卸载，这里会是 null，回落到把手。
   const sheetOpener = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -286,7 +300,7 @@ export function PanelRail({ className }: { className?: string }) {
    * 第一次加载时已有的卡片不算。
    */
   const railBotId = widthBot;
-  const live = useLivePanels(railBotId);
+  const live = useLivePanels(railBotId, { active: railVisible });
   const seenPanels = useRef<{ bot?: string; ids: Set<string> } | null>(null);
   const liveItemsKey = live.data
     ? live.data.map((p) => `${p.id}:${p.status}`).join("\0")
@@ -310,7 +324,8 @@ export function PanelRail({ className }: { className?: string }) {
       for (const p of items) seen.ids.add(p.id);
       if (!fresh.some((p) => p.status === "building")) return;
       const current = latestChat.current;
-      if (current?.canComputer && current.computerOpen) current.toggleComputer();
+      if (current?.canComputer && current.computerOpen)
+        current.toggleComputer();
       if (wide) setPanelRailOpen(true);
       else openPanelSheet("user");
     },
@@ -338,13 +353,16 @@ export function PanelRail({ className }: { className?: string }) {
   // 抽屉和常驻栏用同一张卡片、同一个内容宽度；24px 是常驻栏左右的留边。
   const cardWidth = width - CARD_INSET;
   const panelBody = (
-    <PanelRailBody
-      controlsId={wide ? "chisabot-panel-rail" : "chisabot-panel-sheet"}
-      drawer={!wide}
-      onCollapse={wide ? collapseWide : closeSheet}
-      showHotkey={wide}
-      width={width}
-    />
+    <PanelRailErrorBoundary resetKey={railBotId ?? ""}>
+      <PanelRailBody
+        active={railVisible}
+        controlsId={wide ? "chisabot-panel-rail" : "chisabot-panel-sheet"}
+        drawer={!wide}
+        onCollapse={wide ? collapseWide : closeSheet}
+        showHotkey={wide}
+        width={width}
+      />
+    </PanelRailErrorBoundary>
   );
 
   if (!wide) {
@@ -358,7 +376,6 @@ export function PanelRail({ className }: { className?: string }) {
               aria-expanded={false}
               aria-label={"打开面板"}
               className="rail-tab is-narrow"
-              ref={presenceRef("has-narrow-rail")}
               onClick={() => openPanelSheet("user")}
               type="button"
             >
@@ -485,13 +502,62 @@ function PanelRailHandle({ open }: { open: boolean }) {
   );
 }
 
+type PanelRailErrorBoundaryState = { hasError: boolean };
+
+/** 局部隔离右栏面板/任务/计算机渲染异常，避免单个卡片数据结构问题拖垮整页外壳。 */
+class PanelRailErrorBoundary extends Component<
+  { children: ReactNode; resetKey?: string },
+  PanelRailErrorBoundaryState
+> {
+  override state: PanelRailErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): PanelRailErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  override componentDidUpdate(prevProps: { resetKey?: string }) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  override componentDidCatch(_error: Error, _info: ErrorInfo) {}
+
+  override render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
+          data-testid="rail-error-fallback"
+          role="alert"
+        >
+          <p className="text-[13px] text-[var(--ink-2)]">
+            {"右栏暂时无法显示"}
+          </p>
+          <button
+            className="rounded-full border border-border/60 bg-background/70 px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted"
+            onClick={() => this.setState({ hasError: false })}
+            type="button"
+          >
+            {"重试"}
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function PanelRailBody({
+  active,
   onCollapse,
   controlsId,
   showHotkey,
   width,
   drawer,
 }: {
+  /** 右栏当前处于可见展开态（折叠、抽屉关闭或隐藏在设置页后为 false，暂停后台轮询）。 */
+  active: boolean;
   onCollapse: () => void;
   controlsId: string;
   showHotkey: boolean;
@@ -512,8 +578,10 @@ function PanelRailBody({
   );
   const tab: RailTab =
     canComputer && chat?.computerOpen ? "computer" : innerTab;
-  const tasksSummary = useRailTasksSummary();
-  const liveList = useLivePanels(botId);
+  const tasksSummary = useRailTasksSummary(active);
+  const liveList = useLivePanels(botId, {
+    active: active && tab === "panels",
+  });
   // 没有面板时不加载卡片渲染（json-render、图表……，按需块）；一旦有过就一直挂着，
   // 删掉最后一张后「撤销」还要靠 LivePanelList 里的 mutation。
   const hasLive = (liveList.data?.length ?? 0) > 0;
@@ -586,6 +654,16 @@ function PanelRailBody({
             <RailNote>
               {rosterPending ? "正在加载机器人…" : "还没有可用的机器人。"}
             </RailNote>
+          ) : liveList.isPending && !liveMounted && !hasLive ? (
+            <div
+              aria-busy="true"
+              className="flex flex-col gap-3 p-1"
+              data-testid="rail-panels-skeleton"
+              role="status"
+            >
+              <Skeleton className="h-28 w-full rounded-2xl" />
+              <Skeleton className="h-20 w-full rounded-2xl" />
+            </div>
           ) : (
             <>
               {liveMounted || hasLive ? (
@@ -628,7 +706,9 @@ function PanelRailBody({
         hidden={tab !== "tasks"}
       >
         <div className="glass-rail-scroll relative flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-          <TasksRailCard />
+          <RailTasksActiveContext.Provider value={active && tab === "tasks"}>
+            <TasksRailCard />
+          </RailTasksActiveContext.Provider>
         </div>
       </div>
 

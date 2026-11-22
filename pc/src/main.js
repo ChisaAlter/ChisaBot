@@ -648,9 +648,18 @@ function retryChat() {
 
 // ---------- 托盘 ----------
 
+const trayIconCache = new Map();
+let lastTrayIconKind = "";
+let lastTrayKey = "";
+
 function trayIcon(kind) {
-  const image = nativeImage.createFromPath(path.join(ASSETS, `tray-${kind}.png`));
-  return process.platform === "darwin" ? image.resize({ width: 18, height: 18 }) : image;
+  let cached = trayIconCache.get(kind);
+  if (!cached) {
+    const image = nativeImage.createFromPath(path.join(ASSETS, `tray-${kind}.png`));
+    cached = process.platform === "darwin" ? image.resize({ width: 18, height: 18 }) : image;
+    trayIconCache.set(kind, cached);
+  }
+  return cached;
 }
 
 function statusKind() {
@@ -681,56 +690,71 @@ function statusText() {
 function refreshTray() {
   if (!tray) return;
   const kind = statusKind();
-  tray.setImage(trayIcon(kind));
-  tray.setToolTip(`ChisaBot · ${statusText()}`);
-  const paused = config.get().localPaused;
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: `状态：${statusText()}`, enabled: false },
-      { type: "separator" },
-      { label: "打开 ChisaBot", click: () => void openApp() },
-      ...(needsEnroll()
-        ? [{ label: "重新登记这台电脑", click: () => void repairDevice({ force: true, manual: true }) }]
-        : []),
-      ...(config.get().serverUrl
-        ? [
-            // 打开主窗口并直接弹出网页「绑定手机」二维码（DESIGN.md §33）。
-            { label: "绑定手机…", click: () => void openApp("/settings/devices?pair=1") },
-            { label: "这台电脑的权限…", click: () => void openDeviceSettings() },
-            { label: "本机设置…", click: () => void openDeviceSettings("local") },
-          ]
-        : []),
-      ...(updater?.state.status === "downloaded"
-        ? [{ label: `重启以安装 ${updater.state.version || "新版本"}…`, click: () => openUpdateWindow({ focus: true }) }]
-        : updater?.state.status === "downloading"
-          ? [{ label: `正在下载新版本 ${updater.state.version || ""}（${Math.round(updater.state.percent || 0)}%）…`, click: () => openUpdateWindow({ focus: true }) }]
-          : updater?.state.status === "verifying"
-            ? [{ label: `正在校验新版本 ${updater.state.version || ""}…`, click: () => openUpdateWindow({ focus: true }) }]
-            : []),
-      { type: "separator" },
-      ...(agent?.fullAccess
-        ? [
-            { label: "完全访问已开启", enabled: false },
-            { label: "关闭完全访问", click: () => agent?.setConfig({ fullAccess: "off" }) },
-          ]
-        : []),
-      {
-        label: paused ? "解除紧急停止…" : "紧急停止（拒绝一切远程操作）",
-        click: () => void requestPaused(!paused),
-      },
-      { type: "separator" },
-      { label: "切换服务器…", click: () => openLogin("switch") },
-      ...(config.get().serverUrl ? [{ label: "退出登录…", click: () => void confirmLogout() }] : []),
-      { type: "separator" },
-      {
-        label: "退出 ChisaBot",
-        click: () => {
-          quitting = true;
-          app.quit();
+  const text = statusText();
+  const local = config.get();
+  const paused = Boolean(local.localPaused);
+  const hasServer = Boolean(local.serverUrl);
+  const enroll = needsEnroll();
+  const fullAccess = Boolean(agent?.fullAccess);
+  const updStatus = updater?.state.status || "idle";
+  const updVersion = updater?.state.version || "";
+  // 托盘菜单不跟随 download-progress 逐小数点重建：实时百分比由独立更新进度窗口展示。
+  const nextTrayKey = `${kind}|${text}|${paused ? 1 : 0}|${hasServer ? 1 : 0}|${enroll ? 1 : 0}|${fullAccess ? 1 : 0}|${updStatus}|${updVersion}`;
+  if (nextTrayKey !== lastTrayKey) {
+    lastTrayKey = nextTrayKey;
+    if (kind !== lastTrayIconKind) {
+      lastTrayIconKind = kind;
+      tray.setImage(trayIcon(kind));
+    }
+    tray.setToolTip(`ChisaBot · ${text}`);
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: `状态：${text}`, enabled: false },
+        { type: "separator" },
+        { label: "打开 ChisaBot", click: () => void openApp() },
+        ...(enroll
+          ? [{ label: "重新登记这台电脑", click: () => void repairDevice({ force: true, manual: true }) }]
+          : []),
+        ...(hasServer
+          ? [
+              // 打开主窗口并直接弹出网页「绑定手机」二维码（DESIGN.md §33）。
+              { label: "绑定手机…", click: () => void openApp("/settings/devices?pair=1") },
+              { label: "这台电脑的权限…", click: () => void openDeviceSettings() },
+              { label: "本机设置…", click: () => void openDeviceSettings("local") },
+            ]
+          : []),
+        ...(updStatus === "downloaded"
+          ? [{ label: `重启以安装 ${updVersion || "新版本"}…`, click: () => openUpdateWindow({ focus: true }) }]
+          : updStatus === "downloading"
+            ? [{ label: `正在下载新版本 ${updVersion || ""}…`, click: () => openUpdateWindow({ focus: true }) }]
+            : updStatus === "verifying"
+              ? [{ label: `正在校验新版本 ${updVersion || ""}…`, click: () => openUpdateWindow({ focus: true }) }]
+              : []),
+        { type: "separator" },
+        ...(fullAccess
+          ? [
+              { label: "完全访问已开启", enabled: false },
+              { label: "关闭完全访问", click: () => agent?.setConfig({ fullAccess: "off" }) },
+            ]
+          : []),
+        {
+          label: paused ? "解除紧急停止…" : "紧急停止（拒绝一切远程操作）",
+          click: () => void requestPaused(!paused),
         },
-      },
-    ]),
-  );
+        { type: "separator" },
+        { label: "切换服务器…", click: () => openLogin("switch") },
+        ...(hasServer ? [{ label: "退出登录…", click: () => void confirmLogout() }] : []),
+        { type: "separator" },
+        {
+          label: "退出 ChisaBot",
+          click: () => {
+            quitting = true;
+            app.quit();
+          },
+        },
+      ]),
+    );
+  }
   broadcast();
 }
 
@@ -1163,6 +1187,7 @@ function startUpdater() {
     }
   }
   const feed = buildConfig.resolveFeedDetail(BUILD, config.get());
+  let lastUpdaterTrayKey = "";
   updater = createUpdater({
     autoUpdater,
     feedUrl: feed.url,
@@ -1179,9 +1204,14 @@ function startUpdater() {
     updateKeys: updateSignature.loadKeys(),
     getAutoUpdate: () => config.get().autoUpdate !== false,
     logger: updateLogger(),
-    onState: () => {
-      refreshTray();
+    onState: (nextState) => {
       sendUpdateState();
+      // download-progress 高频推送时仅广播更新进度，状态键未变不重建托盘菜单或全窗口群发 state:changed。
+      const nextKey = `${nextState?.status || ""}|${nextState?.version || ""}|${nextState?.fullInstall ? 1 : 0}|${nextState?.error || ""}`;
+      if (nextKey !== lastUpdaterTrayKey) {
+        lastUpdaterTrayKey = nextKey;
+        refreshTray();
+      }
     },
     onAvailable: (version) => {
       config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_available", outcome: "succeeded", summary: `发现新版本 ${version || ""}，正在后台下载` });
@@ -1427,18 +1457,19 @@ function compactWindows() {
       onChange: (win, compact) => {
         if (!win.isDestroyed()) win.webContents.send("window:compact", compact);
       },
-      // 进出小窗平滑补间窗口 bounds；系统「减少动画」时直接落位。
-      animate: (win, target, done) => {
+      // macOS 走系统原生动画（减少动画时直接落位）；Windows / Linux 单次原子 setBounds 落位消除 16ms 卡顿与二次闪跳。
+      animate: (win, target, done, meta) => {
+        let reducedMotion = false;
         try {
-          if (systemPreferences.getAnimationSettings?.().prefersReducedMotion) {
-            win.setBounds(target);
-            done();
-            return () => {};
-          }
+          reducedMotion = Boolean(systemPreferences.getAnimationSettings?.().prefersReducedMotion);
         } catch {
           /* 平台不支持读动画设置就当没减少动画 */
         }
-        return animateWindowBounds(win, target, { onDone: done });
+        return animateWindowBounds(win, target, {
+          phase: meta?.phase,
+          reducedMotion,
+          onDone: done,
+        });
       },
     });
   }
@@ -1907,11 +1938,31 @@ const localWeb = createLocalWebController({
 app.whenReady().then(() => {
   const ses = session.fromPartition(PARTITION);
   localWeb.installSessionProtocol(ses);
+  let cachedEgressPolicy = null;
+  let cachedEgressOrigin = "";
+  let cachedEgressDomainsKey = "";
+  const getEgressPolicy = () => {
+    const origin = serverOrigin();
+    const domains = config?.get().allowedEgressDomains || [];
+    const domainsKey = Array.isArray(domains) ? domains.join("\0") : "";
+    if (
+      !cachedEgressPolicy ||
+      cachedEgressOrigin !== origin ||
+      cachedEgressDomainsKey !== domainsKey
+    ) {
+      cachedEgressOrigin = origin;
+      cachedEgressDomainsKey = domainsKey;
+      cachedEgressPolicy = desktopPrefs.compileEgressPolicy({
+        serverOrigin: origin,
+        allowedDomains: domains,
+      });
+    }
+    return cachedEgressPolicy;
+  };
   // 出口域名白名单：仅放行已配 server origin、loopback 与显式放行域名，防恶意渲染脚本外泄。
   ses.webRequest.onBeforeRequest((details, callback) => {
     const allowed = desktopPrefs.isEgressUrlAllowed(details.url, {
-      serverOrigin: serverOrigin(),
-      allowedDomains: config?.get().allowedEgressDomains || [],
+      policy: getEgressPolicy(),
     });
     callback({ cancel: !allowed });
   });

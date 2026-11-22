@@ -18,7 +18,7 @@ import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type * as React from "react";
-import { useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import {
   BotChatMenuItems,
   BotRowComputerChip,
@@ -337,7 +337,7 @@ function canDeleteBot(bot: RosterBot) {
   return bot.canDelete ?? bot.canManage ?? false;
 }
 
-function BotRow({
+const BotRow = memo(function BotRow({
   bot,
   selected,
   main,
@@ -351,7 +351,7 @@ function BotRow({
   main: boolean;
   latest: ChannelSummary | undefined;
   attention: BotAttention | undefined;
-  onToggleMain: () => void;
+  onToggleMain: (botId: string, isMain: boolean) => void;
   /** 左栏里还有别的机器人可以接任主机器人。 */
   canReplaceMain?: boolean;
 }) {
@@ -359,10 +359,10 @@ function BotRow({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const handleMenuOpenChange = (nextOpen: boolean) => {
+  const handleMenuOpenChange = useCallback((nextOpen: boolean) => {
     if (nextOpen) preloadBotDialogs();
     setMenuOpen(nextOpen);
-  };
+  }, []);
   const resume = useMutation(setBotPausedMutationOptions(queryClient));
   const togglePinned = useMutation(setAgentPinnedMutationOptions(queryClient));
   const waiting = attention ? needsInput(attention) : 0;
@@ -495,23 +495,25 @@ function BotRow({
         >
           <IconDots className="size-4" />
         </DropdownMenuTrigger>
-        <BotMenuContent
-          bot={bot}
-          chat={chat}
-          latest={latest}
-          main={main}
-          onComputer={() => setComputerOpen(true)}
-          onDelete={() => setDeleteOpen(true)}
-          onResume={() => resume.mutate({ agentId: bot.id, paused: false })}
-          onToggleMain={onToggleMain}
-          onTogglePinned={() =>
-            togglePinned.mutate({ agentId: bot.id, pinned: !bot.pinned })
-          }
-          onReplaceMain={
-            main && canReplaceMain ? () => setPickerOpen(true) : null
-          }
-          paused={paused}
-        />
+        {menuOpen ? (
+          <BotMenuContent
+            bot={bot}
+            chat={chat}
+            latest={latest}
+            main={main}
+            onComputer={() => setComputerOpen(true)}
+            onDelete={() => setDeleteOpen(true)}
+            onResume={() => resume.mutate({ agentId: bot.id, paused: false })}
+            onToggleMain={() => onToggleMain(bot.id, main)}
+            onTogglePinned={() =>
+              togglePinned.mutate({ agentId: bot.id, pinned: !bot.pinned })
+            }
+            onReplaceMain={
+              main && canReplaceMain ? () => setPickerOpen(true) : null
+            }
+            paused={paused}
+          />
+        ) : null}
       </DropdownMenu>
       {canDeleteBot(bot) ? (
         <DeleteBotDialog
@@ -536,7 +538,7 @@ function BotRow({
       />
     </div>
   );
-}
+});
 
 /**
  * 机器人「⋯」菜单（DESIGN v4.1 §W5，在左栏机器人行；DESIGN.md §57 导航收敛后的顺序）：
@@ -761,17 +763,19 @@ function HiddenBotRow({
         >
           <IconDots className="size-4" />
         </DropdownMenuTrigger>
-        <BotMenuContent
-          bot={bot}
-          chat={chat}
-          latest={undefined}
-          main={null}
-          onComputer={null}
-          onDelete={() => {}}
-          onResume={() => {}}
-          onToggleMain={null}
-          paused={false}
-        />
+        {menuOpen ? (
+          <BotMenuContent
+            bot={bot}
+            chat={chat}
+            latest={undefined}
+            main={null}
+            onComputer={null}
+            onDelete={() => {}}
+            onResume={() => {}}
+            onToggleMain={null}
+            paused={false}
+          />
+        ) : null}
       </DropdownMenu>
     </div>
   );
@@ -786,23 +790,35 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const sidebar = useOptionalSidebar();
   const scrollRoot = useRef<HTMLDivElement>(null);
   const agents = useQuery(agentListQueryOptions());
-  const roster = (agents.data ?? []).filter((bot) => !bot.hidden);
+  const roster = useMemo(
+    () => (agents.data ?? []).filter((bot) => !bot.hidden),
+    [agents.data],
+  );
   const attention = useQuery(botAttentionQueryOptions());
   useAttentionNotifications(attention.data);
-  const attentionById = new Map(
-    (attention.data ?? []).map((a) => [a.agentId, a]),
+  const attentionById = useMemo(
+    () => new Map((attention.data ?? []).map((a) => [a.agentId, a])),
+    [attention.data],
   );
   const { botId: routeBotId } = usePanelBot();
   // 正在切过去的机器人先亮（FIX-PLAN F0），路由跟上后清掉，回到按路由算。
   const pendingBotId = usePendingBot();
   const selectedBotId = pendingBotId ?? routeBotId;
   const { mainBotId, setMainBot } = useMainBot();
-  const { mainBot, others, ordered } = sortSidebarRoster(roster, mainBotId);
+  const { mainBot, others, ordered } = useMemo(
+    () => sortSidebarRoster(roster, mainBotId),
+    [roster, mainBotId],
+  );
+  const orderedIds = useMemo(() => ordered.map((bot) => bot.id), [ordered]);
+  const knownIds = useMemo(
+    () => new Set(roster.map((bot) => bot.id)),
+    [roster],
+  );
   // 空闲时预取主机器人和左栏前几个的对话，切过去就是现成的（DESIGN.md §83）。
-  usePrefetchBotChats(
-    ordered.map((bot) => bot.id),
-    channels.data,
-    routeBotId,
+  usePrefetchBotChats(orderedIds, channels.data, routeBotId);
+  const handleToggleMain = useCallback(
+    (botId: string, isMain: boolean) => setMainBot(isMain ? null : botId),
+    [setMainBot],
   );
 
   const botNameOf = (id: string | null | undefined) =>
@@ -835,7 +851,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       key={bot.id}
       latest={latestChannelFor(bot.id, channels.data)}
       main={isMain}
-      onToggleMain={() => setMainBot(isMain ? null : bot.id)}
+      onToggleMain={handleToggleMain}
       selected={selectedBotId === bot.id}
     />
   );
@@ -851,9 +867,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           attentionById={attentionById}
           bots={railBots}
           channels={channels.data}
+          knownIds={knownIds}
           mainBotId={mainBot?.id}
+          onToggleMain={handleToggleMain}
           selectedBotId={selectedBotId}
-          setMainBot={setMainBot}
         />
       </RailSidebar>
     );
@@ -1010,7 +1027,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </>
           ) : (
             <div className="glass-side-scroll glass-bot-scroll">
-              <HiddenChatBotRow known={new Set(roster.map((bot) => bot.id))} />
+              <HiddenChatBotRow known={knownIds} />
               {/* §139：不再有「主机器人 / 其他」分组标签——主机器人置顶、头像带星，中间一条细分隔线。 */}
               <div className="glass-bot-list relative">
                 {mainBot ? row(mainBot, true) : null}
@@ -1072,18 +1089,20 @@ function RailTip({
  */
 function BotMiniRail({
   bots,
+  knownIds,
   mainBotId,
   selectedBotId,
   channels,
   attentionById,
-  setMainBot,
+  onToggleMain,
 }: {
   bots: RosterBot[];
+  knownIds: Set<string>;
   mainBotId: string | undefined;
   selectedBotId: string | null | undefined;
   channels: ChannelSummary[] | undefined;
   attentionById: Map<string, BotAttention>;
-  setMainBot: (id: string | null) => void;
+  onToggleMain: (botId: string, isMain: boolean) => void;
 }) {
   return (
     <nav aria-label={"机器人"} className="glass-mini" id="chisabot-bot-list">
@@ -1104,7 +1123,7 @@ function BotMiniRail({
         </div>
         <span aria-hidden className="glass-mini-div" />
         <div className="glass-mini-scroll">
-          <HiddenChatMiniBot known={new Set(bots.map((bot) => bot.id))} />
+          <HiddenChatMiniBot known={knownIds} />
           {bots.map((bot) => (
             <MiniBot
               attention={attentionById.get(bot.id)}
@@ -1113,9 +1132,7 @@ function BotMiniRail({
               key={bot.id}
               latest={latestChannelFor(bot.id, channels)}
               main={bot.id === mainBotId}
-              onToggleMain={() =>
-                setMainBot(bot.id === mainBotId ? null : bot.id)
-              }
+              onToggleMain={onToggleMain}
               selected={selectedBotId === bot.id}
             />
           ))}
@@ -1134,7 +1151,7 @@ function BotMiniRail({
  * 菜单（BotMenuContent）；选中的机器人「⋯」常显（头像左下角的小徽标）。计算机打开 / 需要你时，
  * 选中的头像左上角有一个圆点（蓝 = 已打开，琥珀 = 需要你）。
  */
-function MiniBot({
+const MiniBot = memo(function MiniBot({
   bot,
   selected,
   main,
@@ -1148,17 +1165,17 @@ function MiniBot({
   main: boolean;
   latest: ChannelSummary | undefined;
   attention: BotAttention | undefined;
-  onToggleMain: () => void;
+  onToggleMain: (botId: string, isMain: boolean) => void;
   canReplaceMain?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const handleMenuOpenChange = (nextOpen: boolean) => {
+  const handleMenuOpenChange = useCallback((nextOpen: boolean) => {
     if (nextOpen) preloadBotDialogs();
     setMenuOpen(nextOpen);
-  };
+  }, []);
   const resume = useMutation(setBotPausedMutationOptions(queryClient));
   const togglePinned = useMutation(setAgentPinnedMutationOptions(queryClient));
   const chat = useBotChat(bot.id);
@@ -1270,23 +1287,25 @@ function MiniBot({
         >
           <IconDots className="size-3" />
         </DropdownMenuTrigger>
-        <BotMenuContent
-          bot={bot}
-          chat={chat}
-          latest={latest}
-          main={main}
-          onComputer={() => setComputerOpen(true)}
-          onDelete={() => setDeleteOpen(true)}
-          onResume={() => resume.mutate({ agentId: bot.id, paused: false })}
-          onToggleMain={onToggleMain}
-          onTogglePinned={() =>
-            togglePinned.mutate({ agentId: bot.id, pinned: !bot.pinned })
-          }
-          onReplaceMain={
-            main && canReplaceMain ? () => setPickerOpen(true) : null
-          }
-          paused={paused}
-        />
+        {menuOpen ? (
+          <BotMenuContent
+            bot={bot}
+            chat={chat}
+            latest={latest}
+            main={main}
+            onComputer={() => setComputerOpen(true)}
+            onDelete={() => setDeleteOpen(true)}
+            onResume={() => resume.mutate({ agentId: bot.id, paused: false })}
+            onToggleMain={() => onToggleMain(bot.id, main)}
+            onTogglePinned={() =>
+              togglePinned.mutate({ agentId: bot.id, pinned: !bot.pinned })
+            }
+            onReplaceMain={
+              main && canReplaceMain ? () => setPickerOpen(true) : null
+            }
+            paused={paused}
+          />
+        ) : null}
       </DropdownMenu>
       {canDeleteBot(bot) ? (
         <DeleteBotDialog
@@ -1311,7 +1330,7 @@ function MiniBot({
       />
     </div>
   );
-}
+});
 
 /**
  * 收起的左栏里「当前对话」的隐藏机器人（例如浏览器机器人）：和展开时的 HiddenChatBotRow 对应，放在头像列最上面，
@@ -1381,17 +1400,19 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
           >
             <IconDots className="size-3" />
           </DropdownMenuTrigger>
-          <BotMenuContent
-            bot={bot}
-            chat={current}
-            latest={undefined}
-            main={null}
-            onComputer={null}
-            onDelete={() => {}}
-            onResume={() => {}}
-            onToggleMain={null}
-            paused={false}
-          />
+          {menuOpen ? (
+            <BotMenuContent
+              bot={bot}
+              chat={current}
+              latest={undefined}
+              main={null}
+              onComputer={null}
+              onDelete={() => {}}
+              onResume={() => {}}
+              onToggleMain={null}
+              paused={false}
+            />
+          ) : null}
         </DropdownMenu>
       </div>
       <span aria-hidden className="glass-mini-sep" />

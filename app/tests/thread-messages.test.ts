@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   readableTurns,
   readThreadMessages,
+  resetStoredSyncs,
+  THREAD_MESSAGES_RETRY_DEADLINE_MS,
 } from "../src/lib/conversations/thread-messages";
 
 /**
@@ -394,5 +396,103 @@ describe("thread history retrieval outcomes", () => {
       unreadable: 1,
       availability: "ready",
     });
+  });
+
+  test("tail option sends tail query param and partial answer never poisons full sync", async () => {
+    resetStoredSyncs();
+    const seenUrls: string[] = [];
+    let callCount = 0;
+    await withFetch(
+      async (input) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        seenUrls.push(url);
+        callCount += 1;
+        if (callCount === 1) {
+          return Response.json({
+            messages: [answer],
+            partial: true,
+            total: 2,
+          });
+        }
+        return Response.json({
+          messages: [userTurn, answer],
+          version: "v-full",
+          cursor: "c-full",
+          start: 0,
+        });
+      },
+      async () => {
+        const first = await readThreadMessages("thread-tail-1", "agent-1", {
+          tail: 120,
+        });
+        expect(first.availability).toBe("ready");
+        expect(first.partial).toBe(true);
+        expect(first.messages.map((m) => m.id)).toEqual(["5c1f"]);
+        expect(seenUrls[0]).toContain("tail=120");
+        expect(seenUrls[0]).toContain("since=");
+
+        const full = await readThreadMessages("thread-tail-1", "agent-1");
+        expect(full.availability).toBe("ready");
+        expect(full.partial).toBeUndefined();
+        expect(full.messages.map((m) => m.id)).toEqual(["6953d56c", "5c1f"]);
+        expect(seenUrls[1]).not.toContain("tail=");
+        expect(seenUrls[1]).toContain("since=");
+      },
+    );
+    resetStoredSyncs();
+  });
+
+  test("retry deadline with tail=120 still supports immediate tail slice then full backfill", async () => {
+    resetStoredSyncs();
+    const seenUrls: string[] = [];
+    let callCount = 0;
+    await withFetch(
+      async (input) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        seenUrls.push(url);
+        callCount += 1;
+        if (callCount === 1) {
+          return Response.json({
+            messages: [answer],
+            partial: true,
+            total: 2,
+          });
+        }
+        return Response.json({
+          messages: [userTurn, answer],
+          version: "v-full-retry",
+          cursor: "c-full-retry",
+          start: 0,
+        });
+      },
+      async () => {
+        const retryTail = await readThreadMessages("thread-tail-2", "agent-1", {
+          tail: 120,
+          deadlineMs: THREAD_MESSAGES_RETRY_DEADLINE_MS,
+        });
+        expect(retryTail.availability).toBe("ready");
+        expect(retryTail.partial).toBe(true);
+        expect(seenUrls[0]).toContain("tail=120");
+
+        const full = await readThreadMessages("thread-tail-2", "agent-1", {
+          deadlineMs: THREAD_MESSAGES_RETRY_DEADLINE_MS,
+        });
+        expect(full.availability).toBe("ready");
+        expect(full.partial).toBeUndefined();
+        expect(full.messages.map((m) => m.id)).toEqual(["6953d56c", "5c1f"]);
+        expect(seenUrls[1]).not.toContain("tail=");
+      },
+    );
+    resetStoredSyncs();
   });
 });

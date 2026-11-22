@@ -15,6 +15,7 @@ import android.widget.Toast
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -33,11 +34,16 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
@@ -52,11 +58,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -88,6 +97,35 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
     var renewing by remember(origin) { mutableStateOf(false) }
     var web by remember(origin) { mutableStateOf<WebView?>(null) }
     var pageReady by remember(origin) { mutableStateOf(false) }
+    val latestTheme by rememberUpdatedState(theme)
+    val density = LocalDensity.current
+    val layoutDir = LocalLayoutDirection.current
+    val statusBars = WindowInsets.statusBars
+    val navigationBars = WindowInsets.navigationBars
+    val displayCutout = WindowInsets.displayCutout
+    val ime = WindowInsets.ime
+    val topPx = maxOf(statusBars.getTop(density), displayCutout.getTop(density))
+    val leftPx = maxOf(navigationBars.getLeft(density, layoutDir), displayCutout.getLeft(density, layoutDir))
+    val rightPx = maxOf(navigationBars.getRight(density, layoutDir), displayCutout.getRight(density, layoutDir))
+    val bottomPx = effectiveBottomInsetPx(
+        maxOf(navigationBars.getBottom(density), displayCutout.getBottom(density)),
+        ime.getBottom(density),
+    )
+    val d = density.density.coerceAtLeast(1f)
+    val safeInsets = SafeInsetsDp(
+        top = topPx / d,
+        right = rightPx / d,
+        bottom = bottomPx / d,
+        left = leftPx / d,
+    )
+    val latestInsets by rememberUpdatedState(safeInsets)
+
+    LaunchedEffect(web, pageReady, safeInsets) {
+        val w = web ?: return@LaunchedEffect
+        if (!pageReady) return@LaunchedEffect
+        if (originKey(w.url) != originKey(origin)) return@LaunchedEffect
+        syncAndroidSafeInsets(w, safeInsets)
+    }
 
     LaunchedEffect(web, vm.pendingWebRoute) {
         val w = web ?: return@LaunchedEffect
@@ -220,7 +258,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
         }
     }
     androidx.compose.runtime.key(origin) {
-        Box(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+        Box(Modifier.fillMaxSize().imePadding()) {
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
@@ -241,6 +279,19 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                             useWideViewPort = true
                             loadWithOverviewMode = true
                         }
+                        addJavascriptInterface(
+                            object {
+                                @JavascriptInterface
+                                fun setTheme(mode: String?) {
+                                    post {
+                                        if (originKey(this@apply.url) != originKey(origin)) return@post
+                                        val next = normalizeWebTheme(mode) ?: return@post
+                                        if (next != vm.themeMode) vm.setTheme(next)
+                                    }
+                                }
+                            },
+                            "ChisaAndroid",
+                        )
                         fun recoverLogin() {
                             if (renewing) return
                             renewing = true
@@ -268,6 +319,12 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 return true
                             }
                             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) { loadError = null; pageReady = false }
+                            override fun onPageCommitVisible(view: WebView, url: String) {
+                                syncTheme(view, latestTheme)
+                                if (originKey(url) == originKey(origin)) {
+                                    syncAndroidSafeInsets(view, latestInsets)
+                                }
+                            }
                             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
                                 if (originKey(url)?.let { it == originKey(origin) } == true) {
                                     val uri = Uri.parse(url)
@@ -279,8 +336,9 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 }
                             }
                             override fun onPageFinished(view: WebView, url: String) {
-                                syncTheme(view, theme)
+                                syncTheme(view, latestTheme)
                                 if (originKey(url) == originKey(origin)) {
+                                    syncAndroidSafeInsets(view, latestInsets)
                                     installWebExportCapture(view)
                                     pageReady = true
                                 }
@@ -375,16 +433,19 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                 },
                 // 主框架加载失败时 WebView 自己会画英文错误页（net::ERR_…），和上面的中文提示叠在一起；
                 // 藏掉它（INVISIBLE 的 View 也不接触摸），让后面的 SkyBackground 露出来。
-                update = { it.visibility = if (loadError == null) View.VISIBLE else View.INVISIBLE },
+                update = {
+                    it.setBackgroundColor(if (sky.dark) android.graphics.Color.rgb(13, 22, 36) else android.graphics.Color.rgb(247, 249, 252))
+                    it.visibility = if (loadError == null) View.VISIBLE else View.INVISIBLE
+                },
                 // imePadding：edge-to-edge 下 adjustResize 不再缩 WebView，键盘高度只从 insets 来（CB-098）。
                 modifier = Modifier.fillMaxSize(),
                 onRelease = { it.stopLoading(); it.destroy() },
             )
             androidx.compose.animation.AnimatedVisibility(visible = progress in 1..99, exit = fadeOut(tween(200))) {
-                LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth().height(2.dp), color = sky.accent, trackColor = Color.Transparent)
+                LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth().statusBarsPadding().height(2.dp), color = sky.accent, trackColor = Color.Transparent)
             }
             loadError?.let { message ->
-                Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(message, color = sky.ink1, textAlign = TextAlign.Center)
                     // 首屏加载就失败时 WebView 没有已提交的 URL，reload() 是空操作；退回原始地址重新加载。
                     TextButton(onClick = {
@@ -413,11 +474,51 @@ private fun injectNativeShareDraft(view: WebView, draft: ShareDraft) {
     )
 }
 
-/** 首次使用沿用系统主题；之后由同一网页的设置控制，不能每次导航重写用户选择。 */
+private data class SafeInsetsDp(
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val left: Float,
+)
+
+/** 将系统状态栏 / 导航栏 / 刘海安全区（CSS px）写入文档根元素，让网页顶/底避让系统栏同时背景壁纸铺满整屏。 */
+private fun syncAndroidSafeInsets(view: WebView, insets: SafeInsetsDp) {
+    val t = String.format(java.util.Locale.US, "%.2fpx", insets.top)
+    val r = String.format(java.util.Locale.US, "%.2fpx", insets.right)
+    val b = String.format(java.util.Locale.US, "%.2fpx", insets.bottom)
+    val l = String.format(java.util.Locale.US, "%.2fpx", insets.left)
+    view.evaluateJavascript(
+        "(function(t,r,b,l){try{var s=document.documentElement&&document.documentElement.style;if(!s)return;" +
+            "s.setProperty('--android-safe-t',t);s.setProperty('--android-safe-r',r);" +
+            "s.setProperty('--android-safe-b',b);s.setProperty('--android-safe-l',l);" +
+            "s.setProperty('--safe-t',t);s.setProperty('--safe-r',r);" +
+            "s.setProperty('--safe-b',b);s.setProperty('--safe-l',l);}catch(e){}})('$t','$r','$b','$l')",
+        null,
+    )
+}
+
+/** 只接受浅色 / 深色主题名（忽略系统模式与非法值）。 */
+internal fun normalizeWebTheme(raw: String?): String? = when (raw?.trim()?.lowercase()) {
+    "dark" -> "dark"
+    "light" -> "light"
+    else -> null
+}
+
+/** 键盘弹出时底部已由 Box.imePadding() 顶起，网页安全区底边距归零避免重复留白。 */
+internal fun effectiveBottomInsetPx(navBottom: Int, imeBottom: Int): Int =
+    if (imeBottom > 0) 0 else navBottom.coerceAtLeast(0)
+
+/** 首次使用沿用系统主题；之后由同一网页的设置控制，不能每次导航重写用户选择，并同步回原生状态栏。 */
 private fun syncTheme(view: WebView, theme: String) {
     view.evaluateJavascript(
-        "(function(t){try{var stored=localStorage.getItem('chisabot-theme');if(stored)t=stored;else localStorage.setItem('chisabot-theme',t);" +
-            "var r=document.documentElement;if(r){r.classList.toggle('dark',t==='dark');r.style.colorScheme=t;}}catch(e){}})('$theme')",
+        "(function(t){try{var stored=localStorage.getItem('chisabot-theme');if(stored==='dark'||stored==='light'){t=stored;}else{localStorage.setItem('chisabot-theme',t);}" +
+            "var r=document.documentElement;if(r){r.classList.toggle('dark',t==='dark');r.style.colorScheme=t;}" +
+            "var notify=function(m){if(window.ChisaAndroid&&window.ChisaAndroid.setTheme){window.ChisaAndroid.setTheme(m);}};" +
+            "notify(t);" +
+            "if(r&&!window.__chisaThemeObs&&typeof MutationObserver==='function'){" +
+            "window.__chisaThemeObs=new MutationObserver(function(){notify(r.classList.contains('dark')?'dark':'light');});" +
+            "window.__chisaThemeObs.observe(r,{attributes:true,attributeFilter:['class']});" +
+            "}}catch(e){}})('$theme')",
         null,
     )
 }

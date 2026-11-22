@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import {
   messagesDelta,
+  parseTailLimit,
   prefixHashes,
+  sliceTailMessages,
   threadMessagesDelta,
 } from "../src/thread-messages-delta";
 
@@ -154,5 +156,72 @@ describe("threadMessagesDelta middleware", () => {
     ).toEqual({ messages: stored });
     const missing = await app.request("/api/conversations/nothing?since=");
     expect(missing.status).toBe(404);
+  });
+
+  test("cold reads with ?tail= return partial tail without version/cursor on long threads", async () => {
+    const longStored = Array.from({ length: 40 }, (_, i) =>
+      i % 2 === 0 ? user(`u${i}`, `msg ${i}`) : bot(`a${i}`, `reply ${i}`),
+    );
+    const localApp = new Hono();
+    localApp.use("/api/conversations/*", threadMessagesDelta);
+    localApp.get("/api/conversations/threads/:id/messages", (c) =>
+      c.json({ messages: longStored }),
+    );
+
+    const tailRes = await localApp.request(
+      "/api/conversations/threads/long1/messages?since=&tail=20",
+    );
+    const tailBody = await tailRes.json();
+    expect(tailBody.partial).toBe(true);
+    expect(tailBody.total).toBe(40);
+    expect(tailBody.messages).toEqual(longStored.slice(-20));
+    expect(tailBody.version).toBeUndefined();
+    expect(tailBody.cursor).toBeUndefined();
+
+    // Short read where tail >= total returns full delta with version & cursor
+    const fullShort = await localApp.request(
+      "/api/conversations/threads/long1/messages?since=&tail=120",
+    );
+    const fullShortBody = await fullShort.json();
+    expect(fullShortBody.partial).toBeUndefined();
+    expect(fullShortBody.messages).toEqual(longStored);
+    expect(typeof fullShortBody.version).toBe("string");
+    expect(typeof fullShortBody.cursor).toBe("string");
+
+    // When since & cursor are present, tail is ignored and incremental path runs
+    const sameRes = await localApp.request(
+      `/api/conversations/threads/long1/messages?since=${encodeURIComponent(fullShortBody.version)}&cursor=${encodeURIComponent(fullShortBody.cursor)}&tail=20`,
+    );
+    expect(await sameRes.json()).toEqual({
+      unchanged: true,
+      version: fullShortBody.version,
+      cursor: fullShortBody.cursor,
+    });
+  });
+
+  test("parseTailLimit and sliceTailMessages enforce byte budget while keeping min 20", () => {
+    expect(parseTailLimit(null)).toBeNull();
+    expect(parseTailLimit("0")).toBeNull();
+    expect(parseTailLimit("-5")).toBeNull();
+    expect(parseTailLimit("abc")).toBeNull();
+    expect(parseTailLimit("9999")).toBe(500);
+    expect(parseTailLimit("120")).toBe(120);
+
+    const huge = Array.from({ length: 30 }, (_, i) =>
+      user(`u${i}`, "x".repeat(40_000)),
+    );
+    const sliced = sliceTailMessages(huge, 30, 512 * 1024);
+    // 12 * 40KB < 512KB, minKeep = 20 forces keeping at least 20 latest messages
+    expect(sliced.length).toBe(20);
+    expect((sliced[0] as { id: string }).id).toBe("u10");
+
+    const medium = Array.from({ length: 80 }, (_, i) =>
+      user(`m${i}`, "y".repeat(20_000)),
+    );
+    const slicedMedium = sliceTailMessages(medium, 80, 512 * 1024);
+    // ~25 * 20KB ~ 500KB: capped under 512KB while >= 20
+    expect(slicedMedium.length).toBeGreaterThanOrEqual(20);
+    expect(slicedMedium.length).toBeLessThan(35);
+    expect((slicedMedium.at(-1) as { id: string }).id).toBe("m79");
   });
 });

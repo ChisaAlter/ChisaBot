@@ -10,6 +10,44 @@ import type { MiddlewareHandler } from "hono";
  * 指纹按消息内容算，不靠 updated_at——并非每个写入点都会更新它。
  */
 const TAG = "m1";
+const MAX_TAIL_MESSAGES = 500;
+const MAX_TAIL_BYTES = 512 * 1024;
+const MIN_TAIL_MESSAGES = 20;
+
+export function parseTailLimit(raw: string | null): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
+  return Math.min(parsed, MAX_TAIL_MESSAGES);
+}
+
+/**
+ * 截取最近 limit 条消息，同时限制序列化体积上限（默认 512 KiB）；
+ * 即使单条包含超长内容，也至少保留末尾 min(20, slice.length) 条保证首屏可渲染。
+ */
+export function sliceTailMessages(
+  messages: readonly unknown[],
+  limit: number,
+  maxBytes = MAX_TAIL_BYTES,
+): unknown[] {
+  if (messages.length === 0 || limit <= 0) return [];
+  const capped = Math.min(limit, MAX_TAIL_MESSAGES);
+  const start = Math.max(0, messages.length - capped);
+  const slice = messages.slice(start);
+  const minKeep = Math.min(MIN_TAIL_MESSAGES, slice.length);
+  let bytes = 2;
+  let kept = 0;
+  for (let index = slice.length - 1; index >= 0; index -= 1) {
+    const encoded = JSON.stringify(slice[index]) ?? "null";
+    const stepBytes = Buffer.byteLength(encoded) + (kept > 0 ? 1 : 0);
+    if (kept >= minKeep && bytes + stepBytes > maxBytes) break;
+    bytes += stepBytes;
+    kept += 1;
+  }
+  return slice.slice(slice.length - kept);
+}
 
 function hashText(text: string): string {
   return Bun.hash(text).toString(36);
@@ -99,12 +137,17 @@ function remember(key: string, prefix: readonly string[]) {
   if (oldest !== undefined) known.delete(oldest);
 }
 
-/** 套在 /api/conversations/* 外面：本地后端和 Intelligence 两条路读出来的 { messages } 都按 since/cursor 改写。 */
+/** 套在 /api/conversations/* 外面：本地后端和 Intelligence 两条路读出来的 { messages } 都按 since/cursor 或 tail 改写。 */
 export const threadMessagesDelta: MiddlewareHandler = async (context, next) => {
   await next();
   if (context.req.method !== "GET") return;
   const url = new URL(context.req.url);
-  if (!url.searchParams.has("since") && !url.searchParams.has("cursor")) return;
+  if (
+    !url.searchParams.has("since") &&
+    !url.searchParams.has("cursor") &&
+    !url.searchParams.has("tail")
+  )
+    return;
   if (!isMessagesRead(url.pathname)) return;
   const response = context.res;
   if (
@@ -119,6 +162,8 @@ export const threadMessagesDelta: MiddlewareHandler = async (context, next) => {
     return;
   }
   const since = url.searchParams.get("since");
+  const cursor = url.searchParams.get("cursor");
+  const tail = !since && !cursor ? parseTailLimit(url.searchParams.get("tail")) : null;
   const key = `${Bun.hash(raw).toString(36)}.${raw.length}`;
   const cached = known.get(key);
   let answer: Record<string, unknown> | null = cached
@@ -141,12 +186,25 @@ export const threadMessagesDelta: MiddlewareHandler = async (context, next) => {
       string,
       unknown
     >;
-    const prefix = cached ?? prefixHashes(messages);
-    remember(key, prefix);
-    answer = {
-      ...rest,
-      ...messagesDelta(messages, since, url.searchParams.get("cursor"), prefix),
-    };
+    if (tail !== null) {
+      const tailed = sliceTailMessages(messages, tail);
+      if (tailed.length < messages.length) {
+        answer = {
+          ...rest,
+          messages: tailed,
+          total: messages.length,
+          partial: true,
+        };
+      }
+    }
+    if (!answer) {
+      const prefix = cached ?? prefixHashes(messages);
+      remember(key, prefix);
+      answer = {
+        ...rest,
+        ...messagesDelta(messages, since, cursor, prefix),
+      };
+    }
   }
   const headers = new Headers(response.headers);
   headers.delete("content-length");

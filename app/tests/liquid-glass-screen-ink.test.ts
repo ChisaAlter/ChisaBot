@@ -478,4 +478,90 @@ describe("liquid glass installer: resize pause and atomic lens swap", () => {
       }
     }
   });
+
+  test("non-liquid modes (mist/frosted/crystal) stay dormant on DOM mutations and scroll without scanning surfaces", async () => {
+    document.documentElement.setAttribute("data-glass", "mist");
+    mountShell();
+    let rectReads = 0;
+    const origRect = HTMLElement.prototype.getBoundingClientRect;
+    Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value(this: HTMLElement) {
+        rectReads += 1;
+        return origRect.call(this);
+      },
+    });
+    try {
+      uninstall = installLiquidGlass();
+      for (let i = 0; i < 5; i++) {
+        const msg = document.createElement("div");
+        msg.setAttribute("data-slot", "bubble-content");
+        msg.setAttribute("data-rect", `340,${100 + i * 60},500,48`);
+        document.querySelector(".glass-main")?.appendChild(msg);
+      }
+      window.dispatchEvent(new Event("scroll"));
+      await wait(450);
+      expect(rectReads).toBe(0);
+      expect(document.getElementById("chisabot-lg-lens")).toBeNull();
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
+        configurable: true,
+        value: origRect,
+      });
+    }
+  });
+
+  test("liquid mode skips SVG displacement lenses on chat bubbles and cards while keeping panel lenses", async () => {
+    const origCss = globalThis.CSS;
+    const origDecodeDesc = Object.getOwnPropertyDescriptor(
+      Image.prototype,
+      "decode",
+    );
+    Object.defineProperty(globalThis, "CSS", {
+      configurable: true,
+      value: {
+        supports: (prop: string, val?: string) =>
+          prop === "backdrop-filter" && Boolean(val?.includes("url(")),
+      },
+    });
+    Object.defineProperty(Image.prototype, "decode", {
+      configurable: true,
+      value: () => Promise.resolve(),
+    });
+    try {
+      mountShell();
+      for (const el of document.querySelectorAll<HTMLElement>(
+        '.glass-side-card, .jr-card, [data-slot="bubble-content"]',
+      )) {
+        el.style.willChange = "auto";
+        el.style.transform = "none";
+        el.style.filter = "none";
+      }
+      uninstall = installLiquidGlass();
+      await wait(320);
+      expect(
+        document
+          .querySelector(".glass-side-card")
+          ?.getAttribute("data-lg-lens"),
+      ).toBeTruthy();
+      expect(
+        document.querySelector(".jr-card")?.getAttribute("data-lg-lens"),
+      ).toBeNull();
+      expect(
+        document
+          .querySelector('[data-slot="bubble-content"]')
+          ?.getAttribute("data-lg-lens"),
+      ).toBeNull();
+    } finally {
+      Object.defineProperty(globalThis, "CSS", {
+        configurable: true,
+        value: origCss,
+      });
+      if (origDecodeDesc) {
+        Object.defineProperty(Image.prototype, "decode", origDecodeDesc);
+      } else {
+        delete (Image.prototype as { decode?: unknown }).decode;
+      }
+    }
+  });
 });

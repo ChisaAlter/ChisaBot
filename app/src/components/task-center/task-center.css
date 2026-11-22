@@ -17,6 +17,8 @@
   .tc-dialog > [data-slot="dialog-close"] {
     top: calc(0.75rem + var(--safe-t, 0px));
     right: calc(0.75rem + var(--safe-r, 0px));
+    min-width: 40px;
+    min-height: 40px;
   }
   html[data-phone] .tc-dialog[data-slot="dialog-content"] {
     max-width: 100%;
@@ -129,6 +131,24 @@
     flex-wrap: nowrap;
     overflow-x: auto;
     overscroll-behavior-x: contain;
+    padding-right: 28px;
+    scroll-padding-inline: 12px;
+    scrollbar-width: none;
+    mask-image: linear-gradient(
+      to right,
+      #000 0%,
+      #000 calc(100% - 28px),
+      transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+      to right,
+      #000 0%,
+      #000 calc(100% - 28px),
+      transparent 100%
+    );
+  }
+  .tc-nav::-webkit-scrollbar {
+    display: none;
   }
   .tc-nav-item {
     flex: none;

@@ -8,11 +8,11 @@ import {
   type PointerEvent,
   type ReactElement,
   type ReactNode,
+  startTransition,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { WorkingCrewStrip } from "@/components/layout/working-crew-strip";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
@@ -440,10 +440,11 @@ function onFirstKeydown(event: KeyboardEvent) {
   if (!modified && !nav) return;
   keyboardSeen = true;
   window.removeEventListener("keydown", onFirstKeydown, true);
-  flushSync(() => {
-    for (const arm of keyboardListeners) arm();
-  });
+  const pending = [...keyboardListeners];
   keyboardListeners.clear();
+  startTransition(() => {
+    for (const arm of pending) arm();
+  });
 }
 if (typeof globalThis.window?.addEventListener === "function")
   globalThis.window.addEventListener("keydown", onFirstKeydown, true);
@@ -488,7 +489,7 @@ export function ToggleTip({
   if (!armed) {
     return (
       <LazyTipTrigger
-        onArm={(refocus) => flushSync(() => setArmed({ open: true, refocus }))}
+        onArm={(refocus) => setArmed({ open: true, refocus })}
         trigger={children}
       />
     );

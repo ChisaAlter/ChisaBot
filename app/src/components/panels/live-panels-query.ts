@@ -60,17 +60,24 @@ export function useChatRunning() {
   return running;
 }
 
-export function useLivePanels(botId: string | undefined) {
+export function useLivePanels(
+  botId: string | undefined,
+  options?: { active?: boolean },
+) {
   const running = useChatRunning();
-  // 右栏藏着（设置 / 管理，DESIGN.md §98.3）时不轮询；回来时窗口聚焦 / 下一拍照常。
+  // 右栏藏着（设置 / 管理，DESIGN.md §98.3）或折叠（active=false）时不轮询；回来/展开时自动恢复。
   const onScreen = useKeptVisible();
+  const pollActive = (options?.active ?? true) && onScreen;
   const queryClient = useQueryClient();
-  // 一轮刚结束：再看一次（面板可能在最后一步才填好）。
-  useExternalConnection(!running && botId ? botId : null, (activeBotId) => {
-    void queryClient.invalidateQueries({
-      queryKey: livePanelKeys.list(activeBotId),
-    });
-  });
+  // 一轮刚结束：右栏可见时再看一次（面板可能在最后一步才填好）。
+  useExternalConnection(
+    !running && pollActive && botId ? botId : null,
+    (activeBotId) => {
+      void queryClient.invalidateQueries({
+        queryKey: livePanelKeys.list(activeBotId),
+      });
+    },
+  );
   return useQuery({
     enabled: Boolean(botId),
     queryKey: livePanelKeys.list(botId ?? ""),
@@ -83,12 +90,14 @@ export function useLivePanels(botId: string | undefined) {
     // 有卡片在搭建 / 刷新时 3 秒看一次，平时 30 秒（机器人在对话里建的卡片要马上出现）。
     refetchInterval: (query) => {
       if (!onScreen) return false;
+      if (!pollActive) return false;
       const items = query.state.data;
       if (running) return 2500;
       return items?.some((p) => p.status === "building" || p.refreshing)
         ? 3000
         : 30_000;
     },
-    refetchOnWindowFocus: true,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: pollActive,
   });
 }

@@ -1,10 +1,4 @@
-import {
-  createContext,
-  type ReactNode,
-  useContext,
-  useRef,
-  useState,
-} from "react";
+import { createContext, type ReactNode, useContext, useState } from "react";
 import { useExternalConnection } from "@/hooks";
 import { objectConnectionKey } from "@/lib/connection-key";
 
@@ -77,22 +71,22 @@ class RunScopedHolder implements BotHolder {
 }
 
 const ActiveBotContext = createContext<BotHolder | null>(null);
-const ActiveBotValueContext = createContext<{
-  botId: string;
-  announce: (botId: string) => void;
-} | null>(null);
+const ActiveBotAnnounceContext = createContext<
+  ((botId: string) => void) | null
+>(null);
+const ActiveBotIdContext = createContext<string>(DEFAULT_BOT_ID);
 
 export function ActiveBotProvider({ children }: { children: ReactNode }) {
-  const holder = useRef<BotHolder>(new RunScopedHolder());
+  const [holder] = useState<BotHolder>(() => new RunScopedHolder());
   const [botId, setBotId] = useState(DEFAULT_BOT_ID);
-  const value = useRef({ botId, announce: setBotId });
-  value.current = { botId, announce: setBotId };
 
   return (
-    <ActiveBotContext.Provider value={holder.current}>
-      <ActiveBotValueContext.Provider value={value.current}>
-        {children}
-      </ActiveBotValueContext.Provider>
+    <ActiveBotContext.Provider value={holder}>
+      <ActiveBotAnnounceContext.Provider value={setBotId}>
+        <ActiveBotIdContext.Provider value={botId}>
+          {children}
+        </ActiveBotIdContext.Provider>
+      </ActiveBotAnnounceContext.Provider>
     </ActiveBotContext.Provider>
   );
 }
@@ -105,20 +99,20 @@ export function ActiveBotProvider({ children }: { children: ReactNode }) {
  */
 export function useActiveBot(botId: string | undefined): void {
   const holder = useContext(ActiveBotContext);
-  const value = useContext(ActiveBotValueContext);
+  const announce = useContext(ActiveBotAnnounceContext);
   useExternalConnection(
     holder
-      ? `${objectConnectionKey(holder)}:${objectConnectionKey(value)}:${botId === undefined ? "u" : `s:${botId}`}`
+      ? `${objectConnectionKey(holder)}:${announce ? objectConnectionKey(announce) : "0"}:${botId === undefined ? "u" : `s:${botId}`}`
       : false,
     () => {
       if (!holder) return;
       const previous =
         holder instanceof RunScopedHolder ? holder.base : holder.current;
       holder.current = botId ?? DEFAULT_BOT_ID;
-      value?.announce(botId ?? DEFAULT_BOT_ID);
+      announce?.(botId ?? DEFAULT_BOT_ID);
       return () => {
         holder.current = previous;
-        value?.announce(previous);
+        announce?.(previous);
       };
     },
   );
@@ -131,7 +125,7 @@ export function useActiveBotHolder(): BotHolder {
 
 /** The active Bot as a value, for anything that has to re-render when it changes. */
 export function useActiveBotId(): string {
-  return useContext(ActiveBotValueContext)?.botId ?? DEFAULT_BOT_ID;
+  return useContext(ActiveBotIdContext);
 }
 
 /**

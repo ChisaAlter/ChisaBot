@@ -233,6 +233,7 @@ export function taskListOptions(filter: TaskListFilter, enabled = true) {
     initialPageParam: 0,
     getNextPageParam: (page) => page.nextOffset,
     refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
     enabled,
   });
 }
@@ -247,15 +248,18 @@ export function decisionListOptions(
     initialPageParam: 0,
     getNextPageParam: (page) => page.nextOffset,
     refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
     enabled,
   });
 }
 
-export function taskCenterSnapshotOptions() {
+export function taskCenterSnapshotOptions(options?: { poll?: boolean }) {
+  const poll = options?.poll ?? true;
   return queryOptions({
     queryKey: taskCenterKeys.snapshot,
     queryFn: ({ signal }) => taskCenterApi.snapshot(signal),
-    refetchInterval: 5_000,
+    refetchInterval: poll ? 5_000 : false,
+    refetchIntervalInBackground: false,
   });
 }
 export function taskCenterDetailOptions(id: string) {
@@ -268,6 +272,7 @@ export function taskCenterDetailOptions(id: string) {
       )
         ? false
         : 3_000,
+    refetchIntervalInBackground: false,
     enabled: Boolean(id),
   });
 }
@@ -312,7 +317,8 @@ export function taskCenterBoardViewOptions(boardId: string) {
 export function taskCenterBoardDocOptions(boardId: string, relFile: string) {
   return queryOptions({
     queryKey: taskCenterKeys.boardDoc(boardId, relFile),
-    queryFn: ({ signal }) => taskCenterApi.readBoardDoc(boardId, relFile, signal),
+    queryFn: ({ signal }) =>
+      taskCenterApi.readBoardDoc(boardId, relFile, signal),
     enabled: Boolean(boardId && relFile),
     refetchInterval: 6_000,
     refetchIntervalInBackground: false,

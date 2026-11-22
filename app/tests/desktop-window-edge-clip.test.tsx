@@ -196,4 +196,30 @@ describe("useDesktopWindow 的 --edge-clip-r 轮询", () => {
     expect(result.current).toBeNull();
     expect(clipVar()).toBe("");
   });
+
+  test("窄工作区下宿主外框最小宽度大于 innerWidth 但未拖出右缘时，--edge-clip-r 保持 0px", async () => {
+    installBridge(false);
+    const screen = window.screen as Screen & { availLeft?: number };
+    const prevAvailWidth = screen.availWidth;
+    const prevInnerWidth = window.innerWidth;
+    try {
+      screen.availLeft = 0;
+      (screen as { availWidth: number }).availWidth = 390;
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: 390,
+      });
+      window.outerWidth = 535;
+      window.screenX = 10;
+      renderHook(() => useDesktopWindow());
+      await flush();
+      expect(clipVar()).toBe("0px");
+    } finally {
+      (screen as { availWidth: number }).availWidth = prevAvailWidth;
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: prevInnerWidth,
+      });
+    }
+  });
 });

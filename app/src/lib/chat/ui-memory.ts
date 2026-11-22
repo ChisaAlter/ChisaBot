@@ -30,7 +30,7 @@ export const WORK_TTL_MS = 30 * DAY;
 const MAX_BOTS = 60;
 const MAX_THREADS = 80;
 const MAX_WORK = 400;
-const WRITE_DELAY_MS = 150;
+const WRITE_DELAY_MS = 600;
 
 export type BotUi = {
   /** 右栏选的是「计算机」。 */
@@ -90,7 +90,7 @@ type Store = {
 
 let store: Store | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
-let listening = false;
+let listeningWindow: Window | null = null;
 
 function storage(): Storage | null {
   try {
@@ -154,6 +154,18 @@ function prune(s: Store, at = now()): Store {
   };
 }
 
+function needsPrune(s: Store): boolean {
+  return (
+    Object.keys(s.bots).length > MAX_BOTS ||
+    Object.keys(s.threads).length > MAX_THREADS ||
+    Object.keys(s.work).length > MAX_WORK
+  );
+}
+
+function flushPendingOnPageHide(): void {
+  if (timer !== null) flushUiMemory();
+}
+
 function load(): Store {
   if (store) return store;
   let parsed: Store = empty();
@@ -174,10 +186,11 @@ function load(): Store {
     }
   }
   store = prune(parsed);
-  if (!listening && typeof window !== "undefined") {
-    listening = true;
+  if (typeof window !== "undefined" && listeningWindow !== window) {
+    listeningWindow?.removeEventListener("pagehide", flushPendingOnPageHide);
+    listeningWindow = window;
     // 刷新 / 关窗口前把还没落盘的写进去。
-    window.addEventListener("pagehide", flushUiMemory);
+    window.addEventListener("pagehide", flushPendingOnPageHide);
   }
   return store;
 }
@@ -194,8 +207,9 @@ export function flushUiMemory(): void {
     timer = null;
   }
   if (!store) return;
+  if (needsPrune(store)) store = prune(store);
   try {
-    storage()?.setItem(UI_MEMORY_KEY, JSON.stringify(prune(store)));
+    storage()?.setItem(UI_MEMORY_KEY, JSON.stringify(store));
   } catch {
     // 无痕模式 / 存满：内存里那份照样管用到这次关掉为止。
   }
@@ -205,6 +219,8 @@ export function flushUiMemory(): void {
 export function resetUiMemory(): void {
   if (timer !== null) clearTimeout(timer);
   timer = null;
+  listeningWindow?.removeEventListener("pagehide", flushPendingOnPageHide);
+  listeningWindow = null;
   store = null;
   draftFiles.clear();
   draftFileListeners.clear();

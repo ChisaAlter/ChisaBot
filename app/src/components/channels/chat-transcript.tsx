@@ -17,9 +17,11 @@ import { Link } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
 import {
   cloneElement,
+  createContext,
   isValidElement,
   memo,
   type ReactNode,
+  useContext,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -1224,17 +1226,33 @@ function SettleAtEnd({
        * 换行不是「内容多了 / 少了」，不该由留白来接：把 floor 与留白一起收掉、同步 lastHeight（下一帧的 grew
        * 才不会算错），位置交回「贴底 / 浏览器的滚动锚定」。返回 true 表示这一帧的高度差来自换行，不是内容增减。
        */
-      let layoutWidth = content.clientWidth;
+      const roundHalf = (value: number) => Math.round(value * 2) / 2;
+      const innerWidthOf = (node: HTMLElement): number => {
+        const cs = getComputedStyle(node);
+        const pl = Number.parseFloat(cs.paddingLeft) || 0;
+        const pr = Number.parseFloat(cs.paddingRight) || 0;
+        return roundHalf(Math.max(0, node.clientWidth - pl - pr));
+      };
+      let layoutWidth = innerWidthOf(content);
+      let layoutClientWidth = content.clientWidth;
       /*
        * 新的一轮刚对齐（标记还在）：这一刻的宽度变化不是「拖把手 / 缩窗口」，是滚动条出现 / 消失那几像素。
        * 拿掉留白会把刚对齐好的位置顶回去（§94.7：目标 1/3 会被夹回底部），所以标记在的时候只同步宽度。
        */
       const anchoring = () =>
         content.querySelector('[data-scroll-anchor="true"]') !== null;
-      const reflowed = () => {
-        const width = content.clientWidth;
-        if (width === layoutWidth) return false;
+      const reflowed = (measuredInlineWidth?: number) => {
+        const clientWidth = content.clientWidth;
+        const width =
+          measuredInlineWidth !== undefined
+            ? roundHalf(measuredInlineWidth)
+            : clientWidth !== layoutClientWidth
+              ? innerWidthOf(content)
+              : layoutWidth;
+        if (width === layoutWidth && clientWidth === layoutClientWidth)
+          return false;
         layoutWidth = width;
+        layoutClientWidth = clientWidth;
         if (!anchoring() && (s.floor !== null || s.slack > 0)) setSlack(0);
         lastHeight = content.offsetHeight;
         return true;
@@ -1359,19 +1377,22 @@ function SettleAtEnd({
        * 看着就是「往回跳一下」。这里在同一帧把少掉的高度放到最后一条下面当留白、scrollTop 放回去，屏幕上不动；
        * 后来长出来的内容先填这块留白，人往上翻到看不见它时悄悄收掉。
        */
-      const pinNow = () => {
+      const pinNow = (entries?: readonly ResizeObserverEntry[]) => {
         /*
-         * 换行（宽度变了）：这一帧的高度差是整列重新折行算出来的，不是内容长了 / 少了——不补留白、不写 scrollTop，
-         * 只把「原来贴在底部」这件事接着做完（§106）。翻在中间那一半交给浏览器的滚动锚定（`.chat-tail` 不参与，
-         * 见 §82.10 上面那一段），实测第一条可见消息位移 0px。
+         * 换行（宽度或 padding-inline 变了）：这一帧的高度差是整列重新折行算出来的，不是内容长了 / 少了——
+         * 不补留白，只在原本贴底时同帧用 instant 贴回去，确保 scrollTop 同步落底、look() 保持 seen.atBottom=true，
+         * 不出现「先跳回更早对话、再平滑滑回底部」的回跳动画（§106）。翻在中间那一半交给浏览器滚动锚定。
          */
-        if (reflowed()) {
+        const entry = entries?.[entries.length - 1];
+        const nextInline =
+          entry?.contentBoxSize?.[0]?.inlineSize ?? entry?.contentRect?.width;
+        if (reflowed(nextInline)) {
           if (active()) {
             // 打开对话的那几秒（§83）：照旧由 settle 决定落点（回到底部 / 回到上次那一条）。
             window.cancelAnimationFrame(frame);
             settle();
           } else if (seen.atBottom && !s.restore && !anchoring()) {
-            stickToBottom();
+            stickToBottom(true);
           }
           look();
           return;
@@ -1674,7 +1695,13 @@ function SettleAtEnd({
         typeof ResizeObserver === "undefined"
           ? null
           : new ResizeObserver(pinNow);
-      sizes?.observe(content);
+      if (sizes) {
+        try {
+          sizes.observe(content, { box: "border-box" });
+        } catch {
+          sizes.observe(content);
+        }
+      }
       /*
        * 「跟着变」（§94.6）里消息行变矮由留白的 flex 在同一次布局里吃掉：这一列总高不变，上面的观察器
        * 不动、scrollTop 不变、滚动事件不来——pinNow / onScroll 都看不见这次变矮，留白就一直挂着
@@ -2579,6 +2606,9 @@ const TranscriptMessage = memo(function TranscriptMessage({
   );
 }, sameTranscriptMessage);
 
+/** 由 ChatTranscript 顶层单次查询下发 TTS 可用态，避免每条助手消息各自挂独立 QueryObserver。 */
+const TtsReadyContext = createContext(false);
+
 /** A quiet copy action under a Bot's answer; shows on hover, always reachable by keyboard. */
 function CopyMessage({
   text,
@@ -2589,7 +2619,7 @@ function CopyMessage({
   messageId?: string | undefined;
   extra?: React.ReactNode;
 }) {
-  const speechStatus = useQuery(speechStatusQueryOptions());
+  const ttsReady = useContext(TtsReadyContext);
   const copy = useAsyncAction(() => writeClipboard(text), {
     errorToast: "复制失败，请手动选择文本复制。",
   });
@@ -2637,7 +2667,7 @@ function CopyMessage({
       </button>
       {/* biome-ignore lint/a11y/useValidAriaRole: role 是组件自己的 prop（消息作者），不是 ARIA role */}
       <QuoteReplyAction messageId={messageId} role="assistant" text={text} />
-      {speechStatus.data?.ttsReady ? (
+      {ttsReady ? (
         <SpeakAction messageId={messageId ?? "msg"} text={text} />
       ) : null}
       {extra}
@@ -3187,7 +3217,7 @@ function AttachmentLightbox({
         onClick={(event) => {
           if (event.target === event.currentTarget) setOpen(false);
         }}
-        overlayClassName="bg-black/80 supports-backdrop-filter:backdrop-blur-sm"
+        overlayClassName="bg-black/80"
         showCloseButton={false}
       >
         {/* Named for a screen reader; the picture carries the same name in its alt text. */}
@@ -3599,7 +3629,149 @@ export function turnIsLive(
   );
 }
 
-export function ChatTranscript({
+type ToolCallSnapshot = {
+  id: string;
+  name: string;
+  args: string;
+};
+
+type MessageEntrySnapshot = {
+  ref: Readonly<Message>;
+  id: string;
+  role: Message["role"];
+  content: unknown;
+  extra: unknown;
+  tools: ToolCallSnapshot[] | null;
+};
+
+function readMessageExtra(message: Readonly<Message>): unknown {
+  if ("error" in message) return message.error;
+  if ("activityType" in message) return message.activityType;
+  return undefined;
+}
+
+function captureMessagesSnapshot(
+  messages: ReadonlyArray<Readonly<Message>>,
+): MessageEntrySnapshot[] {
+  const out = new Array<MessageEntrySnapshot>(messages.length);
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
+    if (!message) continue;
+    let tools: ToolCallSnapshot[] | null = null;
+    if (
+      "toolCalls" in message &&
+      Array.isArray(message.toolCalls) &&
+      message.toolCalls.length > 0
+    ) {
+      tools = message.toolCalls.map((call) => ({
+        id: call.id,
+        name: call.function.name,
+        args: call.function.arguments,
+      }));
+    }
+    out[i] = {
+      ref: message,
+      id: message.id,
+      role: message.role,
+      content: "content" in message ? message.content : undefined,
+      extra: readMessageExtra(message),
+      tools,
+    };
+  }
+  return out;
+}
+
+function messagesMatchSnapshot(
+  messages: ReadonlyArray<Readonly<Message>>,
+  snapshot: readonly MessageEntrySnapshot[] | undefined,
+): boolean {
+  if (!snapshot || messages.length !== snapshot.length) return false;
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
+    const entry = snapshot[i];
+    if (!message || !entry) return false;
+    if (
+      message !== entry.ref ||
+      message.id !== entry.id ||
+      message.role !== entry.role ||
+      ("content" in message ? message.content : undefined) !== entry.content ||
+      readMessageExtra(message) !== entry.extra
+    ) {
+      return false;
+    }
+    const calls =
+      "toolCalls" in message && Array.isArray(message.toolCalls)
+        ? message.toolCalls
+        : null;
+    const toolCount = calls?.length ?? 0;
+    const prevCount = entry.tools?.length ?? 0;
+    if (toolCount !== prevCount) return false;
+    if (calls && entry.tools) {
+      for (let j = 0; j < toolCount; j += 1) {
+        const call = calls[j];
+        const prev = entry.tools[j];
+        if (
+          !call ||
+          !prev ||
+          call.id !== prev.id ||
+          call.function.name !== prev.name ||
+          call.function.arguments !== prev.args
+        ) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * 记录每个 `messages` 数组引用上次被 `ChatTranscriptImpl` 渲染时的字段快照：
+ * AG-UI 的 `agent.messages` 存在就地 push / 修改 content 的路径，外层 `memo` 若仅比对数组引用会吞掉新消息，
+ * 借助该快照既可在无变更时跳过整棵聊天树重渲，又能 100% 捕获就地变更。
+ */
+const lastRenderedMessages = new WeakMap<
+  ReadonlyArray<Readonly<Message>>,
+  MessageEntrySnapshot[]
+>();
+
+function areChatTranscriptPropsEqual(
+  prev: ChatTranscriptProps,
+  next: ChatTranscriptProps,
+): boolean {
+  if (
+    prev.agentId !== next.agentId ||
+    prev.busy !== next.busy ||
+    prev.threadLive !== next.threadLive ||
+    prev.joining !== next.joining ||
+    prev.reconnecting !== next.reconnecting ||
+    prev.scrollKey !== next.scrollKey ||
+    prev.commandNames !== next.commandNames ||
+    prev.onRemoveQueued !== next.onRemoveQueued ||
+    prev.onRetryQueued !== next.onRetryQueued ||
+    prev.queued !== next.queued ||
+    prev.queuedHeld !== next.queuedHeld ||
+    prev.restoring !== next.restoring ||
+    prev.hydrating !== next.hydrating ||
+    prev.stopped !== next.stopped ||
+    prev.stoppedTurns !== next.stoppedTurns ||
+    prev.onRetry !== next.onRetry ||
+    prev.onRetryUnanswered !== next.onRetryUnanswered ||
+    prev.onWithdraw !== next.onWithdraw ||
+    prev.topNotice !== next.topNotice ||
+    prev.fallbacks !== next.fallbacks ||
+    prev.lastSentAt !== next.lastSentAt
+  ) {
+    return false;
+  }
+  if (prev.messages !== next.messages) return false;
+  return messagesMatchSnapshot(
+    next.messages,
+    lastRenderedMessages.get(next.messages),
+  );
+}
+
+function ChatTranscriptImpl({
   agentId,
   busy = false,
   threadLive = false,
@@ -3623,19 +3795,41 @@ export function ChatTranscript({
   fallbacks,
   lastSentAt = null,
 }: ChatTranscriptProps) {
-  /*
-   * NOT MEMOISED, AND THAT IS DELIBERATE. `useMemo` keyed on `messages` looks obviously right and
-   * silently broke the transcript: the agent hands back the SAME array and mutates it, so the
-   * dependency never changed, the cached items were kept forever and a reply never appeared. A Bot
-   * that answered looked like a Bot that had not.
-   *
-   * It was never the expensive part either. Rebuilding this list is a flatMap over messages; the
-   * cost was markdown parsing and chart SVGs, and those are skipped by the memoised children below,
-   * which is where the 25x came from. This runs per render and is not worth guarding.
-   */
-  const items = groupBrowserSteps(
-    toVisibleChatItems(collapseScheduleRuns(messages)),
+  // 以内容快照而非纯数组引用驱动消息管线缓存：兼顾就地变更安全性与非消息重渲零重算。
+  const itemsCacheRef = useRef<{
+    snapshot: MessageEntrySnapshot[];
+    items: TranscriptItem[];
+  } | null>(null);
+  let items: TranscriptItem[];
+  if (
+    itemsCacheRef.current &&
+    messagesMatchSnapshot(messages, itemsCacheRef.current.snapshot)
+  ) {
+    items = itemsCacheRef.current.items;
+    lastRenderedMessages.set(messages, itemsCacheRef.current.snapshot);
+  } else {
+    const snapshot = captureMessagesSnapshot(messages);
+    items = groupBrowserSteps(
+      toVisibleChatItems(collapseScheduleRuns(messages)),
+    );
+    itemsCacheRef.current = { snapshot, items };
+    lastRenderedMessages.set(messages, snapshot);
+  }
+  const hasAssistantText = useMemo(
+    () =>
+      items.some(
+        (item) =>
+          item.kind === "text" &&
+          item.role === "assistant" &&
+          item.text.trim().length > 0,
+      ),
+    [items],
   );
+  const speechStatus = useQuery({
+    ...speechStatusQueryOptions(),
+    enabled: hasAssistantText,
+  });
+  const ttsReady = Boolean(speechStatus.data?.ttsReady);
   // render_ui 渲染面：历史里已有卡片就立即预载（不等 capabilities）；其余情况 RenderUiTool 空闲时预载。
   useRenderUiPreload(messages);
   /*
@@ -3672,7 +3866,10 @@ export function ChatTranscript({
    */
   const chatConfig = useConversationScope();
   const chatThreadId = chatConfig?.threadId ?? null;
-  const hasTools = items.some((item) => item.kind === "tool");
+  const hasTools = useMemo(
+    () => items.some((item) => item.kind === "tool"),
+    [items],
+  );
   const confirmations = useThreadConfirmations(
     hasTools ? chatThreadId : null,
     false,
@@ -3681,12 +3878,15 @@ export function ChatTranscript({
     ...approvalInboxOptions(),
     enabled: hasTools && chatThreadId !== null,
   });
-  const confirmed = new Set<string>();
-  for (const request of confirmations.data ?? [])
-    if (request.toolCallId) confirmed.add(request.toolCallId);
-  for (const request of approvals.data?.requests ?? [])
-    if (request.status === "pending" && request.action.toolCallId)
-      confirmed.add(request.action.toolCallId);
+  const confirmed = useMemo(() => {
+    const set = new Set<string>();
+    for (const request of confirmations.data ?? [])
+      if (request.toolCallId) set.add(request.toolCallId);
+    for (const request of approvals.data?.requests ?? [])
+      if (request.status === "pending" && request.action.toolCallId)
+        set.add(request.action.toolCallId);
+    return set;
+  }, [confirmations.data, approvals.data]);
   /*
    * 以卡片收尾的一轮也是回答了（回复显示①复审）：生成的图片、分享的文件、问人、确认卡、宿主提示……后面没有字，
    * 也不挂「这一轮没有回答」和重试（点了会重新生成图片、重新建 issue）。和真正画卡片用同一份渲染器表
@@ -3708,23 +3908,36 @@ export function ChatTranscript({
   const liveSinceRef = useRef<number | null>(null);
   if (!live) liveSinceRef.current = null;
   else if (liveSinceRef.current === null) liveSinceRef.current = Date.now();
-  const drawsCard: DrawsCard = (item, turnLive) =>
-    (asking && item.kind === "tool") ||
-    toolDrawsCard(item, {
-      renderers: toolRenderers,
-      activities: activityRenderers,
-      ...(chatConfig?.agentId ? { agentId: chatConfig.agentId } : {}),
-      asked: confirmed,
-      live: turnLive,
-    });
+  const scopeAgentId = chatConfig?.agentId;
   // 一轮收成「开场一句 → 结果」，与机器人聊天同一规则（compactTurns，2026-10-13 第四轮）。
-  const compact = compactTurns(
+  const compact = useMemo(() => {
+    const drawsCard: DrawsCard = (item, turnLive) =>
+      (asking && item.kind === "tool") ||
+      toolDrawsCard(item, {
+        renderers: toolRenderers,
+        activities: activityRenderers,
+        ...(scopeAgentId ? { agentId: scopeAgentId } : {}),
+        asked: confirmed,
+        live: turnLive,
+      });
+    return compactTurns(
+      items,
+      live,
+      stoppedTurns ?? EMPTY_STOPS,
+      fallbacks,
+      drawsCard,
+    );
+  }, [
     items,
     live,
-    stoppedTurns ?? EMPTY_STOPS,
+    stoppedTurns,
     fallbacks,
-    drawsCard,
-  );
+    asking,
+    toolRenderers,
+    activityRenderers,
+    scopeAgentId,
+    confirmed,
+  ]);
   /*
    * 和干活卡同一个开始时间（按这一轮的 key 记在 work-card 的模块里）：切到别的频道再回来，胶囊重新挂上，
    * 秒数接着算，不再从 0 开始（以前记在这个组件的 ref 里，卸载就丢）。
@@ -3756,40 +3969,49 @@ export function ChatTranscript({
    */
   const hasQuiet =
     !showToolActivity && [...compact.work.values()].some((work) => work.quiet);
-  // 没绑到工具调用的确认卡片（§101.9）画在最下面；「用户确认了」那条已经进来的不再画（那一行就是记录）。
-  const resumedCards = new Set<string>();
-  for (const item of items) {
-    if (item.kind !== "text" || item.role !== "user") continue;
-    const id = confirmResumeId(item.text);
-    if (id) resumedCards.add(id);
-  }
-  const quietRows = new Set<string>();
-  /*
-   * 收起的锚点行自己画着卡片（审查模块 7）：问人、建定时任务、交给后台……这种调用当了这一轮干活卡的锚点时，
-   * 收起的只能是干活那一行，不能把卡片一起收掉（以前后台任务卡就是这样在任务还在跑时消失的，刷新后也不画）。
-   * 用和画卡片同一份判断（toolDrawsCard），确认 / 审批还没读到时不先当卡片：先收、读到了再露出来，不会先画后收。
-   */
-  const quietWorkOnly = new Set<string>();
-  const rowItems = new Map(items.map((item) => [item.id, item] as const));
-  const anchorDrawsCard = (id: string) => {
-    const item = rowItems.get(id);
-    return (
-      (item?.kind === "tool" || item?.kind === "activity") &&
-      toolDrawsCard(item, {
-        renderers: toolRenderers,
-        activities: activityRenderers,
-        ...(chatConfig?.agentId ? { agentId: chatConfig.agentId } : {}),
-        asked: confirmed,
-      })
-    );
-  };
-  if (hasQuiet) {
+  const resumedCards = useMemo(() => {
+    const ids = new Set<string>();
+    for (const item of items) {
+      if (item.kind !== "text" || item.role !== "user") continue;
+      const id = confirmResumeId(item.text);
+      if (id) ids.add(id);
+    }
+    return ids;
+  }, [items]);
+  const { quietRows, quietWorkOnly } = useMemo(() => {
+    const rows = new Set<string>();
+    /*
+     * 收起的锚点行自己画着卡片（审查模块 7）：问人、建定时任务、交给后台……这种调用当了这一轮干活卡的锚点时，
+     * 收起的只能是干活那一行，不能把卡片一起收掉（以前后台任务卡就是这样在任务还在跑时消失的，刷新后也不画）。
+     * 用和画卡片同一份判断（toolDrawsCard），确认 / 审批还没读到时不先当卡片：先收、读到了再露出来，不会先画后收。
+     */
+    const workOnly = new Set<string>();
+    if (!hasQuiet) return { quietRows: rows, quietWorkOnly: workOnly };
+    const rowItems = new Map(items.map((item) => [item.id, item] as const));
     for (const [anchor, work] of compact.work) {
       if (!work.quiet) continue;
-      if (anchorDrawsCard(anchor)) quietWorkOnly.add(anchor);
-      else quietRows.add(anchor);
+      const item = rowItems.get(anchor);
+      const draws =
+        (item?.kind === "tool" || item?.kind === "activity") &&
+        toolDrawsCard(item, {
+          renderers: toolRenderers,
+          activities: activityRenderers,
+          ...(scopeAgentId ? { agentId: scopeAgentId } : {}),
+          asked: confirmed,
+        });
+      if (draws) workOnly.add(anchor);
+      else rows.add(anchor);
     }
-  }
+    return { quietRows: rows, quietWorkOnly: workOnly };
+  }, [
+    hasQuiet,
+    items,
+    compact.work,
+    toolRenderers,
+    activityRenderers,
+    scopeAgentId,
+    confirmed,
+  ]);
   /** 这一行不画（收起的过程话、旧的浏览小条、结束那轮的干活卡那一行）。 */
   const rowHidden = (id: string) => compact.hidden.has(id) || quietRows.has(id);
   /*
@@ -3932,42 +4154,77 @@ export function ChatTranscript({
    * 一轮里调几十次工具时，按条数挂的尾巴全是看不见的行——打开对话一片空白。看不见的行照样挂（卡片异步出现时
    * 由 CSS 露出来），只按 HIDDEN_ROW_WEIGHT 折算名额。判断和真正画的同一套：收起的行、干活卡那一行、
    * 画卡片的工具（toolDrawsCard，确认还没读到时不先当卡片）；判漏了由 useTailFirstMount 在 DOM 上兜底。
+   * 预计算 `shownFlags` 供 windowMarks / nextShown / firstVisible / keepRow 四处 O(1) 复用。
    */
-  const rowShows = (index: number): boolean => {
-    const item = items[index];
-    if (!item) return false;
-    // 挂着「已停止」/ 备用说明 / 「这一轮没有回答」的行：标记跟着它画（rowsFor），它本身看不见也得挂上，
-    // 不然用户停止的一轮刷新后只剩人那条消息，「◼ 已停止」跟着隐藏的工具行一起没了（QA #519 r3 自测）。
-    if (
-      compact.stoppedAfter.has(item.id) ||
-      compact.fallbackAfter.has(item.id) ||
-      compact.noAnswerAfter.has(item.id)
-    )
-      return true;
-    if (rowHidden(item.id)) return false;
-    if (item.kind === "text" || item.kind === "attachments") return true;
-    if (showToolActivity) return true;
-    if (
-      compact.work.has(item.id) &&
-      !quietWorkOnly.has(item.id) &&
-      !(liveWorkInTail && item.id === liveAnchorId)
-    )
-      return true;
-    if (item.kind === "browser") return false;
-    return toolDrawsCard(item, {
-      renderers: toolRenderers,
-      activities: activityRenderers,
-      ...(chatConfig?.agentId ? { agentId: chatConfig.agentId } : {}),
-      asked: confirmed,
-      live: item.kind !== "tool" || compact.liveTools.has(item.id),
-    });
-  };
-  const tailMarks = virtual ? EMPTY_MARKS : windowMarks(items.length, rowShows);
-  const nextShown = new Set<string>();
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index];
-    if (item && !rowHidden(item.id) && rowShows(index)) nextShown.add(item.id);
-  }
+  const { shownFlags, firstVisibleIndex, tailMarks, nextShown } =
+    useMemo(() => {
+      const flags = new Array<boolean>(items.length);
+      let firstVisible = -1;
+      const shown = new Set<string>();
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index];
+        let visible = false;
+        if (item) {
+          const hidden = compact.hidden.has(item.id) || quietRows.has(item.id);
+          // 挂着「已停止」/ 备用说明 / 「这一轮没有回答」的行：标记跟着它画（rowsFor），它本身看不见也得挂上，
+          // 不然用户停止的一轮刷新后只剩人那条消息，「◼ 已停止」跟着隐藏的工具行一起没了（QA #519 r3 自测）。
+          if (
+            compact.stoppedAfter.has(item.id) ||
+            compact.fallbackAfter.has(item.id) ||
+            compact.noAnswerAfter.has(item.id)
+          ) {
+            visible = true;
+          } else if (hidden) {
+            visible = false;
+          } else if (item.kind === "text" || item.kind === "attachments") {
+            visible = true;
+          } else if (showToolActivity) {
+            visible = true;
+          } else if (
+            compact.work.has(item.id) &&
+            !quietWorkOnly.has(item.id) &&
+            !(liveWorkInTail && item.id === liveAnchorId)
+          ) {
+            visible = true;
+          } else if (item.kind === "browser") {
+            visible = false;
+          } else {
+            visible = toolDrawsCard(item, {
+              renderers: toolRenderers,
+              activities: activityRenderers,
+              ...(scopeAgentId ? { agentId: scopeAgentId } : {}),
+              asked: confirmed,
+              live: item.kind !== "tool" || compact.liveTools.has(item.id),
+            });
+          }
+          if (visible && !hidden) shown.add(item.id);
+        }
+        flags[index] = visible;
+        if (visible && firstVisible < 0) firstVisible = index;
+      }
+      const marks = virtual
+        ? EMPTY_MARKS
+        : windowMarks(items.length, (index) => flags[index] === true);
+      return {
+        shownFlags: flags,
+        firstVisibleIndex: firstVisible,
+        tailMarks: marks,
+        nextShown: shown,
+      };
+    }, [
+      items,
+      compact,
+      quietRows,
+      quietWorkOnly,
+      showToolActivity,
+      liveWorkInTail,
+      liveAnchorId,
+      toolRenderers,
+      activityRenderers,
+      scopeAgentId,
+      confirmed,
+      virtual,
+    ]);
   shownIdsRef.current = nextShown;
   // 正在进行的这一轮：开头那条（人发的）→ 干活卡所在的行，一定挂上（不然干活提示和问题都不在屏幕上）。
   const livePin = live
@@ -3999,9 +4256,7 @@ export function ChatTranscript({
       followBottom: !needsHistory,
       marks: tailMarks,
       itemCount: virtual ? 0 : items.length,
-      firstVisible: virtual
-        ? 0
-        : items.findIndex((_, index) => rowShows(index)),
+      firstVisible: virtual ? 0 : firstVisibleIndex,
       ...(Number.isFinite(livePin) ? { pin: livePin } : {}),
     },
   );
@@ -4022,7 +4277,7 @@ export function ChatTranscript({
       return (
         !!item &&
         (showToolActivity ||
-          rowShows(index) ||
+          shownFlags[index] === true ||
           // 这一页亲眼见过、后来收起的行留在 DOM 里做 0 高折叠（§82.9），不能卸掉。
           foldedRef.current.has(item.id))
       );
@@ -4200,233 +4455,235 @@ export function ChatTranscript({
     paneHeight > 0 ? Math.max(0, Math.round(paneHeight / 3) - 48) : 0;
 
   return (
-    <MessageScrollerProvider
-      autoScroll
-      scrollMargin={anchorOffset}
-      scrollPreviousItemPeek={48}
-    >
-      <MessageScroller>
-        <MessageScrollerViewport
-          ref={viewportRef}
-          // 补历史时靠浏览器原生滚动锚定保位（jank P1-2）；chat-tail 那一格单独关掉（§94.6）。
-          className="scroll-smooth motion-reduce:scroll-auto [overflow-anchor:auto]"
-        >
-          <MessageScrollerContent
-            aria-busy={busy}
-            data-testid="chat-transcript"
-            data-tail-first-pending={tailPending ? "" : undefined}
-            data-tail-first-truncated={tailTruncated ? "" : undefined}
-            className="mx-auto w-full max-w-2xl px-4 pt-6 chat-scroll-pad"
-            spacerClassName="order-2"
+    <TtsReadyContext.Provider value={ttsReady}>
+      <MessageScrollerProvider
+        autoScroll
+        scrollMargin={anchorOffset}
+        scrollPreviousItemPeek={48}
+      >
+        <MessageScroller>
+          <MessageScrollerViewport
+            ref={viewportRef}
+            // 补历史时靠浏览器原生滚动锚定保位（jank P1-2）；chat-tail 那一格单独关掉（§94.6）。
+            className="scroll-smooth motion-reduce:scroll-auto [overflow-anchor:auto]"
           >
-            {/*
-             * DRAWN LAST, WRITTEN FIRST, AND THE SCROLLER IS WHY. Three reviewers have now arrived
-             * at this block, worked the mechanism out from the library's bundle, and reached the
-             * same place; it had no comment for any of them to read. This is that comment.
-             *
-             * `MessageScrollerContent` is `flex flex-col`, so `order` is live: the spacer takes
-             * `order-2`, these children take `order-1`, and the transcript rows below keep the
-             * default `0`. Visual order is therefore items, then anything parked or in flight, then
-             * the spacer — while DOM order puts this block first.
-             *
-             * IT CANNOT SIMPLY BE MOVED DOWN. The scroller finds a newly appended row POSITIONALLY.
-             * On every content change it takes `Array.from(content.children)` minus the spacer,
-             * compares the length against the previous length, and when it grew scans FROM THE OLD
-             * LENGTH FORWARD for the next `data-scroll-anchor="true"` (`je(a, T)` in
-             * `@shadcn/react/dist/message-scroller`). A new row is only found when it lands at the
-             * very end of that list. Put this block after `items.map` and every appended row lands
-             * one slot short of the end, the scan finds this div instead, returns null, and the
-             * caller falls through to its follow-the-bottom branch — so a new turn stops aligning
-             * to the top of the viewport with a peek of the previous one, silently, with no test
-             * failing.
-             *
-             * `display: contents` IS LOAD-BEARING FOR THE SAME REASON, and not a layout trick. It
-             * promotes these children to flex items of the column so they can carry `order`, while
-             * the div itself stays a single, always-present entry in `content.children` — one
-             * stable slot the row count can be offset by. Wrapping `items.map` the same way would
-             * be the natural symmetry and is fatal: the rows would leave `content.children`
-             * entirely and the scroller would see a transcript of two elements, neither carrying a
-             * `data-message-id`, so nothing would register, be tracked as visible, or anchor.
-             *
-             * WHAT THIS COSTS, STATED RATHER THAN LEFT TO BE REDISCOVERED. `order` moves paint and
-             * not the DOM, so it moves neither focus order nor the reading order of the enclosing
-             * `role="log"`. A keyboard user tabbing in reaches the "Remove queued message: …"
-             * button of every parked message before any control in the conversation, though those
-             * lines are drawn at the very bottom (WCAG 2.4.3); a screen reader reading the log
-             * linearly hears the parked messages, and `Stopped`, ahead of the conversation they
-             * follow on screen (WCAG 1.3.2).
-             *
-             * THAT IS A KNOWN, UNPAID DEBT AND NOT AN OVERSIGHT. The fixes available from inside
-             * this file were each tried on paper and each breaks something worse: `aria-owns` needs
-             * a generated id per row and re-sequences only the accessibility tree, leaving tab
-             * order inverted; positive `tabIndex` hijacks the tab sequence of the whole page;
-             * hoisting the queue out of `MessageScrollerContent` into a sibling region — the
-             * cleanest END STATE, since a parked message is genuinely not a log entry — puts it
-             * outside a column that is `min-h-full`, so it lands below the fold on a short
-             * transcript, outside the `gap-6` rhythm, and outside the spacer's height arithmetic.
-             * Paying it properly means the scroller identifying new rows by identity rather than by
-             * position, which is the library's to change and is worth asking for.
-             */}
-            {/*
-             * chat-tail：这一格在 DOM 里排在所有消息前面、画在最下面（order-1）。浏览器的滚动锚定（overflow-anchor）按 DOM 顺序
-             * 挑第一个看得见的元素当锚——总挑中这里的留白 /「思考中」。上面的行一长，浏览器为了让锚不动先把 scrollTop 往下推，
-             * 下一帧留白吃掉了再夹回来 = 往回挪一下（§94.6，1280 实测 5–8px）。这一格不参与锚定，锚落在看得见的第一条消息上。
-             */}
-            <div className="chat-tail contents [&>*]:order-1">
-              <span
-                className="sr-only"
-                data-testid="transcript-live-status"
-                role="status"
-              >
-                {liveStatus}
-              </span>
+            <MessageScrollerContent
+              aria-busy={busy}
+              data-testid="chat-transcript"
+              data-tail-first-pending={tailPending ? "" : undefined}
+              data-tail-first-truncated={tailTruncated ? "" : undefined}
+              className="mx-auto w-full max-w-2xl px-4 pt-6 chat-scroll-pad"
+              spacerClassName="order-2"
+            >
               {/*
-               * 状态行固定槽（§94.7）：「思考中」/ 干活胶囊 / 暂停 /「已停止」在 38px 高的格子里出现、换样、收起，
-               * 格子一直占着那 38px，列高不变。以前这一行从 0 长出来，钉在底部时 scrollTop 跟着整列 +38px，
-               * 每一轮开始整段对话都往上挪一下；§88.1 的留白只能吃「变矮」，吃不下「从 0 长高」。
-               * 38px = 胶囊实际高（status-capsule.css：9 + 20 行高 + 9）；「已停止」更高的部分仍会长列，
-               * 但最常见的「每轮开始出胶囊」完全不画面。
+               * DRAWN LAST, WRITTEN FIRST, AND THE SCROLLER IS WHY. Three reviewers have now arrived
+               * at this block, worked the mechanism out from the library's bundle, and reached the
+               * same place; it had no comment for any of them to read. This is that comment.
+               *
+               * `MessageScrollerContent` is `flex flex-col`, so `order` is live: the spacer takes
+               * `order-2`, these children take `order-1`, and the transcript rows below keep the
+               * default `0`. Visual order is therefore items, then anything parked or in flight, then
+               * the spacer — while DOM order puts this block first.
+               *
+               * IT CANNOT SIMPLY BE MOVED DOWN. The scroller finds a newly appended row POSITIONALLY.
+               * On every content change it takes `Array.from(content.children)` minus the spacer,
+               * compares the length against the previous length, and when it grew scans FROM THE OLD
+               * LENGTH FORWARD for the next `data-scroll-anchor="true"` (`je(a, T)` in
+               * `@shadcn/react/dist/message-scroller`). A new row is only found when it lands at the
+               * very end of that list. Put this block after `items.map` and every appended row lands
+               * one slot short of the end, the scan finds this div instead, returns null, and the
+               * caller falls through to its follow-the-bottom branch — so a new turn stops aligning
+               * to the top of the viewport with a peek of the previous one, silently, with no test
+               * failing.
+               *
+               * `display: contents` IS LOAD-BEARING FOR THE SAME REASON, and not a layout trick. It
+               * promotes these children to flex items of the column so they can carry `order`, while
+               * the div itself stays a single, always-present entry in `content.children` — one
+               * stable slot the row count can be offset by. Wrapping `items.map` the same way would
+               * be the natural symmetry and is fatal: the rows would leave `content.children`
+               * entirely and the scroller would see a transcript of two elements, neither carrying a
+               * `data-message-id`, so nothing would register, be tracked as visible, or anchor.
+               *
+               * WHAT THIS COSTS, STATED RATHER THAN LEFT TO BE REDISCOVERED. `order` moves paint and
+               * not the DOM, so it moves neither focus order nor the reading order of the enclosing
+               * `role="log"`. A keyboard user tabbing in reaches the "Remove queued message: …"
+               * button of every parked message before any control in the conversation, though those
+               * lines are drawn at the very bottom (WCAG 2.4.3); a screen reader reading the log
+               * linearly hears the parked messages, and `Stopped`, ahead of the conversation they
+               * follow on screen (WCAG 1.3.2).
+               *
+               * THAT IS A KNOWN, UNPAID DEBT AND NOT AN OVERSIGHT. The fixes available from inside
+               * this file were each tried on paper and each breaks something worse: `aria-owns` needs
+               * a generated id per row and re-sequences only the accessibility tree, leaving tab
+               * order inverted; positive `tabIndex` hijacks the tab sequence of the whole page;
+               * hoisting the queue out of `MessageScrollerContent` into a sibling region — the
+               * cleanest END STATE, since a parked message is genuinely not a log entry — puts it
+               * outside a column that is `min-h-full`, so it lands below the fold on a short
+               * transcript, outside the `gap-6` rhythm, and outside the spacer's height arithmetic.
+               * Paying it properly means the scroller identifying new rows by identity rather than by
+               * position, which is the library's to change and is worth asking for.
                */}
-              <div className="chat-status-slot">
-                {tailStop ? (
-                  <Stopped
-                    onRetry={stopped ? onRetry : onRetryUnanswered}
-                    onWithdraw={onWithdraw}
-                    reason={tailStop}
+              {/*
+               * chat-tail：这一格在 DOM 里排在所有消息前面、画在最下面（order-1）。浏览器的滚动锚定（overflow-anchor）按 DOM 顺序
+               * 挑第一个看得见的元素当锚——总挑中这里的留白 /「思考中」。上面的行一长，浏览器为了让锚不动先把 scrollTop 往下推，
+               * 下一帧留白吃掉了再夹回来 = 往回挪一下（§94.6，1280 实测 5–8px）。这一格不参与锚定，锚落在看得见的第一条消息上。
+               */}
+              <div className="chat-tail contents [&>*]:order-1">
+                <span
+                  className="sr-only"
+                  data-testid="transcript-live-status"
+                  role="status"
+                >
+                  {liveStatus}
+                </span>
+                {/*
+                 * 状态行固定槽（§94.7）：「思考中」/ 干活胶囊 / 暂停 /「已停止」在 38px 高的格子里出现、换样、收起，
+                 * 格子一直占着那 38px，列高不变。以前这一行从 0 长出来，钉在底部时 scrollTop 跟着整列 +38px，
+                 * 每一轮开始整段对话都往上挪一下；§88.1 的留白只能吃「变矮」，吃不下「从 0 长高」。
+                 * 38px = 胶囊实际高（status-capsule.css：9 + 20 行高 + 9）；「已停止」更高的部分仍会长列，
+                 * 但最常见的「每轮开始出胶囊」完全不画面。
+                 */}
+                <div className="chat-status-slot">
+                  {tailStop ? (
+                    <Stopped
+                      onRetry={stopped ? onRetry : onRetryUnanswered}
+                      onWithdraw={onWithdraw}
+                      reason={tailStop}
+                    />
+                  ) : liveWorkInTail && liveWork ? (
+                    <WorkRow
+                      calls={liveWork.calls}
+                      agentId={agentId}
+                      live
+                      notes={liveWork.notes}
+                      since={liveSince}
+                      statusLabel={workStatusLabel}
+                      turnKey={liveWork.key}
+                    />
+                  ) : waitingOnFirstToken ? (
+                    <Thinking
+                      since={liveSince}
+                      label={connectionLabel ?? "思考中"}
+                    />
+                  ) : pausedAfterText !== null ? (
+                    <PausedCapsule
+                      since={liveSince}
+                      watch={pausedAfterText}
+                      label={connectionLabel}
+                    />
+                  ) : null}
+                </div>
+                <LooseConfirmCards
+                  resumed={resumedCards}
+                  version={items.length}
+                />
+                {queued.map((message) => (
+                  <Queued
+                    attachments={message.attachments}
+                    held={queuedHeld}
+                    key={message.id}
+                    onRemove={
+                      onRemoveQueued
+                        ? () => onRemoveQueued(message.id)
+                        : undefined
+                    }
+                    text={message.text}
                   />
-                ) : liveWorkInTail && liveWork ? (
-                  <WorkRow
-                    calls={liveWork.calls}
-                    agentId={agentId}
-                    live
-                    notes={liveWork.notes}
-                    since={liveSince}
-                    statusLabel={workStatusLabel}
-                    turnKey={liveWork.key}
-                  />
-                ) : waitingOnFirstToken ? (
-                  <Thinking
-                    since={liveSince}
-                    label={connectionLabel ?? "思考中"}
-                  />
-                ) : pausedAfterText !== null ? (
-                  <PausedCapsule
-                    since={liveSince}
-                    watch={pausedAfterText}
-                    label={connectionLabel}
-                  />
+                ))}
+                {/*
+                 * The retry is one row for the whole stack: `settle` sends every parked message as one
+                 * turn, so a button per row would offer several names for the same send.
+                 */}
+                {queuedHeld && onRetryQueued && queued.length > 0 ? (
+                  <MessageRow align="end">
+                    <MessageContent>
+                      <MessageFooter>
+                        <button
+                          aria-label={"重试发送排队的消息"}
+                          className="underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                          onClick={onRetryQueued}
+                          type="button"
+                        >
+                          {"重试"}
+                        </button>
+                      </MessageFooter>
+                    </MessageContent>
+                  </MessageRow>
+                ) : null}
+                {/* 回答期间发的、进了服务器收件箱的（DESIGN.md §38.1）：读到之前画在这里，读到后出现在它被读到的位置。 */}
+                <QueuedMessages />
+                {/* 最后一条下面的留白（§88.1）：在这一格里，不算一行；高度由 SettleAtEnd 直接改。 */}
+                <div
+                  aria-hidden
+                  className="chat-slack"
+                  data-chat-slack=""
+                  ref={slackRef}
+                  style={{ display: "none" }}
+                />
+              </div>
+              {topNotice ? (
+                <div className="chat-top-notice">{topNotice}</div>
+              ) : null}
+              {/*
+               * 「显示更早的消息」（聊天记录消失，2026-11-10）：上面还有没挂的历史时一直在。以前只靠滚到顶附近补，
+               * 挂着的内容不够一屏高时根本滚不动，上面的历史就再也出不来。外层 `contents` 的 div 一直在
+               * （content.children 里固定占一格，滚动容器按位置找新行，见上面 chat-tail 的说明）；
+               * 按钮自己不参与滚动锚定，补上来的行出现在它下面、看着的那一行不动。
+               */}
+              <div className="contents" data-testid="transcript-history-more">
+                {tailTruncated && !virtual && firstMountedVisible ? (
+                  <button
+                    className="chat-history-more"
+                    onClick={prependHistory}
+                    type="button"
+                  >
+                    {"显示更早的消息"}
+                  </button>
                 ) : null}
               </div>
-              <LooseConfirmCards
-                resumed={resumedCards}
-                version={items.length}
-              />
-              {queued.map((message) => (
-                <Queued
-                  attachments={message.attachments}
-                  held={queuedHeld}
-                  key={message.id}
-                  onRemove={
-                    onRemoveQueued
-                      ? () => onRemoveQueued(message.id)
-                      : undefined
-                  }
-                  text={message.text}
+              {items.length === 0 && restoring ? <RestoringTranscript /> : null}
+              {virtual ? (
+                <VirtualTranscriptRows
+                  cells={virtualCells}
+                  handleRef={virtualHandle}
+                  layoutKey={topNotice ? 1 : 0}
+                  scrollKey={scrollKey ?? ""}
+                  viewportRef={viewportRef}
                 />
-              ))}
-              {/*
-               * The retry is one row for the whole stack: `settle` sends every parked message as one
-               * turn, so a button per row would offer several names for the same send.
-               */}
-              {queuedHeld && onRetryQueued && queued.length > 0 ? (
-                <MessageRow align="end">
-                  <MessageContent>
-                    <MessageFooter>
-                      <button
-                        aria-label={"重试发送排队的消息"}
-                        className="underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                        onClick={onRetryQueued}
-                        type="button"
-                      >
-                        {"重试"}
-                      </button>
-                    </MessageFooter>
-                  </MessageContent>
-                </MessageRow>
               ) : null}
-              {/* 回答期间发的、进了服务器收件箱的（DESIGN.md §38.1）：读到之前画在这里，读到后出现在它被读到的位置。 */}
-              <QueuedMessages />
-              {/* 最后一条下面的留白（§88.1）：在这一格里，不算一行；高度由 SettleAtEnd 直接改。 */}
-              <div
-                aria-hidden
-                className="chat-slack"
-                data-chat-slack=""
-                ref={slackRef}
-                style={{ display: "none" }}
-              />
-            </div>
-            {topNotice ? (
-              <div className="chat-top-notice">{topNotice}</div>
-            ) : null}
-            {/*
-             * 「显示更早的消息」（聊天记录消失，2026-11-10）：上面还有没挂的历史时一直在。以前只靠滚到顶附近补，
-             * 挂着的内容不够一屏高时根本滚不动，上面的历史就再也出不来。外层 `contents` 的 div 一直在
-             * （content.children 里固定占一格，滚动容器按位置找新行，见上面 chat-tail 的说明）；
-             * 按钮自己不参与滚动锚定，补上来的行出现在它下面、看着的那一行不动。
-             */}
-            <div className="contents" data-testid="transcript-history-more">
-              {tailTruncated && !virtual && firstMountedVisible ? (
-                <button
-                  className="chat-history-more"
-                  onClick={prependHistory}
-                  type="button"
-                >
-                  {"显示更早的消息"}
-                </button>
-              ) : null}
-            </div>
-            {items.length === 0 && restoring ? <RestoringTranscript /> : null}
-            {virtual ? (
-              <VirtualTranscriptRows
-                cells={virtualCells}
-                handleRef={virtualHandle}
-                layoutKey={topNotice ? 1 : 0}
-                scrollKey={scrollKey ?? ""}
-                viewportRef={viewportRef}
-              />
-            ) : null}
-            {virtual
-              ? tailNodes
-              : mountedRows.flatMap(([item, index]) => rowsFor(item, index))}
-          </MessageScrollerContent>
-        </MessageScrollerViewport>
-        {virtual ? (
-          <VirtualTranscriptControls
-            handleRef={virtualHandle}
-            items={items}
-            layerRef={dataLayerRef}
-            textOf={findTextOf}
-            viewportRef={viewportRef}
-            virtualIds={virtualCells.map((cell) => cell.id)}
+              {virtual
+                ? tailNodes
+                : mountedRows.flatMap(([item, index]) => rowsFor(item, index))}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          {virtual ? (
+            <VirtualTranscriptControls
+              handleRef={virtualHandle}
+              items={items}
+              layerRef={dataLayerRef}
+              textOf={findTextOf}
+              viewportRef={viewportRef}
+              virtualIds={virtualCells.map((cell) => cell.id)}
+            />
+          ) : null}
+          {BOTTOM_PILL}
+          <ScrollNewestQueuedIntoView
+            newest={queued.at(-1)?.id ?? null}
+            viewport={viewportRef}
           />
-        ) : null}
-        {BOTTOM_PILL}
-        <ScrollNewestQueuedIntoView
-          newest={queued.at(-1)?.id ?? null}
-          viewport={viewportRef}
-        />
-        <SettleAtEnd
-          busy={busy || live}
-          hydrating={hydrating}
-          newestUserMessageId={newestUserMessageId}
-          opening={opening}
-          viewport={viewportRef}
-          slack={slackRef}
-          sendMode={sendMode}
-          {...(scrollKey ? { scrollKey } : {})}
-        />
-      </MessageScroller>
-    </MessageScrollerProvider>
+          <SettleAtEnd
+            busy={busy || live}
+            hydrating={hydrating}
+            newestUserMessageId={newestUserMessageId}
+            opening={opening}
+            viewport={viewportRef}
+            slack={slackRef}
+            sendMode={sendMode}
+            {...(scrollKey ? { scrollKey } : {})}
+          />
+        </MessageScroller>
+      </MessageScrollerProvider>
+    </TtsReadyContext.Provider>
   );
 
   /** 一条消息对应的那几行（它自己 + 跟着它的「已停止」/备用说明）。旧路径和虚拟化共用。 */
@@ -4629,6 +4886,11 @@ export function ChatTranscript({
     );
   }
 }
+
+export const ChatTranscript = memo(
+  ChatTranscriptImpl,
+  areChatTranscriptPropsEqual,
+);
 
 const EMPTY_STOPS: ReadonlySet<string> = new Set();
 
@@ -4978,10 +5240,24 @@ export function compactTurns(
         isBlankNote(item.text)
       )
         hidden.add(item.id);
+    // 单次逆序扫描定位最后一个「干活」步骤的下标（O(N) 替代循环内 indexOf + slice().some 的 O(N²)）。
+    let lastWorkAt = -1;
+    for (let at = turn.rest.length - 1; at >= 0; at -= 1) {
+      const candidate = turn.rest[at];
+      if (candidate && doesWork(candidate)) {
+        lastWorkAt = at;
+        break;
+      }
+    }
+    const restIndex = new Map<TranscriptItem, number>();
+    for (let at = 0; at < turn.rest.length; at += 1) {
+      const entry = turn.rest[at];
+      if (entry) restIndex.set(entry, at);
+    }
     let final: string | null = null;
     texts.forEach((item, i) => {
-      const at = turn.rest.indexOf(item);
-      const toolAfter = turn.rest.slice(at + 1).some(doesWork);
+      const at = restIndex.get(item) ?? -1;
+      const toolAfter = at >= 0 && at < lastWorkAt;
       if (i === texts.length - 1 && !live && !isStopped && !toolAfter) {
         final = item.id;
         tone.set(item.id, "final");
@@ -4993,14 +5269,19 @@ export function compactTurns(
      * 把「我再核对一下深圳」这种过程留在了答案上面。
      */
     if (!final && !live && !isStopped && texts.length > 1) {
-      const lastRest = [...turn.rest]
-        .reverse()
-        .find(
-          (item) =>
-            item.kind !== "text" ||
-            item.role !== "assistant" ||
-            item.text.trim(),
-        );
+      let lastRest: TranscriptItem | undefined;
+      for (let at = turn.rest.length - 1; at >= 0; at -= 1) {
+        const candidate = turn.rest[at];
+        if (
+          candidate &&
+          (candidate.kind !== "text" ||
+            candidate.role !== "assistant" ||
+            candidate.text.trim())
+        ) {
+          lastRest = candidate;
+          break;
+        }
+      }
       if (
         lastRest?.kind === "tool" &&
         lastRest.toolCall.function.name === "render_ui"
@@ -5020,10 +5301,9 @@ export function compactTurns(
      */
     const replies = new Set<string>();
     if (final) {
-      const lastWorkAt = turn.rest.findLastIndex(doesWork);
       for (const item of texts)
         if (
-          turn.rest.indexOf(item) > lastWorkAt &&
+          (restIndex.get(item) ?? -1) > lastWorkAt &&
           tone.get(item.id) !== "final"
         ) {
           tone.set(item.id, "final");
@@ -5111,7 +5391,7 @@ export function compactTurns(
             !(multiReplyTurn && item.id === texts[0]?.id) &&
             !/^\s*>\s+\S/.test(item.text)
           ) {
-            const workAfter = turn.rest.slice(at + 1).some(doesWork);
+            const workAfter = at < lastWorkAt;
             if (!live || workAfter) {
               hidden.add(item.id);
               notes.push({ at: seen, text: item.text });

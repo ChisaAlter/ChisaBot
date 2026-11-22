@@ -527,6 +527,24 @@ function engineAddEventListener(
   window.addEventListener(type, fn, opts);
 }
 
+/**
+ * 引擎脚本里裸写的 setInterval（每秒 tick / 10 分钟 fetchWeather）：
+ * 启用自定义壁纸、性能模式或主题静态天空（sky.mode === "off"）以及窗口隐藏时跳过执行，
+ * 避免后台持续唤醒主线程做太阳物理演算或无效网络请求。
+ */
+function engineSetInterval(
+  handler: TimerHandler,
+  timeout?: number,
+  ...args: unknown[]
+): number {
+  return window.setInterval(() => {
+    if (sky.mode === "off" || document.hidden) return;
+    if (typeof handler === "function") {
+      handler(...args);
+    }
+  }, timeout);
+}
+
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
 function reducedMotionQuery(): MediaQueryList | null {
@@ -599,7 +617,7 @@ export function SkyBackground() {
   //    同时开始听别的标签页改外观（storage 事件）。
   //    液态玻璃的边缘透镜 + 背景自适应也在这里挂上（liquid 材质 / 支持 backdrop url 时才生效）。
   useExternalConnection(true, () => {
-    applyAppearanceToDocument(getAppearanceState());
+    applyAppearanceToDocument(getAppearanceState(), dark);
     installAppearanceStorageSync();
     return installLiquidGlass();
   });
@@ -613,7 +631,7 @@ export function SkyBackground() {
     if (root.getAttribute("data-theme") !== (current.dark ? "dark" : "light")) {
       root.setAttribute("data-theme", current.dark ? "dark" : "light");
     }
-    applyAppearanceToDocument(getAppearanceState());
+    applyAppearanceToDocument(getAppearanceState(), current.dark);
     // 旧 palette 轴写过的 --palette-sky-* / --glass-sky 内联变量：清掉（换族时这些残留会让整页重算）。
     for (const k of [
       "--glass-sky",
@@ -720,6 +738,7 @@ export function SkyBackground() {
           "requestAnimationFrame",
           "window",
           "addEventListener",
+          "setInterval",
           script,
         );
         wakeSky(SKY_SNAPSHOT_MS);
@@ -728,6 +747,7 @@ export function SkyBackground() {
           skyRaf,
           createSkyWindow(window, SKY_RENDER_SCALE),
           engineAddEventListener,
+          engineSetInterval,
         );
         // 引擎的 resize 监听已经收进 deferredSkyResize：先改尺寸，再在同一个事件里补画；拖动中推迟到停下。
         window.addEventListener("resize", onSkyResizeEvent);

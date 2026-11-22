@@ -67,11 +67,11 @@ export const BEAT_SECONDS = 0.16;
 
 const EMPTY_COMPONENTS: Record<string, unknown> = {};
 
-const ARRIVE_ANIMATE = { opacity: 1, transform: "translateY(0px)" } as const;
-const ARRIVE_INITIAL_PLAIN = { opacity: 0, transform: "none" } as const;
+const ARRIVE_ANIMATE = { opacity: 1, y: 0 } as const;
+const ARRIVE_INITIAL_PLAIN = { opacity: 0, y: 0 } as const;
 const ARRIVE_INITIAL_SLIDE = {
   opacity: 0,
-  transform: "translateY(6px)",
+  y: 6,
 } as const;
 const ARRIVE_ZERO_TRANSITION = {
   delay: 0,
@@ -566,6 +566,10 @@ const SegmentRow = memo(function SegmentRow({
   targetMessageId?: string | undefined;
   streaming?: boolean | undefined;
 }) {
+  // 锁定挂载时的入场动画开关：历史消息与每条消息首段直接渲染普通 div，避免残留 motion.div 实例与
+  // transform 合成层；实时新到段落用数值 y: 0 动画，结束后自动还原 transform: none，且不因后续
+  // animate prop 变化卸载重挂载正文。
+  const useMotionRef = useRef(animateEntrance);
   const transition = useMemo(
     () =>
       transitionDelay === 0
@@ -577,18 +581,19 @@ const SegmentRow = memo(function SegmentRow({
           },
     [transitionDelay],
   );
+  if (!useMotionRef.current) {
+    return (
+      <div className="chat-bubble-arrive" data-slot="bubble-arriving">
+        <Segment {...segmentProps} />
+      </div>
+    );
+  }
   return (
     <motion.div
       animate={ARRIVE_ANIMATE}
       className="chat-bubble-arrive"
       data-slot="bubble-arriving"
-      initial={
-        animateEntrance
-          ? reduce
-            ? ARRIVE_INITIAL_PLAIN
-            : ARRIVE_INITIAL_SLIDE
-          : false
-      }
+      initial={reduce ? ARRIVE_INITIAL_PLAIN : ARRIVE_INITIAL_SLIDE}
       transition={transition}
     >
       <Segment {...segmentProps} />

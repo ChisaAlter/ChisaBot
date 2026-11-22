@@ -4,7 +4,13 @@ import type * as React from "react";
 import { useRef, useState } from "react";
 import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
 import { RosterToggle } from "@/components/layout/roster-toggle";
-import { Sidebar, SidebarContent, SidebarRail, useOptionalSidebar } from "@/components/ui/sidebar";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarRail,
+  useCloseMobileDrawer,
+  useOptionalSidebar,
+} from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useExternalConnection } from "@/hooks";
 import { scrollIntoViewWithinAsync } from "@/lib/scroll-within";
@@ -234,8 +240,7 @@ function CollapsibleGroup({ group, anyHere, first }: { group: RailGroup; anyHere
 }
 
 function NavRow({ item }: { item: RailItem }) {
-  const sidebar = useOptionalSidebar();
-  const closeDrawer = () => sidebar?.isMobile && sidebar.setOpenMobile(false);
+  const closeDrawer = useCloseMobileDrawer();
   const body = (
     <>
       <span className="nav-row-ico">

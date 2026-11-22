@@ -1109,10 +1109,11 @@ function writeFamilyVars(
 
 export function applyAppearanceToDocument(
   state: AppearanceState = ensureState(),
+  darkOverride?: boolean,
 ) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  const dark = root.classList.contains("dark");
+  const dark = darkOverride ?? root.classList.contains("dark");
   const family = writeFamilyVars(state, root, dark);
   setRootAttribute(root, "data-theme-family", family.id);
   // 旧版 palette 轴的根属性：清掉，避免新样式表之外还有残留引用。

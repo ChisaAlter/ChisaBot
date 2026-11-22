@@ -44,6 +44,38 @@ function paneOf(box: HTMLElement | null): HTMLElement | null {
   );
 }
 
+function applyDockStyle(
+  box: HTMLDivElement,
+  rect: DockRect | null,
+  pill: boolean,
+) {
+  if (!rect) {
+    delete box.dataset.docked;
+    delete box.dataset.sized;
+    box.style.left = "";
+    box.style.bottom = "";
+    box.style.width = "";
+    box.style.height = "";
+    box.style.right = "";
+    box.style.top = "";
+    box.style.margin = "";
+    box.style.maxWidth = "";
+    return;
+  }
+  const effectiveH = pill ? null : rect.h;
+  box.dataset.docked = "true";
+  if (effectiveH !== null) box.dataset.sized = "true";
+  else delete box.dataset.sized;
+  box.style.left = `${rect.x}px`;
+  box.style.bottom = `${rect.b}px`;
+  box.style.width = `${rect.w}px`;
+  box.style.height = effectiveH !== null ? `${effectiveH}px` : "auto";
+  box.style.right = "auto";
+  box.style.top = "auto";
+  box.style.margin = "0px";
+  box.style.maxWidth = "none";
+}
+
 /**
  * 悬浮输入框底座：box 脱离文档流、绝对定位压在对话底边上，把手可四边/角拖动
  * 调整宽高，尺寸记进 localStorage。内容占据的底部高度写进面板 CSS 变量
@@ -62,12 +94,18 @@ export function ComposerDock({
   rectRef.current = rect;
   // 收起横条没有「拉高」概念：DOM 里出现 .glass-composer-pill 时把 h 视为自然高。
   const [pill, setPill] = useState(false);
+  const pillRef = useRef(pill);
+  pillRef.current = pill;
   const coarse = useCoarsePointer();
+  const lastInsetRef = useRef<number | null>(null);
+  const scheduleSyncRef = useRef<() => void>(() => {});
   const drag = useRef<{
     dir: DockDir;
     px: number;
     py: number;
     start: DockRect;
+    current: DockRect;
+    moved: boolean;
     contentH: number;
     paneW: number;
     paneH: number;
@@ -104,10 +142,10 @@ export function ComposerDock({
         visit(child);
       }
     }
-    pane.style.setProperty(
-      "--chat-composer-h",
-      `${Math.max(0, Math.round(paneRect.bottom - top))}px`,
-    );
+    const nextInset = Math.max(0, Math.round(paneRect.bottom - top));
+    if (lastInsetRef.current === nextInset) return;
+    lastInsetRef.current = nextInset;
+    pane.style.setProperty("--chat-composer-h", `${nextInset}px`);
   }, []);
 
   useExternalConnection(true, () => {
@@ -115,56 +153,103 @@ export function ComposerDock({
     const pane = paneOf(box);
     if (!box || !pane) return;
 
-    const syncPill = () =>
-      setPill(Boolean(box.querySelector(".glass-composer-pill")));
-    const syncAll = () => {
-      syncPill();
-      syncInset();
+    let rafId: number | null = null;
+    const observed = new Set<Element>();
+
+    const syncPill = () => {
+      const nextPill = Boolean(box.querySelector(".glass-composer-pill"));
+      pillRef.current = nextPill;
+      setPill((prev) => (prev === nextPill ? prev : nextPill));
     };
 
-    // 内容高变化（编辑、附件条、横条⇄卡片）→ 重算 inset；
+    const observeContent = (ro: ResizeObserver | null) => {
+      if (!ro) return;
+      const targets = new Set<Element>([box, pane]);
+      for (const child of Array.from(box.children)) {
+        if ((child as HTMLElement).dataset.dockHandles !== undefined) continue;
+        targets.add(child);
+        if (child.classList.contains("composer-frame")) {
+          for (const inner of Array.from(child.children)) targets.add(inner);
+        }
+      }
+      for (const el of observed) {
+        if (!targets.has(el)) {
+          ro.unobserve(el);
+          observed.delete(el);
+        }
+      }
+      for (const el of targets) {
+        if (!observed.has(el)) {
+          ro.observe(el);
+          observed.add(el);
+        }
+      }
+    };
+
+    let ro: ResizeObserver | null = null;
+
+    const runSync = (clamp: boolean) => {
+      syncPill();
+      observeContent(ro);
+      syncInset();
+      if (!clamp || drag.current) return;
+      const r = rectRef.current;
+      if (!r) return;
+      const p = pane.getBoundingClientRect();
+      const next = clampDockRect(r, { w: p.width, h: p.height });
+      if (
+        next.x !== r.x ||
+        next.b !== r.b ||
+        next.w !== r.w ||
+        next.h !== r.h
+      ) {
+        setRect(next);
+      }
+    };
+
+    let pendingClamp = false;
+    const scheduleSync = (clamp = false) => {
+      pendingClamp = pendingClamp || clamp;
+      if (rafId !== null) return;
+      if (typeof requestAnimationFrame !== "function") {
+        const shouldClamp = pendingClamp;
+        pendingClamp = false;
+        runSync(shouldClamp);
+        return;
+      }
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const shouldClamp = pendingClamp;
+        pendingClamp = false;
+        runSync(shouldClamp);
+      });
+    };
+    scheduleSyncRef.current = () => scheduleSync(false);
+
+    // 内容高变化（编辑、附件条、横条⇄卡片）→ rAF 合并重算 inset；
     // 面板尺寸变化 → 把已存的悬浮框夹回面板内 + 重算 inset。
-    const ro =
+    ro =
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(() => {
-            syncInset();
-            const r = rectRef.current;
-            if (!r) return;
-            const p = pane.getBoundingClientRect();
-            const next = clampDockRect(r, { w: p.width, h: p.height });
-            if (
-              next.x !== r.x ||
-              next.b !== r.b ||
-              next.w !== r.w ||
-              next.h !== r.h
-            ) {
-              setRect(next);
-            }
+            scheduleSync(true);
           });
-    ro?.observe(box);
-    ro?.observe(pane);
 
-    // 编辑器里打字每个字都在改 DOM：落在编辑区里的变动不触发同步，高度变化由上面的 RO 报。
-    const mo = new MutationObserver((muts) => {
-      for (const m of muts) {
-        if (
-          !(
-            m.target instanceof Element &&
-            m.target.closest(".glass-composer-editor")
-          )
-        ) {
-          syncAll();
-          return;
-        }
-      }
-    });
-    mo.observe(box, { childList: true, subtree: true });
-    syncAll();
+    // 定高模式下点击「收起/展开」会替换内部 form，但 box 外高可能不变；冒泡 click 兜底一帧同步。
+    const onBoxClick = () => scheduleSync(false);
+    box.addEventListener("click", onBoxClick);
+
+    runSync(false);
 
     return () => {
+      scheduleSyncRef.current = () => {};
+      if (rafId !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(rafId);
+      }
+      box.removeEventListener("click", onBoxClick);
       ro?.disconnect();
-      mo.disconnect();
+      observed.clear();
+      lastInsetRef.current = null;
       pane.style.removeProperty("--chat-composer-h");
     };
   });
@@ -182,6 +267,13 @@ export function ComposerDock({
       const current = rectRef.current;
       const effH = pill ? null : (current?.h ?? null);
       const vertical = dir.includes("n") || dir.includes("s");
+      const start: DockRect = {
+        x: current?.x ?? boxRect.left - paneRect.left,
+        b: current?.b ?? paneRect.bottom - boxRect.bottom,
+        w: current?.w ?? boxRect.width,
+        // 横条永远自然高；展开卡片第一次竖向拖时把当前高固化为起点。
+        h: pill ? null : (effH ?? (vertical ? boxRect.height : null)),
+      };
       drag.current = {
         dir,
         px: event.clientX,
@@ -189,13 +281,9 @@ export function ComposerDock({
         contentH: boxRect.height,
         paneW: paneRect.width,
         paneH: paneRect.height,
-        start: {
-          x: current?.x ?? boxRect.left - paneRect.left,
-          b: current?.b ?? paneRect.bottom - boxRect.bottom,
-          w: current?.w ?? boxRect.width,
-          // 横条永远自然高；展开卡片第一次竖向拖时把当前高固化为起点。
-          h: pill ? null : (effH ?? (vertical ? boxRect.height : null)),
-        },
+        start,
+        current: start,
+        moved: false,
       };
     },
     [pill],
@@ -203,31 +291,36 @@ export function ComposerDock({
 
   const onHandleMove = useCallback((event: PointerEvent<HTMLSpanElement>) => {
     const d = drag.current;
-    if (!d) return;
-    setRect(
-      applyDockDrag(
-        d.start,
-        d.dir,
-        event.clientX - d.px,
-        event.clientY - d.py,
-        { w: d.paneW, h: d.paneH },
-        d.contentH,
-      ),
+    const box = boxRef.current;
+    if (!d || !box) return;
+    const next = applyDockDrag(
+      d.start,
+      d.dir,
+      event.clientX - d.px,
+      event.clientY - d.py,
+      { w: d.paneW, h: d.paneH },
+      d.contentH,
     );
+    d.current = next;
+    d.moved = true;
+    applyDockStyle(box, next, pillRef.current);
+    scheduleSyncRef.current();
   }, []);
 
   const onHandleEnd = useCallback((event: PointerEvent<HTMLSpanElement>) => {
-    if (!drag.current) return;
+    const d = drag.current;
+    if (!d) return;
     drag.current = null;
     try {
       event.currentTarget.releasePointerCapture(event.pointerId);
     } catch {
       /* 浏览器已释放 */
     }
-    const next = rectRef.current;
-    if (next) {
+    if (d.moved) {
+      rectRef.current = d.current;
+      setRect(d.current);
       try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(d.current));
       } catch {
         /* 存储不可用只影响持久化 */
       }
@@ -236,6 +329,8 @@ export function ComposerDock({
 
   const resetDock = useCallback(() => {
     setRect(null);
+    if (boxRef.current) applyDockStyle(boxRef.current, null, pillRef.current);
+    scheduleSyncRef.current();
     try {
       window.localStorage.removeItem(STORAGE_KEY);
     } catch {

@@ -97,7 +97,7 @@ function CreateTaskForm({
     <DialogContent
       className="tc-create-dialog"
       finalFocus={finalFocus}
-      overlayClassName="bg-black/40 supports-backdrop-filter:backdrop-blur-sm"
+      overlayClassName="bg-black/40"
     >
       <DialogHeader>
         <DialogTitle>新建任务</DialogTitle>

@@ -18,7 +18,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import cn.ayase.chisabot.md.Block
 import cn.ayase.chisabot.md.Markdown
 import cn.ayase.chisabot.ui.hideIncompleteTail
+import cn.ayase.chisabot.ui.effectiveBottomInsetPx
 import cn.ayase.chisabot.ui.isBackHandled
+import cn.ayase.chisabot.ui.normalizeWebTheme
 import cn.ayase.chisabot.ui.isWebSignOutPath
 import cn.ayase.chisabot.ui.MIC_DENIED_ONCE_MESSAGE
 import cn.ayase.chisabot.ui.MIC_DENIED_SETTINGS_MESSAGE
@@ -657,5 +659,20 @@ class NativeLogicTest {
         assertEquals(2, cards.size)
         assertEquals("a.pdf", cards[0].files[0].name)
         assertEquals("g.png", cards[1].files[0].name)
+    }
+
+    @Test fun webThemeNormalizationAcceptsOnlyLightAndDark() {
+        assertEquals("dark", normalizeWebTheme("dark"))
+        assertEquals("light", normalizeWebTheme(" LIGHT "))
+        assertNull(normalizeWebTheme("system"))
+        assertNull(normalizeWebTheme(""))
+        assertNull(normalizeWebTheme(null))
+        assertNull(normalizeWebTheme("evil';alert(1)"))
+    }
+
+    @Test fun effectiveBottomInsetZeroesWhenImeVisible() {
+        assertEquals(72, effectiveBottomInsetPx(navBottom = 72, imeBottom = 0))
+        assertEquals(0, effectiveBottomInsetPx(navBottom = 72, imeBottom = 840))
+        assertEquals(0, effectiveBottomInsetPx(navBottom = -4, imeBottom = 0))
     }
 }
