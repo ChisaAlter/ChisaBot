@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复**：
+  - 修复回复期间用户消息下 `.chat-msg-action[data-held]` 沿用 `visibility: hidden` 占宽并被 `.btn-face` 穿透漏出孤立撤回图标的问题（改用 `display: none` 并在 `.chat-msg-actions` 锁 `min-height: 26px` 保住行高，消除「引用」左侧跑远及幽灵撤回图标）。
+  - 修复手机端 `.glass-composer-toolbar` 按钮多时未换行且缺少收缩/裁切约束导致的模型选择器与上下文圆环冲突（`composer.tsx` 划分 `glass-composer-toolbar-start` / `glass-composer-toolbar-end` 与 `busy-send-pill`，`styles.css` 为 `.model-pill` 补充 `flex-shrink: 0; overflow: hidden` 并在 `@container (max-width: 480px)` 下整洁换行收紧）。
+  - 优化手机 WebView 切页流畅度：`section-rail.tsx` 与 `account-menu.tsx` 为触控链路补充按下即预加载路由，并在 `styles.css` 为 `html[data-phone]` 添加 `touch-action: manipulation`、无位移纯淡入 `@keyframes page-in-phone`、`.page-scroll` containment、`.kept-chat[data-switching="true"]` 去半透闪烁及抽屉 `will-change: transform`。
+
 - **手机端顶栏移除重复头像并将待处理红点迁至抽屉按钮**：
   - 移除手机端 `.glass-topbar` 右上角与左栏抽屉底部 `AccountCard` 重复的头像入口（`glass-shell.tsx` · `glass-topbar.tsx` · `account-menu.tsx`），手机顶栏统一收敛为「左 `☰` 抽屉 ｜ 右 `🔍` 搜索会话」。
   - 抽取共享计数模块 `app/src/lib/pending-actions.ts`，在手机模式将待处理红点挂到左上角 `☰` 抽屉按钮上，清理 `.hk-avatar-btn` 与 `.glass-topbar .glass-avatar` 残留样式并同步 `app/tests/pc-layout-topbar.test.ts` 与 `app/tests/mobile-topbar.test.tsx`。

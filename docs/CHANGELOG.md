@@ -1,5 +1,7 @@
 ## Unreleased
 
+- **手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复**：`.chat-msg-action[data-held]` 改用 `display: none` 并以 `.chat-msg-actions` `min-height: 26px` 固定行高，消除回复中幽灵撤回图标与「引用」偏移；`composer.tsx` 与 `styles.css`（`.model-pill` `flex-shrink: 0` + `@container (max-width: 480px)` `flex-wrap`）解决手机端输入框工具栏挤压重叠；`section-rail.tsx` / `account-menu.tsx` 补充按下路由预加载，并优化 `html[data-phone]` 切页 `page-in-phone` 无位移淡入、`touch-action: manipulation` 与抽屉 `will-change: transform`（`styles.css` · `composer.tsx` · `section-rail.tsx` · `account-menu.tsx` · `mobile-chat-ui-fixes.test.tsx`）。
+
 - **手机端顶栏移除重复头像并将待处理红点迁至抽屉按钮**：移除手机顶栏右上角重复头像与 `AccountMenu placement="topbar"` 分支，身份入口统一收束至左栏抽屉底部 `AccountCard`，并将待处理红点迁至手机左上角 `☰` 抽屉按钮；抽取共享待处理计数并清理 `.hk-avatar-btn` / `.glass-topbar .glass-avatar` 样式及更新测试（`pending-actions.ts` · `glass-shell.tsx` · `glass-topbar.tsx` · `account-menu.tsx` · `styles.css` · `pc-layout-topbar.test.ts` · `mobile-topbar.test.tsx`）。
 
 - **手机端、Web 端与桌面端流畅度全面修复及护栏（DESIGN §153）**：服务端 `?tail=120` 尾读与后台静默补全（`thread-messages-delta.ts` · `thread-messages.ts` · `channel-chat.tsx`）；Android Edge-to-Edge 安全区与状态栏主题双向同步（`WebScreen.kt` · `theme-provider.tsx`）；`SkyBackground` / `appearance.ts` 运行时切主题令牌同帧同步；公网 `/login` 暗色横屏与触控热区（`login.html` · `login.css`）；手机端布局、热区、侧栏抽屉返回栈、右抽屉骨架与容错边界及桌面端流畅度护栏（`styles.css` · `page-shell.tsx` · `section-rail.tsx` · `panel-rail.tsx` · `tasks-rail-card.tsx` · `account-menu.tsx` · `bots.index.tsx` · `fallback-models.tsx` · `task-center.css` · `desktop-window.ts` · `chat-transcript.tsx` · `liquid-glass.ts` · `pc/`）。
