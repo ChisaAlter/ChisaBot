@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { SQL } from "bun";
 import { drizzle } from "drizzle-orm/bun-sql";
-import { scrubInheritedDatabaseUrlFromProcessEnv } from "../config";
+import {
+  DEFAULT_DATABASE_POOL_MAX,
+  scrubInheritedDatabaseUrlFromProcessEnv,
+} from "../config";
 import { recoveringSql } from "./recovery";
 import * as schema from "./schema";
 
@@ -191,6 +194,21 @@ export function addressOf(
 }
 
 /**
+ * Resolve the PostgreSQL pool size passed to Bun's `SQL`.
+ *
+ * Defaults to {@link DEFAULT_DATABASE_POOL_MAX} so concurrent streaming, `/sync`, and recovery
+ * workloads never silently fall back to a tiny pool, while still letting callers (and tests that
+ * pin `max: 1` for deadlock detection) override it explicitly.
+ */
+export function resolvePoolMax(max?: number): number {
+  if (max === undefined) return DEFAULT_DATABASE_POOL_MAX;
+  if (!Number.isInteger(max) || max < 1) {
+    throw new TypeError("Database pool max must be a positive integer.");
+  }
+  return max;
+}
+
+/**
  * `max` is exposed so tests can pin the pool to a single connection. Code that opens a transaction
  * and then reads on a second connection deadlocks once every pooled connection is inside such a
  * transaction; a pool of one turns that from a load-dependent production hang into an immediate,
@@ -230,6 +248,7 @@ export function createDatabase(
   scrubInheritedDatabaseUrlFromProcessEnv();
 
   const address = addressOf(databaseUrl);
+  const max = resolvePoolMax(options.max);
   const client = recoveringSql(
     () =>
       new SQL({
@@ -248,7 +267,7 @@ export function createDatabase(
           lock_timeout: "5000",
           ...address.connection,
         },
-        ...(options.max === undefined ? {} : { max: options.max }),
+        max,
       }),
     options.queryTimeoutMs,
   );

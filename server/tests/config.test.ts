@@ -1058,3 +1058,26 @@ test("a Composio key is read when set and absent when not", () => {
       .composioApiKey,
   ).toBe("ak_example");
 });
+
+describe("DATABASE_POOL_MAX", () => {
+  test("defaults to 20 and honours explicit positive bounds", () => {
+    expect(loadConfig(baseEnvironment).databasePoolMax).toBe(20);
+    expect(
+      loadConfig({ ...baseEnvironment, DATABASE_POOL_MAX: "32" })
+        .databasePoolMax,
+    ).toBe(32);
+    expect(
+      loadConfig({ ...baseEnvironment, DATABASE_POOL_MAX: "  " })
+        .databasePoolMax,
+    ).toBe(20);
+  });
+
+  test.each(["0", "-5", "201", "1.5", "twenty"])(
+    "refuses invalid DATABASE_POOL_MAX=%p",
+    (raw) => {
+      expect(() =>
+        loadConfig({ ...baseEnvironment, DATABASE_POOL_MAX: raw }),
+      ).toThrow("DATABASE_POOL_MAX");
+    },
+  );
+});

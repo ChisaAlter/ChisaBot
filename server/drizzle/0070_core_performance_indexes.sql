@@ -1,0 +1,16 @@
+CREATE INDEX IF NOT EXISTS "accounts_user_id_idx" ON "accounts" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "channel_memberships_user_channel_idx" ON "channel_memberships" USING btree ("user_id","channel_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "sessions_user_id_idx" ON "sessions" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "verifications_identifier_idx" ON "verifications" USING btree ("identifier");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_conversation_commands_active_created_idx" ON "chisabot_conversation_commands" USING btree ("created_at") WHERE "chisabot_conversation_commands"."status" IN ('accepted', 'queued', 'dispatched');--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_conversation_interactions_pending_thread_idx" ON "chisabot_conversation_interactions" USING btree ("thread_id") WHERE "chisabot_conversation_interactions"."status" = 'pending';--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_dsh_runs_active_owner_idx" ON "chisabot_dsh_runs" USING btree ("owner_user_id","thread_id","run_id") WHERE "chisabot_dsh_runs"."status" IN ('admitting', 'observing', 'projecting');--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_local_events_thread_run_seq_idx" ON "chisabot_local_events" USING btree ("thread_id","run_id","sequence");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_local_events_thread_run_lifecycle_idx" ON "chisabot_local_events" USING btree ("thread_id","sequence" DESC NULLS FIRST) WHERE ("chisabot_local_events"."event"->>'type') IN ('RUN_STARTED', 'RUN_FINISHED', 'RUN_ERROR');--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_local_runs_thread_created_idx" ON "chisabot_local_runs" USING btree ("thread_id","created_at" DESC NULLS FIRST,"run_id" DESC NULLS FIRST);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_local_runs_active_idx" ON "chisabot_local_runs" USING btree ("thread_id","run_id","created_at") WHERE "chisabot_local_runs"."status" IN ('running', 'reserved', 'capacity_wait');--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_local_threads_owner_agent_updated_idx" ON "chisabot_local_threads" USING btree ("owner_user_id","agent_id","updated_at" DESC NULLS FIRST);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_local_threads_locked_idx" ON "chisabot_local_threads" USING btree ("lock_expires_at") WHERE "chisabot_local_threads"."run_id" IS NOT NULL;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_tool_operations_owner_confirmation_idx" ON "chisabot_tool_operations" USING btree ("owner_user_id","confirmation_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "chisabot_tool_operations_inflight_run_idx" ON "chisabot_tool_operations" USING btree ("run_id") WHERE "chisabot_tool_operations"."status" IN ('dispatching', 'outcome_unknown');--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "agent_profiles_owner_deleted_idx" ON "agent_profiles" USING btree ("owner_user_id","deleted_at");

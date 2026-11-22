@@ -14,6 +14,14 @@ const MAX_TAIL_MESSAGES = 500;
 const MAX_TAIL_BYTES = 512 * 1024;
 const MIN_TAIL_MESSAGES = 20;
 
+/**
+ * 内部跳过标记：当下游（如本地后端 `GET /threads/:id/messages`）已原生完成
+ * `tail` / `since` / `cursor` 处理时挂此头，中间件剥离后直接放行，
+ * 防止对已截尾响应二次 `sliceTailMessages` 或错算 `total` / `prefixHashes`。
+ */
+export const THREAD_MESSAGES_DELTA_HANDLED_HEADER =
+  "x-chisabot-messages-delta-handled";
+
 export function parseTailLimit(raw: string | null): number | null {
   if (!raw) return null;
   const trimmed = raw.trim();
@@ -127,7 +135,10 @@ function isMessagesRead(pathname: string): boolean {
  * 「没变」直接回 unchanged。只存哈希，不存消息内容；条数有上限。
  */
 const known = new Map<string, readonly string[]>();
-const KNOWN_LIMIT = 64;
+const KNOWN_LIMIT = 256;
+
+const knownTail = new Map<string, string>();
+const KNOWN_TAIL_LIMIT = 128;
 
 function remember(key: string, prefix: readonly string[]) {
   known.delete(key);
@@ -137,10 +148,30 @@ function remember(key: string, prefix: readonly string[]) {
   if (oldest !== undefined) known.delete(oldest);
 }
 
+function rememberTail(key: string, serialized: string) {
+  knownTail.delete(key);
+  knownTail.set(key, serialized);
+  if (knownTail.size <= KNOWN_TAIL_LIMIT) return;
+  const oldest = knownTail.keys().next().value;
+  if (oldest !== undefined) knownTail.delete(oldest);
+}
+
 /** 套在 /api/conversations/* 外面：本地后端和 Intelligence 两条路读出来的 { messages } 都按 since/cursor 或 tail 改写。 */
 export const threadMessagesDelta: MiddlewareHandler = async (context, next) => {
   await next();
   if (context.req.method !== "GET") return;
+  const response = context.res;
+  if (response.headers.has(THREAD_MESSAGES_DELTA_HANDLED_HEADER)) {
+    const headers = new Headers(response.headers);
+    headers.delete(THREAD_MESSAGES_DELTA_HANDLED_HEADER);
+    context.res = undefined;
+    context.res = new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+    return;
+  }
   const url = new URL(context.req.url);
   if (
     !url.searchParams.has("since") &&
@@ -149,7 +180,6 @@ export const threadMessagesDelta: MiddlewareHandler = async (context, next) => {
   )
     return;
   if (!isMessagesRead(url.pathname)) return;
-  const response = context.res;
   if (
     response.status !== 200 ||
     !(response.headers.get("content-type") ?? "").includes("application/json")
@@ -165,10 +195,24 @@ export const threadMessagesDelta: MiddlewareHandler = async (context, next) => {
   const cursor = url.searchParams.get("cursor");
   const tail = !since && !cursor ? parseTailLimit(url.searchParams.get("tail")) : null;
   const key = `${Bun.hash(raw).toString(36)}.${raw.length}`;
+  if (tail !== null) {
+    const tailKey = `${key}:${tail}`;
+    const cachedTail = knownTail.get(tailKey);
+    if (cachedTail !== undefined) {
+      const headers = new Headers(response.headers);
+      headers.delete("content-length");
+      headers.delete("content-encoding");
+      headers.set("cache-control", "no-store");
+      context.res = undefined;
+      context.res = new Response(cachedTail, { status: 200, headers });
+      return;
+    }
+  }
   const cached = known.get(key);
   let answer: Record<string, unknown> | null = cached
     ? unchangedAnswer(cached, since)
     : null;
+  let cacheTailKey: string | null = null;
   if (!answer) {
     let body: unknown;
     try {
@@ -176,13 +220,16 @@ export const threadMessagesDelta: MiddlewareHandler = async (context, next) => {
     } catch {
       return;
     }
+    if (!body || typeof body !== "object") return;
+    const record = body as Record<string, unknown>;
     if (
-      !body ||
-      typeof body !== "object" ||
-      !Array.isArray((body as { messages?: unknown }).messages)
+      record.partial === true ||
+      record.unchanged === true ||
+      typeof record.version === "string"
     )
       return;
-    const { messages, ...rest } = body as { messages: unknown[] } & Record<
+    if (!Array.isArray(record.messages)) return;
+    const { messages, ...rest } = record as { messages: unknown[] } & Record<
       string,
       unknown
     >;
@@ -195,6 +242,7 @@ export const threadMessagesDelta: MiddlewareHandler = async (context, next) => {
           total: messages.length,
           partial: true,
         };
+        cacheTailKey = `${key}:${tail}`;
       }
     }
     if (!answer) {
@@ -206,10 +254,12 @@ export const threadMessagesDelta: MiddlewareHandler = async (context, next) => {
       };
     }
   }
+  const serialized = JSON.stringify(answer);
+  if (cacheTailKey) rememberTail(cacheTailKey, serialized);
   const headers = new Headers(response.headers);
   headers.delete("content-length");
   headers.delete("content-encoding");
   headers.set("cache-control", "no-store");
   context.res = undefined;
-  context.res = new Response(JSON.stringify(answer), { status: 200, headers });
+  context.res = new Response(serialized, { status: 200, headers });
 };

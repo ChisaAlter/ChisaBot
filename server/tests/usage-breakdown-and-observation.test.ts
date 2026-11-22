@@ -21,9 +21,13 @@ import type { AppVariables } from "../src/auth/guards";
 import { createModelConnectionProxy } from "../src/conversations/model-connection-proxy";
 import {
   buildUsageBreakdown,
+  buildUsageBreakdownFromAggregates,
   createMemoryUsageBreakdownStorage,
+  createPgUsageBreakdownStorage,
   createUsageBreakdownService,
   formatLocalDay,
+  type UsageBreakdownDatabase,
+  type UsageEventRecord,
 } from "../src/quotas/usage-breakdown";
 
 function createRoleMiddleware(
@@ -182,6 +186,191 @@ describe("本地时区 + 按用途(kind) + 思考 Token(reasoning) 细分用量�
       "/api/usage/breakdown?tz=Mars/Olympus_Mons",
     );
     expect(badTzResp.status).toBe(400);
+  });
+
+  test("PG SQL 下推聚合 (aggregateSince) 与纯函数 buildUsageBreakdown 在跨时区/夏令时下逐字段完全一致，并支持 22023 平滑回退", async () => {
+    // 覆盖夏令时切换（America/New_York 2026-11-01 结束夏令时）与东八区跨日边界
+    const nowMs = Date.UTC(2026, 10, 2, 3, 30, 0);
+    const events: UsageEventRecord[] = [
+      {
+        id: "e1",
+        ownerUserId: "u1",
+        kind: "chat",
+        modelId: "deepseek-reasoner",
+        effort: "high",
+        inputTokens: 1200,
+        outputTokens: 800,
+        reasoningTokens: 500,
+        createdAt: new Date(Date.UTC(2026, 10, 2, 2, 15, 0)).toISOString(),
+      },
+      {
+        id: "e2",
+        ownerUserId: "u1",
+        kind: "chat",
+        modelId: "deepseek-reasoner",
+        effort: "medium",
+        inputTokens: 300,
+        outputTokens: 150,
+        reasoningTokens: 60,
+        createdAt: new Date(Date.UTC(2026, 10, 2, 1, 0, 0)).toISOString(),
+      },
+      {
+        id: "e3",
+        ownerUserId: "u1",
+        kind: "summary",
+        modelId: "gpt-4.1-mini",
+        effort: "low",
+        inputTokens: 450,
+        outputTokens: 90,
+        reasoningTokens: 0,
+        createdAt: new Date(Date.UTC(2026, 10, 1, 4, 30, 0)).toISOString(),
+      },
+      {
+        id: "e4",
+        ownerUserId: "u1",
+        kind: "review",
+        modelId: "claude-sonnet-4-5",
+        effort: "default",
+        inputTokens: 900,
+        outputTokens: 400,
+        reasoningTokens: 120,
+        createdAt: new Date(nowMs - 15 * 86_400_000).toISOString(),
+      },
+      {
+        id: "e-other",
+        ownerUserId: "u2",
+        kind: "chat",
+        modelId: "other",
+        effort: "default",
+        inputTokens: 99999,
+        outputTokens: 99999,
+        reasoningTokens: 99999,
+        createdAt: new Date(nowMs - 1000).toISOString(),
+      },
+    ];
+
+    let sqlAggregateCalls = 0;
+    let sqlRawListCalls = 0;
+    let rejectTzWith22023 = false;
+
+    const fakePg: UsageBreakdownDatabase = {
+      $client: {
+        unsafe: (async (query: string, params: unknown[] = []) => {
+          const q = query.replace(/\s+/g, " ").trim();
+          if (q.includes("GROUP BY 1, 2, 3")) {
+            sqlAggregateCalls += 1;
+            if (rejectTzWith22023) {
+              throw Object.assign(new Error("time zone not recognized"), {
+                code: "22023",
+              });
+            }
+            const [owner, sinceIso, tz, startDay, endDay] = params as [
+              string,
+              string,
+              string,
+              string,
+              string,
+            ];
+            const sinceMs = Date.parse(sinceIso);
+            const grouped = new Map<
+              string,
+              {
+                local_day: string;
+                kind: string;
+                model_id: string;
+                input_tokens: string;
+                output_tokens: string;
+                reasoning_tokens: string;
+                requests: string;
+              }
+            >();
+            for (const event of events) {
+              if (event.ownerUserId !== owner) continue;
+              const ts = Date.parse(event.createdAt);
+              if (ts < sinceMs) continue;
+              const day = formatLocalDay(ts, tz);
+              if (day < startDay || day > endDay) continue;
+              const key = `${day}|${event.kind}|${event.modelId}`;
+              const prev = grouped.get(key);
+              if (!prev) {
+                grouped.set(key, {
+                  local_day: day,
+                  kind: event.kind,
+                  model_id: event.modelId,
+                  input_tokens: String(event.inputTokens),
+                  output_tokens: String(event.outputTokens),
+                  reasoning_tokens: String(event.reasoningTokens),
+                  requests: "1",
+                });
+              } else {
+                prev.input_tokens = String(
+                  Number(prev.input_tokens) + event.inputTokens,
+                );
+                prev.output_tokens = String(
+                  Number(prev.output_tokens) + event.outputTokens,
+                );
+                prev.reasoning_tokens = String(
+                  Number(prev.reasoning_tokens) + event.reasoningTokens,
+                );
+                prev.requests = String(Number(prev.requests) + 1);
+              }
+            }
+            return [...grouped.values()];
+          }
+          if (q.includes("FROM chisabot_usage_events")) {
+            sqlRawListCalls += 1;
+            const [owner, sinceIso] = params as [string, string];
+            const sinceMs = Date.parse(sinceIso);
+            return events
+              .filter(
+                (e) =>
+                  e.ownerUserId === owner && Date.parse(e.createdAt) >= sinceMs,
+              )
+              .map((e) => ({
+                id: e.id,
+                owner_user_id: e.ownerUserId,
+                kind: e.kind,
+                model_id: e.modelId,
+                effort: e.effort,
+                input_tokens: String(e.inputTokens),
+                output_tokens: String(e.outputTokens),
+                reasoning_tokens: String(e.reasoningTokens),
+                created_at: e.createdAt,
+              }));
+          }
+          return [];
+        }) as unknown as UsageBreakdownDatabase["$client"]["unsafe"],
+      },
+    };
+
+    const pgStorage = createPgUsageBreakdownStorage(fakePg, {
+      now: () => nowMs,
+    });
+    const pgService = createUsageBreakdownService(pgStorage, {
+      now: () => nowMs,
+    });
+
+    const userEvents = events.filter((e) => e.ownerUserId === "u1");
+    for (const tz of ["Asia/Shanghai", "UTC", "America/New_York"]) {
+      const fromPgSql = await pgService.breakdown("u1", tz, nowMs);
+      const fromPureJs = buildUsageBreakdown(userEvents, tz, nowMs);
+      expect(fromPgSql).toEqual(fromPureJs);
+    }
+    expect(sqlAggregateCalls).toBe(3);
+    expect(sqlRawListCalls).toBe(0);
+
+    // 纯聚合组装空集合校验
+    expect(buildUsageBreakdownFromAggregates([], "UTC", nowMs)).toEqual(
+      buildUsageBreakdown([], "UTC", nowMs),
+    );
+
+    // 模拟极少数 ICU 时区不被 PG 识别（22023）：自动平滑回退到原始明细聚合
+    rejectTzWith22023 = true;
+    const fallbackResult = await pgService.breakdown("u1", "UTC", nowMs);
+    expect(fallbackResult).toEqual(
+      buildUsageBreakdown(userEvents, "UTC", nowMs),
+    );
+    expect(sqlRawListCalls).toBe(1);
   });
 });
 

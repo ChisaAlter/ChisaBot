@@ -49,6 +49,16 @@ export type UsageEventRecord = {
   createdAt: string;
 };
 
+export type UsageAggregateRow = {
+  localDay: string;
+  kind: UsageKind;
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  requests: number;
+};
+
 export type UsageBreakdownStorage = {
   ensure(): Promise<void>;
   insertEvent(input: UsageEventInput): Promise<UsageEventRecord>;
@@ -56,6 +66,14 @@ export type UsageBreakdownStorage = {
     ownerUserId: string,
     sinceIso: string,
   ): Promise<UsageEventRecord[]>;
+  /** 可选 SQL 下推聚合接口：按 `(created_at AT TIME ZONE tz)::date, kind, model_id` 返回窗口内预聚合行。 */
+  aggregateSince?(
+    ownerUserId: string,
+    sinceIso: string,
+    timeZone: string,
+    startDay: string,
+    endDay: string,
+  ): Promise<UsageAggregateRow[]>;
 };
 
 export type UsageBreakdownDatabase = {
@@ -152,6 +170,44 @@ function addEventToBucket(
   target.requests += 1;
 }
 
+function addAggregateToBucket(
+  target: UsageBucketTotals,
+  agg: UsageAggregateRow,
+): void {
+  target.inputTokens += agg.inputTokens;
+  target.outputTokens += agg.outputTokens;
+  target.reasoningTokens += agg.reasoningTokens;
+  target.totalTokens += agg.inputTokens + agg.outputTokens;
+  target.requests += agg.requests;
+}
+
+function finalizeWindow(
+  startDay: string,
+  endDay: string,
+  totals: UsageBucketTotals,
+  byKind: Record<UsageKind, UsageBucketTotals>,
+  byModelMap: Map<string, UsageModelBreakdown>,
+  byDayMap: Map<string, UsageDayBreakdown>,
+): UsageWindowBreakdown {
+  const byModel = [...byModelMap.values()].sort(
+    (left, right) =>
+      right.totalTokens - left.totalTokens ||
+      left.modelId.localeCompare(right.modelId),
+  );
+  const byDay = [...byDayMap.values()].sort((left, right) =>
+    left.day.localeCompare(right.day),
+  );
+
+  return {
+    startDay,
+    endDay,
+    totals,
+    byKind,
+    byModel,
+    byDay,
+  };
+}
+
 function aggregateWindow(
   events: readonly { event: UsageEventRecord; localDay: string }[],
   startDay: string,
@@ -189,22 +245,70 @@ function aggregateWindow(
     addEventToBucket(dayEntry, event);
   }
 
-  const byModel = [...byModelMap.values()].sort(
-    (left, right) =>
-      right.totalTokens - left.totalTokens ||
-      left.modelId.localeCompare(right.modelId),
-  );
-  const byDay = [...byDayMap.values()].sort((left, right) =>
-    left.day.localeCompare(right.day),
-  );
+  return finalizeWindow(startDay, endDay, totals, byKind, byModelMap, byDayMap);
+}
+
+function aggregateWindowFromAggregates(
+  aggregates: readonly UsageAggregateRow[],
+  startDay: string,
+  endDay: string,
+): UsageWindowBreakdown {
+  const totals = emptyBucket();
+  const byKind: Record<UsageKind, UsageBucketTotals> = {
+    chat: emptyBucket(),
+    summary: emptyBucket(),
+    classifier: emptyBucket(),
+    review: emptyBucket(),
+    test: emptyBucket(),
+  };
+  const byModelMap = new Map<string, UsageModelBreakdown>();
+  const byDayMap = new Map<string, UsageDayBreakdown>();
+
+  for (const agg of aggregates) {
+    if (agg.localDay < startDay || agg.localDay > endDay) continue;
+    if (agg.requests <= 0) continue;
+    addAggregateToBucket(totals, agg);
+    addAggregateToBucket(byKind[agg.kind], agg);
+
+    let modelEntry = byModelMap.get(agg.modelId);
+    if (!modelEntry) {
+      modelEntry = { modelId: agg.modelId, ...emptyBucket() };
+      byModelMap.set(agg.modelId, modelEntry);
+    }
+    addAggregateToBucket(modelEntry, agg);
+
+    let dayEntry = byDayMap.get(agg.localDay);
+    if (!dayEntry) {
+      dayEntry = { day: agg.localDay, ...emptyBucket() };
+      byDayMap.set(agg.localDay, dayEntry);
+    }
+    addAggregateToBucket(dayEntry, agg);
+  }
+
+  return finalizeWindow(startDay, endDay, totals, byKind, byModelMap, byDayMap);
+}
+
+/** 纯聚合函数：基于 SQL 端按 `(local_day, kind, model_id)` 预聚合结果组装今日 / 近 7 天 / 近 30 天视图。 */
+export function buildUsageBreakdownFromAggregates(
+  aggregates: readonly UsageAggregateRow[],
+  timeZone: string,
+  nowMs = Date.now(),
+): UsageBreakdownResponse {
+  const validTz = validateTimeZone(timeZone);
+  const todayDay = formatLocalDay(nowMs, validTz);
+  const last7Start = shiftCalendarDay(todayDay, -6);
+  const last30Start = shiftCalendarDay(todayDay, -29);
 
   return {
-    startDay,
-    endDay,
-    totals,
-    byKind,
-    byModel,
-    byDay,
+    timeZone: validTz,
+    generatedAt: new Date(nowMs).toISOString(),
+    today: aggregateWindowFromAggregates(aggregates, todayDay, todayDay),
+    last7Days: aggregateWindowFromAggregates(aggregates, last7Start, todayDay),
+    last30Days: aggregateWindowFromAggregates(
+      aggregates,
+      last30Start,
+      todayDay,
+    ),
   };
 }
 
@@ -267,6 +371,28 @@ function mapEventRow(row: UsageEventRow): UsageEventRecord {
     outputTokens: clampInt(Number(row.output_tokens)),
     reasoningTokens: clampInt(Number(row.reasoning_tokens)),
     createdAt: new Date(row.created_at).toISOString(),
+  };
+}
+
+type UsageAggregateDbRow = {
+  local_day: string;
+  kind: string;
+  model_id: string;
+  input_tokens: number | string;
+  output_tokens: number | string;
+  reasoning_tokens: number | string;
+  requests: number | string;
+};
+
+function mapAggregateRow(row: UsageAggregateDbRow): UsageAggregateRow {
+  return {
+    localDay: String(row.local_day),
+    kind: normalizeKind(row.kind),
+    modelId: row.model_id,
+    inputTokens: clampInt(Number(row.input_tokens)),
+    outputTokens: clampInt(Number(row.output_tokens)),
+    reasoningTokens: clampInt(Number(row.reasoning_tokens)),
+    requests: clampInt(Number(row.requests)),
   };
 }
 
@@ -347,6 +473,26 @@ export function createPgUsageBreakdownStorage(
       );
       return rows.map(mapEventRow);
     },
+
+    async aggregateSince(ownerUserId, sinceIso, timeZone, startDay, endDay) {
+      const validTz = validateTimeZone(timeZone);
+      const rows = await sql.unsafe<UsageAggregateDbRow[]>(
+        `SELECT to_char((created_at AT TIME ZONE $3)::date, 'YYYY-MM-DD') AS local_day,
+                kind,
+                model_id,
+                COALESCE(SUM(GREATEST(input_tokens, 0)), 0)::bigint AS input_tokens,
+                COALESCE(SUM(GREATEST(output_tokens, 0)), 0)::bigint AS output_tokens,
+                COALESCE(SUM(GREATEST(reasoning_tokens, 0)), 0)::bigint AS reasoning_tokens,
+                COUNT(*)::bigint AS requests
+         FROM chisabot_usage_events
+         WHERE owner_user_id = $1
+           AND created_at >= $2
+           AND (created_at AT TIME ZONE $3)::date BETWEEN $4::date AND $5::date
+         GROUP BY 1, 2, 3`,
+        [ownerUserId, sinceIso, validTz, startDay, endDay],
+      );
+      return rows.map(mapAggregateRow);
+    },
   };
 }
 
@@ -421,6 +567,25 @@ export function createUsageBreakdownService(
       const validTz = validateTimeZone(timeZone);
       // 回溯 32 个完整自然日（UTC+14 到 UTC-12 的最大边界缓冲），确保 30 天本地窗口零遗漏。
       const sinceIso = new Date(nowMs - 32 * 86_400_000).toISOString();
+      if (storage.aggregateSince) {
+        const todayDay = formatLocalDay(nowMs, validTz);
+        const last30Start = shiftCalendarDay(todayDay, -29);
+        try {
+          const aggregates = await storage.aggregateSince(
+            ownerUserId,
+            sinceIso,
+            validTz,
+            last30Start,
+            todayDay,
+          );
+          return buildUsageBreakdownFromAggregates(aggregates, validTz, nowMs);
+        } catch (error) {
+          // 极少数仅 ICU 支持但 PG tzdata 未收录的时区别名（SQLSTATE 22023）平滑回退至明细聚合。
+          if ((error as { code?: unknown } | null)?.code !== "22023") {
+            throw error;
+          }
+        }
+      }
       const events = await storage.listEventsSince(ownerUserId, sinceIso);
       return buildUsageBreakdown(events, validTz, nowMs);
     },

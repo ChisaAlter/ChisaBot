@@ -77,11 +77,62 @@ type CurrentRow = { thread_id: string; updated_at: Date | string };
 const iso = (value: Date | string | null | undefined) =>
   value ? new Date(value).toISOString() : null;
 
+const MISSING_TABLE_RETRY_MS = 60_000;
+
+type TablePresenceState =
+  | { status: "unknown" }
+  | { status: "present" }
+  | { status: "missing"; retryAt: number };
+
+type BotThreadTableCache = {
+  localThreads: TablePresenceState;
+  workers: TablePresenceState;
+  truncations: TablePresenceState;
+};
+
+/** 进程级（按 DB 客户端隔离，避免测试间串态）可选表存在性缓存，消除 2s `/sync` 重复探测。 */
+const tableCacheByClient = new WeakMap<object, BotThreadTableCache>();
+
+function getTableCache(client: object): BotThreadTableCache {
+  let cache = tableCacheByClient.get(client);
+  if (!cache) {
+    cache = {
+      localThreads: { status: "unknown" },
+      workers: { status: "unknown" },
+      truncations: { status: "unknown" },
+    };
+    tableCacheByClient.set(client, cache);
+  }
+  return cache;
+}
+
+function isKnownMissing(state: TablePresenceState, now: number): boolean {
+  return state.status === "missing" && now < state.retryAt;
+}
+
+function isResolvedState(state: TablePresenceState, now: number): boolean {
+  return (
+    state.status === "present" ||
+    (state.status === "missing" && now < state.retryAt)
+  );
+}
+
+function isMissingTableError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if ((error as { code?: unknown }).code === "42P01") return true;
+  const message =
+    error instanceof Error
+      ? error.message
+      : String((error as { message?: unknown }).message ?? "");
+  return /does not exist|no such table/i.test(message);
+}
+
 export async function createBotThreads(
   database: Database,
   control?: BotThreadRunControl,
 ) {
   const sql = database.$client;
+  const tableCache = getTableCache(sql as object);
   await sql.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_bot_threads (
     owner_user_id text NOT NULL, agent_id text NOT NULL, thread_id text NOT NULL,
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -105,6 +156,8 @@ export async function createBotThreads(
     agentId: string,
     threadId: string,
   ): Promise<boolean> {
+    const now = Date.now();
+    if (isKnownMissing(tableCache.localThreads, now)) return true;
     try {
       const rows = await sql.unsafe<
         { owner_user_id: string; agent_id: string }[]
@@ -112,11 +165,18 @@ export async function createBotThreads(
         "SELECT owner_user_id, agent_id FROM chisabot_local_threads WHERE id = $1",
         [threadId],
       );
+      tableCache.localThreads = { status: "present" };
       const row = rows[0];
       return (
         !row || (row.owner_user_id === ownerUserId && row.agent_id === agentId)
       );
-    } catch {
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        tableCache.localThreads = {
+          status: "missing",
+          retryAt: now + MISSING_TABLE_RETRY_MS,
+        };
+      }
       // 不是本地会话模式（没有这张表）：对话在别处，按 id 记下即可。
       return true;
     }
@@ -143,12 +203,72 @@ export async function createBotThreads(
     ownerUserId: string,
     threadId: string,
   ): Promise<BotThreadActivity | null> {
-    let owner: string | null = null;
-    let locked = false;
-    let seq = "0";
-    let inbox: string | null = null;
-    try {
-      const rows = await sql.unsafe<
+    const now = Date.now();
+    if (isKnownMissing(tableCache.localThreads, now)) return null;
+
+    // 热路径：各可选表存在性已缓存时，合并为单条 SQL（仅 1 次连接借用与 1 次 RTT）。
+    if (
+      tableCache.localThreads.status === "present" &&
+      isResolvedState(tableCache.workers, now) &&
+      isResolvedState(tableCache.truncations, now)
+    ) {
+      const includeWorkers = tableCache.workers.status === "present";
+      const includeTruncations = tableCache.truncations.status === "present";
+      try {
+        const rows = await sql.unsafe<
+          {
+            owner: string | null;
+            locked: boolean | null;
+            seq: string | null;
+            inbox: Date | null;
+            workers: Date | null;
+            revision: string | null;
+          }[]
+        >(
+          `SELECT
+             t.owner_user_id AS owner,
+             (t.run_id IS NOT NULL AND t.lock_expires_at > now()) AS locked,
+             CASE WHEN t.owner_user_id IS NOT NULL AND t.owner_user_id <> $2 THEN NULL
+                  ELSE (SELECT max(sequence)::text FROM chisabot_local_events WHERE thread_id = $1) END AS seq,
+             CASE WHEN t.owner_user_id IS NOT NULL AND t.owner_user_id <> $2 THEN NULL
+                  ELSE (SELECT max(updated_at) FROM chisabot_thread_inbox WHERE thread_id = $1) END AS inbox,
+             ${
+               includeWorkers
+                 ? "CASE WHEN t.owner_user_id IS NOT NULL AND t.owner_user_id <> $2 THEN NULL ELSE (SELECT max(updated_at) FROM chisabot_workers WHERE parent_thread_id = $1 AND owner_user_id = $2) END"
+                 : "NULL::timestamptz"
+             } AS workers,
+             ${
+               includeTruncations
+                 ? "CASE WHEN t.owner_user_id IS NOT NULL AND t.owner_user_id <> $2 THEN NULL ELSE (SELECT count(*)::text FROM chisabot_thread_truncations WHERE thread_id = $1) END"
+                 : "'0'::text"
+             } AS revision
+           FROM (VALUES ($1::text)) AS q(id)
+           LEFT JOIN chisabot_local_threads t ON t.id = q.id`,
+          [threadId, ownerUserId],
+        );
+        const row = rows[0];
+        const owner = row?.owner ?? null;
+        if (owner && owner !== ownerUserId) return null;
+        return {
+          threadId,
+          seq: row?.seq ?? "0",
+          running: Boolean(control?.isActive(threadId)) || Boolean(row?.locked),
+          workers: iso(row?.workers),
+          inbox: iso(row?.inbox),
+          revision: row?.revision ?? "0",
+        };
+      } catch (error) {
+        if (!isMissingTableError(error)) return null;
+        // 若表结构在运行期变动，重置缓存并回退到分表并发探测路径。
+        tableCache.localThreads = { status: "unknown" };
+        tableCache.workers = { status: "unknown" };
+        tableCache.truncations = { status: "unknown" };
+      }
+    }
+
+    // 首次或缓存刷新路径：并行查询主表与可选表，同时缓存表存在性。
+    const corePromise = sql
+      .unsafe<
         {
           owner: string | null;
           locked: boolean | null;
@@ -157,48 +277,88 @@ export async function createBotThreads(
         }[]
       >(
         `SELECT
-           (SELECT owner_user_id FROM chisabot_local_threads WHERE id = $1) AS owner,
-           (SELECT run_id IS NOT NULL AND lock_expires_at > now() FROM chisabot_local_threads WHERE id = $1) AS locked,
+           t.owner_user_id AS owner,
+           (t.run_id IS NOT NULL AND t.lock_expires_at > now()) AS locked,
            (SELECT max(sequence)::text FROM chisabot_local_events WHERE thread_id = $1) AS seq,
-           (SELECT max(updated_at) FROM chisabot_thread_inbox WHERE thread_id = $1) AS inbox`,
+           (SELECT max(updated_at) FROM chisabot_thread_inbox WHERE thread_id = $1) AS inbox
+         FROM (VALUES ($1::text)) AS q(id)
+         LEFT JOIN chisabot_local_threads t ON t.id = q.id`,
         [threadId],
-      );
-      const row = rows[0];
-      owner = row?.owner ?? null;
-      locked = Boolean(row?.locked);
-      seq = row?.seq ?? "0";
-      inbox = iso(row?.inbox);
-    } catch {
-      return null;
-    }
+      )
+      .then((rows) => {
+        tableCache.localThreads = { status: "present" };
+        return { ok: true as const, row: rows[0] };
+      })
+      .catch((error: unknown) => {
+        if (isMissingTableError(error)) {
+          tableCache.localThreads = {
+            status: "missing",
+            retryAt: now + MISSING_TABLE_RETRY_MS,
+          };
+        }
+        return { ok: false as const, row: undefined };
+      });
+
+    const workersPromise = isKnownMissing(tableCache.workers, now)
+      ? Promise.resolve<string | null>(null)
+      : sql
+          .unsafe<{ at: Date | null }[]>(
+            "SELECT max(updated_at) AS at FROM chisabot_workers WHERE parent_thread_id = $1 AND owner_user_id = $2",
+            [threadId, ownerUserId],
+          )
+          .then((rows) => {
+            tableCache.workers = { status: "present" };
+            return iso(rows[0]?.at);
+          })
+          .catch((error: unknown) => {
+            if (isMissingTableError(error)) {
+              tableCache.workers = {
+                status: "missing",
+                retryAt: now + MISSING_TABLE_RETRY_MS,
+              };
+            }
+            // 后台任务没启用（没有这张表）。
+            return null;
+          });
+
+    const revisionPromise = isKnownMissing(tableCache.truncations, now)
+      ? Promise.resolve("0")
+      : sql
+          .unsafe<{ n: string | null }[]>(
+            "SELECT count(*)::text AS n FROM chisabot_thread_truncations WHERE thread_id = $1",
+            [threadId],
+          )
+          .then((rows) => {
+            tableCache.truncations = { status: "present" };
+            return rows[0]?.n ?? "0";
+          })
+          .catch((error: unknown) => {
+            if (isMissingTableError(error)) {
+              tableCache.truncations = {
+                status: "missing",
+                retryAt: now + MISSING_TABLE_RETRY_MS,
+              };
+            }
+            // 截断没启用（没有这张表）。
+            return "0";
+          });
+
+    const [core, workers, revision] = await Promise.all([
+      corePromise,
+      workersPromise,
+      revisionPromise,
+    ]);
+    if (!core.ok) return null;
+    const owner = core.row?.owner ?? null;
     // 别人的对话：什么都不说（和对话接口一样当作不存在）。
     if (owner && owner !== ownerUserId) return null;
-    let workers: string | null = null;
-    try {
-      const rows = await sql.unsafe<{ at: Date | null }[]>(
-        "SELECT max(updated_at) AS at FROM chisabot_workers WHERE parent_thread_id = $1 AND owner_user_id = $2",
-        [threadId, ownerUserId],
-      );
-      workers = iso(rows[0]?.at);
-    } catch {
-      // 后台任务没启用（没有这张表）。
-    }
-    let revision = "0";
-    try {
-      const rows = await sql.unsafe<{ n: string | null }[]>(
-        "SELECT count(*)::text AS n FROM chisabot_thread_truncations WHERE thread_id = $1",
-        [threadId],
-      );
-      revision = rows[0]?.n ?? "0";
-    } catch {
-      // 截断没启用（没有这张表）。
-    }
     return {
       threadId,
-      seq,
-      running: Boolean(control?.isActive(threadId)) || locked,
+      seq: core.row?.seq ?? "0",
+      running:
+        Boolean(control?.isActive(threadId)) || Boolean(core.row?.locked),
       workers,
-      inbox,
+      inbox: iso(core.row?.inbox),
       revision,
     };
   }
@@ -208,6 +368,8 @@ export async function createBotThreads(
     ownerUserId: string,
     agentId: string,
   ): Promise<BotThreadSummary[]> {
+    const now = Date.now();
+    if (isKnownMissing(tableCache.localThreads, now)) return [];
     try {
       const rows = await sql.unsafe<
         {
@@ -219,12 +381,17 @@ export async function createBotThreads(
         }[]
       >(
         `SELECT id, name, jsonb_array_length(messages) AS count, updated_at,
-           (SELECT m->'content' FROM jsonb_array_elements(messages) m WHERE m->>'role' = 'user' LIMIT 1) AS first
+           CASE
+             WHEN name IS NOT NULL AND btrim(regexp_replace(name, '^［经[^\\n]+?］\\r?\\n', '')) <> '' THEN NULL
+             WHEN messages->0->>'role' = 'user' THEN messages->0->'content'
+             ELSE (SELECT m->'content' FROM jsonb_array_elements(messages) m WHERE m->>'role' = 'user' LIMIT 1)
+           END AS first
          FROM chisabot_local_threads
          WHERE owner_user_id = $1 AND agent_id = $2 AND id NOT LIKE 'worker-%' AND id NOT LIKE 'im-%' AND COALESCE(thread_kind, 'primary') = 'primary' AND jsonb_array_length(messages) > 0
          ORDER BY updated_at DESC LIMIT 30`,
         [ownerUserId, agentId],
       );
+      tableCache.localThreads = { status: "present" };
       return rows.map((row) => ({
         threadId: row.id,
         title:
@@ -234,7 +401,13 @@ export async function createBotThreads(
         messages: Number(row.count) || 0,
         updatedAt: iso(row.updated_at),
       }));
-    } catch {
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        tableCache.localThreads = {
+          status: "missing",
+          retryAt: now + MISSING_TABLE_RETRY_MS,
+        };
+      }
       // 不是本地会话模式：没有可列的对话。
       return [];
     }

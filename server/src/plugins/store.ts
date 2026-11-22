@@ -4253,52 +4253,66 @@ export function createPluginStore(options: PluginStoreOptions) {
         .orderBy(asc(mcpServers.title));
       if (rows.length === 0) return [];
 
-      const autoGranted = await globalAutoGrantServers();
-
-      const tools = await database
-        .select()
-        .from(mcpTools)
-        .where(
-          inArray(
-            mcpTools.serverId,
-            rows.map((row) => row.id),
-          ),
-        )
-        .orderBy(asc(mcpTools.name));
+      const serverIds = rows.map((row) => row.id);
+      const brokeredUrls = rows
+        .filter((row) => toolkitOf(row.url) !== null)
+        .map((row) => row.url);
 
       /*
        * Every grant on these servers, not only the ones matching a tool that is still advertised.
        * Asking about the advertised refs answers "who holds what is offered", which cannot report the
        * grants that are the point here — see `mcpGrantsForServers`.
-       */
-      const grants = await mcpGrantsForServers(rows.map((row) => row.id));
-      const advertised = new Set(
-        tools.map((tool) => `${tool.serverId}/${tool.name}`),
-      );
-
-      /*
+       *
        * HOW EACH APP CONNECTS, WHICH IS A FACT ABOUT THE APP AND NOT ABOUT THE ROW BESIDE IT.
        *
        * CRITERION. Every row here whose url names a Composio app reports the scheme
        * {@link brokeredAppScheme} answers for that app — so two rows at one url report one answer,
        * and it is the answer {@link connectBrokeredWithFields} will act on.
        *
-       * REASON. The browser forks on this field: `brokered-account-row.tsx` draws a consent button,
-       * a form or a "nothing to connect" sentence out of it, and the press then lands in a store
-       * method that resolves the app by its URL. Reported off each row's own column those were two
-       * readings of one fact — a form drawn from this row and a submission refused by the other
-       * row's scheme, telling somebody to connect the app the way it asks for over an app they were
-       * asked exactly that way. {@link serverAddress} answers the same field the same way, so the
-       * page that lists an app and the route that connects it cannot come apart either.
-       *
        * ONE EXTRA READ FOR THE WHOLE LIST, and none where the deployment has enabled no apps.
+       * All four independent read queries execute concurrently.
        */
-      const brokeredApps = await brokeredAppRowsAt(
-        rows.filter((row) => toolkitOf(row.url) !== null).map((row) => row.url),
-      );
+      const [autoGranted, tools, grants, brokeredApps] = await Promise.all([
+        globalAutoGrantServers(),
+        database
+          .select()
+          .from(mcpTools)
+          .where(inArray(mcpTools.serverId, serverIds))
+          .orderBy(asc(mcpTools.name)),
+        mcpGrantsForServers(serverIds),
+        brokeredAppRowsAt(brokeredUrls),
+      ]);
+
+      const advertised = new Set<string>();
+      const toolsByServer = new Map<string, (typeof tools)[number][]>();
+      for (const tool of tools) {
+        advertised.add(`${tool.serverId}/${tool.name}`);
+        const bucket = toolsByServer.get(tool.serverId);
+        if (bucket) bucket.push(tool);
+        else toolsByServer.set(tool.serverId, [tool]);
+      }
+
+      const withdrawnByServer = new Map<
+        string,
+        Array<{ ref: string; name: string; grantedTo: string[] }>
+      >();
+      for (const [ref, grantedTo] of grants.entries()) {
+        if (advertised.has(ref)) continue;
+        const slash = ref.indexOf("/");
+        if (slash <= 0) continue;
+        const serverId = ref.slice(0, slash);
+        const item = { ref, name: ref.slice(slash + 1), grantedTo };
+        const bucket = withdrawnByServer.get(serverId);
+        if (bucket) bucket.push(item);
+        else withdrawnByServer.set(serverId, [item]);
+      }
+      for (const bucket of withdrawnByServer.values()) {
+        bucket.sort((left, right) => left.ref.localeCompare(right.ref));
+      }
 
       return rows.map((row) => {
         const entry = catalogueEntry(row.id);
+        const serverTools = toolsByServer.get(row.id) ?? [];
         return {
           id: row.id,
           title: row.title,
@@ -4321,36 +4335,25 @@ export function createPluginStore(options: PluginStoreOptions) {
             ? (brokeredApps.get(row.url)?.authScheme ?? null)
             : row.authScheme,
           autoGrantAll: autoGranted.has(row.id),
-          tools: tools
-            .filter((tool) => tool.serverId === row.id)
-            .map((tool) => {
-              const ref = `${tool.serverId}/${tool.name}`;
-              return {
-                serverId: tool.serverId,
-                name: tool.name,
-                description: tool.description,
-                inputSchema: tool.inputSchema as Record<string, unknown>,
-                ref,
-                effect: classifyTool(entry, tool.name, true, tool.effect),
-                destructive: tool.destructive,
-                grantedTo: grants.get(ref) ?? [],
-              };
-            }),
+          tools: serverTools.map((tool) => {
+            const ref = `${tool.serverId}/${tool.name}`;
+            return {
+              serverId: tool.serverId,
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema as Record<string, unknown>,
+              ref,
+              effect: classifyTool(entry, tool.name, true, tool.effect),
+              destructive: tool.destructive,
+              grantedTo: grants.get(ref) ?? [],
+            };
+          }),
           /*
            * Sorted by ref so the list is stable between reads, which matters because this is the one
            * place a discrepancy is reported and a reader comparing two visits should see the same
            * order.
            */
-          withdrawn: [...grants.entries()]
-            .filter(
-              ([ref]) => ref.startsWith(`${row.id}/`) && !advertised.has(ref),
-            )
-            .sort(([left], [right]) => left.localeCompare(right))
-            .map(([ref, grantedTo]) => ({
-              ref,
-              name: ref.slice(row.id.length + 1),
-              grantedTo,
-            })),
+          withdrawn: withdrawnByServer.get(row.id) ?? [],
         };
       });
     },
@@ -4819,25 +4822,37 @@ export function createPluginStore(options: PluginStoreOptions) {
           ...autoServers,
         ]),
       ].filter(Boolean);
-      const toolRows =
+      const [toolRows, enhancementMeta, skillRows] = await Promise.all([
         grantedServers.length === 0
-          ? []
-          : await database
+          ? Promise.resolve([])
+          : database
               .select()
               .from(mcpTools)
               .where(inArray(mcpTools.serverId, grantedServers))
-              .orderBy(asc(mcpTools.name));
+              .orderBy(asc(mcpTools.name)),
+        options.enhancements && grantedServers.length > 0
+          ? options.enhancements.metadataForServers(grantedServers)
+          : Promise.resolve(
+              new Map<
+                string,
+                { disabledTools: ReadonlySet<string>; customInstructions: string }
+              >(),
+            ),
+        skillSlugs.length === 0
+          ? Promise.resolve([])
+          : database
+              .select()
+              .from(skills)
+              .where(inArray(skills.slug, skillSlugs)),
+      ]);
       // A set, so this is a lookup per row rather than a walk of the grants per row.
       const granted = new Set(toolRefs);
-      const disabledByServer = options.enhancements
-        ? await options.enhancements.disabledToolsMap(grantedServers)
-        : new Map<string, ReadonlySet<string>>();
       const grantedTools = toolRows
         .filter(
           (row) =>
             (autoServers.has(row.serverId) ||
               granted.has(`${row.serverId}/${row.name}`)) &&
-            !disabledByServer.get(row.serverId)?.has(row.name),
+            !enhancementMeta.get(row.serverId)?.disabledTools.has(row.name),
         )
         .map((row) => {
           const ref = `${row.serverId}/${row.name}`;
@@ -4855,20 +4870,17 @@ export function createPluginStore(options: PluginStoreOptions) {
       const activeServerIds = [
         ...new Set(grantedTools.map((tool) => tool.ref.split("/")[0] ?? "")),
       ].filter(Boolean);
-      const customInstructions =
-        options.enhancements && activeServerIds.length > 0
-          ? await options.enhancements.customInstructionsForServers(
-              activeServerIds,
-            )
-          : [];
-
-      const skillRows =
-        skillSlugs.length === 0
-          ? []
-          : await database
-              .select()
-              .from(skills)
-              .where(inArray(skills.slug, skillSlugs));
+      const customInstructions: Array<{
+        serverId: string;
+        customInstructions: string;
+      }> = [];
+      for (const serverId of activeServerIds) {
+        const text =
+          enhancementMeta.get(serverId)?.customInstructions.trim() ?? "";
+        if (text.length > 0) {
+          customInstructions.push({ serverId, customInstructions: text });
+        }
+      }
 
       /*
        * What each skill says it needs, carried alongside rather than folded into `tools`.
@@ -4877,7 +4889,10 @@ export function createPluginStore(options: PluginStoreOptions) {
        * built, intersects the two; handing the runtime a union instead would make writing a skill a
        * way to grant a tool, which is the one thing this must never be.
        */
-      const declared = await toolsDeclaredBy(skillRows.map((row) => row.id));
+      const declared =
+        skillRows.length === 0
+          ? new Map<string, string[]>()
+          : await toolsDeclaredBy(skillRows.map((row) => row.id));
 
       return {
         tools: grantedTools,
@@ -7300,21 +7315,22 @@ export function createPluginStore(options: PluginStoreOptions) {
         throw new PluginRefusedError(disabledReason, null);
       }
 
-      const { row, entry, access } = await requireServer(serverId);
-
-      const advertised = await database
-        .select({
-          name: mcpTools.name,
-          inputSchema: mcpTools.inputSchema,
-          effect: mcpTools.effect,
-          destructive: mcpTools.destructive,
-          version: mcpTools.version,
-        })
-        .from(mcpTools)
-        .where(
-          and(eq(mcpTools.serverId, serverId), eq(mcpTools.name, toolName)),
-        )
-        .limit(1);
+      const [{ row, entry, access }, advertised] = await Promise.all([
+        requireServer(serverId),
+        database
+          .select({
+            name: mcpTools.name,
+            inputSchema: mcpTools.inputSchema,
+            effect: mcpTools.effect,
+            destructive: mcpTools.destructive,
+            version: mcpTools.version,
+          })
+          .from(mcpTools)
+          .where(
+            and(eq(mcpTools.serverId, serverId), eq(mcpTools.name, toolName)),
+          )
+          .limit(1),
+      ]);
 
       const effect = classifyTool(
         entry,
@@ -7580,12 +7596,39 @@ export function createPluginStore(options: PluginStoreOptions) {
             null,
           );
         }
-        const { token } = await connectionTokenFor(
-          row,
-          entry,
-          input.credentialActorId ?? input.actorId,
-          access,
-        );
+        const needOverlay =
+          access.transport === "mcp" && Boolean(options.enhancements);
+        const canParallelOverlay =
+          needOverlay && entry?.auth.kind !== "user-oauth";
+        let token: string | undefined;
+        let overlay:
+          | Awaited<ReturnType<McpEnhancementStore["resolveConnectionOverlay"]>>
+          | undefined;
+        if (canParallelOverlay && options.enhancements) {
+          const [tokenResult, resolvedOverlay] = await Promise.all([
+            connectionTokenFor(
+              row,
+              entry,
+              input.credentialActorId ?? input.actorId,
+              access,
+            ),
+            options.enhancements.resolveConnectionOverlay(serverId),
+          ]);
+          token = tokenResult.token;
+          overlay = resolvedOverlay;
+        } else {
+          const tokenResult = await connectionTokenFor(
+            row,
+            entry,
+            input.credentialActorId ?? input.actorId,
+            access,
+          );
+          token = tokenResult.token;
+          if (needOverlay && options.enhancements) {
+            overlay =
+              await options.enhancements.resolveConnectionOverlay(serverId);
+          }
+        }
         const vendor =
           injectedVendor ?? transportFor(access.transport).callTool;
         if (input.signal?.aborted) {
@@ -7593,10 +7636,6 @@ export function createPluginStore(options: PluginStoreOptions) {
           err.name = "AbortError";
           throw err;
         }
-        const overlay =
-          access.transport === "mcp" && options.enhancements
-            ? await options.enhancements.resolveConnectionOverlay(serverId)
-            : undefined;
         const result = await vendor(
           {
             url: effectiveUrl(row, entry),

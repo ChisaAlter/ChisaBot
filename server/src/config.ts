@@ -166,6 +166,8 @@ export type DeploymentConfig = {
   /** The port the API listens on. Named `PORT` or `SERVER_PORT`; see `serverPort`. */
   port: number;
   databaseUrl: string;
+  /** Maximum connections held by the PostgreSQL SQL pool (`DATABASE_POOL_MAX`, default 20). */
+  databasePoolMax: number;
   keyEncryptionKey: string;
   /**
    * Authentication for the bundled Bot and/or the installed picked harness.
@@ -1407,6 +1409,29 @@ function agentStallTimeoutMs(environment: Environment): number {
 const DEFAULT_PORT = 3001;
 
 /**
+ * Default upper bound for the PostgreSQL connection pool.
+ *
+ * Bun SQL's implicit default is tuned small; under concurrent SSE turns, 2s `/sync` polls and
+ * periodic recovery sweeps an explicit default of 20 avoids unnecessary pool queueing while
+ * staying comfortably within PostgreSQL's default `max_connections = 100`.
+ */
+export const DEFAULT_DATABASE_POOL_MAX = 20;
+
+const MAX_DATABASE_POOL_MAX = 200;
+
+function databasePoolMax(environment: Environment): number {
+  const raw = optional(environment, "DATABASE_POOL_MAX");
+  if (raw === undefined) return DEFAULT_DATABASE_POOL_MAX;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > MAX_DATABASE_POOL_MAX) {
+    throw new Error(
+      `DATABASE_POOL_MAX must be a whole number between 1 and ${MAX_DATABASE_POOL_MAX}`,
+    );
+  }
+  return value;
+}
+
+/**
  * The port the API listens on, from either of its two names.
  *
  * `PORT` and `SERVER_PORT` name one number: either moves the server, and two that disagree are
@@ -1479,6 +1504,7 @@ export function loadConfig(
     transcription,
     speech: speechConfigFromEnv(environment),
     databaseUrl: required(environment, "DATABASE_URL"),
+    databasePoolMax: databasePoolMax(environment),
     keyEncryptionKey: keyEncryptionKey(environment),
     ...(kernel === "dsh"
       ? {

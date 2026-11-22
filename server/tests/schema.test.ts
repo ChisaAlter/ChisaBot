@@ -433,6 +433,12 @@ describe("ChisaBot database schema", () => {
         unique: false,
         method: "btree",
       },
+      {
+        name: "agent_profiles_owner_deleted_idx",
+        columns: ["owner_user_id", "deleted_at"],
+        unique: false,
+        method: "btree",
+      },
       // "Which Bots did this Bot create" — the managed-bots listing and the per-user cap read it.
       {
         name: "agent_profiles_created_by_idx",
@@ -498,5 +504,34 @@ describe("ChisaBot database schema", () => {
     expect(normalizedMigration).toContain(
       `CREATE INDEX "agent_profiles_visibility_deleted_idx" ON "agent_profiles" USING btree ("visibility","deleted_at")`,
     );
+  });
+
+  test("declares core performance B-tree and partial indexes in 0070 without CONCURRENTLY", async () => {
+    const migration = await readFile(
+      new URL("../drizzle/0070_core_performance_indexes.sql", import.meta.url),
+      "utf8",
+    );
+    expect(migration).not.toMatch(/\bCONCURRENTLY\b/i);
+    const expectedIndexes = [
+      "channel_memberships_user_channel_idx",
+      "chisabot_conversation_commands_active_created_idx",
+      "chisabot_dsh_runs_active_owner_idx",
+      "chisabot_local_runs_active_idx",
+      "chisabot_local_threads_locked_idx",
+      "chisabot_local_runs_thread_created_idx",
+      "chisabot_local_events_thread_run_seq_idx",
+      "chisabot_local_events_thread_run_lifecycle_idx",
+      "chisabot_local_threads_owner_agent_updated_idx",
+      "chisabot_conversation_interactions_pending_thread_idx",
+      "chisabot_tool_operations_owner_confirmation_idx",
+      "chisabot_tool_operations_inflight_run_idx",
+      "agent_profiles_owner_deleted_idx",
+      "sessions_user_id_idx",
+      "accounts_user_id_idx",
+      "verifications_identifier_idx",
+    ];
+    for (const indexName of expectedIndexes) {
+      expect(migration).toContain(`CREATE INDEX IF NOT EXISTS "${indexName}"`);
+    }
   });
 });

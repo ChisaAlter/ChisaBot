@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addressOf, createDatabase } from "../src/db/client";
+import { addressOf, createDatabase, resolvePoolMax } from "../src/db/client";
 import { testDatabaseUrl } from "./support/database";
 
 // Any readable PEM will do: these tests check what reaches Bun, not a handshake.
@@ -119,6 +119,15 @@ describe("the database address", () => {
   test("still refuses pool options where the address belongs", () => {
     // @ts-expect-error the wrong-way-round call this guard exists for
     expect(() => createDatabase({ max: 1 })).toThrow(/connection string/);
+  });
+
+  test("resolves explicit default pool max and validates overrides", () => {
+    expect(resolvePoolMax()).toBe(20);
+    expect(resolvePoolMax(1)).toBe(1);
+    expect(resolvePoolMax(32)).toBe(32);
+    expect(() => resolvePoolMax(0)).toThrow(/positive integer/);
+    expect(() => resolvePoolMax(-2)).toThrow(/positive integer/);
+    expect(() => resolvePoolMax(2.5)).toThrow(/positive integer/);
   });
 });
 

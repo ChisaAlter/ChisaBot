@@ -94,18 +94,22 @@ export const users = pgTable("users", {
   updatedAt: updatedAt(),
 });
 
-export const sessions = pgTable("sessions", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  token: text("token").notNull().unique(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  ipAddress: text("ip_address"),
-  userAgent: text("user_agent"),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    token: text("token").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [index("sessions_user_id_idx").on(table.userId)],
+);
 
 export const accounts = pgTable(
   "accounts",
@@ -151,17 +155,22 @@ export const accounts = pgTable(
       table.providerId,
       table.accountId,
     ),
+    index("accounts_user_id_idx").on(table.userId),
   ],
 );
 
-export const verifications = pgTable("verifications", {
-  id: text("id").primaryKey(),
-  identifier: text("identifier").notNull(),
-  value: text("value").notNull(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const verifications = pgTable(
+  "verifications",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [index("verifications_identifier_idx").on(table.identifier)],
+);
 
 export const userRoles = pgTable(
   "user_roles",
@@ -387,7 +396,13 @@ export const channelMemberships = pgTable(
     lastReadAt: timestamp("last_read_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
-  (table) => [primaryKey({ columns: [table.channelId, table.userId] })],
+  (table) => [
+    primaryKey({ columns: [table.channelId, table.userId] }),
+    index("channel_memberships_user_channel_idx").on(
+      table.userId,
+      table.channelId,
+    ),
+  ],
 );
 
 export const channelAgents = pgTable(

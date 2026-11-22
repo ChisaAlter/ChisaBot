@@ -16,6 +16,7 @@ const DEFAULT_SEARCH_LIMIT = 5;
 const MAX_SEARCH_LIMIT = 20;
 const MAX_EXCERPT_CHARS = 280;
 const MAX_MESSAGE_SEGMENTS_PER_THREAD = 400;
+const SEARCH_YIELD_BATCH_SIZE = 20;
 
 const DATA_URI_BASE64_PATTERN =
   /data:[a-zA-Z0-9/+.-]+;base64,[A-Za-z0-9+/=]{16,}/gi;
@@ -71,12 +72,17 @@ function normalizeForMatch(text: string): string {
 
 /** 剥离 base64 数据 URI、长编码串与内部工具结果标记，只保留可读对话文本。 */
 export function scrubSessionText(raw: string): string {
-  return raw
-    .replace(DATA_URI_BASE64_PATTERN, " ")
-    .replace(LONG_BASE64_BLOB_PATTERN, " ")
-    .replace(INTERNAL_MARKER_PATTERN, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  let text = raw;
+  if (text.length >= 24 && /base64,/i.test(text)) {
+    text = text.replace(DATA_URI_BASE64_PATTERN, " ");
+  }
+  if (text.length >= 128) {
+    text = text.replace(LONG_BASE64_BLOB_PATTERN, " ");
+  }
+  if (text.includes("⟦chisabot:")) {
+    text = text.replace(INTERNAL_MARKER_PATTERN, " ");
+  }
+  return text.replace(/\s+/g, " ").trim();
 }
 
 function extractMessageText(content: unknown): string {
@@ -117,7 +123,10 @@ function parseMessagesArray(raw: unknown): unknown[] {
   }
 }
 
-function extractSegments(rawMessages: unknown): {
+function extractSegments(
+  rawMessages: unknown,
+  needTitleFallback = true,
+): {
   titleFallback: string;
   segments: MessageSegment[];
 } {
@@ -128,12 +137,19 @@ function extractSegments(rawMessages: unknown): {
     0,
     entries.length - MAX_MESSAGE_SEGMENTS_PER_THREAD,
   );
+  const loopStart = needTitleFallback ? 0 : startIndex;
 
-  for (let index = 0; index < entries.length; index += 1) {
+  for (let index = loopStart; index < entries.length; index += 1) {
+    if (index < startIndex && titleFallback) {
+      index = startIndex - 1;
+      continue;
+    }
     const entry = entries[index];
     if (!isRecord(entry)) continue;
     const role = typeof entry.role === "string" ? entry.role : "";
     if (role === "system" || role === "developer") continue;
+    // 窗口之前的历史消息仅用于提取首条用户消息作为缺省标题，非用户消息可直接跳过正则清洗。
+    if (index < startIndex && role !== "user") continue;
     const text = extractMessageText(entry.content);
     if (!text) continue;
     if (!titleFallback && role === "user") {
@@ -280,6 +296,126 @@ function sliceSafe(text: string, start: number, end: number): string {
   return text.slice(start, safeEnd);
 }
 
+type ScoredSessionHit = {
+  hit: SessionSearchHit;
+  score: number;
+  updatedMs: number;
+};
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function scoreSessionRow(
+  row: SessionThreadRow,
+  tokens: QueryTokens,
+  options: {
+    ownerUserId: string;
+    currentThreadId?: string;
+  },
+): ScoredSessionHit | null {
+  if (!row || typeof row.id !== "string") return null;
+  // 二次防线：即便上层查询返回了非主会话或跨用户行，也在这里强制剔除。
+  if (
+    row.owner_user_id !== undefined &&
+    row.owner_user_id !== options.ownerUserId
+  ) {
+    return null;
+  }
+  if (
+    row.thread_kind !== undefined &&
+    row.thread_kind !== null &&
+    row.thread_kind !== "primary"
+  ) {
+    return null;
+  }
+  if (row.id.startsWith("worker-")) return null;
+  if (options.currentThreadId && row.id === options.currentThreadId) {
+    return null;
+  }
+
+  const clippedName = clipTitle(row.name);
+  const { titleFallback, segments } = extractSegments(
+    row.messages,
+    !clippedName,
+  );
+  const title = clippedName || titleFallback || "（没有文字的对话）";
+  const titleScore = scoreText(title, tokens) * 1.4;
+
+  let bestSegmentScore = 0;
+  let bodyScoreSum = 0;
+  const matchedSegments: {
+    seg: MessageSegment;
+    score: number;
+    index: number;
+  }[] = [];
+
+  for (let idx = 0; idx < segments.length; idx += 1) {
+    const seg = segments[idx];
+    if (!seg) continue;
+    const segScore = scoreText(seg.text, tokens);
+    if (segScore > 0) {
+      bodyScoreSum += segScore * 0.25;
+      matchedSegments.push({ seg, score: segScore, index: idx });
+      if (segScore > bestSegmentScore) {
+        bestSegmentScore = segScore;
+      }
+    }
+  }
+
+  const combinedScore =
+    titleScore + bestSegmentScore + Math.min(bodyScoreSum, 4);
+  if (combinedScore <= 0) return null;
+
+  matchedSegments.sort((a, b) =>
+    b.score !== a.score ? b.score - a.score : a.index - b.index,
+  );
+  const topTwo = matchedSegments.slice(0, 2);
+  const perSnippetBudget =
+    topTwo.length > 1
+      ? Math.floor((MAX_EXCERPT_CHARS - 16) / 2)
+      : MAX_EXCERPT_CHARS;
+  const matchedExcerpt =
+    topTwo.length > 0
+      ? topTwo
+          .map(
+            (entry) =>
+              `${entry.seg.speaker}: ${clipAroundMatch(entry.seg.text, tokens, perSnippetBudget)}`,
+          )
+          .join(" | ")
+      : segments[0]
+        ? `${segments[0].speaker}: ${clipAroundMatch(segments[0].text, tokens)}`
+        : `标题命中：${title}`;
+  const updatedDate = new Date(row.updated_at);
+  const updatedMs = Number.isFinite(updatedDate.getTime())
+    ? updatedDate.getTime()
+    : 0;
+
+  return {
+    score: combinedScore,
+    updatedMs,
+    hit: {
+      threadId: row.id,
+      title,
+      updatedAt: Number.isFinite(updatedDate.getTime())
+        ? updatedDate.toISOString()
+        : new Date(0).toISOString(),
+      matchedExcerpt,
+    },
+  };
+}
+
+function finalizeScoredHits(
+  scored: ScoredSessionHit[],
+  limit: number,
+): SessionSearchHit[] {
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.updatedMs - a.updatedMs;
+  });
+  return scored.slice(0, limit).map((entry) => entry.hit);
+}
+
 /** 纯检索与排序逻辑，便于单测直接验证分词、打分、片段截取与隔离保护。 */
 export function rankSessionRows(
   rows: readonly SessionThreadRow[],
@@ -297,101 +433,47 @@ export function rankSessionRows(
     MAX_SEARCH_LIMIT,
   );
 
-  const scored: { hit: SessionSearchHit; score: number; updatedMs: number }[] =
-    [];
-
+  const scored: ScoredSessionHit[] = [];
   for (const row of rows) {
-    if (!row || typeof row.id !== "string") continue;
-    // 二次防线：即便上层查询返回了非主会话或跨用户行，也在这里强制剔除。
-    if (
-      row.owner_user_id !== undefined &&
-      row.owner_user_id !== options.ownerUserId
-    ) {
-      continue;
-    }
-    if (
-      row.thread_kind !== undefined &&
-      row.thread_kind !== null &&
-      row.thread_kind !== "primary"
-    ) {
-      continue;
-    }
-    if (row.id.startsWith("worker-")) continue;
-    if (options.currentThreadId && row.id === options.currentThreadId) continue;
-
-    const { titleFallback, segments } = extractSegments(row.messages);
-    const title = clipTitle(row.name) || titleFallback || "（没有文字的对话）";
-    const titleScore = scoreText(title, tokens) * 1.4;
-
-    let bestSegmentScore = 0;
-    let bodyScoreSum = 0;
-    const matchedSegments: {
-      seg: MessageSegment;
-      score: number;
-      index: number;
-    }[] = [];
-
-    for (let idx = 0; idx < segments.length; idx += 1) {
-      const seg = segments[idx];
-      if (!seg) continue;
-      const segScore = scoreText(seg.text, tokens);
-      if (segScore > 0) {
-        bodyScoreSum += segScore * 0.25;
-        matchedSegments.push({ seg, score: segScore, index: idx });
-        if (segScore > bestSegmentScore) {
-          bestSegmentScore = segScore;
-        }
-      }
-    }
-
-    const combinedScore =
-      titleScore + bestSegmentScore + Math.min(bodyScoreSum, 4);
-    if (combinedScore <= 0) continue;
-
-    matchedSegments.sort((a, b) =>
-      b.score !== a.score ? b.score - a.score : a.index - b.index,
-    );
-    const topTwo = matchedSegments.slice(0, 2);
-    const perSnippetBudget =
-      topTwo.length > 1
-        ? Math.floor((MAX_EXCERPT_CHARS - 16) / 2)
-        : MAX_EXCERPT_CHARS;
-    const matchedExcerpt =
-      topTwo.length > 0
-        ? topTwo
-            .map(
-              (entry) =>
-                `${entry.seg.speaker}: ${clipAroundMatch(entry.seg.text, tokens, perSnippetBudget)}`,
-            )
-            .join(" | ")
-        : segments[0]
-          ? `${segments[0].speaker}: ${clipAroundMatch(segments[0].text, tokens)}`
-          : `标题命中：${title}`;
-    const updatedDate = new Date(row.updated_at);
-    const updatedMs = Number.isFinite(updatedDate.getTime())
-      ? updatedDate.getTime()
-      : 0;
-
-    scored.push({
-      score: combinedScore,
-      updatedMs,
-      hit: {
-        threadId: row.id,
-        title,
-        updatedAt: Number.isFinite(updatedDate.getTime())
-          ? updatedDate.toISOString()
-          : new Date(0).toISOString(),
-        matchedExcerpt,
-      },
-    });
+    const entry = scoreSessionRow(row, tokens, options);
+    if (entry) scored.push(entry);
   }
+  return finalizeScoredHits(scored, limit);
+}
 
-  scored.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return b.updatedMs - a.updatedMs;
-  });
+/** 分批让出事件循环的异步检索排序：避免 200 条长会话 JSONB 清洗与打分持续占用主线程阻塞 SSE。 */
+export async function rankSessionRowsAsync(
+  rows: readonly SessionThreadRow[],
+  options: {
+    ownerUserId: string;
+    currentThreadId?: string;
+    query: string;
+    limit?: number;
+    batchSize?: number;
+  },
+): Promise<SessionSearchHit[]> {
+  const tokens = tokenizeSearchQuery(options.query);
+  if (!tokens.phrase) return [];
+  const limit = Math.min(
+    Math.max(Math.floor(options.limit ?? DEFAULT_SEARCH_LIMIT), 1),
+    MAX_SEARCH_LIMIT,
+  );
+  const batchSize = Math.max(
+    1,
+    Math.floor(options.batchSize ?? SEARCH_YIELD_BATCH_SIZE),
+  );
 
-  return scored.slice(0, limit).map((entry) => entry.hit);
+  const scored: ScoredSessionHit[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    if (index > 0 && index % batchSize === 0) {
+      await yieldToEventLoop();
+    }
+    const row = rows[index];
+    if (!row) continue;
+    const entry = scoreSessionRow(row, tokens, options);
+    if (entry) scored.push(entry);
+  }
+  return finalizeScoredHits(scored, limit);
 }
 
 const searchParameters = z
@@ -494,7 +576,7 @@ export function createSessionSearchTools({
           throw error;
         }
 
-        const results = rankSessionRows(rows, {
+        const results = await rankSessionRowsAsync(rows, {
           ownerUserId: cleanOwner,
           ...(cleanCurrent ? { currentThreadId: cleanCurrent } : {}),
           query: parsed.data.query,

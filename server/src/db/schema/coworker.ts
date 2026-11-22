@@ -73,6 +73,10 @@ export const agentProfiles = pgTable(
       table.visibility,
       table.deletedAt,
     ),
+    index("agent_profiles_owner_deleted_idx").on(
+      table.ownerUserId,
+      table.deletedAt,
+    ),
     // "Which Bots did this Bot create" — the managed-bots listing and the per-user cap both read it.
     index("agent_profiles_created_by_idx").on(table.createdByAgentId),
   ],
