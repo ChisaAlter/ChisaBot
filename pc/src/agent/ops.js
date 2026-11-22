@@ -12,6 +12,10 @@ const { spawn } = require("node:child_process");
 const { createCodeOps } = require("./code-ops");
 const { classifyOpenTarget } = require("./open-target");
 const { callLocalMcp, discoverLocalMcpConfigs } = require("./mcp-host");
+const {
+  getSharedWinPsHelper,
+  disposeSharedWinPsHelper,
+} = require("./win-ps-helper");
 
 const OUTPUT_CAP = 64 * 1024;
 const LIST_CAP = 500;
@@ -322,6 +326,47 @@ function linuxInputArgs(args = {}) {
   }
 }
 
+/** 校验并规范化 Windows 输入命令负载，供常驻 STA helper 白名单分派使用。 */
+function buildWinInputPayload(args = {}) {
+  const x = Number.isFinite(args.x) ? Math.round(args.x) : null;
+  const y = Number.isFinite(args.y) ? Math.round(args.y) : null;
+  const hasPoint = x !== null && y !== null;
+  const point = hasPoint ? { x, y } : {};
+  switch (args.action) {
+    case "move":
+      if (!hasPoint) throw new OpError("move 需要 x 和 y。");
+      return { action: "move", x, y };
+    case "click":
+      return { action: "click", ...point };
+    case "double_click":
+      return { action: "double_click", ...point };
+    case "right_click":
+      return { action: "right_click", ...point };
+    case "scroll": {
+      const amount = Number.isFinite(args.amount)
+        ? Math.round(args.amount)
+        : -3;
+      return { action: "scroll", ...point, amount };
+    }
+    case "type": {
+      const text = validateInputText(args.text);
+      return { action: "type", sendKeysText: escapeSendKeys(text) };
+    }
+    case "key": {
+      const keys = validateInputKey(args.keys);
+      return { action: "key", keys };
+    }
+    case "focus": {
+      const target = validateFocusTarget(
+        args.app ?? args.bundleId ?? args.title,
+      );
+      return { action: "focus", target };
+    }
+    default:
+      throw new OpError(`不支持的输入动作：${args.action}`);
+  }
+}
+
 function winInputScript(args = {}) {
   const x = Number.isFinite(args.x) ? Math.round(args.x) : null;
   const y = Number.isFinite(args.y) ? Math.round(args.y) : null;
@@ -548,6 +593,7 @@ Write-Output ("{0}x{1}x{2}x{3}:" -f $b.Width, $b.Height, $w, $h) -NoNewline
 function createOps(options = {}) {
   const platform = options.platform || process.platform;
   const hooks = options.hooks || {};
+  const winHelper = options.winHelper || null;
   const P = pathApi(platform);
   let memoryClipboard = "";
   const code = createCodeOps({ platform, resolveInRoots });
@@ -744,15 +790,31 @@ function createOps(options = {}) {
     throw new OpError("这台电脑上没有可用的截图方式。");
   }
 
-  async function input(args) {
+  async function input(args, ctx = {}) {
     if (hooks.input) return hooks.input(args);
     if (platform === "win32") {
-      const result = await runPowerShell(winInputScript(args), {
-        timeoutMs: 20_000,
-      });
-      if (result.exitCode !== 0)
-        throw new OpError(`输入失败：${result.stderr.slice(0, 300)}`);
-      return { done: true, action: args.action };
+      const payload = buildWinInputPayload(args);
+      const helper = winHelper || getSharedWinPsHelper();
+      try {
+        await helper.request("input", payload, {
+          timeoutMs: 20_000,
+          signal: ctx?.signal,
+        });
+        return { done: true, action: payload.action };
+      } catch (error) {
+        if (!error?.isTransportError) {
+          throw new OpError(
+            `输入失败：${String(error?.message || error).slice(0, 300)}`,
+          );
+        }
+        const result = await runPowerShell(winInputScript(args), {
+          timeoutMs: 20_000,
+          signal: ctx?.signal,
+        });
+        if (result.exitCode !== 0)
+          throw new OpError(`输入失败：${result.stderr.slice(0, 300)}`);
+        return { done: true, action: payload.action };
+      }
     }
     if (platform === "darwin") {
       const plan = macInputPlan(args, {
@@ -963,10 +1025,12 @@ module.exports = {
   runProcess,
   encodePowerShell,
   psUtf8Literal,
+  buildWinInputPayload,
   winInputScript,
   macInputPlan,
   linuxInputArgs,
   escapeAppleScriptString,
   escapeSendKeys,
+  disposeWinPsHelper: disposeSharedWinPsHelper,
   OpError,
 };

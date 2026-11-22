@@ -13,6 +13,7 @@
  *    - Linux：检测 AT-SPI / xdotool 能力并提供清晰降级提示。
  */
 const { runProcess, encodePowerShell } = require("./agent/ops");
+const { getSharedWinPsHelper } = require("./agent/win-ps-helper");
 
 const DEFAULT_GRANT_TTL_MS = 10 * 60_000;
 const MAX_GRANT_TTL_MS = 30 * 60_000;
@@ -204,42 +205,72 @@ function createDirectionEpochAuthorizer(options = {}) {
   };
 }
 
-/** 构造 Windows UI Automation 语义控件树读取脚本（仅精确匹配进程名，且用 Base64 防弯单引号逃逸）。 */
-function buildWinReadTreeScript({ bundleId, maxNodes = 80 }) {
+/** 构造 Windows UI Automation 有界语义控件树读取脚本（TreeWalker BFS + 深度/节点上限 + Base64 传参）。 */
+function buildWinReadTreeScript({ bundleId, maxNodes = 80, maxDepth = 12 }) {
   const normalizedTarget = normalizeBundleId(bundleId);
   if (!normalizedTarget) {
     throw new Error("必须提供合法的目标应用标识（bundleId / 进程名）。");
   }
   const limit = Math.min(200, Math.max(10, Number(maxNodes) || 80));
+  const depthLimit = Math.min(30, Math.max(2, Number(maxDepth) || 12));
+  const maxVisited = Math.min(2000, Math.max(limit * 8, 600));
   return [
     "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes",
     `$target = ${psUtf8Literal(normalizedTarget)}`,
     `$limit = ${limit}`,
+    `$maxDepth = ${depthLimit}`,
+    `$maxVisited = ${maxVisited}`,
+    "$procs = @(Get-Process -Name $target -ErrorAction SilentlyContinue | Where-Object { $pname = $_.ProcessName.ToLower(); $pname -eq $target })",
+    'if ($procs.Count -eq 0) { Write-Output \'{"nodes":[],"found":false}\'; exit 0 }',
+    "$pids = New-Object 'System.Collections.Generic.HashSet[int]'",
+    "foreach ($p in $procs) { [void]$pids.Add([int]$p.Id) }",
     "$root = [System.Windows.Automation.AutomationElement]::RootElement",
-    "$cond = [System.Windows.Automation.Condition]::TrueCondition",
-    "$wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)",
+    "$walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker",
     "$picked = $null",
-    "foreach ($w in $wins) {",
-    "  $pidVal = $w.Current.ProcessId",
-    "  $proc = Get-Process -Id $pidVal -ErrorAction SilentlyContinue",
-    "  $pname = if ($proc) { $proc.ProcessName.ToLower() } else { '' }",
-    "  if ($pname -eq $target) { $picked = $w; break }",
+    "$w = $walker.GetFirstChild($root)",
+    "while ($null -ne $w) {",
+    "  try { if ($pids.Contains([int]$w.Current.ProcessId)) { $picked = $w; break } } catch {}",
+    "  $w = $walker.GetNextSibling($w)",
     "}",
     'if (-not $picked) { Write-Output \'{"nodes":[],"found":false}\'; exit 0 }',
-    "$all = $picked.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)",
-    "$nodes = @()",
-    "for ($i = 0; $i -lt $all.Count -and $nodes.Count -lt $limit; $i++) {",
-    "  $el = $all.Item($i)",
-    "  $cur = $el.Current",
-    "  if (-not $cur.Name -and -not $cur.AutomationId) { continue }",
-    "  $r = $cur.BoundingRectangle",
-    "  $nodes += @{ name = $cur.Name; role = $cur.ControlType.ProgrammaticName; automationId = $cur.AutomationId; enabled = $cur.IsEnabled; focused = $cur.HasKeyboardFocus; bounds = @{ x = [int]$r.X; y = [int]$r.Y; width = [int]$r.Width; height = [int]$r.Height } }",
+    "$queue = New-Object 'System.Collections.Generic.Queue[object]'",
+    "$nodes = New-Object 'System.Collections.Generic.List[object]'",
+    "$queue.Enqueue(@{ el = $picked; depth = 0 })",
+    "$visited = 0",
+    "while ($queue.Count -gt 0 -and $nodes.Count -lt $limit -and $visited -lt $maxVisited) {",
+    "  $item = $queue.Dequeue()",
+    "  $el = $item.el",
+    "  $depth = [int]$item.depth",
+    "  $visited++",
+    "  if ($depth -gt 0) {",
+    "    try {",
+    "      $cur = $el.Current",
+    "      if ($cur.Name -or $cur.AutomationId) {",
+    "        $r = $cur.BoundingRectangle",
+    "        $rx = if ([double]::IsInfinity($r.X) -or [double]::IsNaN($r.X)) { 0 } else { [int]$r.X }",
+    "        $ry = if ([double]::IsInfinity($r.Y) -or [double]::IsNaN($r.Y)) { 0 } else { [int]$r.Y }",
+    "        $rw = if ([double]::IsInfinity($r.Width) -or [double]::IsNaN($r.Width)) { 0 } else { [int]$r.Width }",
+    "        $rh = if ([double]::IsInfinity($r.Height) -or [double]::IsNaN($r.Height)) { 0 } else { [int]$r.Height }",
+    "        $nodes.Add(@{ name = $cur.Name; role = $cur.ControlType.ProgrammaticName; automationId = $cur.AutomationId; enabled = [bool]$cur.IsEnabled; focused = [bool]$cur.HasKeyboardFocus; bounds = @{ x = $rx; y = $ry; width = $rw; height = $rh } })",
+    "        if ($nodes.Count -ge $limit) { break }",
+    "      }",
+    "    } catch {}",
+    "  }",
+    "  if ($depth -lt $maxDepth) {",
+    "    try {",
+    "      $child = $walker.GetFirstChild($el)",
+    "      while ($null -ne $child -and ($visited + $queue.Count) -lt $maxVisited) {",
+    "        $queue.Enqueue(@{ el = $child; depth = ($depth + 1) })",
+    "        $child = $walker.GetNextSibling($child)",
+    "      }",
+    "    } catch {}",
+    "  }",
     "}",
-    "@{ found = $true; windowTitle = $picked.Current.Name; nodes = $nodes } | ConvertTo-Json -Depth 5 -Compress",
+    "@{ found = $true; windowTitle = $picked.Current.Name; nodes = $nodes.ToArray() } | ConvertTo-Json -Depth 5 -Compress",
   ].join("\n");
 }
 
-/** 构造 Windows UI Automation 语义操作脚本（focus / click / set_value，全参数走 Base64 解码）。 */
+/** 构造 Windows UI Automation 语义操作脚本（FindFirst + PropertyCondition 短路查找，全参数走 Base64 解码）。 */
 function buildWinActionScript({ bundleId, action, name, automationId, value }) {
   const normalizedTarget = normalizeBundleId(bundleId);
   if (!normalizedTarget) {
@@ -254,22 +285,27 @@ function buildWinActionScript({ bundleId, action, name, automationId, value }) {
     `$matchId = ${psUtf8Literal(automationId ?? "")}`,
     `$act = ${psUtf8Literal(normalizedAction)}`,
     `$val = ${psUtf8Literal(value ?? "")}`,
+    "$procs = @(Get-Process -Name $target -ErrorAction SilentlyContinue | Where-Object { $pname = $_.ProcessName.ToLower(); $pname -eq $target })",
+    "if ($procs.Count -eq 0) { throw '未找到目标应用窗口' }",
+    "$pids = New-Object 'System.Collections.Generic.HashSet[int]'",
+    "foreach ($p in $procs) { [void]$pids.Add([int]$p.Id) }",
     "$root = [System.Windows.Automation.AutomationElement]::RootElement",
-    "$cond = [System.Windows.Automation.Condition]::TrueCondition",
-    "$wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)",
+    "$walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker",
     "$picked = $null",
-    "foreach ($w in $wins) {",
-    "  $proc = Get-Process -Id $w.Current.ProcessId -ErrorAction SilentlyContinue",
-    "  $pname = if ($proc) { $proc.ProcessName.ToLower() } else { '' }",
-    "  if ($pname -eq $target) { $picked = $w; break }",
+    "$w = $walker.GetFirstChild($root)",
+    "while ($null -ne $w) {",
+    "  try { if ($pids.Contains([int]$w.Current.ProcessId)) { $picked = $w; break } } catch {}",
+    "  $w = $walker.GetNextSibling($w)",
     "}",
     "if (-not $picked) { throw '未找到目标应用窗口' }",
-    "$all = $picked.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)",
     "$el = $null",
-    "for ($i = 0; $i -lt $all.Count; $i++) {",
-    "  $cand = $all.Item($i)",
-    "  if ($matchId -and $cand.Current.AutomationId -eq $matchId) { $el = $cand; break }",
-    "  if ($matchName -and $cand.Current.Name -eq $matchName) { $el = $cand; break }",
+    "if ($matchId) {",
+    "  $condId = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty, $matchId)",
+    "  $el = $picked.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condId)",
+    "}",
+    "if (-not $el -and $matchName) {",
+    "  $condName = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $matchName)",
+    "  $el = $picked.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condName)",
     "}",
     "if (-not $el) { throw '未找到匹配的语义控件' }",
     "if ($act -eq 'focus') { $el.SetFocus() }",
@@ -356,9 +392,23 @@ function createAccessibilityBridge(options = {}) {
   const platform = options.platform || process.platform;
   const authorizer =
     options.authorizer || createDirectionEpochAuthorizer({ now: options.now });
+  const hasCustomRunner = typeof options.runner === "function";
   const runner =
     options.runner ||
     ((file, args, opts) => runProcess(file, args, { ...opts, platform }));
+  const useWinHelper =
+    platform === "win32" && (Boolean(options.winHelper) || !hasCustomRunner);
+  const resolveWinHelper = () => options.winHelper || getSharedWinPsHelper();
+
+  function normalizeTreeResult(raw) {
+    const base = raw && typeof raw === "object" ? raw : {};
+    const nodes = Array.isArray(base.nodes)
+      ? base.nodes
+      : base.nodes
+        ? [base.nodes]
+        : [];
+    return { ...base, nodes };
+  }
 
   function gate({ conversationId, deviceId, bundleId, epoch, scopes }) {
     const normalized = normalizeBundleId(bundleId);
@@ -405,9 +455,41 @@ function createAccessibilityBridge(options = {}) {
     const check = gate(request);
     if (!check.ok) return check;
     if (platform === "win32") {
+      const limit = Math.min(200, Math.max(10, Number(request.maxNodes) || 80));
+      const maxDepth = Math.min(
+        30,
+        Math.max(2, Number(request.maxDepth) || 12),
+      );
+      if (useWinHelper) {
+        try {
+          const data = await resolveWinHelper().request(
+            "uia_read",
+            { bundleId: check.bundleId, maxNodes: limit, maxDepth },
+            { timeoutMs: 20_000 },
+          );
+          return {
+            ok: true,
+            status: "done",
+            platform,
+            bundleId: check.bundleId,
+            epoch: check.epoch,
+            tree: normalizeTreeResult(data),
+          };
+        } catch (error) {
+          if (!error?.isTransportError) {
+            return {
+              ok: false,
+              status: "failed",
+              error: `Windows UIA 读取失败：${String(error?.message || error).slice(0, 240)}`,
+            };
+          }
+          // helper 管道异常重试后仍失败：降级到一次性有界 PowerShell 脚本兜底
+        }
+      }
       const script = buildWinReadTreeScript({
         bundleId: check.bundleId,
-        maxNodes: request.maxNodes,
+        maxNodes: limit,
+        maxDepth,
       });
       const res = await runner(
         "powershell.exe",
@@ -415,6 +497,7 @@ function createAccessibilityBridge(options = {}) {
           "-NoLogo",
           "-NoProfile",
           "-NonInteractive",
+          "-STA",
           "-EncodedCommand",
           encodePowerShell(script),
         ],
@@ -428,7 +511,9 @@ function createAccessibilityBridge(options = {}) {
         };
       }
       try {
-        const parsed = JSON.parse(String(res.stdout || "{}").trim() || "{}");
+        const parsed = normalizeTreeResult(
+          JSON.parse(String(res.stdout || "{}").trim() || "{}"),
+        );
         return {
           ok: true,
           status: "done",
@@ -505,6 +590,38 @@ function createAccessibilityBridge(options = {}) {
       };
     }
     if (platform === "win32") {
+      if (useWinHelper) {
+        try {
+          await resolveWinHelper().request(
+            "uia_action",
+            {
+              bundleId: check.bundleId,
+              action,
+              name: request.name ?? "",
+              automationId: request.automationId ?? "",
+              value: request.value ?? "",
+            },
+            { timeoutMs: 20_000 },
+          );
+          return {
+            ok: true,
+            status: "done",
+            platform,
+            bundleId: check.bundleId,
+            epoch: check.epoch,
+            action,
+          };
+        } catch (error) {
+          if (!error?.isTransportError) {
+            return {
+              ok: false,
+              status: "failed",
+              error: `Windows UIA 操作失败：${String(error?.message || error).slice(0, 240)}`,
+            };
+          }
+          // helper 管道异常重试后仍失败：降级到一次性有界 PowerShell 脚本兜底
+        }
+      }
       const script = buildWinActionScript({
         bundleId: check.bundleId,
         action,
@@ -518,6 +635,7 @@ function createAccessibilityBridge(options = {}) {
           "-NoLogo",
           "-NoProfile",
           "-NonInteractive",
+          "-STA",
           "-EncodedCommand",
           encodePowerShell(script),
         ],
