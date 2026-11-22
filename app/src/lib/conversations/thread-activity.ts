@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useExternalConnection } from "@/hooks";
 import { objectConnectionKey } from "@/lib/connection-key";
 import { useKeptVisibility } from "@/lib/kept-visible";
@@ -14,6 +14,10 @@ import { readSync, SYNC_INTERVAL_MS, type ThreadActivity } from "./bot-thread";
  */
 /** 藏着的聊天问变化戳的间隔（DESIGN.md §98.3）。 */
 export const HIDDEN_SYNC_INTERVAL_MS = 10_000;
+
+function syncDelay(onScreenRef: { current: boolean }): number {
+  return onScreenRef.current ? SYNC_INTERVAL_MS : HIDDEN_SYNC_INTERVAL_MS;
+}
 
 export function useThreadActivity(
   agentId: string,
@@ -41,15 +45,13 @@ export function useThreadActivity(
       let unsupported = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const visible = () =>
-        typeof document === "undefined" || document.visibilityState !== "hidden";
+        typeof document === "undefined" ||
+        document.visibilityState !== "hidden";
       const schedule = () => {
         if (timer) clearTimeout(timer);
         timer =
           !signal.aborted && !unsupported && visible()
-            ? setTimeout(
-                () => void tick(),
-                onScreenRef.current ? SYNC_INTERVAL_MS : HIDDEN_SYNC_INTERVAL_MS,
-              )
+            ? setTimeout(() => void tick(), syncDelay(onScreenRef))
             : undefined;
       };
       const tick = async () => {
@@ -122,7 +124,7 @@ export function useThreadActivity(
   /** 马上问一次（比如刚打开时的接入到了时限被截断：不等下一个 2 秒）。 */
   const kick = useCallback(() => kickRef.current(), []);
 
-  return { onActivity, kick };
+  return useMemo(() => ({ onActivity, kick }), [onActivity, kick]);
 }
 
 type Row = {

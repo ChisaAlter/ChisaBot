@@ -251,38 +251,76 @@ function defaultPortForProtocol(protocol) {
   return "";
 }
 
-function matchesServerOrigin(targetUrl, serverOriginRaw) {
-  if (!serverOriginRaw || typeof serverOriginRaw !== "string") return false;
+function parseServerOriginRule(serverOriginRaw) {
+  if (!serverOriginRaw || typeof serverOriginRaw !== "string") return null;
   try {
     const server = new URL(serverOriginRaw);
-    const sameHost =
-      targetUrl.hostname.toLowerCase() === server.hostname.toLowerCase();
-    if (!sameHost) return false;
-    const targetPort =
-      targetUrl.port || defaultPortForProtocol(targetUrl.protocol);
-    const serverPort = server.port || defaultPortForProtocol(server.protocol);
-    if (targetPort !== serverPort) return false;
-    if (server.protocol === "https:") {
-      return targetUrl.protocol === "https:" || targetUrl.protocol === "wss:";
+    if (server.protocol !== "https:" && server.protocol !== "http:") {
+      return null;
     }
-    if (server.protocol === "http:") {
-      return targetUrl.protocol === "http:" || targetUrl.protocol === "ws:";
-    }
-    return false;
+    return {
+      host: server.hostname.toLowerCase(),
+      port: server.port || defaultPortForProtocol(server.protocol),
+      protocol: server.protocol,
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
-function matchesAllowedDomain(hostname, allowedDomains) {
-  const host = hostname.toLowerCase().replace(/\.+$/, "");
-  for (const rule of allowedDomains) {
+/**
+ * 预编译出口域名白名单策略：在配置加载或变更时调用一次，
+ * 避免 `session.webRequest.onBeforeRequest` 逐请求重复 `new URL(serverOrigin)` 与正则归一化。
+ */
+function compileEgressPolicy({ serverOrigin = "", allowedDomains = [] } = {}) {
+  const server = parseServerOriginRule(serverOrigin);
+  const normalized = normalizeAllowedDomains(allowedDomains);
+  const exactHosts = new Set();
+  const wildcardBases = [];
+  for (const rule of normalized) {
     if (rule.startsWith("*.")) {
       const base = rule.slice(2);
-      if (host === base || host.endsWith(`.${base}`)) return true;
-    } else if (host === rule) {
-      return true;
+      exactHosts.add(base);
+      wildcardBases.push(`.${base}`);
+    } else {
+      exactHosts.add(rule);
     }
+  }
+  return Object.freeze({
+    serverHost: server ? server.host : "",
+    serverPort: server ? server.port : "",
+    serverProtocol: server ? server.protocol : "",
+    exactHosts,
+    wildcardDotSuffixes: Object.freeze(wildcardBases),
+  });
+}
+
+function matchesCompiledServerOrigin(targetUrl, policy) {
+  if (!policy?.serverHost) return false;
+  if (targetUrl.hostname.toLowerCase() !== policy.serverHost) return false;
+  const targetPort =
+    targetUrl.port || defaultPortForProtocol(targetUrl.protocol);
+  if (targetPort !== policy.serverPort) return false;
+  if (policy.serverProtocol === "https:") {
+    return targetUrl.protocol === "https:" || targetUrl.protocol === "wss:";
+  }
+  if (policy.serverProtocol === "http:") {
+    return targetUrl.protocol === "http:" || targetUrl.protocol === "ws:";
+  }
+  return false;
+}
+
+function matchesCompiledAllowedDomain(hostname, policy) {
+  if (
+    !policy ||
+    (policy.exactHosts.size === 0 && policy.wildcardDotSuffixes.length === 0)
+  ) {
+    return false;
+  }
+  const host = hostname.toLowerCase().replace(/\.+$/, "");
+  if (policy.exactHosts.has(host)) return true;
+  for (const suffix of policy.wildcardDotSuffixes) {
+    if (host.endsWith(suffix)) return true;
   }
   return false;
 }
@@ -294,6 +332,8 @@ function matchesAllowedDomain(hostname, allowedDomains) {
  * - 放行 loopback（localhost / 127.0.0.1 / ::1）
  * - 放行显式配置的 `allowedDomains`（精确域名或 `*.domain.tld`）
  * - 其余外域请求一律拦截，防止恶意渲染脚本外泄数据
+ *
+ * 调用方可传入 `options.policy`（`compileEgressPolicy` 预编译结果）以走零分配热路径。
  */
 function isEgressUrlAllowed(rawUrl, options = {}) {
   if (typeof rawUrl !== "string" || !rawUrl.trim()) return false;
@@ -308,12 +348,10 @@ function isEgressUrlAllowed(rawUrl, options = {}) {
   if (!NETWORK_PROTOCOLS.has(protocol)) return false;
 
   if (isLoopbackHost(parsed.hostname)) return true;
-  if (matchesServerOrigin(parsed, options.serverOrigin)) return true;
 
-  const allowed = normalizeAllowedDomains(options.allowedDomains || []);
-  if (allowed.length > 0 && matchesAllowedDomain(parsed.hostname, allowed)) {
-    return true;
-  }
+  const policy = options.policy || compileEgressPolicy(options);
+  if (matchesCompiledServerOrigin(parsed, policy)) return true;
+  if (matchesCompiledAllowedDomain(parsed.hostname, policy)) return true;
 
   return false;
 }
@@ -325,5 +363,6 @@ module.exports = {
   readBootstrapDesktopPrefs,
   sanitizeDesktopPrefsPatch,
   buildContextMenuTemplate,
+  compileEgressPolicy,
   isEgressUrlAllowed,
 };

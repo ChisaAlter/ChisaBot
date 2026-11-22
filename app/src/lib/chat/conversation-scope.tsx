@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext } from "react";
+import { createContext, type ReactNode, useContext, useMemo } from "react";
 
 export type ConversationScope = {
   threadId: string;
@@ -8,9 +8,18 @@ export type ConversationScope = {
 const Scope = createContext<ConversationScope | null>(null);
 export function ConversationScopeProvider({
   children,
-  ...scope
+  threadId,
+  agentId,
+  botId,
 }: ConversationScope & { children: ReactNode }) {
-  return <Scope.Provider value={scope}>{children}</Scope.Provider>;
+  const value = useMemo<ConversationScope>(
+    () =>
+      botId === undefined
+        ? { threadId, agentId }
+        : { threadId, agentId, botId },
+    [threadId, agentId, botId],
+  );
+  return <Scope.Provider value={value}>{children}</Scope.Provider>;
 }
 export function useConversationScope() {
   return useContext(Scope);

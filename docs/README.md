@@ -15,7 +15,7 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 | 用个人助理整理资料、设提醒、接日历邮箱和检查发送结果 | [个人助理使用说明](personal-assistant.md)                                                                                    |
 | 理解系统怎么搭的                                     | [架构 architecture](architecture.md) · [数据模型 data-model](data-model.md) · [ADR](adr/README.md)                           |
 | 知道为什么这样做、有哪些长期规则                     | [产品决策与需求原则 decisions](decisions.md) · [ADR](adr/README.md)                                                          |
-| 改界面                                               | [DESIGN.md](../DESIGN.md)（顶部章节索引）· [设置的信息结构](settings-ia.md)                                                  |
+| 改界面                                               | [DESIGN.md](../DESIGN.md)（顶部章节索引）· [设置的信息结构](settings-ia.md) · [桌面端流畅度硬红线](desktop-performance-guardrails.md) |
 | 提交改动                                             | [CONTRIBUTING](../CONTRIBUTING.md) · [并行开发协议](dev/parallel-work.md)                                                    |
 | 自己部署、运维一套 ChisaBot                          | [运维手册 ops/](ops/README.md)（主机端口、容器、目录、部署回滚、网关、云端节点、发版、模型、测试环境、巡检、清理、故障复盘） |
 | 发布 DSH、核心服务与共用网页                         | [部署、回滚与上线检查](ops/deploy.md)（串行入口）· [DSH 运行时与恢复](ops/dsh-runtime.md) · [网关同步](ops/gateway.md)       |
@@ -95,6 +95,7 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 | [常见故障与事故复盘](ops/incidents.md)            | 典型故障处理、过去事故的教训、整机迁移                               |
 | [发布流程](release.md)                            | 版本号规则、服务器上线、客户端发版、外壳指纹与「重新安装」、自测规则 |
 | [测试与验证](testing.md)                          | 单元测试、预览约定、回归套件、生产只读检查、已知不稳定测试           |
+| [桌面端流畅度与防卡顿/防回跳硬红线](desktop-performance-guardrails.md) | 桌面端卡顿与竖屏回跳根因清单、四大域防复发硬红线、实测基线与复测命令 |
 | [在线更新](online-update.md)                      | 网页提示刷新、PC / Android 自动更新、系统更新（宿主机更新器）        |
 | [管理员自检](admin-smoke.md)                      | 不碰任何对话的模型往返检查                                           |
 | [维护与排错](operations.md)                       | 备份、升级、连接故障与部署验收                                       |

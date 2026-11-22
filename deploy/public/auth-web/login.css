@@ -211,6 +211,7 @@ button:focus-visible, a:focus-visible {
  * ChisaBot 登录页（login.html 的 <body class="chisabot">）：DESIGN.md 的蓝天 + 磨砂玻璃，亮色 / 暗色。
  * 只作用于 body.chisabot，Magpie 登录页（magpie-login.html，同一个样式表）保持原样；结构和 login.js 不变。
  * =================================================================== */
+html.chisabot-login { background: #e4ecf3; }
 body.chisabot {
   --ink-1: #16181d; --ink-2: #3b3f48; --ink-3: #5f6673; --ink-4: #9aa1ad;
   --glass-1: rgba(255, 255, 255, .5); --glass-2: rgba(255, 255, 255, .62); --glass-3: rgba(255, 255, 255, .82);
@@ -220,10 +221,11 @@ body.chisabot {
   --shadow: 0 20px 50px rgba(30, 50, 80, .18), 0 1px 2px rgba(40, 70, 110, .08);
   --sky: linear-gradient(180deg, #6f9bc7 0%, #9dbddc 38%, #c9dbeb 72%, #e4ecf3 100%);
   --glow: radial-gradient(640px 520px at 18% 12%, rgba(255, 255, 240, .5), transparent 62%);
-  min-height: 100svh; color: var(--ink-1); background: var(--glow), var(--sky); background-attachment: fixed;
+  min-height: 100svh; color: var(--ink-1); background: var(--glow), var(--sky);
   font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 @media (prefers-color-scheme: dark) {
+  html.chisabot-login { background: #1a2a4a; }
   body.chisabot {
     --ink-1: #e8ecf3; --ink-2: #c7cedb; --ink-3: #97a1b2; --ink-4: #6f7a8c;
     --glass-1: rgba(16, 25, 44, .55); --glass-2: rgba(255, 255, 255, .06); --glass-3: rgba(255, 255, 255, .1);
@@ -312,6 +314,9 @@ body.chisabot .noscript-message { color: var(--danger); }
   body.chisabot .orbit { opacity: .5; }
   body.chisabot .login-section { padding: 16px 16px 72px; }
   body.chisabot .login-content { padding: 28px 22px 24px; border-radius: 24px; }
+  body.chisabot .remember { min-height: 44px; font-size: 16px; }
+  body.chisabot .remember input { width: 20px; height: 20px; font-size: 16px; }
+  body.chisabot .field input { font-size: 16px; }
 }
 
 /* 邀请 / 重置密码表单（CB-040）：hidden 必须真的隐藏（.field 等有自己的 display）。 */

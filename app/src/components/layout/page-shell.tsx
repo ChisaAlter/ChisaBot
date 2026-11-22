@@ -1,6 +1,8 @@
 import { IconChevronLeft } from "@tabler/icons-react";
 import { Link, type LinkProps, useRouterState } from "@tanstack/react-router";
 import type * as React from "react";
+import { useRef } from "react";
+import { useExternalConnection } from "@/hooks";
 import { cn } from "@/lib/utils";
 
 /**
@@ -105,6 +107,26 @@ export function PageShell({
   };
 }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  useExternalConnection(pathname || "/", () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (typeof el.scrollTo === "function") el.scrollTo({ top: 0 });
+    else el.scrollTop = 0;
+    const sync = () => {
+      if (el.scrollTop > 8) {
+        document.body.dataset.pageScrolled = "true";
+      } else {
+        delete document.body.dataset.pageScrolled;
+      }
+    };
+    sync();
+    el.addEventListener("scroll", sync, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", sync);
+      delete document.body.dataset.pageScrolled;
+    };
+  });
   const area = areaOf(pathname);
   const resolvedWidth: ShellWidth = width ?? (pathname.startsWith("/admin") ? "wide" : "prose");
   const sharedRail = pathname.startsWith("/settings") || pathname.startsWith("/admin");
@@ -140,7 +162,11 @@ export function PageShell({
      * inside it). `min-h-0` is the load-bearing half of `min-h-0 flex-1`: a flex item's default
      * `min-height: auto` would otherwise grow this past the pane and clip the page.
      */
-    <div className="page-scroll min-h-0 flex-1 overflow-y-auto" data-slot="page-shell">
+    <div
+      className="page-scroll min-h-0 flex-1 overflow-y-auto"
+      data-slot="page-shell"
+      ref={scrollRef}
+    >
       <div
         className={cn(
           "page mx-auto flex w-full flex-col",

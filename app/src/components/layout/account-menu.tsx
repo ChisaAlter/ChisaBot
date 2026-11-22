@@ -65,9 +65,15 @@ export function AccountMenu({
   // 「待处理」的数 = 聊天里没点的确认卡片（§58）+ 交给你的操作 + 在等你回答的问题（DESIGN.md §71.1）。
   const confirms = useQuery(recentConfirmationsQueryOptions());
   const pending =
-    (approvals.data?.requests.filter((r) => r.status === "pending").length ?? 0) +
-    (approvals.data?.questions.length ?? 0) +
-    (confirms.data?.filter((r) => r.status === "pending").length ?? 0);
+    (Array.isArray(approvals.data?.requests)
+      ? approvals.data.requests.filter((r) => r.status === "pending").length
+      : 0) +
+    (Array.isArray(approvals.data?.questions)
+      ? approvals.data.questions.length
+      : 0) +
+    (Array.isArray(confirms.data)
+      ? confirms.data.filter((r) => r.status === "pending").length
+      : 0);
   const [open, setOpen] = useState(false);
   const openTaskCenter = useOpenTaskCenter();
 

@@ -8,14 +8,14 @@ import path from "node:path";
  * 新代码请改用组件直接输出的 data-* 属性（例如顶栏的 data-sidebar / data-winctrls）。
  * 下面的清单是 main 上已有的旧规则，只许减少不许增加；删掉一条旧规则时把它也从清单里去掉。
  */
-/** 已经删掉、不许再出现的旧规则（左栏收起改用顶栏的 data-sidebar）。 */
+/** 已经删掉、不许再出现的旧规则（左栏收起与 PC 标题按钮个数均改用顶栏的 data-* 属性）。 */
 const FORBIDDEN = [
   '.glass-shell:has([data-slot="sidebar"][data-state="collapsed"])',
+  '.glass-topbar:has(.win-ctrls[data-count="3"])',
 ];
 
-// #403（设置面板卡顿）把 body / html / .glass-shell 上的那几条换成了 presenceRef 拨的 data-has-* 旗子（DESIGN.md §41 ③），
-// 只剩 PC 3 个标题按钮这一条。
-const LEGACY = ['.glass-topbar:has(.win-ctrls[data-count="3"])'];
+// 全部旧的大容器 :has() 均已清零，不允许再新增。
+const LEGACY: string[] = [];
 
 const css = readFileSync(
   path.join(import.meta.dir, "../src/styles.css"),
@@ -64,9 +64,9 @@ function outsideParens(compound: string): string {
 const BIG =
   /^(?:html|body|:root)(?![\w-])|\.glass-(?:shell|topbar|main)(?![\w-])/;
 
-function containerHasSelectors(): string[] {
+function containerHasSelectors(source = css): string[] {
   const found = new Set<string>();
-  for (const m of css.matchAll(/([^{};]+)\{/g)) {
+  for (const m of source.matchAll(/([^{};]+)\{/g)) {
     const prelude = m[1].trim();
     if (!prelude || prelude.startsWith("@") || !prelude.includes(":has("))
       continue;
@@ -81,10 +81,12 @@ function containerHasSelectors(): string[] {
   return [...found].sort();
 }
 
-test("找得到旧的大容器 :has()，说明检查本身在工作", () => {
-  expect(containerHasSelectors()).toContain(
-    '.glass-topbar:has(.win-ctrls[data-count="3"])',
-  );
+test("能检出大容器 :has()，说明检查本身在工作", () => {
+  expect(
+    containerHasSelectors(
+      'html[data-desktop] .glass-topbar:has(.win-ctrls[data-count="3"]) { padding-right: 116px; }',
+    ),
+  ).toContain('.glass-topbar:has(.win-ctrls[data-count="3"])');
 });
 
 test("已删掉的旧 :has() 不许再出现", () => {
@@ -106,13 +108,17 @@ test("styles.css 不新增挂在大容器上的 :has()", () => {
   expect(containerHasSelectors()).toEqual([...LEGACY].sort());
 });
 
-test("顶栏收起左栏 / 4 个标题按钮改用顶栏自己的 data 属性", () => {
+test("顶栏收起左栏 / 3 或 4 个标题按钮改用顶栏自己的 data 属性", () => {
   expect(
     css.includes('.glass-topbar[data-sidebar="collapsed"] .glass-topbar-start'),
   ).toBe(true);
   expect(
+    css.includes('html[data-desktop] .glass-topbar[data-winctrls="3"]'),
+  ).toBe(true);
+  expect(
     css.includes('html[data-desktop] .glass-topbar[data-winctrls="4"]'),
   ).toBe(true);
+  expect(css.includes('.win-ctrls[data-count="3"]')).toBe(false);
   expect(css.includes('.win-ctrls[data-count="4"]')).toBe(false);
 });
 

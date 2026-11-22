@@ -77,10 +77,19 @@ export function RichUiProvider({
   value: Partial<RichActions>;
   children: ReactNode;
 }) {
+  const { surface, ask, refresh, openLink, copy } = value;
+  const merged = useMemo<RichActions>(
+    () => ({
+      surface: surface ?? DEFAULT_ACTIONS.surface,
+      ...(ask !== undefined ? { ask } : {}),
+      ...(refresh !== undefined ? { refresh } : {}),
+      openLink: openLink ?? DEFAULT_ACTIONS.openLink,
+      copy: copy ?? DEFAULT_ACTIONS.copy,
+    }),
+    [surface, ask, refresh, openLink, copy],
+  );
   return (
-    <RichUiContext.Provider value={{ ...DEFAULT_ACTIONS, ...value }}>
-      {children}
-    </RichUiContext.Provider>
+    <RichUiContext.Provider value={merged}>{children}</RichUiContext.Provider>
   );
 }
 

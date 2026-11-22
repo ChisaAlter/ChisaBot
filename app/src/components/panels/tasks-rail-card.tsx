@@ -30,7 +30,13 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useMemo, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
 import { CreateTask } from "@/components/task-center/create-task";
 import {
   ACTIVE_STATUSES,
@@ -41,7 +47,6 @@ import {
   taskDate,
   taskProvenanceLabels,
 } from "@/components/task-center/labels";
-import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { useOpenTaskCenter } from "@/components/task-center/task-center-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,6 +58,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/toast";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { ClientError } from "@/lib/client";
 import {
   type TaskControl,
@@ -97,26 +103,34 @@ import "../task-center/task-center.css";
 import "./tasks-rail-card.css";
 
 /**
+ * 控制右栏「任务」卡是否处于可见激活态：右栏折叠、切到别的页签或离开聊天页时为 false，
+ * 暂停后台 3s/5s 轮询；独立挂载（单测或弹窗）默认 true，行为不变。
+ */
+export const RailTasksActiveContext = createContext(true);
+
+/**
  * 供右栏顶部「任务」选项卡读取角标状态（是否有待确认审批、是否有进行中任务/工作流）。
  */
-export function useRailTasksSummary() {
-  const snapshot = useQuery(taskCenterSnapshotOptions());
-  const workflows = useQuery(workflowLibraryQueryOptions());
+export function useRailTasksSummary(active = true) {
+  const snapshot = useQuery(taskCenterSnapshotOptions({ poll: active }));
+  const workflows = useQuery(workflowLibraryQueryOptions({ poll: active }));
   const data = snapshot.data;
+  const outbox = Array.isArray(data?.outbox) ? data.outbox : [];
+  const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+  const runs = Array.isArray(workflows.data?.runs) ? workflows.data.runs : [];
 
-  const pendingDecisions =
-    data?.outbox.filter((decision) => decision.status === "pending") ?? [];
-  const activeTasks =
-    data?.tasks.filter(
-      (task) =>
-        ACTIVE_STATUSES.includes(task.status) ||
-        task.status === "paused" ||
-        task.status === "waiting_approval",
-    ) ?? [];
-  const activeRuns =
-    workflows.data?.runs.filter((run) =>
-      ACTIVE_RUN_STATUSES.includes(run.status),
-    ) ?? [];
+  const pendingDecisions = outbox.filter(
+    (decision) => decision.status === "pending",
+  );
+  const activeTasks = tasks.filter(
+    (task) =>
+      ACTIVE_STATUSES.includes(task.status) ||
+      task.status === "paused" ||
+      task.status === "waiting_approval",
+  );
+  const activeRuns = runs.filter((run) =>
+    ACTIVE_RUN_STATUSES.includes(run.status),
+  );
   const waitingApprovalRuns = activeRuns.filter(
     (run) => run.status === "waiting_approval",
   );
@@ -130,7 +144,8 @@ export function useRailTasksSummary() {
     approvalCount:
       (data?.decisionCounts?.pending ?? pendingDecisions.length) +
       waitingApprovalRuns.length,
-    activeCount: (data ? activeTaskCount(data.counts) : 0) + activeRuns.length,
+    activeCount:
+      (data?.counts ? activeTaskCount(data.counts) : 0) + activeRuns.length,
   };
 }
 
@@ -139,6 +154,7 @@ export function useRailTasksSummary() {
  * 支持原位操作（三点菜单：取消、置顶、上移、下移、暂停/继续/重试）与点击卡片丝滑弹窗查看详情。
  */
 export function TasksRailCard() {
+  const active = useContext(RailTasksActiveContext);
   const openTaskCenter = useOpenTaskCenter();
   const queryClient = useQueryClient();
   const {
@@ -148,17 +164,17 @@ export function TasksRailCard() {
     activeTasks,
     activeRuns,
     approvalCount,
-  } = useRailTasksSummary();
+  } = useRailTasksSummary(active);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailTarget, setDetailTarget] = useState<RailDetailTarget | null>(
     null,
   );
 
   const data = snapshot.data;
-  const finishedTasks =
-    data?.tasks.filter((task) =>
-      ["succeeded", "failed", "cancelled"].includes(task.status),
-    ) ?? [];
+  const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+  const finishedTasks = tasks.filter((task) =>
+    ["succeeded", "failed", "cancelled"].includes(task.status),
+  );
 
   return (
     <div className="task-rail" data-testid="tasks-rail-card">
@@ -194,12 +210,12 @@ export function TasksRailCard() {
         activeTasks={activeTasks}
         detailTarget={detailTarget}
         finishedTasks={finishedTasks}
-        inboxCount={data?.counts.inbox ?? 0}
+        inboxCount={data?.counts?.inbox ?? 0}
         onOpenDetail={setDetailTarget}
         pendingCount={data?.decisionCounts?.pending ?? pendingDecisions.length}
         pendingDecisions={pendingDecisions}
         snapshot={snapshot}
-        taskCount={data ? activeTaskCount(data.counts) : 0}
+        taskCount={data?.counts ? activeTaskCount(data.counts) : 0}
         workflows={workflows}
       />
       <CreateTask
@@ -373,9 +389,10 @@ function TasksRailBody({
           >
             {sortedDecisions.map((decision) => {
               const itemId = `decision:${decision.id}`;
-              const matchedTask = snapshot.data?.tasks.find(
-                (t) => t.id === decision.taskId,
-              );
+              const tasksList = Array.isArray(snapshot.data?.tasks)
+                ? snapshot.data.tasks
+                : [];
+              const matchedTask = tasksList.find((t) => t.id === decision.taskId);
               return (
                 <RailDecisionItem
                   decision={decision}
@@ -549,8 +566,12 @@ function TasksRailBody({
       </div>
 
       <TaskRailDetailDialog
-        allDecisions={snapshot.data?.outbox ?? []}
-        allTasks={snapshot.data?.tasks ?? []}
+        allDecisions={
+          Array.isArray(snapshot.data?.outbox) ? snapshot.data.outbox : []
+        }
+        allTasks={
+          Array.isArray(snapshot.data?.tasks) ? snapshot.data.tasks : []
+        }
         onClose={() => onOpenDetail(null)}
         sortedSectionIds={sortedSectionIds}
         target={detailTarget}
@@ -596,24 +617,25 @@ export function isStaleActionError(err: unknown): boolean {
 function dropStaleDecision(queryClient: QueryClient, decisionId: string) {
   queryClient.setQueryData<TaskCenterSnapshot>(
     taskCenterKeys.snapshot,
-    (prev) =>
-      prev
-        ? {
-            ...prev,
-            outbox: prev.outbox.filter((item) => item.id !== decisionId),
-            ...(prev.decisionCounts &&
-            prev.outbox.some(
-              (item) => item.id === decisionId && item.status === "pending",
-            )
-              ? {
-                  decisionCounts: {
-                    ...prev.decisionCounts,
-                    pending: Math.max(0, prev.decisionCounts.pending - 1),
-                  },
-                }
-              : {}),
-          }
-        : prev,
+    (prev) => {
+      if (!prev) return prev;
+      const outbox = Array.isArray(prev.outbox) ? prev.outbox : [];
+      return {
+        ...prev,
+        outbox: outbox.filter((item) => item.id !== decisionId),
+        ...(prev.decisionCounts &&
+        outbox.some(
+          (item) => item.id === decisionId && item.status === "pending",
+        )
+          ? {
+              decisionCounts: {
+                ...prev.decisionCounts,
+                pending: Math.max(0, prev.decisionCounts.pending - 1),
+              },
+            }
+          : {}),
+      };
+    },
   );
 }
 
@@ -993,11 +1015,12 @@ function RailWorkflowRunItem({
   onOpenDetail: () => void;
   onChanged: () => void;
 }) {
-  const totalSteps = run.steps.length;
-  const doneSteps = run.steps.filter(
+  const steps = Array.isArray(run.steps) ? run.steps : [];
+  const totalSteps = steps.length;
+  const doneSteps = steps.filter(
     (s) => s.status === "succeeded" || s.status === "skipped",
   ).length;
-  const activeStep = run.steps.find(
+  const activeStep = steps.find(
     (s) => s.status === "running" || s.status === "waiting_approval",
   );
   const description = workflowRunDescription(run, doneSteps, activeStep);
@@ -1185,11 +1208,12 @@ export function workflowRunDescription(
 ): string {
   if (activeStep) return `当前：${activeStep.name}`;
   if (run.status === "queued") return "等待工作流开始";
-  const total = run.steps.length;
+  const steps = Array.isArray(run.steps) ? run.steps : [];
+  const total = steps.length;
   if (total > 0 && doneSteps === total) return "步骤已全部完成，正在收尾…";
   if (
     total > 0 &&
-    run.steps.every((step) => FINISHED_STEP_STATUSES.includes(step.status))
+    steps.every((step) => FINISHED_STEP_STATUSES.includes(step.status))
   ) {
     return "步骤已结束，正在收尾…";
   }

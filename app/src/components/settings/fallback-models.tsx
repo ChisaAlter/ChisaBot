@@ -109,6 +109,7 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
                 <>
                   <Button
                     aria-label="上移"
+                    className="max-sm:size-9"
                     disabled={index === 0}
                     onClick={() => setDraft(moveModel(list, index, -1))}
                     size="icon-sm"
@@ -119,6 +120,7 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
                   </Button>
                   <Button
                     aria-label="下移"
+                    className="max-sm:size-9"
                     disabled={index === list.length - 1}
                     onClick={() => setDraft(moveModel(list, index, 1))}
                     size="icon-sm"
@@ -129,6 +131,7 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
                   </Button>
                   <Button
                     aria-label="移除"
+                    className="max-sm:size-9"
                     onClick={() => setDraft(list.filter((m) => m !== id))}
                     size="icon-sm"
                     type="button"

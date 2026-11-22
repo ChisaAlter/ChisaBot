@@ -466,3 +466,169 @@ test("shell-fingerprint ignores src/web-bundle and routeTree.gen.ts, keeps Windo
     assert.notEqual(afterAppEdit.clientHash, base.clientHash);
   });
 });
+
+test("pre-indexed bundle lookup does zero sync fs calls on request hot path and caches static bytes", async () => {
+  await withTempDirAsync("chisabot-index-hot-", async (root) => {
+    const bundleDir = path.join(root, "web-bundle");
+    fs.mkdirSync(path.join(bundleDir, "assets"), { recursive: true });
+    fs.writeFileSync(path.join(bundleDir, "index.html"), "<html>idx</html>");
+    fs.writeFileSync(
+      path.join(bundleDir, "chisabot-web-meta.json"),
+      JSON.stringify({ version: "0.1.180" }),
+    );
+    fs.writeFileSync(path.join(bundleDir, "assets", "app.js"), "console.log(42);");
+
+    let hotExistsCalls = 0;
+    let hotStatCalls = 0;
+    let counting = false;
+    const trackedFs = {
+      existsSync: (...args) => {
+        if (counting) hotExistsCalls++;
+        return fs.existsSync(...args);
+      },
+      statSync: (...args) => {
+        if (counting) hotStatCalls++;
+        return fs.statSync(...args);
+      },
+      readFileSync: (...args) => fs.readFileSync(...args),
+      readdirSync: (...args) => fs.readdirSync(...args),
+    };
+
+    const origin = "https://hot.example.com";
+    const ctrl = createLocalWebController({
+      bundleDir,
+      localVersion: "0.1.180",
+      getServerOrigin: () => origin,
+      fsImpl: trackedFs,
+    });
+
+    counting = true;
+    assert.equal(
+      ctrl.classifyRequest({ url: `${origin}/assets/app.js`, method: "GET" }).action,
+      "local-file",
+    );
+    assert.equal(
+      ctrl.classifyRequest({ url: `${origin}/assets/missing.js`, method: "GET" }).action,
+      "passthrough",
+    );
+    assert.equal(
+      ctrl.classifyRequest({ url: `${origin}/../secret.txt`, method: "GET" }).action,
+      "passthrough",
+    );
+    assert.equal(hotExistsCalls, 0, "请求热路径不调用同步 existsSync");
+    assert.equal(hotStatCalls, 0, "请求热路径不调用同步 statSync");
+  });
+});
+
+test("installSessionProtocol uses ses.fetch zero-copy passthrough for API/assets and keeps net.request for navigation redirects", async () => {
+  await withTempDirAsync("chisabot-direct-fetch-", async (root) => {
+    const bundleDir = path.join(root, "web-bundle");
+    fs.mkdirSync(path.join(bundleDir, "assets"), { recursive: true });
+    fs.writeFileSync(path.join(bundleDir, "index.html"), "<html>ok</html>");
+    fs.writeFileSync(
+      path.join(bundleDir, "chisabot-web-meta.json"),
+      JSON.stringify({ version: "0.1.180" }),
+    );
+
+    const origin = "https://app.example.com";
+    const handlers = {};
+    const directCalls = [];
+    const netReqCalls = [];
+    const fakeSes = {
+      protocol: {
+        handle(scheme, fn) {
+          handlers[scheme] = fn;
+        },
+      },
+      async fetch(input, init) {
+        const url = typeof input === "string" ? input : input.url;
+        directCalls.push({ url, bypass: init?.bypassCustomProtocolHandlers });
+        if (url.endsWith("/api/version")) {
+          return new Response(JSON.stringify({ version: "0.1.181" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "content-encoding": "gzip",
+            "content-length": "99",
+          },
+        });
+      },
+    };
+    const fakeNet = {
+      request(opts) {
+        netReqCalls.push(opts.url);
+        const emitter = new EventEmitter();
+        emitter.write = () => {};
+        emitter.abort = () => {};
+        emitter.end = () => {
+          queueMicrotask(() => {
+            emitter.emit("redirect", 302, "GET", `${origin}/login`, {
+              "set-cookie": "sid=exp; Path=/",
+            });
+          });
+        };
+        return emitter;
+      },
+    };
+
+    const ctrl = createLocalWebController({
+      bundleDir,
+      localVersion: "0.1.180",
+      getServerOrigin: () => origin,
+      netImpl: fakeNet,
+    });
+    assert.equal(ctrl.installSessionProtocol(fakeSes), true);
+
+    // 1. 普通 API 走 ses.fetch 零拷贝直通并剥离已解压头
+    const apiRes = await handlers.https(
+      new Request(`${origin}/api/bots`, { method: "GET" }),
+    );
+    assert.equal(apiRes.status, 200);
+    assert.equal(apiRes.headers.get("content-encoding"), null);
+    assert.equal(apiRes.headers.get("content-length"), null);
+    assert.deepEqual(await apiRes.json(), { ok: true });
+    assert.equal(directCalls.length, 1);
+    assert.equal(directCalls[0].bypass, true);
+
+    // 2. /api/version 走 ses.fetch 并旁路升级到 remote 模式
+    const verRes = await handlers.https(
+      new Request(`${origin}/api/version`, { method: "GET" }),
+    );
+    assert.deepEqual(await verRes.json(), { version: "0.1.181" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(ctrl.activeMode(origin), "remote");
+
+    // 3. 文档导航仍走 net.request 保留 302 Location 供 will-redirect 捕获
+    const navRes = await handlers.https(
+      new Request(`${origin}/`, {
+        method: "GET",
+        headers: { "sec-fetch-dest": "document" },
+      }),
+    );
+    assert.equal(navRes.status, 302);
+    assert.equal(navRes.headers.get("location"), `${origin}/login`);
+    assert.equal(netReqCalls.length, 1);
+  });
+});
+
+test("compileEgressPolicy precompiles server origin and allowed domains with identical semantics", () => {
+  const desktopPrefs = require("../src/desktop-prefs");
+  const policy = desktopPrefs.compileEgressPolicy({
+    serverOrigin: "https://chat.example.com:8443",
+    allowedDomains: ["CDN.Example.net", "*.trusted.org", "bad host"],
+  });
+  assert.equal(desktopPrefs.isEgressUrlAllowed("https://chat.example.com:8443/api/me", { policy }), true);
+  assert.equal(desktopPrefs.isEgressUrlAllowed("wss://chat.example.com:8443/ws", { policy }), true);
+  assert.equal(desktopPrefs.isEgressUrlAllowed("https://chat.example.com/api/me", { policy }), false);
+  assert.equal(desktopPrefs.isEgressUrlAllowed("https://cdn.example.net/a.png", { policy }), true);
+  assert.equal(desktopPrefs.isEgressUrlAllowed("https://sub.trusted.org/x.js", { policy }), true);
+  assert.equal(desktopPrefs.isEgressUrlAllowed("https://trusted.org/x.js", { policy }), true);
+  assert.equal(desktopPrefs.isEgressUrlAllowed("https://evil.example.com/leak", { policy }), false);
+  assert.equal(desktopPrefs.isEgressUrlAllowed("http://127.0.0.1:3001/health", { policy }), true);
+  assert.equal(desktopPrefs.isEgressUrlAllowed("data:image/png;base64,AA==", { policy }), true);
+});

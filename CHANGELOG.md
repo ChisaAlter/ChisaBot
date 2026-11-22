@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **手机端与 Web 端体验全面修复及长对话尾读 / 桌面流畅度护栏（DESIGN.md §153）**：
+  - 服务端 `server/src/thread-messages-delta.ts` 与前端 `app/src/lib/conversations/thread-messages.ts`、`channel-chat.tsx` 支持冷启动及重试 `?tail=120` 尾片优先首读（512 KiB 预算，至少保留 20 条）并后台静默补齐较早历史，将重试读超时放宽至 45s；修复 `SkyBackground` 与 `ThemeProvider` 运行时切换深浅主题时 `--ink-1` / `--glass-bg` 滞后一拍的跨端缺陷（`appearance.ts` · `sky-background.tsx` · `theme-provider.tsx`）。
+  - Android 外壳（`WebScreen.kt`）支持 Edge-to-Edge 全屏壁纸与 `--safe-*` / `--android-safe-*` 首帧及运行时安全区注入（键盘弹出底边距自动归零）与 `ChisaAndroid.setTheme` 状态栏深浅图标实时同步；公网 `/login` 修复暗色横屏下半露白并扩大窄屏复选框热区。
+  - 修复手机端 Composer 底部按钮横向热区互抢、`/settings` 分段控件描述截断、`/tasks` 窄屏标签右缘硬裁切与关闭热区、`/admin/*` 切页滚动残留及透明顶栏遮挡、移动端侧栏抽屉点击回退、`/bots` 与模型排序触控热区、右抽屉加载骨架与空值异常边界（含 `account-menu.tsx`）、PC 小窗 `--edge-clip-r` 把手漂移及窄屏「回到底部」按钮遮挡；落实 `DESIGN.md §153` 桌面端流畅度与竖屏面板防回跳护栏并在 `biome.json` 排除 `android/app/build`。
+
 - **PC 独立更新进度窗口极简改版（DESIGN.md §152）**：
   - 将 PC 更新弹窗（`pc/src/ui/update.html`、`pc/src/ui/update.css`、`pc/src/ui/update.js`）升级为独立可缩放/可最小化/可最大化的无边框顶层纯白/深炭居中进度页（默认 `880×600`，Windows 右上角 `— / □ / ×`、macOS 原生红绿灯），移除旧 `pc/src/update-backdrop.js` 与 `update:fit` 主窗随动截图链路。
   - 发现新版本开始下载时自动弹出一次，关闭窗口不打断后台下载与主窗口聊天，可随时从托盘或网页「设置 → 版本与更新 / 设备 → 本机」点击「查看更新进度」重开；校验通过后原位提供「稍后 / 立即重启」与经过 `https://` 校验的「下载最新版本」链接。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），无需数据库迁移。

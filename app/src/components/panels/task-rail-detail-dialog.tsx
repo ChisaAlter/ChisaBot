@@ -377,9 +377,11 @@ function TaskDetailModalContent({
             prev
               ? {
                   ...prev,
-                  outbox: prev.outbox.filter(
-                    (item) => item.id !== pendingDecision.id,
-                  ),
+                  outbox: Array.isArray(prev.outbox)
+                    ? prev.outbox.filter(
+                        (item) => item.id !== pendingDecision.id,
+                      )
+                    : [],
                 }
               : prev,
         );
@@ -1168,11 +1170,12 @@ function WorkflowRunModalContent({
     },
   });
 
-  const totalSteps = run?.steps.length ?? 0;
-  const doneSteps =
-    run?.steps.filter((s) => s.status === "succeeded" || s.status === "skipped")
-      .length ?? 0;
-  const waitingStep = run?.steps.find((s) => s.status === "waiting_approval");
+  const runSteps = Array.isArray(run?.steps) ? run.steps : [];
+  const totalSteps = runSteps.length;
+  const doneSteps = runSteps.filter(
+    (s) => s.status === "succeeded" || s.status === "skipped",
+  ).length;
+  const waitingStep = runSteps.find((s) => s.status === "waiting_approval");
   const isActive = run ? ACTIVE_RUN_STATUSES.includes(run.status) : false;
   const canRetry = run?.status === "failed" || run?.status === "cancelled";
 
@@ -1470,7 +1473,7 @@ function WorkflowRunModalContent({
                 <section className="task-rail-modal-card">
                   <h4>{"执行步骤"}</h4>
                   <ol className="task-rail-modal-step-list">
-                    {run.steps.map((step, idx) => (
+                    {runSteps.map((step, idx) => (
                       <li
                         className="task-rail-modal-step-item"
                         data-tone={stepTone(step.status)}

@@ -1,5 +1,7 @@
 ## Unreleased
 
+- **手机端、Web 端与桌面端流畅度全面修复及护栏（DESIGN §153）**：服务端 `?tail=120` 尾读与后台静默补全（`thread-messages-delta.ts` · `thread-messages.ts` · `channel-chat.tsx`）；Android Edge-to-Edge 安全区与状态栏主题双向同步（`WebScreen.kt` · `theme-provider.tsx`）；`SkyBackground` / `appearance.ts` 运行时切主题令牌同帧同步；公网 `/login` 暗色横屏与触控热区（`login.html` · `login.css`）；手机端布局、热区、侧栏抽屉返回栈、右抽屉骨架与容错边界及桌面端流畅度护栏（`styles.css` · `page-shell.tsx` · `section-rail.tsx` · `panel-rail.tsx` · `tasks-rail-card.tsx` · `account-menu.tsx` · `bots.index.tsx` · `fallback-models.tsx` · `task-center.css` · `desktop-window.ts` · `chat-transcript.tsx` · `liquid-glass.ts` · `pc/`）。
+
 - **PC 独立更新进度窗口极简改版（DESIGN §152）**：将桌面更新弹窗升级为独立可缩放/可最大化/可最小化的无边框纯白/深炭居中进度页（`880×600`，Windows `— / □ / ×`、macOS 原生红绿灯），移除 `pc/src/update-backdrop.js` 与 `update:fit` 主窗随动截图链路；接入 `deriveUpdateView` 全状态驱动、`dismissedDownloadVersion` 后台续下与网页「查看更新进度」唤起入口，以及 `feedToDownloadPage` / `resolveManualDownloadUrl` `https://` 手动下载链接（`pc/src/window-chrome.js` · `pc/src/update-placement.js` · `pc/src/build-config.js` · `pc/src/main.js` · `pc/src/preload.js` · `pc/src/ui/chrome.js` · `pc/src/ui/ui.js` · `pc/src/ui/update.*` · `devices.tsx` · `client-update-section.tsx` · `pc/test/update-window.check.js`）。
 
 ## 0.1.180 — 2026-11-22

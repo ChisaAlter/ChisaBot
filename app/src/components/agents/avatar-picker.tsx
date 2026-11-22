@@ -257,7 +257,7 @@ function AvatarDialog({
       <DialogContent
         className="bot-ava-dialog sm:max-w-[420px]"
         finalFocus={finalFocus}
-        overlayClassName="bg-black/25 supports-backdrop-filter:backdrop-blur-sm"
+        overlayClassName="bg-black/25"
       >
         {/* 关窗即丢掉没按「完成」的选择。 */}
         {open ? (

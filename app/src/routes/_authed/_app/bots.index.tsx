@@ -197,19 +197,21 @@ function BotsPage() {
                         ) : null}
                       </ItemTitle>
                       <ItemDescription>
-                        {createdBy ? (
-                          <span
-                            className="mr-1.5 inline-flex items-center rounded-full bg-muted px-1.5 py-px font-medium text-[11px] text-muted-foreground"
-                            data-testid="created-by-badge"
-                          >
-                            {createdBy}
-                          </span>
-                        ) : null}
-                        {summary || agent.title}
+                        <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                          {createdBy ? (
+                            <span
+                              className="inline-flex shrink-0 items-center rounded-full bg-muted px-1.5 py-px font-medium text-[11px] text-muted-foreground"
+                              data-testid="created-by-badge"
+                            >
+                              {createdBy}
+                            </span>
+                          ) : null}
+                          <span className="min-w-0">{summary || agent.title}</span>
+                        </span>
                       </ItemDescription>
                     </ItemContent>
                   </button>
-                  <ItemActions>
+                  <ItemActions className="gap-1">
                     {state && needsInput(state) > 0 ? (
                       <span className="rounded-full bg-primary px-1.5 text-[11px] font-medium text-primary-foreground tabular-nums">
                         {needsInput(state)}
@@ -217,8 +219,9 @@ function BotsPage() {
                     ) : null}
                     <Button
                       aria-label={`和「${agent.name}」聊天`}
+                      className="max-sm:size-9"
                       onClick={() => void openCompose(agent.id)}
-                      size="icon-xs"
+                      size="icon-sm"
                       title={"开始聊天"}
                       type="button"
                       variant="ghost"
@@ -237,8 +240,9 @@ function BotsPage() {
                         render={
                           <Button
                             aria-label={`「${agent.name}」更多操作`}
+                            className="max-sm:size-9"
                             data-testid={`bot-row-menu-${agent.id}`}
-                            size="icon-xs"
+                            size="icon-sm"
                             title={"更多操作"}
                             type="button"
                             variant="ghost"
@@ -328,7 +332,7 @@ function BotsPage() {
                     </DropdownMenu>
                     <Link
                       aria-label={`「${agent.name}」的资料`}
-                      className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60"
+                      className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60 max-sm:size-9"
                       params={{ agentId: agent.id }}
                       title={"资料"}
                       to="/bots/$agentId"

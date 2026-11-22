@@ -24,7 +24,8 @@ export type WorkflowLibrary = {
   runs: WorkflowRunView[];
 };
 
-export function workflowLibraryQueryOptions() {
+export function workflowLibraryQueryOptions(options?: { poll?: boolean }) {
+  const poll = options?.poll ?? true;
   return queryOptions({
     queryKey: workflowKeys.library,
     queryFn: ({ signal }): Promise<WorkflowLibrary> =>
@@ -33,8 +34,9 @@ export function workflowLibraryQueryOptions() {
       ),
     // 最近运行里有还在跑的，就跟着刷新。
     // 失败或还没有数据时也继续轮询：右栏同时拉任务和工作流，工作流失败后若停掉轮询，
-    // 提示要等用户点「重试」才会消失。
+    // 提示要等用户点「重试」才会消失。折叠或不可见时（poll=false）暂停轮询。
     refetchInterval: (query) => {
+      if (!poll) return false;
       const failed =
         query.state.status === "error" ||
         (query.state.data === undefined && query.state.errorUpdateCount > 0);
@@ -45,6 +47,7 @@ export function workflowLibraryQueryOptions() {
         ? 3_000
         : false;
     },
+    refetchIntervalInBackground: false,
   });
 }
 

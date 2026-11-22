@@ -2,6 +2,7 @@ import {
   createContext,
   type ReactNode,
   useContext,
+  useMemo,
   useState,
 } from "react";
 import { useDocumentSync, useWindowEvent } from "@/hooks";
@@ -36,6 +37,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         doc.documentElement.style.colorScheme = scheme;
       },
     });
+    const bridge = (
+      window as Window & {
+        ChisaAndroid?: { setTheme?: (mode: "dark" | "light") => void };
+      }
+    ).ChisaAndroid;
+    bridge?.setTheme?.(isDark ? "dark" : "light");
   });
 
   // 多标签页同步：别的标签页切了浅色 / 深色，这边跟着切（storage 事件只在别的标签页写入时触发）。
@@ -45,10 +52,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setDark(parseStoredDarkTheme(readStoredPreference(THEME_STORAGE_KEY)));
   });
 
+  const value = useMemo(() => ({ dark, setDark }), [dark]);
+
   return (
-    <ThemeContext.Provider value={{ dark, setDark }}>
-      {children}
-    </ThemeContext.Provider>
+    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
   );
 }
 

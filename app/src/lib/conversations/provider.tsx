@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { ToolRendererProvider } from "@/lib/chat/renderers";
 import { ConversationSessionProvider } from "@/lib/chat/session-client";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
@@ -22,16 +22,14 @@ import { VaultTool } from "./vault-tool";
 import { WorkerTool } from "./worker-tool";
 
 /** Registers conversation surfaces and tool result renderers around the authenticated chat. */
-export function ConversationToolsProvider({
-  children,
-}: {
-  children: ReactNode;
-}) {
-  const { data: capabilities } = useQuery(deploymentCapabilitiesQueryOptions());
+export const ConversationToolsProvider = memo(
+  function ConversationToolsProvider({ children }: { children: ReactNode }) {
+    const { data: capabilities } = useQuery(
+      deploymentCapabilitiesQueryOptions(),
+    );
 
-  return (
-    <>
-      {/* Computer tools target the Bot declared by the mounted surface. */}
+    return (
+      /* Computer tools target the Bot declared by the mounted surface. */
       <ConversationSessionProvider>
         <ToolRendererProvider>
           <ActiveBotProvider>
@@ -78,6 +76,6 @@ export function ConversationToolsProvider({
           </ActiveBotProvider>
         </ToolRendererProvider>
       </ConversationSessionProvider>
-    </>
-  );
-}
+    );
+  },
+);

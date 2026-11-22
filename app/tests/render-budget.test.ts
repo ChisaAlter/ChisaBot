@@ -103,6 +103,7 @@ test("only the rails, the composer, the top bar and popups blur", () => {
     '.rail-sheet[data-slot="sheet-content"]',
     ".update-banner",
     ".context-popover",
+    "html[data-phone] body[data-page-scrolled] .glass-topbar",
     ".install-hint",
     ".live-panel-src-pop",
     ".chat-spotlight-panel",

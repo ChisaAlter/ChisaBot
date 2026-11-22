@@ -189,6 +189,9 @@ import { newId } from "../../lib/new-id";
  */
 const JOIN_DEADLINE_MS = 1500;
 
+/** Cold-start tail slice size so huge conversations render latest turns immediately. */
+const INITIAL_TAIL_MESSAGES = 120;
+
 /**
  * Backstop for a message typed before the runtime agent exists; it must not be discarded.
  */
@@ -587,7 +590,9 @@ export function ChannelChat({
   if (earlyRead.current === undefined) {
     earlyRead.current =
       seed === null && !freshDraft
-        ? readThreadMessages(channel.threadId, runtimeAgentId)
+        ? readThreadMessages(channel.threadId, runtimeAgentId, {
+            tail: INITIAL_TAIL_MESSAGES,
+          })
         : null;
   }
   const earlyInbox = useRef<
@@ -714,6 +719,7 @@ export function ChannelChat({
   const retryHistoryRead = useCallback(async (): Promise<boolean> => {
     const version = ++historyReadVersion.current;
     const stored = await readThreadMessages(channel.threadId, runtimeAgentId, {
+      tail: INITIAL_TAIL_MESSAGES,
       deadlineMs: THREAD_MESSAGES_RETRY_DEADLINE_MS,
     });
     if (version !== historyReadVersion.current) return false;
@@ -724,6 +730,25 @@ export function ChannelChat({
     setUnreadable(stored.unreadable);
     setHistoryAvailability("ready");
     setHistoryReadFailed(false);
+    if (stored.partial) {
+      void (async () => {
+        const full = await readThreadMessages(
+          channel.threadId,
+          runtimeAgentId,
+          { deadlineMs: THREAD_MESSAGES_RETRY_DEADLINE_MS },
+        );
+        if (
+          version !== historyReadVersion.current ||
+          full.availability === "unavailable"
+        ) {
+          return;
+        }
+        const latest = agentRef.current;
+        const merged = mergeStoredMessages(latest.messages, full.messages);
+        if (merged !== latest.messages) latest.setMessages(merged);
+        setUnreadable(full.unreadable);
+      })();
+    }
     return true;
   }, [channel.threadId, runtimeAgentId]);
   useExternalConnection(isReady, () => {
@@ -776,7 +801,9 @@ export function ChannelChat({
           const pendingRead = earlyRead.current;
           earlyRead.current = null;
           const stored = await (pendingRead ??
-            readThreadMessages(channel.threadId, runtimeAgentId));
+            readThreadMessages(channel.threadId, runtimeAgentId, {
+              tail: INITIAL_TAIL_MESSAGES,
+            }));
           const isCurrent = current && version === historyReadVersion.current;
           if (isCurrent) mountReadOk.current = stored.availability === "ready";
           if (isCurrent) {
@@ -799,7 +826,30 @@ export function ChannelChat({
             setHistoryAvailability(stored.availability);
             // A gateway snapshot may be partial; neither it nor a later send proves this read succeeded.
             setHistoryReadFailed(stored.availability === "unavailable");
-            if (stored.availability === "unavailable") {
+            if (stored.availability === "ready" && stored.partial) {
+              // Latest turns are already painted; quietly backfill older history without blocking UI.
+              void (async () => {
+                const full = await readThreadMessages(
+                  channel.threadId,
+                  runtimeAgentId,
+                  { deadlineMs: THREAD_MESSAGES_RETRY_DEADLINE_MS },
+                );
+                if (
+                  !current ||
+                  version !== historyReadVersion.current ||
+                  full.availability === "unavailable"
+                ) {
+                  return;
+                }
+                const latest = agentRef.current;
+                const messages = mergeStoredMessages(
+                  latest.messages,
+                  full.messages,
+                );
+                if (messages !== latest.messages) latest.setMessages(messages);
+                setUnreadable(full.unreadable);
+              })();
+            } else if (stored.availability === "unavailable") {
               /*
                * 不挡输入：下面的 finally 照常放行第一条消息，重试在后台进行。全部失败后才轮到
                * channelHistoryNotice 判断要不要提示（只在什么都没恢复出来时）。
@@ -1082,7 +1132,16 @@ export function ChannelChat({
           }
         })();
       };
-      const unsubscribe = queryClient.getQueryCache().subscribe(() => {
+      const listKey = channelKeys.list();
+      const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+        if (event.type !== "updated" && event.type !== "added") return;
+        const queryKey = event.query.queryKey;
+        if (
+          queryKey.length < listKey.length ||
+          !listKey.every((part, index) => queryKey[index] === part)
+        ) {
+          return;
+        }
         const arrived = !rosterKnown && rosterRow() !== undefined;
         if (arrived) rosterKnown = true;
         const activity = authoredActivity();

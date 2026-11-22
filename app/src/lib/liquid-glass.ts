@@ -27,7 +27,12 @@
  * 对比度模型跑的就是这里同一份判定和求解，不是另一份近似。
  */
 
-import { GLASS_SURFACE_SELECTOR, subscribeAppearance } from "@/lib/appearance";
+import {
+  GLASS_SURFACE_SELECTOR,
+  readGlassAlpha,
+  readGlassAlphaDark,
+  subscribeAppearance,
+} from "@/lib/appearance";
 import {
   isResizing,
   RESIZE_SETTLE_MS,
@@ -420,6 +425,20 @@ const LENS_SKIP_SELECTOR = [
   ".win-ctrls",
   ".rs-capsule",
   ".chat-thinking",
+  '[data-slot="bubble-content"]',
+  ".jr-card",
+  ".cf-card",
+  ".gh-card",
+  ".page-card",
+  ".schedule-card",
+  ".bot-exchange-card",
+  ".chat-question",
+  ".chat-work-steps",
+  ".chat-draft-card",
+  ".chat-history-notice",
+  ".chat-history-more",
+  ".to-card",
+  ".hr-card",
   "[data-lg-skip]",
 ].join(",");
 
@@ -477,9 +496,21 @@ function glassSuppressed(): boolean {
   return false;
 }
 
+interface LensSpec {
+  key: string;
+  w: number;
+  h: number;
+  radius: number;
+  rim: number;
+}
+
 class LiquidGlass {
   private enabled = false;
   private destroyed = false;
+  /** 仅在 liquid 激活且未抑制时挂载重型 DOM/Resize/Scroll 监听，其余材质（默认 mist/frosted/crystal）零空转。 */
+  private heavyActive = false;
+  /** 是否曾向 DOM 写过自适应属性（退出 liquid 时只需清一次，避免反复全页 querySelectorAll）。 */
+  private hasAdapted = false;
   private seq = 0;
   private readonly lens = new Map<Element, LensEntry>();
   private readonly pendingLensKey = new WeakMap<Element, string>();
@@ -529,6 +560,16 @@ class LiquidGlass {
       attributes: true,
       attributeFilter: HTML_WATCHED_ATTRS,
     });
+    this.unsubscribeAppearance = subscribeAppearance(() => this.refresh());
+    this.unsubscribeResize = subscribeResizing((resizing) =>
+      this.onResizingChange(resizing),
+    );
+    this.refresh();
+  }
+
+  private attachHeavyObservers() {
+    if (this.destroyed || this.heavyActive) return;
+    this.heavyActive = true;
     this.mutationObs = new MutationObserver((records) =>
       this.onMutations(records),
     );
@@ -538,46 +579,60 @@ class LiquidGlass {
     });
     this.resizeObs = new ResizeObserver(() => this.refresh());
     this.resizeObs.observe(document.documentElement);
-    this.unsubscribeAppearance = subscribeAppearance(() => this.refresh());
-    this.unsubscribeResize = subscribeResizing((resizing) =>
-      this.onResizingChange(resizing),
-    );
     window.addEventListener("scroll", this.onScroll, {
       passive: true,
       capture: true,
     });
-    this.refresh();
   }
 
-  stop() {
-    this.destroyed = true;
-    this.enabled = false;
+  private detachHeavyObservers() {
     window.clearTimeout(this.pendingRescan);
+    this.pendingRescan = 0;
     window.clearTimeout(this.pendingSample);
+    this.pendingSample = 0;
     window.clearTimeout(this.scrollEndTimer);
+    this.scrollEndTimer = 0;
     window.clearTimeout(this.resizeFallbackTimer);
     this.resizeFallbackTimer = 0;
+    this.scrolling = false;
     this.pendingAfterResize = false;
     this.pendingLensAttrs.clear();
     this.lensFlushQueued = false;
     this.cancelIdleSample();
+    if (this.heavyActive) {
+      this.mutationObs?.disconnect();
+      this.mutationObs = null;
+      this.resizeObs?.disconnect();
+      this.resizeObs = null;
+      window.removeEventListener("scroll", this.onScroll, {
+        capture: true,
+      } as EventListenerOptions);
+      this.heavyActive = false;
+    }
     this.wallpaperObs?.disconnect();
     this.wallpaperObs = null;
     this.watchedWallpaper = null;
     this.unsubscribeSky?.();
     this.unsubscribeSky = null;
+    if (this.lens.size > 0) {
+      for (const el of [...this.lens.keys()]) this.removeLens(el, true);
+      this.rewriteLensStyle();
+    }
+    if (this.hasAdapted) {
+      this.clearAdapted();
+    }
+  }
+
+  stop() {
+    this.destroyed = true;
+    this.enabled = false;
+    this.detachHeavyObservers();
     this.unsubscribeAppearance?.();
     this.unsubscribeAppearance = null;
     this.unsubscribeResize?.();
     this.unsubscribeResize = null;
-    window.removeEventListener("scroll", this.onScroll, {
-      capture: true,
-    } as EventListenerOptions);
     this.htmlObs?.disconnect();
-    this.mutationObs?.disconnect();
-    this.resizeObs?.disconnect();
-    for (const el of [...this.lens.keys()]) this.removeLens(el, true);
-    this.clearAdapted();
+    this.htmlObs = null;
     this.lensStyle?.remove();
     this.svgHost?.remove();
   }
@@ -608,6 +663,10 @@ class LiquidGlass {
     if (this.destroyed) return;
     window.clearTimeout(this.resizeFallbackTimer);
     this.resizeFallbackTimer = 0;
+    if (!liquidActive() || glassSuppressed()) {
+      this.pendingAfterResize = false;
+      return;
+    }
     if (resizing) {
       this.pauseForResize();
       return;
@@ -619,9 +678,15 @@ class LiquidGlass {
     if (needRescan) this.scheduleRescan();
   }
 
-  /** 属性 / 结构 / 尺寸有变化：重采样 + 重挂透镜（各自有节流）。 */
+  /** 属性 / 结构 / 尺寸有变化：仅在 liquid 激活时运行采样与透镜，其余材质立即休眠。 */
   private refresh() {
+    if (this.destroyed) return;
     this.rasterDirty = true;
+    if (!liquidActive() || glassSuppressed()) {
+      this.detachHeavyObservers();
+      return;
+    }
+    this.attachHeavyObservers();
     this.syncSkySubscription();
     this.syncWallpaperWatch();
     if (resizeInProgress()) {
@@ -637,7 +702,7 @@ class LiquidGlass {
    * 换场景的渐变画完那一帧也有一张）就重采一次，整屏墨色跟着天空走。
    */
   private syncSkySubscription() {
-    const want = !this.destroyed && liquidActive();
+    const want = !this.destroyed && liquidActive() && !glassSuppressed();
     if (want && !this.unsubscribeSky) {
       this.unsubscribeSky = subscribeSkySnapshot(() => {
         this.rasterDirty = true;
@@ -650,31 +715,72 @@ class LiquidGlass {
   }
 
   /**
-   * 结构变化：重挂透镜（防抖）。新出现的玻璃面（后渲染的卡片 / 气泡 / 面板抽屉）
-   * 在 liquid 模式下当场挂上整屏墨色，所有玻璃档位都排一次采样以更新对比度补偿。
+   * 结构变化：仅在新增玻璃面、壁纸节点变化或已挂透镜节点移除时介入。
+   * 流式输出在气泡内追加普通文本 / Markdown 节点不会触发全页 rescan 或 sample。
    */
   private onMutations(records: MutationRecord[]) {
-    this.scheduleRescan();
-    let added = false;
+    if (this.destroyed || !liquidActive() || glassSuppressed()) return;
+    let hasElementMutation = false;
+    let addedSurface = false;
+    let wallpaperChanged = false;
     for (const r of records) {
+      if (
+        this.svgHost &&
+        (r.target === this.svgHost || this.svgHost.contains(r.target))
+      ) {
+        continue;
+      }
+      if (this.lensStyle && r.target === this.lensStyle) continue;
       for (const node of r.addedNodes) {
         if (!(node instanceof Element)) continue;
+        hasElementMutation = true;
         if (
-          node.matches(GLASS_SURFACE_SELECTOR) ||
-          node.querySelector(GLASS_SURFACE_SELECTOR)
+          !wallpaperChanged &&
+          (node.matches(".chisabot-wallpaper-img") ||
+            node.querySelector(".chisabot-wallpaper-img"))
         ) {
-          added = true;
-          break;
+          wallpaperChanged = true;
+        }
+        if (
+          !addedSurface &&
+          (node.matches(GLASS_SURFACE_SELECTOR) ||
+            node.querySelector(GLASS_SURFACE_SELECTOR))
+        ) {
+          addedSurface = true;
         }
       }
-      if (added) break;
+      for (const node of r.removedNodes) {
+        if (!(node instanceof Element)) continue;
+        hasElementMutation = true;
+        if (
+          !wallpaperChanged &&
+          this.watchedWallpaper &&
+          (node === this.watchedWallpaper ||
+            node.contains(this.watchedWallpaper))
+        ) {
+          wallpaperChanged = true;
+        }
+      }
     }
-    this.syncWallpaperWatch();
-    if (!added || !liquidActive()) return;
+    if (!hasElementMutation) return;
+    if (wallpaperChanged || !this.watchedWallpaper) {
+      this.syncWallpaperWatch();
+    }
+    let lostLens = false;
+    for (const el of this.lens.keys()) {
+      if (!el.isConnected) {
+        lostLens = true;
+        break;
+      }
+    }
+    if (addedSurface || lostLens) this.scheduleRescan();
+    if (!addedSurface) return;
     if (!darkScheme() && this.screenInk === "dark") {
       for (const el of this.surfaces()) {
-        if (!el.hasAttribute("data-lg-ink"))
+        if (!el.hasAttribute("data-lg-ink")) {
           el.setAttribute("data-lg-ink", "dark");
+          this.hasAdapted = true;
+        }
       }
     }
     this.scheduleSample(true);
@@ -812,46 +918,61 @@ class LiquidGlass {
       return;
     }
     const canLens = liquidActive() && !glassSuppressed() && lensUrlSupported();
+    if (!canLens && this.lens.size === 0) return;
     let removedAny = false;
     for (const el of [...this.lens.keys()]) {
       if (!el.isConnected && this.removeLens(el, true)) removedAny = true;
     }
+    if (!canLens) {
+      for (const el of [...this.lens.keys()]) {
+        if (this.removeLens(el, true)) removedAny = true;
+      }
+      if (removedAny) this.rewriteLensStyle();
+      return;
+    }
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
     for (const el of this.surfaces()) {
-      if (canLens && this.eligible(el)) this.ensureLens(el);
+      const spec = this.measureLens(el, vw, vh);
+      if (spec) this.ensureLens(el, spec);
       else if (this.removeLens(el, true)) removedAny = true;
     }
     if (removedAny) this.rewriteLensStyle();
   }
 
-  private eligible(el: HTMLElement): boolean {
+  /**
+   * 合并原 eligible + lensKey：先做零布局成本的 LENS_SKIP_SELECTOR 预筛（跳过聊天区全部气泡与卡片），
+   * 再对真正候选项仅执行 1 次 getBoundingClientRect + 1 次 getComputedStyle，并跳过完全在视口外的面。
+   */
+  private measureLens(
+    el: HTMLElement,
+    vw: number,
+    vh: number,
+  ): LensSpec | null {
+    if (el.closest(LENS_SKIP_SELECTOR)) return null;
     const rect = el.getBoundingClientRect();
-    if (Math.min(rect.width, rect.height) < LG_MIN_SIDE) return false;
+    if (Math.min(rect.width, rect.height) < LG_MIN_SIDE) return null;
+    if (
+      vw > 0 &&
+      vh > 0 &&
+      (rect.right <= 0 || rect.left >= vw || rect.bottom <= 0 || rect.top >= vh)
+    ) {
+      return null;
+    }
     const cs = getComputedStyle(el);
     // --lg-blur: none（渲染预算关掉的小元素 / 滚动区）上透镜自然缺席。
-    if (cs.getPropertyValue("backdrop-filter") === "none") return false;
+    if (cs.getPropertyValue("backdrop-filter") === "none") return null;
     // will-change / 变换 / 固定定位 / 弹层菜单：Chromium 会画出位移图而不是弯折后的背景。
     if (
       cs.willChange !== "auto" ||
       cs.transform !== "none" ||
       cs.filter !== "none"
-    )
-      return false;
-    if (cs.position === "fixed" || cs.position === "sticky") return false;
-    if (el.closest(LENS_SKIP_SELECTOR)) return false;
-    return true;
-  }
-
-  private lensKey(el: HTMLElement): {
-    key: string;
-    w: number;
-    h: number;
-    radius: number;
-    rim: number;
-  } {
-    const rect = el.getBoundingClientRect();
+    ) {
+      return null;
+    }
+    if (cs.position === "fixed" || cs.position === "sticky") return null;
     const w = Math.max(8, Math.round(rect.width / 8) * 8);
     const h = Math.max(8, Math.round(rect.height / 8) * 8);
-    const cs = getComputedStyle(el);
     const radii = [
       cs.borderTopLeftRadius,
       cs.borderTopRightRadius,
@@ -882,11 +1003,18 @@ class LiquidGlass {
     const cached = this.mapCache.get(key);
     if (cached) return cached;
     const promise = (async () => {
-      const data = buildDisplacementMap(w, h, radius, rim);
+      // 位移场是平滑缓坡，大面板按 2x–4x 降采样生成 PNG（像素数降 4x–16x），
+      // <feImage width="${w}" height="${h}" preserveAspectRatio="none"> 由浏览器线性插值铺满。
+      const maxDim = Math.max(w, h);
+      const divisor = maxDim > 480 ? 4 : maxDim > 160 ? 2 : 1;
+      const mw = Math.max(16, Math.round(w / divisor));
+      const mh = Math.max(16, Math.round(h / divisor));
+      const scale = Math.min(mw / w, mh / h);
+      const data = buildDisplacementMap(mw, mh, radius * scale, rim * scale);
       const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const imgData = new ImageData(w, h);
+      canvas.width = mw;
+      canvas.height = mh;
+      const imgData = new ImageData(mw, mh);
       imgData.data.set(data);
       canvas.getContext("2d")?.putImageData(imgData, 0, 0);
       const url = canvas.toDataURL("image/png");
@@ -908,8 +1036,8 @@ class LiquidGlass {
     return promise;
   }
 
-  private ensureLens(el: HTMLElement) {
-    const { key, w, h, radius, rim } = this.lensKey(el);
+  private ensureLens(el: HTMLElement, spec: LensSpec) {
+    const { key, w, h, radius, rim } = spec;
     const existing = this.lens.get(el);
     if (existing?.key === key) {
       this.pendingLensKey.delete(el);
@@ -1034,7 +1162,7 @@ class LiquidGlass {
       return;
     }
     if (glassSuppressed() || !liquidActive()) {
-      this.clearAdapted();
+      if (this.hasAdapted) this.clearAdapted();
       return;
     }
     const els = this.surfaces();
@@ -1043,6 +1171,9 @@ class LiquidGlass {
     const scheme = darkScheme() ? "dark" : "light";
     const vw = window.innerWidth;
     const vh = window.innerHeight;
+    // 阶段 1（纯读）：每元素仅读 1 次 getBoundingClientRect，alpha 从全局样式表一次性读取，
+    // 彻底消除 applyAdapt 循环内 Read-After-Write 触发的 N 次同步强制重排。
+    const alpha = this.currentAlpha(scheme);
     // 不用 offsetParent !== null：position: fixed 的玻璃面（如窄窗抽屉 .rail-sheet）在 Chromium 下
     // offsetParent 恒为 null，会整块漏掉对比度补偿；改按可视盒面积 > 0 过滤。
     const measured: Array<{
@@ -1057,12 +1188,12 @@ class LiquidGlass {
       const w = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
       const h = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
       if (w <= 0 || h <= 0) continue;
-      const pts = raster ? this.sampleGrid(el, raster) : null;
+      const pts = raster ? this.sampleGridRect(rect, raster) : null;
       const stats = pts ? sampleStats(pts) : null;
       measured.push({ el, pts, stats, area: w * h });
     }
     if (measured.length === 0) return;
-    // 每块面板背后的真实亮度（按它在屏上的位置取样）→ 面积加权成整屏背后亮度 → 整屏一种墨。
+    // 阶段 2（纯算）：整屏一种墨 + 每个面板的密度 / AA 对比度补偿 / 保饱和系数。
     const { ink } = decideScreenInk(
       scheme,
       measured.flatMap((m) =>
@@ -1072,64 +1203,64 @@ class LiquidGlass {
     );
     // 迟滞只对浅色有意义；深色模式恒深釉，切回浅色时从头判。
     this.screenInk = scheme === "light" ? ink : null;
-    for (const m of measured) {
-      this.applyAdapt(
-        m.el,
-        ink,
-        m.stats ?? { lum: 0.5, texture: 0.4, chroma: 0.4 },
-        m.pts,
-        scheme,
-      );
-    }
-  }
-
-  private applyAdapt(
-    el: HTMLElement,
-    ink: GlassInkState,
-    stats: BgStats,
-    pts: readonly RGBA[] | null,
-    scheme: "light" | "dark",
-  ) {
-    if (ink === "dark" && scheme === "light") {
-      if (el.getAttribute("data-lg-ink") !== "dark")
-        el.setAttribute("data-lg-ink", "dark");
-    } else if (el.hasAttribute("data-lg-ink"))
-      el.removeAttribute("data-lg-ink");
-    const density = densityOf(ink, stats);
-    const densityK = densityKOf(density);
-    const satKeep = satKeepOf(stats.chroma);
-    // 「升密度不动墨色」：不够对比时把釉再压一档（aa-boost 乘进 --lg-tint-a）。
-    const alpha = this.currentAlpha(el);
+    const setDarkInk = ink === "dark" && scheme === "light";
     const mul = scheme === "dark" ? 1.75 : ink === "dark" ? 1.4 : 1;
-    const raw = alpha * mul * densityK;
-    const bgColor = pts
-      ? worstBackdropColor(pts, ink)
-      : scheme === "dark"
-        ? ([10, 14, 24, 1] as RGBA)
-        : ([180, 200, 225, 1] as RGBA);
-    const needed = alphaForContrast({
-      bg: bgColor,
-      tintRGB:
-        scheme === "dark" || ink === "dark" ? [16, 18, 22] : [255, 255, 255],
-      hlAlpha: scheme === "dark" ? 0.1 : ink === "dark" ? 0.08 : 0.3,
-      ink,
-      base: raw,
-      // 深釉档的 clamp 上限放到 0.95（--lg-tint-hi），边界亮度也能升密度升到 4.5。
-      max: scheme === "dark" ? 0.9 : ink === "dark" ? 0.95 : 0.85,
-      inkColor: LG_WORST_INK[ink],
+    const tintRGB: [number, number, number] =
+      scheme === "dark" || ink === "dark" ? [16, 18, 22] : [255, 255, 255];
+    const hlAlpha = scheme === "dark" ? 0.1 : ink === "dark" ? 0.08 : 0.3;
+    const maxAlpha = scheme === "dark" ? 0.9 : ink === "dark" ? 0.95 : 0.85;
+    const fallbackBg: RGBA =
+      scheme === "dark" ? [10, 14, 24, 1] : [180, 200, 225, 1];
+    const updates = measured.map((m) => {
+      const stats = m.stats ?? { lum: 0.5, texture: 0.4, chroma: 0.4 };
+      const density = densityOf(ink, stats);
+      const densityK = densityKOf(density);
+      const satKeep = satKeepOf(stats.chroma);
+      // 「升密度不动墨色」：不够对比时把釉再压一档（aa-boost 乘进 --lg-tint-a）。
+      const raw = alpha * mul * densityK;
+      const bgColor = m.pts ? worstBackdropColor(m.pts, ink) : fallbackBg;
+      const needed = alphaForContrast({
+        bg: bgColor,
+        tintRGB,
+        hlAlpha,
+        ink,
+        base: raw,
+        // 深釉档的 clamp 上限放到 0.95（--lg-tint-hi），边界亮度也能升密度升到 4.5。
+        max: maxAlpha,
+        inkColor: LG_WORST_INK[ink],
+      });
+      const boost = raw > 0 ? Math.min(20, needed / raw) : 1;
+      return {
+        el: m.el,
+        densityK: densityK.toFixed(3),
+        boost: boost.toFixed(3),
+        satKeep: satKeep.toFixed(3),
+      };
     });
-    const boost = raw > 0 ? Math.min(20, needed / raw) : 1;
-    setInlineVar(el, "--lg-density-k", densityK.toFixed(3));
-    setInlineVar(el, "--lg-aa-boost", boost.toFixed(3));
-    setInlineVar(el, "--lg-sat-keep", satKeep.toFixed(3));
+    // 阶段 3（纯写）：批量更新属性与行内变量，不再交错触发布局读取。
+    for (const u of updates) {
+      if (setDarkInk) {
+        if (u.el.getAttribute("data-lg-ink") !== "dark") {
+          u.el.setAttribute("data-lg-ink", "dark");
+        }
+      } else if (u.el.hasAttribute("data-lg-ink")) {
+        u.el.removeAttribute("data-lg-ink");
+      }
+      setInlineVar(u.el, "--lg-density-k", u.densityK);
+      setInlineVar(u.el, "--lg-aa-boost", u.boost);
+      setInlineVar(u.el, "--lg-sat-keep", u.satKeep);
+    }
+    this.hasAdapted = true;
   }
 
-  /** 元素当前的 --lg-alpha 计算值（滑块实时值），行内数值变量以它为底。 */
-  private currentAlpha(el: HTMLElement): number {
-    const v = Number.parseFloat(
-      getComputedStyle(el).getPropertyValue("--lg-alpha"),
-    );
-    return Number.isFinite(v) ? v : 0.16;
+  /** 当前档位的全局 --lg-alpha（直接读 #chisabot-glass-alpha CSSOM，零 getComputedStyle）。 */
+  private currentAlpha(scheme: "light" | "dark"): number {
+    const raw = scheme === "dark" ? readGlassAlphaDark() : readGlassAlpha();
+    if (raw) {
+      const v = Number.parseFloat(raw);
+      if (Number.isFinite(v)) return v;
+    }
+    return 0.16;
   }
 
   private clearAdapted() {
@@ -1142,6 +1273,7 @@ class LiquidGlass {
       el.style.removeProperty("--lg-sat-keep");
     }
     this.screenInk = null;
+    this.hasAdapted = false;
   }
 
   /* --------------------------- 背景光栅 --------------------------- */
@@ -1388,9 +1520,8 @@ class LiquidGlass {
     ctx.fillRect(0, 0, vw, vh);
   }
 
-  /** 元素下的 5×3 采样网格（RGBA 点集）。 */
-  private sampleGrid(el: HTMLElement, raster: ImageData): RGBA[] {
-    const rect = el.getBoundingClientRect();
+  /** 元素下的 5×3 采样网格（RGBA 点集），直接复用调用方已读的 DOMRect。 */
+  private sampleGridRect(rect: DOMRect, raster: ImageData): RGBA[] {
     const xs = [0.08, 0.28, 0.5, 0.72, 0.92];
     const ys = [0.18, 0.5, 0.82];
     const pts: RGBA[] = [];

@@ -50,6 +50,8 @@ export type StoredThread = {
    * the thread is empty or belongs to another project.
    */
   availability: "ready" | "unavailable";
+  /** True when only a fast tail slice was returned; caller will backfill full history silently. */
+  partial?: boolean;
 };
 
 const UNAVAILABLE_THREAD: StoredThread = {
@@ -65,13 +67,15 @@ const UNAVAILABLE_THREAD: StoredThread = {
  */
 const THREAD_MESSAGES_DEADLINE_MS = 4000;
 /** 后台重试与「重试」按钮用的期限：不挡住任何操作，可以等久一点。 */
-export const THREAD_MESSAGES_RETRY_DEADLINE_MS = 15000;
+export const THREAD_MESSAGES_RETRY_DEADLINE_MS = 45000;
 /** 首次读取失败后，后台再试的间隔（毫秒）。全部失败、且会话里什么也没恢复出来时才提示。 */
 export const HISTORY_RETRY_DELAYS_MS = [1500, 4000, 10000] as const;
 
 type ReadThreadMessagesOptions = {
   /** Shorter only in tests; production uses the mount/send ordering deadline. */
   deadlineMs?: number;
+  /** Initial fast-tail limit on cold start; omitted when reading the full thread. */
+  tail?: number;
 };
 
 /**
@@ -203,15 +207,12 @@ export function resetStoredSyncs(): void {
   storedSyncs.clear();
 }
 
-/**
- * 读一条对话存储里的原始行（整份，未解析）。`request` 由调用方给：恢复历史走 `tryClient`，
- * 顺序核对沿用它原来的 `fetch`（401 等处理不变）。非 2xx 返回 null；网络 / JSON 错误照常抛出。
- */
-export async function readStoredRows(
+async function readStoredSnapshot(
   threadId: string,
   agentId: string | undefined,
   request: (path: string) => Promise<Response>,
-): Promise<readonly unknown[] | null> {
+  tail?: number,
+): Promise<{ rows: readonly unknown[]; partial: boolean } | null> {
   const key = `${agentId ?? ""}\n${threadId}`;
   let base = storedSyncs.get(key) ?? null;
   for (;;) {
@@ -219,6 +220,8 @@ export async function readStoredRows(
     if (agentId !== undefined) params.set("agentId", agentId);
     params.set("since", base?.version ?? "");
     if (base) params.set("cursor", base.cursor);
+    else if (typeof tail === "number" && tail > 0)
+      params.set("tail", String(Math.trunc(tail)));
     const response = await request(
       `/api/conversations/threads/${encodeURIComponent(threadId)}/messages?${params}`,
     );
@@ -226,14 +229,19 @@ export async function readStoredRows(
       storedSyncs.delete(key);
       return null;
     }
-    const answer = applyStoredAnswer(base, await response.json());
+    const rawBody: unknown = await response.json();
+    const partial =
+      rawBody !== null &&
+      typeof rawBody === "object" &&
+      (rawBody as { partial?: unknown }).partial === true;
+    const answer = applyStoredAnswer(base, rawBody);
     storedSyncs.delete(key);
     if (!answer) {
       if (!base) return null;
       base = null;
       continue;
     }
-    if (answer.version && answer.cursor) {
+    if (!partial && answer.version && answer.cursor) {
       storedSyncs.set(key, {
         version: answer.version,
         cursor: answer.cursor,
@@ -244,9 +252,23 @@ export async function readStoredRows(
         if (oldest !== undefined) storedSyncs.delete(oldest);
       }
     }
-    return answer.rows;
+    return { rows: answer.rows, partial };
   }
 }
+
+/**
+ * 读一条对话存储里的原始行（整份，未解析）。`request` 由调用方给：恢复历史走 `tryClient`，
+ * 顺序核对沿用它原来的 `fetch`（401 等处理不变）。非 2xx 返回 null；网络 / JSON 错误照常抛出。
+ */
+export async function readStoredRows(
+  threadId: string,
+  agentId: string | undefined,
+  request: (path: string) => Promise<Response>,
+): Promise<readonly unknown[] | null> {
+  const snapshot = await readStoredSnapshot(threadId, agentId, request);
+  return snapshot ? snapshot.rows : null;
+}
+
 export async function readThreadMessages(
   threadId: string,
   agentId: string,
@@ -258,15 +280,21 @@ export async function readThreadMessages(
 
   try {
     const read = async () => {
-      const rows = await readStoredRows(threadId, agentId, (path) =>
-        tryClient(path, { signal: controller.signal }),
+      const snapshot = await readStoredSnapshot(
+        threadId,
+        agentId,
+        (path) => tryClient(path, { signal: controller.signal }),
+        options.tail,
       );
-      if (!rows) return UNAVAILABLE_THREAD;
+      if (!snapshot) return UNAVAILABLE_THREAD;
+      if (snapshot.partial) {
+        return { ...readableTurns(snapshot.rows), partial: true };
+      }
       // 服务器回 unchanged 时 rows 是上次那同一个数组：直接给上次的结果（同一批消息对象）。
-      const known = parsedRows.get(rows);
+      const known = parsedRows.get(snapshot.rows);
       if (known) return known;
-      const parsed = readableTurns(rows);
-      parsedRows.set(rows, parsed);
+      const parsed = readableTurns(snapshot.rows);
+      parsedRows.set(snapshot.rows, parsed);
       return parsed;
     };
 
