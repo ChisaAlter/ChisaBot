@@ -329,43 +329,53 @@ export function redeemOneTimeInvitation(
   return invite;
 }
 
-/** 清理某个 peer 自身的过期消息，并严格按该 peer 独立配额检查历史总数。 */
-export function enforcePerPeerMessageLimits(
+/** 清理某个 peer 自身的过期消息并返回当前历史数与活跃数（单次过滤 + 单次统计）。 */
+function pruneAndCountPeerMessages(
   state: FederationQueueState,
   peer: FederationPeerRecord,
   now: number,
-): void {
+): { peerHistoryCount: number; peerActiveCount: number } {
   const thirtyDaysMs = 30 * 86_400_000;
   const sevenDaysMs = 7 * 86_400_000;
+  const expiryCutoff = now - thirtyDaysMs;
+  const staleCutoff = now - sevenDaysMs;
 
-  state.messages = state.messages.filter(
-    (msg) =>
-      msg.peerId !== peer.id ||
-      !FINISHED_STATES.has(msg.state) ||
-      (msg.finishedAt ?? msg.createdAt) > now - thirtyDaysMs,
-  );
-
+  let peerHistoryCount = 0;
+  let peerActiveCount = 0;
+  const kept: FederationMessageRecord[] = [];
   for (const msg of state.messages) {
+    if (msg.peerId !== peer.id) {
+      kept.push(msg);
+      continue;
+    }
     if (
-      msg.peerId === peer.id &&
+      FINISHED_STATES.has(msg.state) &&
+      (msg.finishedAt ?? msg.createdAt) <= expiryCutoff
+    ) {
+      continue;
+    }
+    if (
       !FINISHED_STATES.has(msg.state) &&
       (msg.direction === "outbound" || msg.state === "queued") &&
-      now - msg.createdAt > sevenDaysMs
+      msg.createdAt < staleCutoff
     ) {
       msg.state = "expired";
       msg.finishedAt = now;
       delete msg.text;
     }
-  }
-
-  let peerHistoryCount = 0;
-  let peerActiveCount = 0;
-  for (const msg of state.messages) {
-    if (msg.peerId !== peer.id) continue;
+    kept.push(msg);
     peerHistoryCount += 1;
     if (!FINISHED_STATES.has(msg.state)) peerActiveCount += 1;
   }
+  state.messages = kept;
+  return { peerHistoryCount, peerActiveCount };
+}
 
+function assertPeerMessageQuota(
+  peer: FederationPeerRecord,
+  peerHistoryCount: number,
+  peerActiveCount: number,
+): void {
   if (peerHistoryCount >= peer.maxHistoryMessages) {
     throw new FederationError(
       429,
@@ -380,6 +390,20 @@ export function enforcePerPeerMessageLimits(
       `联邦节点 ${peer.id.slice(0, 12)} 活跃队列配额已达上限（${peer.maxQueuedMessages}）。`,
     );
   }
+}
+
+/** 清理某个 peer 自身的过期消息，并严格按该 peer 独立配额检查历史总数。 */
+export function enforcePerPeerMessageLimits(
+  state: FederationQueueState,
+  peer: FederationPeerRecord,
+  now: number,
+): void {
+  const { peerHistoryCount, peerActiveCount } = pruneAndCountPeerMessages(
+    state,
+    peer,
+    now,
+  );
+  assertPeerMessageQuota(peer, peerHistoryCount, peerActiveCount);
 }
 
 export function enqueueOutgoingMessage(
@@ -485,6 +509,19 @@ export function receiveInboundMessages(
     );
   }
 
+  const allowedBots = new Set(peer.allowedBots);
+  const remoteBots = new Set(peer.remoteBots.map((bot) => bot.id));
+  const inboundById = new Map<string, FederationMessageRecord>();
+  for (const msg of state.messages) {
+    if (msg.direction === "inbound" && msg.peerId === peer.id) {
+      inboundById.set(msg.id, msg);
+    }
+  }
+
+  let limitsPrepared = false;
+  let peerHistoryCount = 0;
+  let peerActiveCount = 0;
+
   const accepted: Array<Omit<FederationMessageRecord, "text">> = [];
   for (const item of batch) {
     if (
@@ -503,10 +540,7 @@ export function receiveInboundMessages(
         "收到的联邦消息字段无效或已过期。",
       );
     }
-    if (
-      !peer.allowedBots.includes(item.toAgentId) ||
-      !peer.remoteBots.some((bot) => bot.id === item.fromAgentId)
-    ) {
+    if (!allowedBots.has(item.toAgentId) || !remoteBots.has(item.fromAgentId)) {
       throw new FederationError(
         403,
         "BOT_ACCESS_DENIED",
@@ -515,12 +549,7 @@ export function receiveInboundMessages(
     }
 
     const digest = computeFederationMessageDigest(item);
-    const existing = state.messages.find(
-      (msg) =>
-        msg.direction === "inbound" &&
-        msg.peerId === peer.id &&
-        msg.id === item.id,
-    );
+    const existing = inboundById.get(item.id);
     if (existing) {
       if (existing.digest !== digest) {
         throw new FederationError(
@@ -534,7 +563,20 @@ export function receiveInboundMessages(
       continue;
     }
 
-    enforcePerPeerMessageLimits(state, peer, now);
+    if (!limitsPrepared) {
+      const counts = pruneAndCountPeerMessages(state, peer, now);
+      peerHistoryCount = counts.peerHistoryCount;
+      peerActiveCount = counts.peerActiveCount;
+      limitsPrepared = true;
+      // 同步移除已被 30 天清理策略删除的旧入站消息索引。
+      inboundById.clear();
+      for (const msg of state.messages) {
+        if (msg.direction === "inbound" && msg.peerId === peer.id) {
+          inboundById.set(msg.id, msg);
+        }
+      }
+    }
+    assertPeerMessageQuota(peer, peerHistoryCount, peerActiveCount);
 
     const record: FederationMessageRecord = {
       id: item.id,
@@ -550,6 +592,9 @@ export function receiveInboundMessages(
       state: "queued",
     };
     state.messages.push(record);
+    inboundById.set(record.id, record);
+    peerHistoryCount += 1;
+    peerActiveCount += 1;
     const { text: _omit, ...view } = record;
     accepted.push(view);
   }
@@ -567,13 +612,15 @@ export function acknowledgeOutgoingMessages(
   if (!Array.isArray(acks) || acks.length > 100) {
     throw new FederationError(400, "INVALID_ACKS", "联邦回执批次无效。");
   }
+  if (acks.length === 0) return;
+  const outboundById = new Map<string, FederationMessageRecord>();
+  for (const item of state.messages) {
+    if (item.direction === "outbound" && item.peerId === peer.id) {
+      outboundById.set(item.id, item);
+    }
+  }
   for (const ack of acks) {
-    const msg = state.messages.find(
-      (item) =>
-        item.direction === "outbound" &&
-        item.peerId === peer.id &&
-        item.id === ack.id,
-    );
+    const msg = outboundById.get(ack.id);
     if (!msg) continue;
     if (ack.digest !== msg.digest) {
       throw new FederationError(

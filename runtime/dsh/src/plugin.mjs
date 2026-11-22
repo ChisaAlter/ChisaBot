@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
@@ -26,6 +26,8 @@ export const inject = [
 ];
 
 const STEER_CUT = "chisabot/steer";
+const DEFAULT_MAX_IDLE_SESSIONS = 32;
+const DEFAULT_SESSION_IDLE_TTL_MS = 10 * 60_000;
 
 const requiredText = (value, label) => {
   if (typeof value !== "string" || !value.trim() || value.length > 512)
@@ -33,49 +35,93 @@ const requiredText = (value, label) => {
   return value;
 };
 
+const readNonNegativeInt = (value, fallback) => {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
+const findLastModelBinding = (events) => {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event?.type === "plugin:chisabot/model-binding") return event.data;
+  }
+  return undefined;
+};
+
 export async function apply(ctx, config) {
   const generation = randomUUID();
   const loopLimits = toolLoopLimits(config.toolLoop);
-  // References only, never key values. A crash must not leave temporary run credentials forever.
+  const maxIdleSessions = readNonNegativeInt(
+    config.maxIdleSessions ?? process.env.CHISABOT_DSH_MAX_SESSIONS,
+    DEFAULT_MAX_IDLE_SESSIONS,
+  );
+  const sessionIdleTtlMs = readNonNegativeInt(
+    config.sessionIdleTtlMs ?? process.env.CHISABOT_DSH_SESSION_IDLE_MS,
+    DEFAULT_SESSION_IDLE_TTL_MS,
+  );
+  // Clean up any legacy on-disk temporary route keys from prior versions, then keep all
+  // new run credentials strictly in memory (zero writes to .credentials.yaml or route-keys.json).
   const keyJournal = join(config.home, "route-keys.json");
-  const keyRefs = new Set();
-  let keyWrites = Promise.resolve();
-  const saveKeyRefs = () => {
-    const body = JSON.stringify([...keyRefs]);
-    const write = keyWrites.then(async () => {
-      await writeFile(`${keyJournal}.tmp`, body, { mode: 0o600 });
-      await rename(`${keyJournal}.tmp`, keyJournal);
-    });
-    keyWrites = write.catch(() => {});
-    return write;
-  };
   let oldRefs;
   try {
     oldRefs = JSON.parse(await readFile(keyJournal, "utf8"));
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    oldRefs = [];
+    oldRefs = undefined;
   }
-  for (const ref of oldRefs) {
-    if (typeof ref !== "string" || !ref.startsWith("CHISABOT_ROUTE_"))
+  if (oldRefs !== undefined) {
+    if (!Array.isArray(oldRefs))
       throw new Error("Invalid temporary credential journal.");
-    await ctx.credentials.unset(ref);
+    for (const ref of oldRefs) {
+      if (typeof ref !== "string" || !ref.startsWith("CHISABOT_ROUTE_"))
+        throw new Error("Invalid temporary credential journal.");
+      await ctx.credentials.unset(ref);
+    }
+    await rm(keyJournal, { force: true });
   }
-  await saveKeyRefs();
-  const removeKey = async (ref) => {
-    if (!ref) return;
-    await ctx.credentials.unset(ref);
-    keyRefs.delete(ref);
-    await saveKeyRefs();
+  const ephemeralKeys = new Map();
+  const baseCredentials = ctx.credentials;
+  const overlayCredentials = {
+    resolve: (ref) => {
+      if (typeof ref === "string" && ephemeralKeys.has(ref)) {
+        return Promise.resolve({
+          value: ephemeralKeys.get(ref),
+          source: "memory",
+        });
+      }
+      return baseCredentials.resolve(ref);
+    },
+    describe: (ref) => {
+      if (typeof ref === "string" && ephemeralKeys.has(ref)) {
+        return Promise.resolve({
+          configured: true,
+          source: "memory",
+          writable: false,
+        });
+      }
+      return baseCredentials.describe(ref);
+    },
+    set: (ref, value) => baseCredentials.set(ref, value),
+    unset: (ref) => baseCredentials.unset(ref),
+    readRecord: (key) => baseCredentials.readRecord(key),
+    describeRecord: (key) => baseCredentials.describeRecord(key),
+    listRecords: () => baseCredentials.listRecords(),
+    modifyRecord: (key, mutate) => baseCredentials.modifyRecord(key, mutate),
+    deleteRecord: (key) => baseCredentials.deleteRecord(key),
   };
+  const piAiCtx = ctx.isolate("credentials");
+  piAiCtx.provide("credentials", overlayCredentials);
   let providerProfiles = Object.fromEntries(
     Object.entries(config.providers).map(([id, profile]) => [
       id,
       { timeoutMs: 0, streamIdleTimeoutMs: 0, ...profile },
     ]),
   );
-  const providerFiber = ctx.plugin(PiAi, { providers: providerProfiles });
+  const providerFiber = piAiCtx.plugin(PiAi, { providers: providerProfiles });
   await providerFiber;
+  let providerUpdateCount = 0;
+  let evictedSessionCount = 0;
   let providerUpdate = Promise.resolve();
   const updateProvider = (id, profile) => {
     const update = providerUpdate.then(async () => {
@@ -84,6 +130,7 @@ export async function apply(ctx, config) {
       else delete next[id];
       await providerFiber.update({ providers: next });
       providerProfiles = next;
+      providerUpdateCount += 1;
     });
     providerUpdate = update.catch(() => {});
     return update;
@@ -93,7 +140,19 @@ export async function apply(ctx, config) {
   const sessions = new Map();
   const pending = new Map();
   ctx.on("session/event", (session, event) => {
+    if (event.type === "plugin:chisabot/privacy-gate") {
+      router.markPrivacyBlocked(session.id);
+    }
     const state = sessions.get(session.id);
+    if (state) state.lastUsedAt = Date.now();
+    if (
+      state &&
+      event.type === "user/message" &&
+      event.data?.source?.kind === "user" &&
+      typeof event.data.source.rpcId === "string"
+    ) {
+      state.seenRpcIds?.add(event.data.source.rpcId);
+    }
     if (state && event.type === "turn/start") {
       state.phase = "model";
       state.currentTurn = event.data?.turn ?? state.currentTurn;
@@ -149,6 +208,77 @@ export async function apply(ctx, config) {
       .catch(() => {});
     return result;
   };
+
+  const canEvictSession = (state) =>
+    Boolean(
+      state &&
+        state.released === true &&
+        !state.waiting &&
+        state.handle?.agent?.status === "idle",
+    );
+
+  const evictSession = (sessionId, expectedState) =>
+    serialized(sessionId, async () => {
+      const current = sessions.get(sessionId);
+      if (!current || (expectedState && current !== expectedState))
+        return false;
+      if (!canEvictSession(current)) return false;
+      await ctx.sessions.flush(current.handle.agent.session);
+      for (const dispose of current.disposers.splice(0)) await dispose();
+      if (current.keyRef) ephemeralKeys.delete(current.keyRef);
+      await current.routeFiber?.dispose();
+      current.routeFiber = undefined;
+      current.keyRef = undefined;
+      current.providerId = undefined;
+      current.connectionFingerprint = undefined;
+      if (current.routeId) router.routes.delete(current.routeId);
+      router.clearSession(sessionId);
+      sessions.delete(sessionId);
+      await current.handle.dispose();
+      evictedSessionCount += 1;
+      return true;
+    });
+
+  let sweeping = false;
+  const sweepSessions = async () => {
+    if (sweeping) return;
+    sweeping = true;
+    try {
+      const now = Date.now();
+      if (sessionIdleTtlMs > 0) {
+        for (const [sessionId, state] of [...sessions.entries()]) {
+          if (
+            canEvictSession(state) &&
+            now - (state.lastUsedAt ?? 0) >= sessionIdleTtlMs
+          ) {
+            await evictSession(sessionId, state).catch(() => {});
+          }
+        }
+      }
+      if (maxIdleSessions > 0 && sessions.size > maxIdleSessions) {
+        const candidates = [...sessions.entries()]
+          .filter(([, state]) => canEvictSession(state))
+          .sort(([, a], [, b]) => (a.lastUsedAt ?? 0) - (b.lastUsedAt ?? 0));
+        for (const [sessionId, state] of candidates) {
+          if (sessions.size <= maxIdleSessions) break;
+          await evictSession(sessionId, state).catch(() => {});
+        }
+      }
+    } finally {
+      sweeping = false;
+    }
+  };
+
+  const sweepTimer =
+    sessionIdleTtlMs > 0
+      ? setInterval(
+          () => {
+            void sweepSessions().catch(() => {});
+          },
+          Math.min(60_000, Math.max(50, Math.floor(sessionIdleTtlMs / 2))),
+        )
+      : undefined;
+  sweepTimer?.unref?.();
 
   function checkBinding(value) {
     for (const key of ["sessionId", "runId", "threadId", "botId", "actorId"])
@@ -537,31 +667,7 @@ export async function apply(ctx, config) {
         : await ctx.sessionPersistence.stat(binding.sessionId);
       let previousSelection = state?.selection;
       let previousRouteId = state?.routeId;
-      if (existing) {
-        const stored = await ctx.sessionPersistence.open(
-          binding.sessionId,
-          "read",
-        );
-        try {
-          const saved = (await stored.read()).events.findLast(
-            (event) => event.type === "plugin:chisabot/model-binding",
-          )?.data;
-          if (
-            saved &&
-            typeof saved.selection === "string" &&
-            typeof saved.routeId === "string"
-          ) {
-            previousSelection = saved.selection;
-            previousRouteId = saved.routeId;
-          }
-        } finally {
-          await stored.close();
-        }
-      }
-      const routeId =
-        previousSelection === selection && previousRouteId
-          ? previousRouteId
-          : `route-${randomUUID()}`;
+      let routeId;
       let routeFiber;
       let keyRef;
       let providerId;
@@ -607,15 +713,13 @@ export async function apply(ctx, config) {
           routeFiber = state.routeFiber;
           keyRef = state.keyRef;
           if (connection.apiKey && keyRef) {
-            await ctx.credentials.set(keyRef, connection.apiKey);
+            ephemeralKeys.set(keyRef, connection.apiKey);
           }
         } else {
           providerId = `chisabot-${randomUUID()}`;
           if (connection.apiKey) {
             keyRef = `CHISABOT_ROUTE_${randomUUID().replaceAll("-", "_")}`;
-            keyRefs.add(keyRef);
-            await saveKeyRefs();
-            await ctx.credentials.set(keyRef, connection.apiKey);
+            ephemeralKeys.set(keyRef, connection.apiKey);
           }
           try {
             await updateProvider(providerId, {
@@ -633,7 +737,7 @@ export async function apply(ctx, config) {
               dispose: () => updateProvider(createdProviderId, undefined),
             };
           } catch (error) {
-            await removeKey(keyRef);
+            if (keyRef) ephemeralKeys.delete(keyRef);
             throw error;
           }
         }
@@ -657,14 +761,20 @@ export async function apply(ctx, config) {
             binding.revision < previous.revision
           )
             throw new Error("Session binding conflict.");
+          routeId =
+            previousSelection === selection && previousRouteId
+              ? previousRouteId
+              : `route-${randomUUID()}`;
           for (const dispose of state.disposers.splice(0)) await dispose();
           if (!reusedProvider) {
+            if (state.keyRef) ephemeralKeys.delete(state.keyRef);
             await state.routeFiber?.dispose();
-            await removeKey(state.keyRef);
           }
           router.routes.delete(state.routeId);
           state.binding = binding;
           state.stopped = false;
+          state.released = false;
+          state.lastUsedAt = Date.now();
           state.waiting = undefined;
           state.calls.clear();
           router.bind(routeId, binding.model, binding.runId);
@@ -674,21 +784,50 @@ export async function apply(ctx, config) {
             model: routeId,
           });
         } else {
-          state = { binding, stopped: false, disposers: [], calls: new Map() };
-          router.bind(routeId, binding.model, binding.runId);
-          const options = {
-            sessionId: binding.sessionId,
-            meta: { cwd: join(config.home, "workspace") },
-            agentOptions: { provider: "chisabot", model: routeId },
-            setup: (agentCtx, agent) => compose(agentCtx, agent, state),
+          state = {
+            binding,
+            stopped: false,
+            released: false,
+            lastUsedAt: Date.now(),
+            disposers: [],
+            calls: new Map(),
+            seenRpcIds: new Set(),
           };
-          state.handle = existing
-            ? await ctx.agents.resume({
-                resumeSessionId: binding.sessionId,
-                agentOptions: options.agentOptions,
-                setup: options.setup,
-              })
-            : await ctx.agents.create(options);
+          if (existing) {
+            // Resume first to avoid double Zstd decompression of the persisted session file.
+            // ReactLoopAgent stores agentOptions only as a fallback when no selection is recorded,
+            // so omitting provider/model here neither appends model/selection nor triggers compaction.
+            state.handle = await ctx.agents.resume({
+              resumeSessionId: binding.sessionId,
+              agentOptions: {},
+              setup: (agentCtx, agent) => compose(agentCtx, agent, state),
+            });
+            const saved = findLastModelBinding(
+              state.handle.agent.session.snapshotEvents(),
+            );
+            if (
+              saved &&
+              typeof saved.selection === "string" &&
+              typeof saved.routeId === "string"
+            ) {
+              previousSelection = saved.selection;
+              previousRouteId = saved.routeId;
+            }
+            routeId =
+              previousSelection === selection && previousRouteId
+                ? previousRouteId
+                : `route-${randomUUID()}`;
+            router.bind(routeId, binding.model, binding.runId);
+          } else {
+            routeId = `route-${randomUUID()}`;
+            router.bind(routeId, binding.model, binding.runId);
+            state.handle = await ctx.agents.create({
+              sessionId: binding.sessionId,
+              meta: { cwd: join(config.home, "workspace") },
+              agentOptions: { provider: "chisabot", model: routeId },
+              setup: (agentCtx, agent) => compose(agentCtx, agent, state),
+            });
+          }
           state.handle.agent.model.select({
             provider: "chisabot",
             model: routeId,
@@ -720,7 +859,12 @@ export async function apply(ctx, config) {
         state.providerId = providerId;
         state.connectionFingerprint = connectionFingerprint;
         state.modelProxy = input.connection?.modelProxy === true;
+        state.released = false;
+        state.lastUsedAt = Date.now();
         await ctx.sessions.flush(state.handle.agent.session);
+        if (maxIdleSessions > 0 && sessions.size > maxIdleSessions) {
+          void sweepSessions().catch(() => {});
+        }
         return {
           sessionId: binding.sessionId,
           generation,
@@ -730,9 +874,10 @@ export async function apply(ctx, config) {
         for (const dispose of state?.disposers.splice(0) ?? []) await dispose();
         await state?.handle?.dispose();
         sessions.delete(binding.sessionId);
-        router.routes.delete(routeId);
+        if (routeId) router.routes.delete(routeId);
+        router.clearSession(binding.sessionId);
+        if (keyRef) ephemeralKeys.delete(keyRef);
         await routeFiber?.dispose();
-        await removeKey(keyRef);
         throw error;
       }
     });
@@ -788,7 +933,7 @@ export async function apply(ctx, config) {
         "tool capability",
       );
       if (state.modelProxy && state.keyRef)
-        await ctx.credentials.set(state.keyRef, state.binding.toolCapability);
+        ephemeralKeys.set(state.keyRef, state.binding.toolCapability);
       state.binding.steering = input.steering === true;
       return { attached: true, generation };
     }),
@@ -801,15 +946,21 @@ export async function apply(ctx, config) {
       const sourceMatches = (message) =>
         message.source?.kind === "user" &&
         message.source.rpcId === input.requestId;
-      const accepted =
+      let accepted =
         state.handle.agent.inbox.nextTurn.some(sourceMatches) ||
         state.handle.agent.inbox.nextStep.some(sourceMatches) ||
-        state.handle.agent.session
-          .snapshotEvents()
-          .some(
-            (event) =>
-              event.type === "user/message" && sourceMatches(event.data),
-          );
+        Boolean(state.seenRpcIds?.has(input.requestId));
+      if (!accepted) {
+        const events = state.handle.agent.session.snapshotEvents();
+        for (let i = events.length - 1; i >= 0; i -= 1) {
+          const event = events[i];
+          if (event?.type === "user/message" && sourceMatches(event.data)) {
+            accepted = true;
+            state.seenRpcIds?.add(input.requestId);
+            break;
+          }
+        }
+      }
       await ctx.sessions.flush(state.handle.agent.session);
       return { accepted };
     }),
@@ -993,14 +1144,16 @@ export async function apply(ctx, config) {
       if (state.handle.agent.status !== "idle")
         throw new Error("The session still owns active work.");
       await ctx.sessions.flush(state.handle.agent.session);
-      await state.routeFiber?.dispose();
-      await removeKey(state.keyRef);
-      state.routeFiber = undefined;
-      state.keyRef = undefined;
-      state.providerId = undefined;
-      state.connectionFingerprint = undefined;
+      // Immediately purge the turn's secret from memory while keeping the non-secret provider
+      // slot registered for reuse on the next turn (zero disk writes, zero Fiber churn).
+      if (state.keyRef) ephemeralKeys.delete(state.keyRef);
       delete state.binding.toolCapability;
       router.routes.delete(state.routeId);
+      state.released = true;
+      state.lastUsedAt = Date.now();
+      if (maxIdleSessions > 0 && sessions.size > maxIdleSessions) {
+        void sweepSessions().catch(() => {});
+      }
       return { released: true };
     }),
   );
@@ -1016,6 +1169,11 @@ export async function apply(ctx, config) {
           version: "0.2.2-rc.1",
           generation,
           ownerUserId: config.ownerUserId,
+          stats: {
+            providerUpdates: providerUpdateCount,
+            evictedSessions: evictedSessionCount,
+            ephemeralKeys: ephemeralKeys.size,
+          },
           sessions: [...sessions.values()].map((x) => ({
             sessionId: x.binding.sessionId,
             runId: x.binding.runId,
@@ -1029,10 +1187,11 @@ export async function apply(ctx, config) {
     }),
   );
   ctx.on("dispose", async () => {
+    if (sweepTimer) clearInterval(sweepTimer);
+    ephemeralKeys.clear();
     await Promise.allSettled(
       [...sessions.values()].map((state) => state.handle.dispose()),
     );
-    for (const ref of [...keyRefs]) await removeKey(ref);
   });
 
   // Private launch-token discovery for the owning backend. Never print this URL.

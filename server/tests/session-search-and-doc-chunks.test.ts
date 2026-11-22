@@ -9,6 +9,8 @@ import {
 } from "../src/chat-files/service";
 import {
   createSessionSearchTools,
+  rankSessionRows,
+  rankSessionRowsAsync,
   type SessionThreadRow,
 } from "../src/conversations/session-search";
 import type { Database } from "../src/db/client";
@@ -368,7 +370,7 @@ function createStubDatabase(
 }
 
 describe("zero-dependency DOCX / PDF extraction and chunking", () => {
-  test("extractDocxText supports stored (method 0) and deflate (method 8) ZIP entries with XML entities", () => {
+  test("extractDocxText supports stored (method 0) and deflate (method 8) ZIP entries with XML entities", async () => {
     const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
       <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
         <w:body>
@@ -396,7 +398,7 @@ describe("zero-dependency DOCX / PDF extraction and chunking", () => {
       ],
       { includeCentralDirectory: false },
     );
-    const extracted0 = extractDocxText(method0Zip);
+    const extracted0 = await extractDocxText(method0Zip);
     expect(extracted0).toContain("季度预算报告 & 审批说明");
     expect(extracted0).toContain("范围：<100万> \"重点项目\" 中文 'OK'");
     expect(extracted0).toContain("列1\t列2");
@@ -417,14 +419,14 @@ describe("zero-dependency DOCX / PDF extraction and chunking", () => {
         useDataDescriptor: true,
       },
     ]);
-    const extracted8 = extractDocxText(method8Zip);
+    const extracted8 = await extractDocxText(method8Zip);
     expect(extracted8).toContain("季度预算报告 & 审批说明");
     expect(extracted8).toContain("机密页眉内容");
   });
 
-  test("extractDocxText safely returns empty string on corrupted or non-DOCX input", () => {
-    expect(extractDocxText(new Uint8Array(0))).toBe("");
-    expect(extractDocxText(Buffer.from("plain text not a zip"))).toBe("");
+  test("extractDocxText safely returns empty string on corrupted or non-DOCX input", async () => {
+    expect(await extractDocxText(new Uint8Array(0))).toBe("");
+    expect(await extractDocxText(Buffer.from("plain text not a zip"))).toBe("");
 
     const brokenDeflateZip = buildZip([
       {
@@ -435,11 +437,10 @@ describe("zero-dependency DOCX / PDF extraction and chunking", () => {
     ]);
     // 破坏 deflate 压缩流尾部字节
     brokenDeflateZip.fill(0xff, 50, 70);
-    expect(() => extractDocxText(brokenDeflateZip)).not.toThrow();
-    expect(extractDocxText(brokenDeflateZip)).toBe("");
+    expect(await extractDocxText(brokenDeflateZip)).toBe("");
   });
 
-  test("extractPdfText extracts uncompressed and FlateDecode BT/ET streams with escapes and UTF-16BE hex", () => {
+  test("extractPdfText extracts uncompressed and FlateDecode BT/ET streams with escapes and UTF-16BE hex", async () => {
     const stream1 = Buffer.from(
       `BT
 /F1 12 Tf
@@ -472,20 +473,20 @@ ET`,
       { body: stream2, compress: true },
     ]);
 
-    const text = extractPdfText(pdf);
+    const text = await extractPdfText(pdf);
     expect(text).toContain("Line1\nLine2\tTabbed (nested) \\ backslash");
     expect(text).toContain("BT inside literal string ET");
     expect(text).toContain("Quarterly Revenue");
     expect(text).toContain("中文财务报表与架构评审");
 
-    expect(extractPdfText(Buffer.from("not a pdf"))).toBe("");
-    expect(() =>
-      extractPdfText(
+    expect(await extractPdfText(Buffer.from("not a pdf"))).toBe("");
+    expect(
+      await extractPdfText(
         Buffer.from(
           "%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\n\x78\x9c\x00\xff\nendstream",
         ),
       ),
-    ).not.toThrow();
+    ).toBe("");
   });
 
   test("chunkDocumentText splits long text with overlap and surrogate safety", () => {
@@ -886,5 +887,84 @@ describe("session_search tool", () => {
     ) as { total: number; results: unknown[] };
     expect(emptyRes.total).toBe(0);
     expect(emptyRes.results).toEqual([]);
+  });
+
+  test("rankSessionRowsAsync matches rankSessionRows, skips pre-window messages cleanly, and yields across batches", async () => {
+    // 构造超过 400 条消息的长会话：前 420 条里包含旧首条用户标题与大量噪声，后 400 条内含目标关键词
+    const longUnnamedMessages = [
+      { id: "m-0", role: "user", content: "首条用户标题：跨年架构复盘" },
+      ...Array.from({ length: 420 }, (_, i) => ({
+        id: `old-${i}`,
+        role: i % 2 === 0 ? "assistant" : "user",
+        content: `早期无关历史消息 ${i} ${"A".repeat(160)}`,
+      })),
+      {
+        id: "m-recent",
+        role: "assistant",
+        content: "最终结论：零停机切换窗口锁定在周六凌晨。",
+      },
+    ];
+    const batchRows: SessionThreadRow[] = [
+      {
+        id: "thread-long-unnamed",
+        owner_user_id: "u-batch",
+        name: null,
+        thread_kind: "primary",
+        updated_at: "2026-10-20T10:00:00.000Z",
+        messages: longUnnamedMessages,
+      },
+      ...Array.from({ length: 45 }, (_, idx) => ({
+        id: `thread-named-${idx}`,
+        owner_user_id: "u-batch",
+        name: `已命名会话 #${idx}`,
+        thread_kind: "primary",
+        updated_at: new Date(1_760_000_000_000 + idx * 1000).toISOString(),
+        messages: [
+          ...Array.from({ length: 405 }, (_, j) => ({
+            id: `pre-${idx}-${j}`,
+            role: "user",
+            content: `早期旧消息 ${j}`,
+          })),
+          {
+            id: `hit-${idx}`,
+            role: "assistant",
+            content:
+              idx === 44
+                ? "零停机切换窗口与灰度回滚清单已完成。"
+                : "普通日常记录。",
+          },
+        ],
+      })),
+    ];
+
+    const syncHits = rankSessionRows(batchRows, {
+      ownerUserId: "u-batch",
+      query: "零停机切换窗口",
+      limit: 5,
+    });
+
+    let ticksBetweenBatches = 0;
+    let done = false;
+    const tickLoop = () => {
+      if (done) return;
+      ticksBetweenBatches += 1;
+      setImmediate(tickLoop);
+    };
+    setImmediate(tickLoop);
+
+    const asyncHits = await rankSessionRowsAsync(batchRows, {
+      ownerUserId: "u-batch",
+      query: "零停机切换窗口",
+      limit: 5,
+      batchSize: 10,
+    });
+    done = true;
+
+    expect(asyncHits).toEqual(syncHits);
+    expect(asyncHits.map((h) => h.threadId)).toContain("thread-long-unnamed");
+    expect(
+      asyncHits.find((h) => h.threadId === "thread-long-unnamed")?.title,
+    ).toBe("首条用户标题：跨年架构复盘");
+    expect(ticksBetweenBatches).toBeGreaterThanOrEqual(2);
   });
 });

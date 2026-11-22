@@ -524,7 +524,12 @@ function toStandardResponse(
     status === 204 ||
     status === 205 ||
     status === 304;
-  const response = new Response(noBody ? null : new Uint8Array(res.body), {
+  const bodyView = noBody
+    ? null
+    : res.body.buffer instanceof ArrayBuffer
+      ? new Uint8Array(res.body.buffer, res.body.byteOffset, res.body.byteLength)
+      : new Uint8Array(res.body);
+  const response = new Response(bodyView, {
     status,
     headers: res.headers,
   });

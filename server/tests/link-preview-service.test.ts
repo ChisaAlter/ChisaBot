@@ -73,6 +73,13 @@ function fakeDatabase() {
       assets.set(id, { mime, data });
       return [];
     }
+    if (sql.startsWith("SELECT mime, data FROM chisabot_link_preview_assets")) {
+      const row = assets.get(params[0] as string);
+      return row ? [row] : [];
+    }
+    if (sql.startsWith("SELECT 1 AS ok FROM chisabot_link_preview_assets")) {
+      return assets.has(params[0] as string) ? [{ ok: 1 }] : [];
+    }
     if (sql.startsWith("UPDATE chisabot_link_preview_assets")) {
       const row = assets.get(params[0] as string);
       return row ? [row] : [];

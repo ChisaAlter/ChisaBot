@@ -207,6 +207,28 @@ export function createWorkerService(
   let pumping = false;
   let deferredPump: ReturnType<typeof setTimeout> | undefined;
   const recovering = new Set<string>();
+  const recoveryWakers = new Map<string, () => void>();
+  const wakeRecovery = (workerId: string) => {
+    const wake = recoveryWakers.get(workerId);
+    if (!wake) return;
+    recoveryWakers.delete(workerId);
+    wake();
+  };
+  const sleepRecovery = (workerId: string, delayMs: number) =>
+    new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (recoveryWakers.get(workerId) === done)
+          recoveryWakers.delete(workerId);
+        resolve();
+      };
+      const timer = setTimeout(done, delayMs);
+      timer.unref?.();
+      recoveryWakers.set(workerId, done);
+    });
 
   const row = async (id: string) =>
     (
@@ -588,6 +610,8 @@ export function createWorkerService(
           // worker and delivers its result, including approval continuation in the same thread.
           void (async () => {
             try {
+              let lastObservedStatus: string = worker.status;
+              let pollDelayMs = worker.status === "waiting" ? 5_000 : 2_000;
               for (;;) {
                 const current = await row(worker.id);
                 if (!current || !ACTIVE.includes(current.status)) return;
@@ -621,14 +645,23 @@ export function createWorkerService(
                   if (finished) await deliver(finished);
                   return;
                 }
-                await sql.unsafe(
-                  "UPDATE chisabot_workers SET status=$2,updated_at=now() WHERE id=$1 AND status IN ('running','waiting')",
-                  [worker.id, state.status],
-                );
-                await new Promise((resolve) => {
-                  const timer = setTimeout(resolve, 1000);
-                  timer.unref?.();
-                });
+                if (state.status !== current.status) {
+                  await sql.unsafe(
+                    "UPDATE chisabot_workers SET status=$2,updated_at=now() WHERE id=$1 AND status IN ('running','waiting')",
+                    [worker.id, state.status],
+                  );
+                }
+                if (state.status !== lastObservedStatus) {
+                  lastObservedStatus = state.status;
+                  pollDelayMs = state.status === "waiting" ? 5_000 : 2_000;
+                } else {
+                  const maxDelay = state.status === "waiting" ? 10_000 : 3_000;
+                  pollDelayMs = Math.min(
+                    maxDelay,
+                    Math.round(pollDelayMs * 1.5),
+                  );
+                }
+                await sleepRecovery(worker.id, pollDelayMs);
               }
             } catch (error) {
               console.warn(
@@ -639,6 +672,7 @@ export function createWorkerService(
                 }),
               );
             } finally {
+              recoveryWakers.delete(worker.id);
               recovering.delete(worker.id);
             }
           })();
@@ -771,6 +805,7 @@ export function createWorkerService(
       );
       const state = live.get(workerId);
       state?.controller.abort(new Error("cancelled"));
+      wakeRecovery(workerId);
       await control.stop({ threadId: found.thread_id }).catch(() => false);
       void pump();
       // 用户在卡片上点的停止：主机器人前面说过「做完会把结果发到这里」，不补一句就成了没下文的承诺
@@ -789,6 +824,7 @@ export function createWorkerService(
       );
       for (const stopped of rows) {
         live.get(stopped.id)?.controller.abort(new Error("cancelled"));
+        wakeRecovery(stopped.id);
         await control.stop({ threadId: stopped.thread_id }).catch(() => false);
       }
       return rows.length;

@@ -161,6 +161,9 @@ export type Screencast = {
   send: (message: InputMessage) => Promise<void>;
 };
 
+/** Minimum interval between screencast frame acks (~30fps cap without dropping trailing frames). */
+export const DEFAULT_MIN_FRAME_INTERVAL_MS = 33;
+
 /**
  * Start casting `page` to `onFrame`, and return a handle that accepts input.
  *
@@ -171,7 +174,13 @@ export type Screencast = {
 export async function startScreencast(
   page: Page,
   onFrame: (frame: FrameMessage | NavigationMessage) => void,
-  options: { maxWidth?: number; maxHeight?: number; quality?: number } = {},
+  options: {
+    maxWidth?: number;
+    maxHeight?: number;
+    quality?: number;
+    minFrameIntervalMs?: number;
+    now?: () => number;
+  } = {},
 ): Promise<Screencast> {
   const client: CDPSession = await page.context().newCDPSession(page);
   let stopped = false;
@@ -269,14 +278,52 @@ export async function startScreencast(
     metadata: { deviceWidth: number; deviceHeight: number };
   };
 
-  client.on("Page.screencastFrame", (event: ScreencastFrame) => {
-    const { data, sessionId, metadata } = event;
-    // Acknowledge every frame. Chrome will not send the next one until the current is acked, which is
-    // the backpressure that stops a slow client drowning in frames. Forgetting this is why a naive
-    // implementation delivers one frame and then appears to hang.
+  const minFrameIntervalMs =
+    options.minFrameIntervalMs ?? DEFAULT_MIN_FRAME_INTERVAL_MS;
+  const clock = options.now ?? Date.now;
+  let lastFrameAt = 0;
+  let pendingAckTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingAckSessionId: number | undefined;
+
+  const sendAck = (sessionId: number) => {
     void client
       .send("Page.screencastFrameAck", { sessionId })
       .catch(() => undefined);
+  };
+
+  const scheduleAck = (sessionId: number) => {
+    // If a previous ack was somehow still queued, flush it before pacing the new frame.
+    if (pendingAckTimer !== undefined) {
+      clearTimeout(pendingAckTimer);
+      pendingAckTimer = undefined;
+      if (pendingAckSessionId !== undefined) {
+        const previousId = pendingAckSessionId;
+        pendingAckSessionId = undefined;
+        sendAck(previousId);
+      }
+    }
+    const now = clock();
+    const waitMs =
+      minFrameIntervalMs > 0 && lastFrameAt > 0
+        ? Math.max(0, minFrameIntervalMs - (now - lastFrameAt))
+        : 0;
+    lastFrameAt = now;
+    if (waitMs <= 0) {
+      sendAck(sessionId);
+      return;
+    }
+    pendingAckSessionId = sessionId;
+    pendingAckTimer = setTimeout(() => {
+      pendingAckTimer = undefined;
+      const queuedId = pendingAckSessionId;
+      pendingAckSessionId = undefined;
+      if (!stopped && queuedId !== undefined) sendAck(queuedId);
+    }, waitMs);
+    pendingAckTimer.unref?.();
+  };
+
+  client.on("Page.screencastFrame", (event: ScreencastFrame) => {
+    const { data, sessionId, metadata } = event;
     if (stopped) return;
     castFrameSeen = true;
     const url = pageUrl();
@@ -287,6 +334,10 @@ export async function startScreencast(
       height: metadata.deviceHeight,
       ...(url ? { url } : {}),
     });
+    // Pace acks to at least `minFrameIntervalMs` (default 33ms) while keeping `everyNthFrame: 1`.
+    // Idle clicks / cursor blinks ack immediately with zero lag; continuous 60fps animations
+    // naturally throttle to ~30fps without ever dropping the final settled frame.
+    scheduleAck(sessionId);
   });
 
   await client.send("Page.startScreencast", {
@@ -294,7 +345,7 @@ export async function startScreencast(
     quality: options.quality ?? 70,
     maxWidth: options.maxWidth ?? 1280,
     maxHeight: options.maxHeight ?? 800,
-    // One frame per change, not per interval. Chrome decides when something moved.
+    // Keep everyNthFrame: 1 so single-frame clicks / cursor blinks never drop their trailing frame.
     everyNthFrame: 1,
   });
 
@@ -331,6 +382,11 @@ export async function startScreencast(
     async stop() {
       if (stopped) return;
       stopped = true;
+      if (pendingAckTimer !== undefined) {
+        clearTimeout(pendingAckTimer);
+        pendingAckTimer = undefined;
+      }
+      pendingAckSessionId = undefined;
       if (listening) {
         page.off("requestfailed", onMainFrameFailed);
         page.off("response", onMainFrameDocument);

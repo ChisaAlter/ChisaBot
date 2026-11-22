@@ -190,6 +190,8 @@ export type ImServiceOptions = {
     record: ImOutboxRecord,
     reason: string,
   ) => Promise<void> | void;
+  /** 可选自定义交付恢复退避阶梯（毫秒），默认 [1000, 2000, 5000, 15000]。 */
+  deliveryDelaysMs?: readonly number[];
 };
 
 export type ImService = ReturnType<typeof createImService>;
@@ -333,8 +335,13 @@ export function createImService(options: ImServiceOptions) {
     : undefined;
   const delivery = createImDelivery(options.database, deliveryOptions);
   const activeTurns = new Set<string>();
-  let deliveryTimer: ReturnType<typeof setInterval> | null = null;
+  const deliveryDelays =
+    options.deliveryDelaysMs && options.deliveryDelaysMs.length > 0
+      ? options.deliveryDelaysMs
+      : ([1_000, 2_000, 5_000, 15_000] as const);
+  let deliveryLoop: { wake: () => void; stop: () => void } | null = null;
   let recovering = false;
+  const wakeDeliveries = () => deliveryLoop?.wake();
   type QrLogin = {
     owner: string;
     platform: QrPlatform;
@@ -376,6 +383,7 @@ export function createImService(options: ImServiceOptions) {
         updated_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (connection_id, chat_key)
       );
+      CREATE INDEX IF NOT EXISTS chisabot_im_chats_thread ON chisabot_im_chats (thread_id);
       CREATE TABLE IF NOT EXISTS chisabot_im_logs (
         id bigserial PRIMARY KEY,
         connection_id text NOT NULL,
@@ -491,13 +499,15 @@ export function createImService(options: ImServiceOptions) {
           [connectionId, status.detail ?? null],
         )
         .catch(() => {});
-    if (status.state === "connected" && previous.state !== "connected")
+    if (status.state === "connected" && previous.state !== "connected") {
       void sql
         .unsafe(
           "UPDATE chisabot_im_connections SET last_error = NULL WHERE id = $1",
           [connectionId],
         )
         .catch(() => {});
+      wakeDeliveries();
+    }
   }
 
   function view(row: Row, secrets: Record<string, string>): ImConnectionView {
@@ -629,15 +639,63 @@ export function createImService(options: ImServiceOptions) {
       ctx,
     });
     await adapter.start();
-    if (!deliveryTimer) {
-      deliveryTimer = setInterval(
-        () =>
-          void recoverDeliveries().catch((error) =>
-            log(row.id, "error", `交付恢复失败：${errorText(error)}`),
-          ),
-        1000,
-      );
-      deliveryTimer.unref?.();
+    if (!deliveryLoop) {
+      let stopped = false;
+      let runningPass = false;
+      let pendingWake = false;
+      let backoffIndex = 0;
+      let nextTimer: ReturnType<typeof setTimeout> | null = null;
+      const schedule = (delayMs: number) => {
+        if (stopped) return;
+        if (nextTimer) clearTimeout(nextTimer);
+        nextTimer = setTimeout(() => {
+          nextTimer = null;
+          void step();
+        }, delayMs);
+        nextTimer.unref?.();
+      };
+      const step = async () => {
+        if (stopped || runningPass) return;
+        runningPass = true;
+        pendingWake = false;
+        let busy = false;
+        try {
+          busy = await recoverDeliveriesPass();
+        } catch (error) {
+          log("delivery", "error", `交付恢复失败：${errorText(error)}`);
+        } finally {
+          runningPass = false;
+        }
+        if (stopped) return;
+        if (pendingWake) {
+          backoffIndex = 0;
+          schedule(0);
+          return;
+        }
+        backoffIndex = busy
+          ? 0
+          : Math.min(backoffIndex + 1, deliveryDelays.length - 1);
+        schedule(deliveryDelays[backoffIndex] ?? 1_000);
+      };
+      deliveryLoop = {
+        wake: () => {
+          if (stopped) return;
+          backoffIndex = 0;
+          if (runningPass) {
+            pendingWake = true;
+          } else {
+            schedule(0);
+          }
+        },
+        stop: () => {
+          stopped = true;
+          if (nextTimer) clearTimeout(nextTimer);
+          nextTimer = null;
+        },
+      };
+      schedule(deliveryDelays[0] ?? 1_000);
+    } else {
+      wakeDeliveries();
     }
   }
 
@@ -658,8 +716,8 @@ export function createImService(options: ImServiceOptions) {
   }
 
   async function stopAll() {
-    if (deliveryTimer) clearInterval(deliveryTimer);
-    deliveryTimer = null;
+    deliveryLoop?.stop();
+    deliveryLoop = null;
     await Promise.all([...live.keys()].map((id) => stopLive(id)));
   }
 
@@ -870,15 +928,21 @@ export function createImService(options: ImServiceOptions) {
       },
       inboxId,
     );
-    return dispatchDelivery(id);
+    const dispatched = await dispatchDelivery(id);
+    if (dispatched === "queued" || dispatched === "sending") {
+      wakeDeliveries();
+    }
+    return dispatched;
   }
 
-  async function recoverDeliveries() {
-    if (recovering || !live.size) return;
+  async function recoverDeliveriesPass(): Promise<boolean> {
+    if (recovering || !live.size) return false;
     recovering = true;
     try {
       const ids = [...live.keys()];
-      for (const incoming of await delivery.pending(ids)) {
+      const pendingInbox = await delivery.pending(ids);
+      let hadWork = pendingInbox.length > 0;
+      for (const incoming of pendingInbox) {
         if (activeTurns.has(incoming.id)) continue;
         const row = await rowById(incoming.connection_id),
           entry = live.get(incoming.connection_id);
@@ -916,14 +980,21 @@ export function createImService(options: ImServiceOptions) {
           incoming.id,
         ).catch((error) => log(row.id, "error", errorText(error)));
       }
-      for (const pending of await delivery.queued(ids)) {
+      const queuedOutbox = await delivery.queued(ids);
+      if (queuedOutbox.length > 0) hadWork = true;
+      for (const pending of queuedOutbox) {
         await dispatchDelivery(pending.id).catch((error) =>
           log("delivery", "error", errorText(error)),
         );
       }
+      return hadWork;
     } finally {
       recovering = false;
     }
+  }
+
+  async function recoverDeliveries() {
+    await recoverDeliveriesPass();
   }
 
   async function onInbound(connectionId: string, inbound: ImInbound) {
@@ -1197,6 +1268,7 @@ export function createImService(options: ImServiceOptions) {
       thread_id: threadId,
       inbound,
     });
+    wakeDeliveries();
     // 定时任务到点或待确认卡片要主动推回这个会话（DESIGN.md §55）：记住最近一条消息的回复信息。
     await sql
       .unsafe(
@@ -2314,6 +2386,7 @@ export function createImService(options: ImServiceOptions) {
       live.get(connectionId)?.adapter ?? null,
     statusOf: (connectionId: string) => live.get(connectionId)?.status ?? null,
     recoverDeliveries,
+    wakeDeliveries,
     deliveries: delivery.history,
     InputError,
   };

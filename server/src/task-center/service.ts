@@ -88,6 +88,10 @@ export type TaskCenterOptions = {
   globalConcurrency?: number;
   /** True resumes the same persisted execution attempt instead of creating another one. */
   hasDurableExecution?: (task: TaskCenterTask) => Promise<boolean>;
+  /** 可选自定义退避阶梯（毫秒），默认 [5000, 15000, 30000]。 */
+  sweepDelaysMs?: readonly number[];
+  /** 可选自定义 recover 最小间隔（毫秒），默认 30000。 */
+  recoverIntervalMs?: number;
 };
 type Sql = Pick<Database["$client"], "unsafe">;
 type TaskPayload = Pick<
@@ -268,9 +272,17 @@ export function createTaskCenter(
   const instance = randomUUID();
   const controllers = new Map<string, AbortController>();
   const jobs = new Set<Promise<void>>();
-  let timer: ReturnType<typeof setInterval> | undefined;
+  const sweepDelays =
+    options.sweepDelaysMs && options.sweepDelaysMs.length > 0
+      ? options.sweepDelaysMs
+      : ([5_000, 15_000, 30_000] as const);
+  const recoverIntervalMs = options.recoverIntervalMs ?? 30_000;
+  let loop: { wake: () => void; stop: () => void } | undefined;
   let sweeping = false;
   let stopping = false;
+  let lastRecoverAt = 0;
+  let recoverNeeded = true;
+  const wake = () => loop?.wake();
 
   async function ensure() {
     await sql.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_task_center_tasks (
@@ -312,6 +324,15 @@ export function createTaskCenter(
       last_status text NOT NULL DEFAULT 'idle', last_error text, failures integer NOT NULL DEFAULT 0,
       lease_owner text, lease_expires_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
     )`);
+    await sql.unsafe(
+      "CREATE INDEX IF NOT EXISTS chisabot_task_center_sources_due ON chisabot_task_center_sources(next_run_at) WHERE enabled",
+    );
+    await sql.unsafe(
+      "CREATE INDEX IF NOT EXISTS chisabot_task_center_sources_running ON chisabot_task_center_sources(lease_expires_at) WHERE last_status = 'running'",
+    );
+    await sql.unsafe(
+      "CREATE INDEX IF NOT EXISTS chisabot_task_center_tasks_lease ON chisabot_task_center_tasks(lease_expires_at) WHERE status IN ('planning','running')",
+    );
     await sql.unsafe(`CREATE TABLE IF NOT EXISTS chisabot_task_center_context (
       owner_user_id text PRIMARY KEY, content jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
     )`);
@@ -507,6 +528,7 @@ export function createTaskCenter(
     await checkBot(owner, input.agentId);
     const task = await sql.begin((tx) => insertTask(tx, owner, input, extra));
     if (!task) throw new TaskCenterError("任务没有创建成功，请重试。");
+    if (task.status === "queued") wake();
     return task;
   }
   async function listDecisions(
@@ -740,6 +762,10 @@ export function createTaskCenter(
       }
     }
     await Promise.all(requested.map(notify));
+    if (action === "start" || action === "resume" || action === "retry") {
+      recoverNeeded = true;
+      wake();
+    }
     return mustTask(owner, id);
   }
   async function setTaskPriority(
@@ -854,7 +880,7 @@ export function createTaskCenter(
     id: string,
     approved: boolean,
   ): Promise<TaskCenterDecision> {
-    return sql.begin(async (tx) => {
+    const decided = await sql.begin(async (tx) => {
       const [decision] = await tx.unsafe<DecisionRow[]>(
         "SELECT * FROM chisabot_task_center_decisions WHERE owner_user_id=$1 AND id=$2 FOR UPDATE",
         [owner, id],
@@ -893,6 +919,8 @@ export function createTaskCenter(
       if (!result) throw new TaskCenterError("这条确认请求已经处理。", 409);
       return decisionView(result);
     });
+    if (approved) wake();
+    return decided;
   }
   async function getContext(owner: string): Promise<TaskContext> {
     const [row] = await sql.unsafe<ContextRow[]>(
@@ -962,7 +990,9 @@ export function createTaskCenter(
       ],
     );
     if (!row) throw new TaskCenterError("信息源没有创建成功，请重试。");
-    return sourceView(row);
+    const created = sourceView(row);
+    if (created.enabled) wake();
+    return created;
   }
   async function updateSource(
     owner: string,
@@ -972,7 +1002,7 @@ export function createTaskCenter(
     const patch = sourceInputSchema.partial().strict().parse(input);
     if (patch.config) safeSourceConfig(patch.config);
     await checkBot(owner, patch.agentId);
-    return sql.begin(async (tx) => {
+    const updatedSource = await sql.begin(async (tx) => {
       const [row] = await tx.unsafe<SourceRow[]>(
         "SELECT * FROM chisabot_task_center_sources WHERE owner_user_id=$1 AND id=$2 FOR UPDATE",
         [owner, id],
@@ -1002,6 +1032,8 @@ export function createTaskCenter(
         throw new TaskCenterError("信息源状态已经变化，请重试。", 409);
       return sourceView(updated);
     });
+    if (updatedSource.enabled) wake();
+    return updatedSource;
   }
   async function scanSource(
     owner: string,
@@ -1517,6 +1549,10 @@ export function createTaskCenter(
       timeout.cancel();
       clearInterval(heartbeat);
       controllers.delete(task.id);
+      if (!stopping) {
+        recoverNeeded = true;
+        wake();
+      }
     }
   }
   async function reportLearn(
@@ -1553,22 +1589,35 @@ export function createTaskCenter(
       );
     }
   }
-  async function sweep() {
-    if (sweeping || conversationAdmissionClosed()) return;
+  async function sweepPass(forceRecover: boolean): Promise<boolean> {
+    if (sweeping || conversationAdmissionClosed()) return false;
     sweeping = true;
+    let hadWork = false;
     try {
-      await recover();
+      const nowMs = Date.now();
+      if (
+        forceRecover ||
+        recoverNeeded ||
+        lastRecoverAt === 0 ||
+        nowMs - lastRecoverAt >= recoverIntervalMs
+      ) {
+        recoverNeeded = false;
+        await recover();
+        lastRecoverAt = Date.now();
+      }
       const sources = await sql.unsafe<
         Pick<SourceRow, "owner_user_id" | "id">[]
       >(
         "SELECT owner_user_id,id FROM chisabot_task_center_sources WHERE enabled AND next_run_at<=now() AND (lease_expires_at IS NULL OR lease_expires_at<now()) ORDER BY next_run_at LIMIT 4",
       );
+      if (sources.length > 0) hadWork = true;
       await Promise.all(
         sources.map((s) => collectSource(s.owner_user_id, s.id)),
       );
       for (let i = 0; i < globalConcurrency; i++) {
         const task = await claim();
         if (!task) break;
+        hadWork = true;
         if (task === "skipped") continue;
         const job = run(task).catch((error) => {
           console.error("[task-center]", reasonWithoutStatement(error));
@@ -1576,26 +1625,76 @@ export function createTaskCenter(
         jobs.add(job);
         void job.finally(() => jobs.delete(job));
       }
+      return hadWork || jobs.size > 0;
     } finally {
       sweeping = false;
     }
   }
+  async function sweep() {
+    await sweepPass(true);
+  }
   function start() {
-    if (timer) return;
+    if (loop) return;
     stopping = false;
-    timer = setInterval(() => {
-      void sweep().catch((error) =>
-        console.error("[task-center]", reasonWithoutStatement(error)),
-      );
-    }, 5000);
-    void sweep().catch((error) =>
-      console.error("[task-center]", reasonWithoutStatement(error)),
-    );
+    let stopped = false;
+    let runningPass = false;
+    let pendingWake = false;
+    let backoffIndex = 0;
+    let nextTimer: ReturnType<typeof setTimeout> | null = null;
+    const schedule = (delayMs: number) => {
+      if (stopped) return;
+      if (nextTimer) clearTimeout(nextTimer);
+      nextTimer = setTimeout(() => {
+        nextTimer = null;
+        void step();
+      }, delayMs);
+      nextTimer.unref?.();
+    };
+    const step = async () => {
+      if (stopped || runningPass) return;
+      runningPass = true;
+      pendingWake = false;
+      let busy = false;
+      try {
+        busy = await sweepPass(false);
+      } catch (error) {
+        console.error("[task-center]", reasonWithoutStatement(error));
+      } finally {
+        runningPass = false;
+      }
+      if (stopped) return;
+      if (pendingWake) {
+        backoffIndex = 0;
+        schedule(0);
+        return;
+      }
+      backoffIndex = busy
+        ? 0
+        : Math.min(backoffIndex + 1, sweepDelays.length - 1);
+      schedule(sweepDelays[backoffIndex] ?? 5_000);
+    };
+    loop = {
+      wake: () => {
+        if (stopped) return;
+        backoffIndex = 0;
+        if (runningPass) {
+          pendingWake = true;
+        } else {
+          schedule(0);
+        }
+      },
+      stop: () => {
+        stopped = true;
+        if (nextTimer) clearTimeout(nextTimer);
+        nextTimer = null;
+      },
+    };
+    schedule(0);
   }
   async function stop() {
     stopping = true;
-    clearInterval(timer);
-    timer = undefined;
+    loop?.stop();
+    loop = undefined;
     for (const controller of controllers.values())
       controller.abort(new Error("任务中心正在停止。"));
     await Promise.allSettled([...jobs]);
@@ -1649,7 +1748,7 @@ export function createTaskCenter(
       sources,
       counts,
       decisionCounts,
-      running: Boolean(timer),
+      running: Boolean(loop),
       concurrency,
     };
   }
@@ -1657,6 +1756,7 @@ export function createTaskCenter(
     ensure,
     start,
     stop,
+    wake,
     sweep,
     snapshot,
     listTasks,

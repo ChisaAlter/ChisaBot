@@ -6,6 +6,30 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { DshHostClient } from "../src/client.mjs";
+import { buildFlockArgs, LINUX_LOCK_HOLDER_ARGS } from "../src/host-lease.mjs";
+
+test("Linux flock lease holder uses lightweight POSIX /bin/sh + exec cat instead of a resident Node.js process", () => {
+  const args = buildFlockArgs("/var/lib/chisabot/acct-1");
+  assert.deepEqual(args, [
+    "--nonblock",
+    "--conflict-exit-code",
+    "73",
+    "--no-fork",
+    "/var/lib/chisabot/acct-1/host.lock",
+    "/bin/sh",
+    "-c",
+    'printf "locked\\n"; exec cat >/dev/null',
+  ]);
+  assert.deepEqual(LINUX_LOCK_HOLDER_ARGS, [
+    "/bin/sh",
+    "-c",
+    'printf "locked\\n"; exec cat >/dev/null',
+  ]);
+  assert.equal(
+    args.some((arg) => arg.includes("lease-holder.mjs") || arg === process.execPath),
+    false,
+  );
+});
 
 test("Host home ownership ignores a copied live PID, excludes a real owner and recovers after SIGKILL", {
   timeout: 150000,

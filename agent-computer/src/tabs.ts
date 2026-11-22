@@ -174,3 +174,85 @@ export async function within<T>(work: Promise<T>, ms: number, fallback: T): Prom
     if (timer) clearTimeout(timer);
   }
 }
+
+export type CachedTabMetadata = {
+  url: string;
+  title: string;
+  titleValid: boolean;
+  faviconHref: string | null;
+  faviconEvaluated: boolean;
+};
+
+export type TabMetadataCache<P extends TabPage = TabPage> = {
+  /**
+   * Read title + favicon href for `page`, hitting memory cache when URL is unchanged and
+   * no invalidation event (navigation / load / explicit refresh) occurred.
+   */
+  resolve: (
+    page: P,
+    readers: {
+      readTitle: (page: P) => Promise<string>;
+      readFaviconHref: (page: P) => Promise<string | null>;
+    },
+    options?: { refresh?: boolean },
+  ) => Promise<{ url: string; title: string; faviconHref: string | null }>;
+  /** Mark a page's cached title (and optionally favicon href) dirty after navigation/load. */
+  invalidate: (page: P, options?: { keepFavicon?: boolean }) => void;
+  /** Forget a closed page. */
+  delete: (page: P) => void;
+};
+
+export function createTabMetadataCache<P extends TabPage = TabPage>(): TabMetadataCache<P> {
+  const cache = new WeakMap<object, CachedTabMetadata>();
+
+  return {
+    async resolve(page, readers, options) {
+      const url = page.url();
+      const existing = cache.get(page);
+      const urlChanged = !existing || existing.url !== url;
+      const force = options?.refresh === true;
+
+      let title = existing?.title ?? "";
+      let titleValid = Boolean(existing?.titleValid && !urlChanged && !force);
+      let faviconHref = existing?.faviconHref ?? null;
+      let faviconEvaluated = Boolean(
+        existing?.faviconEvaluated && !urlChanged && !force,
+      );
+
+      if (!titleValid) {
+        title = await readers.readTitle(page);
+        titleValid = true;
+      }
+      if (!faviconEvaluated) {
+        faviconHref = restorableUrl(url)
+          ? await readers.readFaviconHref(page)
+          : null;
+        faviconEvaluated = true;
+      }
+
+      // Only store if the page did not navigate away while awaiting CDP evaluation.
+      if (!page.isClosed() && page.url() === url) {
+        cache.set(page, {
+          url,
+          title,
+          titleValid,
+          faviconHref,
+          faviconEvaluated,
+        });
+      }
+
+      return { url, title, faviconHref };
+    },
+
+    invalidate(page, options) {
+      const existing = cache.get(page);
+      if (!existing) return;
+      existing.titleValid = false;
+      if (!options?.keepFavicon) existing.faviconEvaluated = false;
+    },
+
+    delete(page) {
+      cache.delete(page);
+    },
+  };
+}

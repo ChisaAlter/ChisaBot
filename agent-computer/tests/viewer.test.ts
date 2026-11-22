@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Screencast } from "../src/screencast";
-import { createViewerSlot, SCREEN_ENDED } from "../src/viewer";
+import {
+  createViewerSlot,
+  MAX_VIEWER_BUFFERED_BYTES,
+  SCREEN_ENDED,
+  shouldDropViewerFrame,
+} from "../src/viewer";
 
 /**
  * The Bot's live screen, watched by any number of windows.
@@ -440,5 +445,104 @@ describe("casts that fail to stop", () => {
 
     expect(ok.said).toEqual(["the computer was stopped"]);
     expect(slot.occupied()).toBe(false);
+  });
+});
+
+describe("broadcast single serialization and per-viewer backpressure", () => {
+  test("serializes a frame once across multiple viewers and reuses it for newcomers", async () => {
+    const slot = createViewerSlot();
+    const receivedA: string[] = [];
+    const receivedB: string[] = [];
+    const receivedC: string[] = [];
+    const receivedLate: string[] = [];
+
+    slot.join({
+      socket: { id: "a" },
+      notify: () => {},
+      send: () => {
+        throw new Error("should use sendEncoded fast path");
+      },
+      sendEncoded: (encoded) => receivedA.push(encoded),
+    });
+    slot.join({
+      socket: { id: "b" },
+      notify: () => {},
+      send: () => {
+        throw new Error("should use sendEncoded fast path");
+      },
+      sendEncoded: (encoded) => receivedB.push(encoded),
+    });
+    slot.join({
+      socket: { id: "c" },
+      notify: () => {},
+      send: () => {
+        throw new Error("should use sendEncoded fast path");
+      },
+      sendEncoded: (encoded) => receivedC.push(encoded),
+    });
+
+    let serializeCount = 0;
+    const frame = {
+      type: "frame",
+      data: "BASE64_JPEG_PAYLOAD",
+      width: 1280,
+      height: 800,
+      toJSON() {
+        serializeCount += 1;
+        return {
+          type: "frame",
+          data: "BASE64_JPEG_PAYLOAD",
+          width: 1280,
+          height: 800,
+        };
+      },
+    };
+
+    slot.broadcast(frame);
+    expect(serializeCount).toBe(1);
+    const expected = JSON.stringify({
+      type: "frame",
+      data: "BASE64_JPEG_PAYLOAD",
+      width: 1280,
+      height: 800,
+    });
+    expect(receivedA).toEqual([expected]);
+    expect(receivedB).toEqual([expected]);
+    expect(receivedC).toEqual([expected]);
+
+    // Newcomer receives the cached pre-encoded frame with zero extra JSON.stringify.
+    slot.join({
+      socket: { id: "late" },
+      notify: () => {},
+      send: () => {
+        throw new Error("should use sendEncoded fast path");
+      },
+      sendEncoded: (encoded) => receivedLate.push(encoded),
+    });
+    expect(serializeCount).toBe(1);
+    expect(receivedLate).toEqual([expected]);
+  });
+
+  test("drops only video frames for a backed-up viewer and never drops control messages", () => {
+    const videoFrame = { type: "frame", data: "AA", width: 1280, height: 800 };
+    expect(shouldDropViewerFrame(0, videoFrame)).toBe(false);
+    expect(shouldDropViewerFrame(MAX_VIEWER_BUFFERED_BYTES, videoFrame)).toBe(
+      false,
+    );
+    expect(
+      shouldDropViewerFrame(MAX_VIEWER_BUFFERED_BYTES + 1, videoFrame),
+    ).toBe(true);
+
+    // Control / state payloads must always be delivered even under backpressure.
+    for (const control of [
+      { type: "tabs", tabs: [] },
+      { type: "navigation", ok: false, url: "https://a.test/", error: "err" },
+      { type: "error", error: "stopped" },
+      { type: "ping" },
+    ]) {
+      expect(
+        shouldDropViewerFrame(MAX_VIEWER_BUFFERED_BYTES * 10, control),
+      ).toBe(false);
+    }
   });
 });
