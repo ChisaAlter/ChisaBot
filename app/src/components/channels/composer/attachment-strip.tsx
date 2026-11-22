@@ -162,6 +162,7 @@ export function AttachmentStrip({
               <img
                 alt={image.alt ?? "附件"}
                 className="size-20 rounded-xl border border-border object-cover"
+                decoding="async"
                 src={image.url}
               />
             )}

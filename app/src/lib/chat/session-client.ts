@@ -425,6 +425,8 @@ export class ConversationSession extends HttpAgent {
   private observedRunId?: string;
   private readonly acceptedCommands = new Set<string>();
   private readonly activeLiveMessageIds = new Set<string>();
+  private structureVersion = 0;
+  private lastDeltaKind: "none" | "text" | "non-text" = "none";
   private connection: ConversationConnection = "online";
   private readonly connectionListeners = new Set<() => void>();
   readonly connectionSnapshot = () => this.connection;
@@ -439,6 +441,22 @@ export class ConversationSession extends HttpAgent {
   }
   hasActiveLiveMessage() {
     return this.activeLiveMessageIds.size > 0;
+  }
+  structuralVersion(): number {
+    return this.structureVersion;
+  }
+  isNonTextDeltaPending(): boolean {
+    return this.lastDeltaKind === "non-text";
+  }
+  override addMessage(message: Message): void {
+    this.lastDeltaKind = "none";
+    this.structureVersion++;
+    super.addMessage(message);
+  }
+  override setMessages(messages: Message[]): void {
+    this.lastDeltaKind = "none";
+    this.structureVersion++;
+    super.setMessages(messages);
   }
   structuralSignature(): string {
     return this.messages
@@ -470,15 +488,38 @@ export class ConversationSession extends HttpAgent {
       fetch: (url, init) => fetch(url, { ...init, credentials: "include" }),
     });
     this.subscribe({
+      onEvent: ({ event }) => {
+        if (
+          event.type === "TEXT_MESSAGE_CONTENT" ||
+          event.type === "TOOL_CALL_ARGS" ||
+          event.type === "REASONING_MESSAGE_CONTENT"
+        ) {
+          return;
+        }
+        this.lastDeltaKind = "none";
+        if (
+          event.type === "ACTIVITY_SNAPSHOT" ||
+          event.type === "ACTIVITY_DELTA"
+        ) {
+          this.structureVersion++;
+        }
+      },
       onRunStartedEvent: ({ event }) => {
+        this.lastDeltaKind = "none";
         this.observedRunId = event.runId;
         this.setConnection("online");
       },
       onTextMessageStartEvent: ({ event }) => {
+        this.lastDeltaKind = "none";
+        this.structureVersion++;
         this.activeLiveMessageIds.add(event.messageId);
         setLiveMessageText(this.threadId, event.messageId, "");
       },
       onTextMessageContentEvent: ({ event, textMessageBuffer }) => {
+        this.lastDeltaKind = "text";
+        if (textMessageBuffer.length === 0 && (event.delta?.length ?? 0) > 0) {
+          this.structureVersion++;
+        }
         this.activeLiveMessageIds.add(event.messageId);
         setLiveMessageText(
           this.threadId,
@@ -487,6 +528,8 @@ export class ConversationSession extends HttpAgent {
         );
       },
       onTextMessageEndEvent: ({ event, textMessageBuffer }) => {
+        this.lastDeltaKind = "none";
+        this.structureVersion++;
         this.activeLiveMessageIds.delete(event.messageId);
         finishLiveMessageText(
           this.threadId,
@@ -494,22 +537,63 @@ export class ConversationSession extends HttpAgent {
           textMessageBuffer,
         );
       },
+      onToolCallStartEvent: () => {
+        this.lastDeltaKind = "none";
+        this.structureVersion++;
+      },
+      onToolCallArgsEvent: () => {
+        this.lastDeltaKind = "non-text";
+      },
+      onToolCallEndEvent: () => {
+        this.lastDeltaKind = "none";
+        this.structureVersion++;
+      },
+      onToolCallResultEvent: () => {
+        this.lastDeltaKind = "none";
+        this.structureVersion++;
+      },
+      onReasoningMessageStartEvent: () => {
+        this.lastDeltaKind = "none";
+        this.structureVersion++;
+      },
+      onReasoningMessageContentEvent: ({ event, reasoningMessageBuffer }) => {
+        this.lastDeltaKind = "non-text";
+        if (
+          reasoningMessageBuffer.length === 0 &&
+          (event.delta?.length ?? 0) > 0
+        ) {
+          this.structureVersion++;
+        }
+      },
+      onReasoningMessageEndEvent: () => {
+        this.lastDeltaKind = "none";
+        this.structureVersion++;
+      },
+      onReasoningEndEvent: () => {
+        this.lastDeltaKind = "none";
+        this.structureVersion++;
+      },
       onRunFinishedEvent: () => {
+        this.lastDeltaKind = "none";
         this.activeLiveMessageIds.clear();
         finishLiveMessageText(this.threadId);
         this.setConnection("online");
       },
       onRunErrorEvent: () => {
+        this.lastDeltaKind = "none";
         this.activeLiveMessageIds.clear();
         finishLiveMessageText(this.threadId);
         this.setConnection("online");
       },
       onRunFinalized: () => {
+        this.lastDeltaKind = "none";
         this.activeLiveMessageIds.clear();
         finishLiveMessageText(this.threadId);
         this.setConnection("online");
       },
       onMessagesSnapshotEvent: ({ event }) => {
+        this.lastDeltaKind = "none";
+        this.structureVersion++;
         this.activeLiveMessageIds.clear();
         syncLiveMessagesFromSnapshot(this.threadId, event.messages);
         for (const message of event.messages)
@@ -844,26 +928,91 @@ export function useConversationSession({
     if (revision >= 0) pruneSettledLiveMessages(threadId, agent.messages);
   }, [threadId, agent, revision]);
   useExternalConnection(objectConnectionKey(agent), () => {
-    let lastSignature = agent.structuralSignature();
+    let lastVersion = agent.structuralVersion();
+    let lastLength = agent.messages.length;
+    let lastTailId = agent.messages.at(-1)?.id;
+    let rafId: number | null = null;
+    let microtaskScheduled = false;
+    let pendingThrottled = false;
+
+    const cancelPendingRefresh = () => {
+      if (rafId !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(rafId);
+      }
+      rafId = null;
+      microtaskScheduled = false;
+      pendingThrottled = false;
+    };
+
     const forceRefresh = () => {
-      lastSignature = agent.structuralSignature();
+      cancelPendingRefresh();
+      lastVersion = agent.structuralVersion();
+      lastLength = agent.messages.length;
+      lastTailId = agent.messages.at(-1)?.id;
       refresh();
     };
+
+    const flushPendingRefresh = () => {
+      if (pendingThrottled) forceRefresh();
+    };
+
+    const scheduleThrottledRefresh = () => {
+      pendingThrottled = true;
+      if (rafId !== null || microtaskScheduled) return;
+      if (typeof requestAnimationFrame === "function") {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          if (!pendingThrottled) return;
+          forceRefresh();
+        });
+        return;
+      }
+      microtaskScheduled = true;
+      queueMicrotask(() => {
+        microtaskScheduled = false;
+        if (!pendingThrottled) return;
+        forceRefresh();
+      });
+    };
+
     const subscription = agent.subscribe({
       onMessagesChanged: () => {
-        const nextSignature = agent.structuralSignature();
-        if (nextSignature !== lastSignature || !agent.hasActiveLiveMessage()) {
-          lastSignature = nextSignature;
-          refresh();
+        const nextVersion = agent.structuralVersion();
+        const nextLength = agent.messages.length;
+        const nextTailId = agent.messages.at(-1)?.id;
+        if (
+          nextVersion !== lastVersion ||
+          nextLength !== lastLength ||
+          nextTailId !== lastTailId
+        ) {
+          forceRefresh();
+          return;
+        }
+        if (agent.isNonTextDeltaPending()) {
+          scheduleThrottledRefresh();
+          return;
+        }
+        if (!agent.hasActiveLiveMessage()) {
+          forceRefresh();
         }
       },
       onStateChanged: forceRefresh,
       onRunInitialized: forceRefresh,
       onRunFinalized: forceRefresh,
+      onRunFinishedEvent: flushPendingRefresh,
+      onRunErrorEvent: flushPendingRefresh,
+      onRunFailed: flushPendingRefresh,
       onTextMessageEndEvent: forceRefresh,
+      onToolCallEndEvent: flushPendingRefresh,
+      onToolCallResultEvent: flushPendingRefresh,
+      onReasoningMessageEndEvent: flushPendingRefresh,
+      onReasoningEndEvent: flushPendingRefresh,
       onMessagesSnapshotEvent: forceRefresh,
     });
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelPendingRefresh();
+      subscription.unsubscribe();
+    };
   });
   return { agent, isReady: true, connectionStatus };
 }

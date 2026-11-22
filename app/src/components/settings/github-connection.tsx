@@ -78,7 +78,7 @@ export function GithubConnectionSection() {
               <ListRow
                 icon={
                   connection.avatarUrl ? (
-                    <img alt="" className="gh-avatar" height={40} referrerPolicy="no-referrer" src={connection.avatarUrl} width={40} />
+                    <img alt="" className="gh-avatar" decoding="async" height={40} referrerPolicy="no-referrer" src={connection.avatarUrl} width={40} />
                   ) : (
                     <span className="gh-mark">
                       <IconBrandGithub className="size-5" />

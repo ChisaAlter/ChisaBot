@@ -1,4 +1,5 @@
 import {
+  type InfiniteData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -27,6 +28,7 @@ import { markChannelReadMutationOptions } from "@/lib/channels/mutations";
 import { useOpenThread } from "@/lib/channels/open-thread";
 import {
   type AgentChannel,
+  type ChannelPage as ChannelListPage,
   channelFromRoster,
   channelListQueryOptions,
   channelQueryOptions,
@@ -126,38 +128,6 @@ export const ChannelPage = memo(function ChannelPage({
   // 藏着时，全局的组件授权轮询不再为这个机器人跑（DESIGN.md §98.3）。
   useMarkBotHidden(agentId, !visible);
 
-  const markRead = useMutation(markChannelReadMutationOptions(queryClient));
-  /*
-   * This channel's roster summary, read out of the same infinite query the sidebar renders.
-   * The detail query deliberately knows nothing about activity; the roster is where the socket
-   * keeps lastMessageAt live, so it is the one honest source for "has something new been said".
-   */
-  const roster = useInfiniteQuery(channelListQueryOptions());
-  const summary = roster.data?.find((row) => row.id === channelId);
-
-  /*
-   * Opening the channel marks it read; the Bot replying while it is open marks it read again.
-   * One effect covers both: the dep changes on navigation and on every activity patch, and the
-   * unseen check keeps it from writing a row per render. No dependency on the mutation object —
-   * its identity changes per render and the effect must not re-fire for that.
-   *
-   * Keyed on primitives, deliberately. The optimistic mark-read patch changes the summary OBJECT's
-   * identity without changing these values, so an object dep would re-fire the effect on its own
-   * write — and when lastMessageAt sits ahead of this browser's clock (another device wrote it),
-   * that re-fire loops into a PUT per render. Primitives hold still under the patch: one PUT.
-   */
-  const unseen = summary !== undefined && hasUnseenActivity(summary);
-  const markReadMutate = markRead.mutate;
-  useExternalConnection(
-    unseen && visible ? channelId || "__channel__" : false,
-    () => {
-      // 藏着时机器人回复了不算「看过」：回来时再标。
-      if (unseen && visible) {
-        markReadMutate(channelId);
-      }
-    },
-  );
-
   // 计算机在右栏「面板 | 计算机」里（DESIGN.md §23）；设置窗格仍是聊天旁的详情栏，两者互不挤占。
   // 按机器人记住选的是哪个标签（DESIGN.md §88）：地址里没有 `watch` 时用上次的。
   const writeWatch = useCallback(
@@ -226,20 +196,25 @@ export const ChannelPage = memo(function ChannelPage({
     [setSideOpen],
   );
 
+  const handleCloseDetail = useCallback(() => {
+    if (visibleRef.current)
+      void navigate({
+        search: (previous) => ({ ...previous, settings: undefined }),
+      });
+  }, [navigate]);
+
   return (
     <div
       className="contents"
       data-channel-id={channelId}
       {...(visible ? { "data-channel-visible": "" } : {})}
     >
+      {visible ? (
+        <ChannelMarkRead channelId={channelId} visible={visible} />
+      ) : null}
       <MessageFind channelId={channelId} visible={visible} />
       <DetailPanel
-        onClose={() => {
-          if (visibleRef.current)
-            void navigate({
-              search: (previous) => ({ ...previous, settings: undefined }),
-            });
-        }}
+        onClose={handleCloseDetail}
         // 设置窗格在窄窗口里是画在 body 上的抽屉：藏着时关掉，别盖在别的页面上。
         open={
           visible && isSettingsOpen && !isGroupChannel && agentId !== undefined
@@ -307,6 +282,47 @@ export const ChannelPage = memo(function ChannelPage({
       ) : null}
     </div>
   );
+});
+
+/**
+ * 仅在当前频道可见时订阅 `channelListQueryOptions()`，并通过 `select` 投影为当前 `channelId` 的标量
+ * `unseen: boolean`：避免发消息乐观更新或无关频道的 WebSocket 补丁唤醒整页 `ChannelPage` 及所有 KeepAlive 保活频道。
+ */
+const ChannelMarkRead = memo(function ChannelMarkRead({
+  channelId,
+  visible,
+}: {
+  channelId: string;
+  visible: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const markRead = useMutation(markChannelReadMutationOptions(queryClient));
+  const selectUnseen = useCallback(
+    (data: InfiniteData<ChannelListPage>): boolean => {
+      for (const page of data.pages) {
+        for (const row of page.channels) {
+          if (row.id === channelId) return hasUnseenActivity(row);
+        }
+      }
+      return false;
+    },
+    [channelId],
+  );
+  const { data: unseen = false } = useInfiniteQuery({
+    ...channelListQueryOptions(),
+    select: selectUnseen,
+  });
+  const markReadMutate = markRead.mutate;
+  useExternalConnection(
+    unseen && visible ? channelId || "__channel__" : false,
+    () => {
+      // 藏着时机器人回复了不算「看过」：回来时再标。
+      if (unseen && visible) {
+        markReadMutate(channelId);
+      }
+    },
+  );
+  return null;
 });
 
 /**

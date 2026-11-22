@@ -55,14 +55,24 @@ test("uses explicit manual chunks for route components", () => {
   ).toBe("route-chat-core");
   expect(
     selectChisaBotManualChunk(
-      "/repo/app/src/routes/_authed/admin/credentials.tsx?tsr-split=component",
+      "/repo/app/src/routes/_authed/admin/route.tsx?tsr-split=component",
     ),
   ).toBe("route-admin");
   expect(
     selectChisaBotManualChunk(
-      "/repo/app/src/routes/_authed/settings/connected-accounts/index.tsx?tsr-split=component",
+      "/repo/app/src/routes/_authed/settings/route.tsx?tsr-split=component",
     ),
   ).toBe("route-settings");
+  expect(
+    selectChisaBotManualChunk(
+      "/repo/app/src/routes/_authed/admin/credentials.tsx?tsr-split=component",
+    ),
+  ).toBeUndefined();
+  expect(
+    selectChisaBotManualChunk(
+      "/repo/app/src/routes/_authed/settings/connected-accounts/index.tsx?tsr-split=component",
+    ),
+  ).toBeUndefined();
   expect(
     selectChisaBotManualChunk(
       "/repo/app/src/routes/_authed/_app/agents/index.tsx?tsr-split=component",
@@ -169,9 +179,9 @@ test("groups heavy vendors into stable chunks (DESIGN.md §41.5)", () => {
   ).toBe("vendor-markdown");
   expect(
     selectChisaBotManualChunk(
-      "/repo/node_modules/.bun/lucide-react@0.5.0/node_modules/lucide-react/dist/esm/icons/x.js",
+      "/repo/node_modules/.bun/@tabler+icons-react@3.49.0/node_modules/@tabler/icons-react/dist/esm/icons/IconX.mjs",
     ),
-  ).toBe("vendor-lucide");
+  ).toBe("vendor-icons");
 });
 
 test("keeps the authed layout out of the chat chunk", () => {
@@ -187,12 +197,17 @@ test("keeps the authed layout out of the chat chunk", () => {
   ).toBe("route-shell");
 });
 
-test("keeps the component gallery (conversation client) out of the admin chunk", () => {
+test("splits admin subpages including component gallery out of the admin shell chunk", () => {
+  expect(
+    selectChisaBotManualChunk(
+      "/repo/app/src/routes/_authed/admin/route.tsx?tsr-split=component",
+    ),
+  ).toBe("route-admin");
   expect(
     selectChisaBotManualChunk(
       "/repo/app/src/routes/_authed/admin/index.tsx?tsr-split=component",
     ),
-  ).toBe("route-admin");
+  ).toBeUndefined();
   expect(
     selectChisaBotManualChunk(
       "/repo/app/src/routes/_authed/admin/components/index.tsx?tsr-split=component",

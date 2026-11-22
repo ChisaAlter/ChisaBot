@@ -12,9 +12,9 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import {
   cloneElement,
   createContext,
@@ -26,6 +26,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { VirtualizerHandle } from "virtua";
 import {
@@ -180,6 +181,7 @@ import {
   useToolRenderers,
 } from "@/lib/conversations/tool-renderers";
 import { WORKER_RESULT_MARKER } from "@/lib/conversations/workers";
+import { useKeptVisibility } from "@/lib/kept-visible";
 import { markdownComponents } from "@/lib/markdown";
 import { forgetMemoryNote } from "@/lib/memory-notes";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
@@ -325,6 +327,54 @@ function ServerRow({ messageId, text }: { messageId: string; text: string }) {
       <ConfirmResumeRow text={text} />
     </div>
   );
+}
+
+/**
+ * 仅在当前 KeepAlive 页处于可见态时维持审批收件箱 10s 轮询（非重渲订阅 `useKeptVisibility()`），
+ * 避免在 `ChatTranscriptImpl` 顶层消费 `KeptVisibleContext` 导致切换频道整树重渲，也不翻转 `enabled` 触发切页重拉。
+ */
+function VisibleApprovalPoll({ enabled }: { enabled: boolean }) {
+  const keptVisibility = useKeptVisibility();
+  const queryClient = useQueryClient();
+  useExternalConnection(
+    enabled ? `approval-poll:${objectKey(keptVisibility)}` : false,
+    () => {
+      let timer: ReturnType<typeof setInterval> | null = null;
+      const stop = () => {
+        if (timer !== null) {
+          clearInterval(timer);
+          timer = null;
+        }
+      };
+      const sync = () => {
+        if (!keptVisibility.get()) {
+          stop();
+          return;
+        }
+        if (timer === null) {
+          timer = setInterval(() => {
+            if (
+              !keptVisibility.get() ||
+              (typeof document !== "undefined" &&
+                document.visibilityState === "hidden")
+            ) {
+              return;
+            }
+            void queryClient.invalidateQueries({
+              queryKey: approvalInboxOptions().queryKey,
+            });
+          }, 10_000);
+        }
+      };
+      sync();
+      const unsubscribe = keptVisibility.subscribe(sync);
+      return () => {
+        unsubscribe();
+        stop();
+      };
+    },
+  );
+  return null;
 }
 
 /** 回答期间发的这条刚被机器人读到（DESIGN.md §38.1），几秒后淡出。 */
@@ -777,14 +827,92 @@ function rowGapOf(content: HTMLElement): number {
  * 两块留白（滚动容器的 spacer、我们的 slack）在这一列里实际占的高度：各自的高度减去被负上边距抵掉的那道行距。
  * 消息行本身的高度 = 列高 − 这个数（§94 用它算新那一行吃掉多少空白）。
  */
-function blankArea(content: HTMLElement, slack: number): number {
-  const gap = rowGapOf(content);
-  const spacer = content.querySelector<HTMLElement>(
-    "[data-message-scroller-spacer]",
-  );
+function blankArea(
+  content: HTMLElement,
+  slack: number,
+  spacerEl?: HTMLElement | null,
+): number {
+  const spacer =
+    spacerEl !== undefined
+      ? spacerEl
+      : content.querySelector<HTMLElement>("[data-message-scroller-spacer]");
   const spacerHeight = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
+  if (spacerHeight <= 0 && slack <= 0) return 0;
+  const gap = rowGapOf(content);
   return (
     (spacerHeight > 0 ? spacerHeight - gap : 0) + (slack > 0 ? slack - gap : 0)
+  );
+}
+
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+let sharedReducedMotionSource: {
+  from: typeof window.matchMedia;
+  mql: MediaQueryList;
+} | null = null;
+const reducedMotionListeners = new Set<() => void>();
+let activeReducedMotionMql: MediaQueryList | null = null;
+const notifyReducedMotion = () => {
+  for (const listener of reducedMotionListeners) listener();
+};
+
+function getReducedMotionMql(): MediaQueryList | null {
+  if (
+    typeof window === "undefined" ||
+    typeof window.matchMedia !== "function"
+  ) {
+    return null;
+  }
+  if (sharedReducedMotionSource?.from !== window.matchMedia) {
+    sharedReducedMotionSource = {
+      from: window.matchMedia,
+      mql: window.matchMedia(REDUCED_MOTION_QUERY),
+    };
+  }
+  return sharedReducedMotionSource.mql;
+}
+
+function subscribeReducedMotion(listener: () => void): () => void {
+  const mql = getReducedMotionMql();
+  if (mql && activeReducedMotionMql !== mql) {
+    activeReducedMotionMql?.removeEventListener?.(
+      "change",
+      notifyReducedMotion,
+    );
+    activeReducedMotionMql = mql;
+    if (reducedMotionListeners.size > 0) {
+      activeReducedMotionMql.addEventListener?.("change", notifyReducedMotion);
+    }
+  }
+  const wasEmpty = reducedMotionListeners.size === 0;
+  reducedMotionListeners.add(listener);
+  if (wasEmpty && activeReducedMotionMql) {
+    activeReducedMotionMql.addEventListener?.("change", notifyReducedMotion);
+  }
+  return () => {
+    reducedMotionListeners.delete(listener);
+    if (reducedMotionListeners.size === 0 && activeReducedMotionMql) {
+      activeReducedMotionMql.removeEventListener?.(
+        "change",
+        notifyReducedMotion,
+      );
+      activeReducedMotionMql = null;
+    }
+  };
+}
+
+function getReducedMotionSnapshot(): boolean {
+  return Boolean(getReducedMotionMql()?.matches);
+}
+
+function getReducedMotionServerSnapshot(): boolean {
+  return false;
+}
+
+function useSharedReducedMotion(): boolean {
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    getReducedMotionSnapshot,
+    getReducedMotionServerSnapshot,
   );
 }
 
@@ -887,9 +1015,9 @@ function SettleAtEnd({
     lastRows: 0,
   });
   state.current.busy = busy;
-  const reduceMotion = useReducedMotion();
+  const reduceMotion = useSharedReducedMotion();
   /** §93.3：一轮结束后收掉底下留的空（由下面的 effect 填上；没挂上时什么都不做）。 */
-  const releaseRef = useRef<(() => boolean) | null>(null);
+  const releaseRef = useRef<((fromScroll?: boolean) => boolean) | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: 滚动位置状态机：状态放在 ref 里，只在 hydrating / 最新用户消息等输入变化时重跑；ref 与 setter 不用列
   useLayoutEffect(() => {
@@ -1077,6 +1205,17 @@ function SettleAtEnd({
         '[data-slot="message-scroller-content"]',
       );
       if (!element || !content) return;
+      // 缓存滚动容器的 spacer 节点引用，避免单次 onScroll 内多次全树 querySelector。
+      let cachedSpacer: HTMLElement | null = null;
+      const getSpacer = (): HTMLElement | null => {
+        if (cachedSpacer?.isConnected && content.contains(cachedSpacer)) {
+          return cachedSpacer;
+        }
+        cachedSpacer = content.querySelector<HTMLElement>(
+          "[data-message-scroller-spacer]",
+        );
+        return cachedSpacer;
+      };
       const s = state.current;
       // CB-106 r2：定位到 ?message= 那条后（data-message-hold），打开时的落点 / 贴底都让路，直到人滚动或发消息。
       const held = () => isMessageHeld(element);
@@ -1290,7 +1429,8 @@ function SettleAtEnd({
           element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
         s.lastTop = seen.top;
         s.lastAtBottom = seen.atBottom;
-        s.lastRows = content.offsetHeight - blankArea(content, s.slack);
+        s.lastRows =
+          content.offsetHeight - blankArea(content, s.slack, getSpacer());
         if (s.slack <= 1) s.holdBlank = false;
         elastic();
       };
@@ -1314,9 +1454,7 @@ function SettleAtEnd({
        * 的入口只是多一重防线。
        */
       const dropOversizedBlank = () => {
-        const spacer = content.querySelector<HTMLElement>(
-          "[data-message-scroller-spacer]",
-        );
+        const spacer = getSpacer();
         const spacerPx = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
         if (!blankCoversViewport(s.slack + spacerPx, element.clientHeight))
           return false;
@@ -1335,9 +1473,7 @@ function SettleAtEnd({
         if (dropOversizedBlank()) return;
         const el = slack.current;
         if (!el || el.parentElement?.parentElement !== content) return;
-        const spacer = content.querySelector<HTMLElement>(
-          "[data-message-scroller-spacer]",
-        );
+        const spacer = getSpacer();
         const ok =
           s.busy &&
           seen.atBottom &&
@@ -1496,11 +1632,10 @@ function SettleAtEnd({
          * 它只在「对齐某一轮 / 回到底部」时才重算，人翻走成 free-scrolling 后没人再管它——按它自己
          * v(0) 的样子在这里收掉（下一次它要写 spacer 时照样写回来）。
          */
+        let spacerPx = 0;
         {
-          const spacer = content.querySelector<HTMLElement>(
-            "[data-message-scroller-spacer]",
-          );
-          const spacerPx = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
+          const spacer = getSpacer();
+          spacerPx = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
           const blank = s.slack + spacerPx;
           if (
             blank > 0 &&
@@ -1511,13 +1646,17 @@ function SettleAtEnd({
               spacer.hidden = true;
               spacer.style.height = "0px";
               spacer.style.marginTop = "";
+              spacerPx = 0;
             }
             setSlack(0);
             lastHeight = content.offsetHeight;
           }
         }
-        // 落定在底部、底下还留着空（§93.3 当时人不在底部没收成）：接着收。release 自己会按 busy / touched 拒。
-        releaseRef.current?.();
+        // 落定在底部、底下还留着空（§93.3 当时人不在底部没收成）：接着收。
+        // 常规无留白滚动时跳过调用，避免每帧触发 release 判定与祖先 dataset.cbRelease 脏写。
+        if (s.slack > 1 || spacerPx > 0 || s.floor !== null) {
+          releaseRef.current?.(true);
+        }
         save();
       };
       /*
@@ -1538,9 +1677,7 @@ function SettleAtEnd({
         const gap =
           element.scrollHeight - element.scrollTop - element.clientHeight;
         if (gap <= 4) {
-          const spacer = content.querySelector<HTMLElement>(
-            "[data-message-scroller-spacer]",
-          );
+          const spacer = getSpacer();
           const spacerHeight =
             spacer && !spacer.hidden ? spacer.offsetHeight : 0;
           setThreadUi(scrollKey, {
@@ -1584,14 +1721,17 @@ function SettleAtEnd({
       };
       let releaseFrame = 0;
       let touchedRetry = 0;
-      releaseRef.current = () => {
+      releaseRef.current = (fromScroll = false) => {
+        const setReleaseState = (reason: string) => {
+          if (element.dataset.cbRelease !== reason) {
+            element.dataset.cbRelease = reason;
+          }
+        };
         const why = (reason: string) => {
-          element.dataset.cbRelease = reason;
+          setReleaseState(reason);
           return false;
         };
-        const spacer = content.querySelector<HTMLElement>(
-          "[data-message-scroller-spacer]",
-        );
+        const spacer = getSpacer();
         const spacerHeight = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
         const busyHold = s.busy && (s.holdBlank || spacerHeight > 0);
         if (busyHold || s.releasing || s.restore || active())
@@ -1619,7 +1759,15 @@ function SettleAtEnd({
           element.clientHeight,
           total,
         );
-        if (gap > 4) return why(`gap:${Math.round(gap)}`); // 人不在底部：留白在视口外，§88.1 自己会收
+        if (gap > 4) {
+          // 滚动期间若已标为 gap:* 不逐帧覆写变化的像素值，避免把整个滚动视口后代反复标脏。
+          const current = element.dataset.cbRelease;
+          return why(
+            fromScroll && current?.startsWith("gap:")
+              ? current
+              : `gap:${Math.round(gap)}`,
+          );
+        }
         if (total <= 1) {
           // Even a zero-height elastic slack can retain the previous content min-height.
           // Once idle, a collapsed row must not recreate that floor on the next resize.
@@ -1629,7 +1777,7 @@ function SettleAtEnd({
         cancelBusyRelease();
         const busyRelease = s.busy;
         s.releasing = true;
-        element.dataset.cbRelease = `release:${Math.round(total)}`;
+        setReleaseState(`release:${Math.round(total)}`);
         // 1) 滚动容器的空挪进留白（同一帧），2) 有 spacer 时让它改成跟着底部（spacer 清零，位置不变）。
         setSlack(total);
         if (spacerHeight > 0) {
@@ -1730,9 +1878,7 @@ function SettleAtEnd({
               const height = element.clientHeight;
               const shrink = lastClient - height;
               lastClient = height;
-              const spacer = content.querySelector<HTMLElement>(
-                "[data-message-scroller-spacer]",
-              );
+              const spacer = getSpacer();
               if (
                 shrink > 0 &&
                 seen.atBottom &&
@@ -1865,6 +2011,49 @@ function createFirstPaintDelays() {
  * whole history mounts at once, and cascading the last few reads as the conversation settling
  * rather than as a page appearing all at once. `createFirstPaintDelays` decides which is which.
  */
+const ARRIVING_ANIMATE = { opacity: 1, y: 0 } as const;
+const ARRIVING_INITIAL_PLAIN = { opacity: 0, y: 0 } as const;
+const ARRIVING_INITIAL_SLIDE = { opacity: 0, y: 8 } as const;
+const ARRIVING_ZERO_TRANSITION = {
+  delay: 0,
+  duration: ENTRANCE_SECONDS,
+  ease: EASE_OUT,
+} as const;
+
+function ArrivingMotion({
+  children,
+  delay,
+}: {
+  children: React.ReactNode;
+  delay: number;
+}) {
+  const shouldReduceMotion = useSharedReducedMotion();
+  const transition = useMemo(
+    () =>
+      shouldReduceMotion || delay === 0
+        ? ARRIVING_ZERO_TRANSITION
+        : {
+            delay,
+            duration: ENTRANCE_SECONDS,
+            ease: EASE_OUT,
+          },
+    [shouldReduceMotion, delay],
+  );
+  return (
+    <motion.div
+      animate={ARRIVING_ANIMATE}
+      data-slot="message-arriving"
+      className="flex w-full flex-col"
+      initial={
+        shouldReduceMotion ? ARRIVING_INITIAL_PLAIN : ARRIVING_INITIAL_SLIDE
+      }
+      transition={transition}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 function Arriving({
   animate = false,
   children,
@@ -1874,47 +2063,19 @@ function Arriving({
   children: React.ReactNode;
   delay?: number;
 }) {
-  const shouldReduceMotion = useReducedMotion();
-
-  return (
-    <motion.div
-      animate={{ opacity: 1, transform: "translateY(0px)" }}
-      /*
-       * `data-slot` IS LOAD-BEARING, NOT DECORATION. `MessageContent` right-aligns a person's own
-       * message with `group-data-[align=end]/message:*:data-slot:self-end` — a selector that reaches
-       * DIRECT CHILDREN CARRYING A data-slot. Wrapping the bubble in a plain div made this the direct
-       * child, the selector matched nothing, and every message a person sent quietly moved to the
-       * left column and read as though the Bot had said it.
-       */
-      data-slot="message-arriving"
-      /*
-       * FULL WIDTH, AND A FLEX COLUMN, because that is what it displaced. `Bubble` is
-       * `w-fit max-w-[80%]` and aligns itself with `group-data-[align=end]/message:self-end`. Both
-       * need the parent this wrapper replaced: against a shrink-to-fit box the 80% resolves against
-       * the bubble's own width and short messages wrap for no reason, and `self-end` does nothing at
-       * all outside a flex container.
-       */
-      className="flex w-full flex-col"
-      initial={
-        animate
-          ? {
-              opacity: 0,
-              // Reduced motion keeps the fade and drops the movement: gentler, not absent.
-              transform: shouldReduceMotion ? "none" : "translateY(8px)",
-            }
-          : false
-      }
-      transition={{
-        // Reduced motion gets the fade with no queue: a cascade is movement too, just spread over
-        // time, and somebody who asked for less of it should not wait for their history to arrive.
-        delay: !animate || shouldReduceMotion ? 0 : delay,
-        duration: ENTRANCE_SECONDS,
-        ease: EASE_OUT,
-      }}
-    >
-      {children}
-    </motion.div>
-  );
+  // 锁定首次挂载时的入场动画开关（同 bot-bubbles.tsx SegmentRow）：
+  // 历史消息直接渲染普通 div（保留 data-slot="message-arriving" 维持右对齐选择器），
+  // 消除数百条历史行的常驻 motion.div 实例、matchMedia 订阅与永久 translateY(0px) 合成层；
+  // 实时新到消息走数值 y: 0 入场动画（动画结束后自动还原 transform: none），且不因后续 animate 变化重挂载正文。
+  const useMotionRef = useRef(animate);
+  if (!useMotionRef.current) {
+    return (
+      <div className="flex w-full flex-col" data-slot="message-arriving">
+        {children}
+      </div>
+    );
+  }
+  return <ArrivingMotion delay={delay}>{children}</ArrivingMotion>;
 }
 
 /**
@@ -3069,6 +3230,7 @@ function SentAttachmentTile({ attachment }: { attachment: SentAttachment }) {
       <img
         alt={filename ? `附件：${filename}` : "附件"}
         className="size-32 rounded-xl object-cover"
+        decoding="async"
         onError={() => setFailedToLoad(true)}
         src={url}
       />
@@ -3149,6 +3311,7 @@ export function LightboxPicture({
     <img
       alt={filename ?? "附件"}
       className="max-h-[88svh] max-w-[92vw] rounded-lg object-contain"
+      decoding="async"
       onError={() => setFailedToLoad(true)}
       src={url}
     />
@@ -3874,17 +4037,33 @@ function ChatTranscriptImpl({
     hasTools ? chatThreadId : null,
     false,
   );
+  const approvalsEnabled = hasTools && chatThreadId !== null;
   const approvals = useQuery({
     ...approvalInboxOptions(),
-    enabled: hasTools && chatThreadId !== null,
+    enabled: approvalsEnabled,
+    // 10s 周期刷新交由 VisibleApprovalPoll 按 useKeptVisibility() 门控，隐藏态零后台轮询且切换不翻转 enabled。
+    refetchInterval: false,
+    refetchIntervalInBackground: false,
+    select: (data) => {
+      let pending = false;
+      const toolCallIds: string[] = [];
+      for (const request of data.requests) {
+        if (request.status === "pending") {
+          pending = true;
+          if (request.action.toolCallId) {
+            toolCallIds.push(request.action.toolCallId);
+          }
+        }
+      }
+      return { pending, toolCallIds };
+    },
   });
   const confirmed = useMemo(() => {
     const set = new Set<string>();
     for (const request of confirmations.data ?? [])
       if (request.toolCallId) set.add(request.toolCallId);
-    for (const request of approvals.data?.requests ?? [])
-      if (request.status === "pending" && request.action.toolCallId)
-        set.add(request.action.toolCallId);
+    for (const toolCallId of approvals.data?.toolCallIds ?? [])
+      set.add(toolCallId);
     return set;
   }, [confirmations.data, approvals.data]);
   /*
@@ -3898,10 +4077,7 @@ function ChatTranscriptImpl({
   const awaitingPerson =
     (confirmations.data ?? []).some(
       (request) => request.status === "pending",
-    ) ||
-    (approvals.data?.requests ?? []).some(
-      (request) => request.status === "pending",
-    );
+    ) || Boolean(approvals.data?.pending);
   const live = turnIsLive(busy, shape, settled, threadLive || awaitingPerson);
   // 这一轮从什么时候开始（状态胶囊的「已用秒数」从这里算；「思考中」换成干活卡后接着算，不归零）。
   // 认不出这一轮的 key 时才用这个（只活在这次挂载里）。
@@ -4671,6 +4847,7 @@ function ChatTranscriptImpl({
             newest={queued.at(-1)?.id ?? null}
             viewport={viewportRef}
           />
+          <VisibleApprovalPoll enabled={approvalsEnabled} />
           <SettleAtEnd
             busy={busy || live}
             hydrating={hydrating}
@@ -4949,7 +5126,7 @@ function useFreshAnchor(
   lastSentAt: SentAtReading | null = null,
   sendMode?: React.RefObject<SendMode>,
 ): string | null {
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = useSharedReducedMotion();
   const seen = useRef<{
     baseline: string | null;
     id: string | null;

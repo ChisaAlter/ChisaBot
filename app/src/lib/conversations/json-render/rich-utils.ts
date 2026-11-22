@@ -4,7 +4,7 @@
  * 不依赖 React，也不碰 DOM，所以单元测试直接测（app/tests/json-render-rich.test.ts）。
  */
 
-import { isSafeRenderImageSrc } from "../../../../../shared/json-render/catalog";
+import { isSafeRenderImageSrc } from "../../../../../shared/json-render/utils";
 
 /** "81,272" / "$81,272.5" / "-3.1%" / 42 → 数字；读不出来 → null。 */
 export function toNumber(value: unknown): number | null {

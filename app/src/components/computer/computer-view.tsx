@@ -895,6 +895,7 @@ export function ComputerView({
     <img
       src={`data:image/png;base64,${drawn.base64}`}
       alt={"助理正在查看什么"}
+      decoding="async"
       // Keep unexpected screenshot dimensions inside the reserved frame.
       className="absolute inset-0 h-full w-full object-contain opacity-100 transition-opacity duration-300 starting:opacity-0"
     />
@@ -1135,6 +1136,7 @@ export function ComputerView({
                         <img
                           alt={"此轮次开放了什么"}
                           className="absolute inset-0 h-full w-full object-contain"
+                          decoding="async"
                           src={`data:image/png;base64,${drawn.base64}`}
                         />
                       </div>

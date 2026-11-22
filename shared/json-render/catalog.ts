@@ -7,6 +7,14 @@ import {
 } from "@json-render/core";
 import { schema } from "@json-render/react/schema";
 import { z } from "zod";
+import {
+  isSafeRenderImageSrc,
+  normaliseTone,
+  TONES,
+  type Tone,
+} from "./utils";
+
+export { isSafeRenderImageSrc, normaliseTone, TONES, type Tone };
 
 /**
  * 生成式界面（json-render）的组件目录，服务器与浏览器共用一份。
@@ -33,52 +41,6 @@ const tone = z
     "语义色：default / accent（品牌蓝）/ info / success（好、涨）/ warn / danger（坏、跌），默认 default",
   );
 
-export const TONES = [
-  "default",
-  "accent",
-  "info",
-  "success",
-  "warn",
-  "danger",
-] as const;
-export type Tone = (typeof TONES)[number];
-const TONE_ALIASES: Record<string, Tone> = {
-  brand: "accent",
-  primary: "accent",
-  blue: "accent",
-  sky: "accent",
-  good: "success",
-  ok: "success",
-  positive: "success",
-  green: "success",
-  up: "success",
-  warning: "warn",
-  amber: "warn",
-  yellow: "warn",
-  orange: "warn",
-  caution: "warn",
-  bad: "danger",
-  error: "danger",
-  negative: "danger",
-  red: "danger",
-  down: "danger",
-  critical: "danger",
-  neutral: "default",
-  muted: "default",
-  gray: "default",
-  grey: "default",
-  none: "default",
-  cyan: "info",
-  teal: "info",
-  purple: "info",
-};
-/** 任意写法 → 六种语义色之一。 */
-export function normaliseTone(value: unknown): Tone {
-  if (typeof value !== "string") return "default";
-  const key = value.trim().toLowerCase();
-  if ((TONES as readonly string[]).includes(key)) return key as Tone;
-  return TONE_ALIASES[key] ?? "default";
-}
 
 /** 每一项（行、磁贴、链接）都可以带一个点击动作；三选一，优先 href。 */
 const itemActions = {
@@ -1075,18 +1037,6 @@ const IMAGE_PROPS: Record<string, string[]> = {
 const isHttps = (value: unknown) =>
   typeof value === "string" && /^https:\/\//i.test(value.trim());
 
-const LOCAL_CHAT_IMAGE_RE =
-  /^\/api\/(?:chat-files\/|channels\/[^/?#]+\/attachments\/)[A-Za-z0-9._-]+(?:\?w=\d+)?$/;
-
-/** 放行外部 https:// 图片与本站受控聊天附件/文件图片路径（拒绝 //、..、http://、data:）。 */
-export function isSafeRenderImageSrc(value: unknown): boolean {
-  if (typeof value !== "string") return false;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.startsWith("//") || trimmed.includes(".."))
-    return false;
-  if (/^https:\/\//i.test(trimmed)) return true;
-  return LOCAL_CHAT_IMAGE_RE.test(trimmed);
-}
 
 /** `on` 里的动作：名字必须存在；本部署的动作（send_message / open_link）按目录校验参数。 */
 function actionIssues(key: string, on: unknown): string[] {

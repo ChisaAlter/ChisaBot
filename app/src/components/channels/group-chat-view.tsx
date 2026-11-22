@@ -29,6 +29,7 @@ import {
 import { EmptyState, ErrorCard } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { useExternalConnection } from "@/hooks";
 import {
   type GroupBotMember,
   type GroupMessageStatus,
@@ -38,6 +39,7 @@ import {
   sendGroupMessageMutationOptions,
 } from "@/lib/channels/group-api";
 import type { AgentChannel } from "@/lib/channels/queries";
+import { useKeptVisible } from "@/lib/kept-visible";
 import { newId } from "@/lib/new-id";
 import { relativeTime, useRelativeNow } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
@@ -208,6 +210,7 @@ function GroupMessageRow({
 
 export function GroupChatView({ channel }: GroupChatViewProps) {
   const queryClient = useQueryClient();
+  const keptVisible = useKeptVisible();
   const now = useRelativeNow();
   const goalSwitchId = useId();
   const textareaId = useId();
@@ -216,15 +219,31 @@ export function GroupChatView({ channel }: GroupChatViewProps) {
   const [draft, setDraft] = useState("");
   const [goalMode, setGoalMode] = useState(false);
 
+  const wasHiddenRef = useRef(!keptVisible);
+  useExternalConnection(keptVisible ? `group-vis:${channel.id}` : false, () => {
+    if (wasHiddenRef.current) {
+      wasHiddenRef.current = false;
+      void queryClient.invalidateQueries({
+        queryKey: groupDetailQueryOptions(channel.id).queryKey,
+      });
+    }
+    return () => {
+      wasHiddenRef.current = true;
+    };
+  });
+
   const groupQuery = useQuery({
     ...groupDetailQueryOptions(channel.id),
     refetchInterval: (query) => {
+      if (!keptVisible) return false;
       if (query.state.status === "error") return false;
       const active = query.state.data?.messages.some(
         (msg) => msg.status === "queued" || msg.status === "running",
       );
       return active ? 1000 : 4000;
     },
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: keptVisible,
   });
 
   const sendMutation = useMutation(

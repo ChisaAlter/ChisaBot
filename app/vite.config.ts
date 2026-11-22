@@ -194,7 +194,8 @@ const VENDOR_CHUNKS: Array<[RegExp, string]> = [
   ],
   // 代码高亮的 Oniguruma 引擎（内联 wasm，~240KB gzip）单独一块：否则 Rollup 会把 Markdown 用到的几个小包和它同块。
   [/\/node_modules\/@shikijs\/engine-oniguruma\//, "vendor-shiki-wasm"],
-  [/\/node_modules\/lucide-react\//, "vendor-lucide"],
+  // Tabler 图标全部归入无环叶子块（仅依赖 vendor-react），消除 29 个单图标小碎片块与首屏 modulepreload 队列拥堵。
+  [/\/node_modules\/@tabler\/icons-react\//, "vendor-icons"],
 ];
 
 /*
@@ -292,15 +293,19 @@ export function selectChisaBotManualChunk(
   if (routePath.startsWith("_authed/_app/channel/")) {
     return "route-chat-core";
   }
-  // 组件库两页要 会话客户端（预览里的工具卡片），不和其它管理页同块，免得打开 /admin 也带上它。
-  if (routePath.startsWith("_authed/admin/components/")) {
-    return undefined;
-  }
-  if (routePath.startsWith("_authed/admin/")) {
+  // 设置 / 管理区只保留布局壳合块供首屏预载，各子页交由 TanStack Router 按需拆块并在悬停时（defaultPreload: "intent"）无感预取，
+  // 避免进入任意设置 / 管理页时整组拉取 200+ KB 无关页面代码。
+  if (routePath === "_authed/admin/route.tsx") {
     return "route-admin";
   }
-  if (routePath.startsWith("_authed/settings/")) {
+  if (routePath === "_authed/settings/route.tsx") {
     return "route-settings";
+  }
+  if (
+    routePath.startsWith("_authed/admin/") ||
+    routePath.startsWith("_authed/settings/")
+  ) {
+    return undefined;
   }
   if (
     routePath.startsWith("_authed/_app/") ||
@@ -397,6 +402,8 @@ const appViteConfig = {
     ...(process.env.CHISABOT_BUNDLE_REPORT ? [bundleReport()] : []),
   ],
   resolve: {
+    // 防止 Bun 嵌套依赖（shared / @json-render 等）把两份不同路径的 Zod 重复打进产物。
+    dedupe: ["zod"],
     alias: [
       { find: "@", replacement: path.resolve(__dirname, "./src") },
       // 首屏包瘦身（DESIGN.md §41.4）：只被引用、在浏览器里从不执行的依赖换成小桩，说明见各文件。

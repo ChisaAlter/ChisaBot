@@ -13,7 +13,6 @@ import {
   useWallpaperLoading,
   usesThemeGradientSky,
 } from "@/lib/appearance";
-import { installLiquidGlass } from "@/lib/liquid-glass";
 import { usePerfMode } from "@/lib/perf-mode";
 import { noteSkyFrame, skyFadeHolding, wakeSkyOnWeather } from "@/lib/sky-fade";
 import {
@@ -619,11 +618,21 @@ export function SkyBackground() {
 
   // 1. 挂载时把外观写到 <html>（之后每次改动由 updateAppearance 自己写，不在这里跟着每一步滑块重跑）。
   //    同时开始听别的标签页改外观（storage 事件）。
-  //    液态玻璃的边缘透镜 + 背景自适应也在这里挂上（liquid 材质 / 支持 backdrop url 时才生效）。
   useExternalConnection(true, () => {
     applyAppearanceToDocument(getAppearanceState(), dark);
     installAppearanceStorageSync();
-    return installLiquidGlass();
+  });
+
+  // 1b. 液态玻璃的边缘透镜 + 背景自适应仅在 glassStyle === "liquid" 时按需动态加载（默认 mist 零加载 55 KB 引擎）。
+  const isLiquidGlass = appearance.glassStyle === "liquid";
+  useExternalConnection(isLiquidGlass, async (_key, signal) => {
+    try {
+      const { installLiquidGlass } = await import("@/lib/liquid-glass");
+      if (signal.aborted) return undefined;
+      return installLiquidGlass();
+    } catch {
+      return undefined;
+    }
   });
 
   // 2. 深浅色 / 主题族变了：data-theme + 整套族派生变量（accent/ink/边框/玻璃令牌在 <html> 上，

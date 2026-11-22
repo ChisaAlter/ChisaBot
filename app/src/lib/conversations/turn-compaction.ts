@@ -2,6 +2,22 @@ import { useState } from "react";
 import { useExternalConnection } from "@/hooks";
 import { readSentAt, type SentAtReading } from "@/lib/chat/send-scroll";
 import { tryClient } from "@/lib/client";
+import { useKeptVisibility } from "@/lib/kept-visible";
+
+type ChatRunningDetail =
+  | boolean
+  | { running?: boolean; threadId?: string | null };
+
+function shouldRefreshForRunningEvent(
+  detail: ChatRunningDetail,
+  threadId: string,
+): boolean {
+  if (typeof detail === "boolean") return detail === false;
+  if (!detail || typeof detail !== "object") return false;
+  if (detail.running !== false) return false;
+  if (detail.threadId && detail.threadId !== threadId) return false;
+  return true;
+}
 
 /**
  * 服务器记下的两类「一轮」信息（频道聊天读，chat-transcript.tsx 的 compactTurns 画）：
@@ -14,23 +30,42 @@ function useTurnEndpoint(
   load: (id: string, signal: AbortSignal) => Promise<void>,
   reset: () => void,
 ) {
+  // 用非重渲可见性订阅，避免切进/切出 KeepAlive 引起 ChannelChat 重画；
+  // 隐藏频道收到全局 chisabot-chat-running 时不立刻发 3 个请求，等切回可见再补偿一次。
+  const visibility = useKeptVisibility();
   useExternalConnection(threadId ? `t:${threadId}` : "none", (_key, signal) => {
     reset();
     if (!threadId) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let pendingWhileHidden = false;
     const run = () => {
       void load(threadId, signal);
     };
     run();
     const onRunning = (event: Event) => {
-      if ((event as CustomEvent<boolean>).detail === false) {
+      const detail = (event as CustomEvent<ChatRunningDetail>).detail;
+      if (!shouldRefreshForRunningEvent(detail, threadId)) return;
+      if (!visibility.get()) {
+        pendingWhileHidden = true;
         clearTimeout(timer);
-        timer = setTimeout(run, 1500);
+        timer = undefined;
+        return;
       }
+      clearTimeout(timer);
+      timer = setTimeout(run, 1500);
     };
+    const unsubscribeVisibility = visibility.subscribe(() => {
+      if (visibility.get() && pendingWhileHidden) {
+        pendingWhileHidden = false;
+        clearTimeout(timer);
+        timer = undefined;
+        run();
+      }
+    });
     window.addEventListener("chisabot-chat-running", onRunning);
     return () => {
       clearTimeout(timer);
+      unsubscribeVisibility();
       window.removeEventListener("chisabot-chat-running", onRunning);
     };
   });
