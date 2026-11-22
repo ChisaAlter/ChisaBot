@@ -28,10 +28,9 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
-import { approvalInboxOptions } from "@/lib/approvals";
-import { recentConfirmationsQueryOptions } from "@/lib/confirmations";
 import { signOutMutationOptions } from "@/lib/auth/mutations";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { usePendingActionCount } from "@/lib/pending-actions";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
 import { cn } from "@/lib/utils";
 
@@ -46,34 +45,19 @@ import { cn } from "@/lib/utils";
 export function AccountMenu({
   compact = false,
   anchorRef,
-  placement = "rail",
 }: {
   compact?: boolean;
-  /** 「topbar」：手机顶栏右上角的圆形头像，菜单向下弹出、右边对齐。电脑上不用（身份只在左栏底部账号卡）。 */
-  placement?: "rail" | "topbar";
   /** 展开时菜单贴着这张账号卡：左右边与卡片齐平、同宽（DESIGN.md §34.2）。 */
   anchorRef?: RefObject<HTMLElement | null>;
 }) {
   const { data: user } = useQuery(currentUserQueryOptions());
-  const approvals = useQuery(approvalInboxOptions());
   const { dark, setDark } = useTheme();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const router = useRouter();
   const sidebar = useOptionalSidebar();
   const signOut = useMutation(signOutMutationOptions(queryClient));
-  // 「待处理」的数 = 聊天里没点的确认卡片（§58）+ 交给你的操作 + 在等你回答的问题（DESIGN.md §71.1）。
-  const confirms = useQuery(recentConfirmationsQueryOptions());
-  const pending =
-    (Array.isArray(approvals.data?.requests)
-      ? approvals.data.requests.filter((r) => r.status === "pending").length
-      : 0) +
-    (Array.isArray(approvals.data?.questions)
-      ? approvals.data.questions.length
-      : 0) +
-    (Array.isArray(confirms.data)
-      ? confirms.data.filter((r) => r.status === "pending").length
-      : 0);
+  const pending = usePendingActionCount();
   const [open, setOpen] = useState(false);
   const openTaskCenter = useOpenTaskCenter();
 
@@ -108,20 +92,12 @@ export function AccountMenu({
   const name = user?.name || user?.email || "";
   const icon = "size-[18px] shrink-0";
 
-  const topbar = placement === "topbar";
-  const trigger = topbar ? (
-    <button aria-label={"账号与设置"} className="hk-avatar-btn glass is-flat" type="button" />
-  ) : compact ? (
+  const trigger = compact ? (
     <button aria-label={"账号与设置"} className="acct-mini" type="button" />
   ) : (
     <button aria-label={"账号与设置"} className="acct-row" type="button" />
   );
-  const triggerBody = topbar ? (
-    <>
-      <GlassAvatar ring={false} size={32} />
-      {pending > 0 ? <span aria-hidden className="glass-avatar-dot" /> : null}
-    </>
-  ) : compact ? (
+  const triggerBody = compact ? (
     <>
       <GlassAvatar ring={false} size={36} />
       {pending > 0 ? <span aria-hidden className="glass-avatar-dot" /> : null}
@@ -154,10 +130,10 @@ export function AccountMenu({
       }}
       open={open}
     >
-      {compact || topbar ? (
+      {compact ? (
         <Tooltip>
           <TooltipTrigger render={<DropdownMenuTrigger render={trigger} />}>{triggerBody}</TooltipTrigger>
-          <TooltipContent side={topbar ? "bottom" : "right"} sideOffset={topbar ? 8 : 10}>
+          <TooltipContent side={"right"} sideOffset={10}>
             {name || "账号"}
           </TooltipContent>
         </Tooltip>
@@ -165,11 +141,11 @@ export function AccountMenu({
         <DropdownMenuTrigger render={trigger}>{triggerBody}</DropdownMenuTrigger>
       )}
       <DropdownMenuContent
-        align={compact || topbar ? "end" : "start"}
-        anchor={compact || topbar ? undefined : anchorRef}
-        className={cn("glass-pop acct-pop", leaving && "is-leaving", compact || topbar ? "w-[264px]" : "is-flush")}
-        side={topbar ? "bottom" : compact ? "right" : "top"}
-        sideOffset={topbar ? 8 : compact ? 12 : 8}
+        align={compact ? "end" : "start"}
+        anchor={compact ? undefined : anchorRef}
+        className={cn("glass-pop acct-pop", leaving && "is-leaving", compact ? "w-[264px]" : "is-flush")}
+        side={compact ? "right" : "top"}
+        sideOffset={compact ? 12 : 8}
       >
         <DropdownMenuGroup>
           <DropdownMenuLabel className="acct-pop-head">

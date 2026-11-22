@@ -7,7 +7,6 @@ import {
   type MouseEvent,
   type PointerEvent,
   type ReactElement,
-  type ReactNode,
   startTransition,
   useLayoutEffect,
   useRef,
@@ -28,6 +27,7 @@ import {
   type DesktopWindowBridge,
   useDesktopWindow,
 } from "@/lib/desktop-window";
+import { usePendingActionCount } from "@/lib/pending-actions";
 import { presenceRef } from "@/lib/presence-flag";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
 import { requestSidebarSearchFocus } from "@/lib/sidebar-search";
@@ -82,17 +82,14 @@ export type ShellScope = "app" | "settings" | "admin";
 /**
  * 顶栏：电脑上只有左上角的品牌文字（ChisaBot）和 PC 无边框窗口的 — □ ✕。
  *
- * 身份只有左栏最底下的账号卡一个位置；搜索会话在左栏卡片顶部；左栏开关在左栏卡片右上角（收起时在 80px 列顶），
- * 和右栏「面板」开关在右栏上对称（#374 回退，DESIGN.md §9.1）。
- * 手机上不变：左 ☰ 打开抽屉 ｜ 右 搜索按钮（打开抽屉并聚焦抽屉顶部的搜索框）+ 圆形头像（账号菜单）。
+ * 电脑与手机的身份入口统一只在左栏最底下的账号卡（手机抽屉底部同样是 `AccountCard`，不在右上角重复画头像）；
+ * 搜索会话在左栏卡片顶部；左栏开关在左栏卡片右上角（收起时在 80px 列顶），和右栏「面板」开关对称（#374 回退，DESIGN.md §9.1）。
+ * 手机顶栏：左 ☰ 打开抽屉（有待处理审批 / 问题 / 确认时带红点）｜ 右 搜索按钮（打开抽屉并聚焦抽屉顶部的搜索框）。
  */
 export function GlassTopBar({
   scope = "app",
-  account,
 }: {
   scope?: ShellScope;
-  /** 手机顶栏右上角的圆形头像（账号菜单），由外壳传进来；电脑上不画。 */
-  account?: ReactNode;
 }) {
   const sidebar = useOptionalSidebar();
   const mobile = Boolean(sidebar?.isMobile);
@@ -147,6 +144,7 @@ export function GlassTopBar({
             type="button"
           >
             <IconMenu2 className="hk-circle-ico" />
+            <MobileDrawerPendingDot />
           </button>
         ) : (
           <span className="glass-brand">
@@ -166,12 +164,7 @@ export function GlassTopBar({
         {scope === "app" && !mobile ? <WorkingCrewStrip /> : null}
       </div>
       <div className="glass-topbar-end">
-        {mobile ? (
-          <>
-            <MobileSearchButton scope={scope} />
-            {account}
-          </>
-        ) : null}
+        {mobile ? <MobileSearchButton scope={scope} /> : null}
       </div>
       {desktop ? (
         <WindowControls
@@ -182,6 +175,12 @@ export function GlassTopBar({
       ) : null}
     </header>
   );
+}
+
+/** 手机顶栏左上角 `☰` 抽屉按钮上的待处理红点：仅在手机模式挂载，避免桌面端多出一份轮询订阅。 */
+function MobileDrawerPendingDot() {
+  const pending = usePendingActionCount();
+  return pending > 0 ? <span aria-hidden className="glass-avatar-dot" /> : null;
 }
 
 /** 手机顶栏右边的搜索按钮：打开左栏抽屉，聚焦抽屉顶部的搜索框（设置 / 管理里先回聊天）。 */

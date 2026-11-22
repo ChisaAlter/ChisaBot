@@ -433,7 +433,11 @@ function setSkyMode(mode: SkyMode) {
   // 先写再早退：初始 sky.mode 已是 "snapshot"，幂等路径也要把启动脚本留下的 "time" 盖成真实模式。
   if (typeof document !== "undefined")
     document.documentElement.setAttribute("data-sky", mode);
-  if (sky.mode === mode) return;
+  if (sky.mode === mode) {
+    if (mode === "off" && typeof document !== "undefined")
+      document.documentElement.setAttribute("data-sky-off", "");
+    return;
+  }
   const wasOff = sky.mode === "off";
   sky.mode = mode;
   if (mode === "off") {
