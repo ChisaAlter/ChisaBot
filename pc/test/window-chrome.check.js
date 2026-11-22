@@ -48,15 +48,18 @@ test("login window is created frameless, fixed size, no maximize, both frame mod
   assert.equal(clip.backgroundColor, "#00000000", "clip：圆角外不能有底色（白边）");
 });
 
-test("main.js builds the login window and every local dialog from window-chrome", () => {
+test("main.js builds the login window, update window and local dialogs from window-chrome", () => {
   const openLogin = main.slice(main.indexOf("function openLogin("), main.indexOf("function loginUrl("));
   assert.match(openLogin, /windowChrome\.loginWindowOptions\(FRAME/, "openLogin 用 loginWindowOptions");
   assert.ok(!/frame:\s*true/.test(main), "没有窗口用原生边框");
   const dialogs = main.match(/windowChrome\.dialogWindowOptions\(FRAME/g) || [];
-  assert.equal(dialogs.length, 3, "本机确认 / 审批 / 更新提示三个弹窗");
+  assert.equal(dialogs.length, 2, "本机确认 / 审批两个弹窗");
+  const updateOpts = main.match(/windowChrome\.updateWindowOptions\(/g) || [];
+  assert.equal(updateOpts.length, 1, "独立更新进度窗口使用 updateWindowOptions");
   // 所有本机页面都带 ?frame=，页面才知道要不要自己裁圆角。
-  for (const page of ["confirm.html", "approval.html", "update.html"])
+  for (const page of ["confirm.html", "approval.html"])
     assert.match(main, new RegExp(`loadFile\\(path\\.join\\(UI, "${page.replace(".", "\\.")}"\\), \\{ query: windowChrome\\.frameQuery\\(FRAME\\) \\}\\)`), page);
+  assert.match(main, /loadFile\(path\.join\(UI, "update\.html"\), \{ query: windowChrome\.frameQuery\("dwm"\) \}\)/, "更新窗口走不透明无边框 dwm 帧");
   assert.match(main, /loadFile\(path\.join\(UI, file\), \{ query: \{ \.\.\.windowChrome\.frameQuery\(FRAME\)/, "localWindow（登录窗）带 ?frame=");
   // 只剩两个窗口不走 window-chrome：主窗口（自己的无边框 thickFrame）和 localWindow 的默认值。
   const created = main.match(/new BrowserWindow\(\{/g) || [];
@@ -65,23 +68,29 @@ test("main.js builds the login window and every local dialog from window-chrome"
   assert.match(chat, /frame: false/);
 });
 
-test("local window controls only act on the calling local window", () => {
+test("local window controls only act on the calling local window and gate maximize by isMaximizable()", () => {
   assert.match(main, /handleLocal\("window:local"/);
   const block = main.slice(main.indexOf('handleLocal("window:local"'), main.indexOf('handleLocal("dialog:fit"'));
   assert.match(block, /BrowserWindow\.fromWebContents\(event\.sender\)/);
   assert.match(block, /win === windows\.chat\) return false/, "不能借本机页面关主窗口");
-  assert.ok(!/maximize\(\)/.test(block.replace(/minimize\(\)/g, "")), "没有最大化");
+  assert.match(block, /win\.isMaximizable\(\)/, "仅允许可最大化的本机窗口切换最大化");
+  assert.ok(chrome.updateWindowOptions().maximizable === true && chrome.updateWindowOptions().resizable === true);
   const preload = fs.readFileSync(path.join(SRC, "preload.js"), "utf8");
   assert.ok(preload.includes('"window:local"') && preload.includes('"dialog:fit"'));
 });
 
-test("login page: drag strip + minimize/close after the form (tab order), no maximize", () => {
+test("login page and update page window controls", () => {
   const html = fs.readFileSync(path.join(UI, "login.html"), "utf8");
   assert.ok(html.indexOf('src="chrome.js"') > 0 && html.indexOf('src="chrome.js"') < html.indexOf("<body"), "chrome.js 在 head 里同步加载");
   assert.ok(html.includes('href="chrome.css"'));
   assert.ok(html.includes('data-win="minimize"') && html.includes('data-win="close"'));
-  assert.ok(!html.includes('data-win="maximize"'));
+  assert.ok(!html.includes('data-win="maximize"') && !html.includes('data-win="toggle-maximize"'));
   assert.ok(html.indexOf('class="win-bar"') > html.indexOf("</form>"), "窗口按钮在表单后面，Tab 先走表单");
+
+  const updateHtml = fs.readFileSync(path.join(UI, "update.html"), "utf8");
+  assert.ok(updateHtml.includes('data-win="minimize"') && updateHtml.includes('data-win="toggle-maximize"') && updateHtml.includes('data-win="close"'));
+  assert.ok(updateHtml.indexOf('class="win-bar"') > updateHtml.indexOf("</main>"), "更新页窗口按钮在主体内容后面");
+
   for (const page of ["approval.html", "confirm.html", "update.html"]) {
     const d = fs.readFileSync(path.join(UI, page), "utf8");
     assert.ok(d.includes('src="chrome.js"') && d.includes('href="chrome.css"'), page);

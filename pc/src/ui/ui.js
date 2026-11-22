@@ -79,8 +79,8 @@ function cleanError(error) {
 }
 
 /**
- * 弹窗按内容定高（DESIGN.md §91.3）：按自然高度量出对话框内容，报给主进程（审批 / 本机确认用 dialog:fit，
- * 更新提示用 update:fit）。主进程等这一次报上来才显示窗口，所以不会先露出旧高度再跳。
+ * 弹窗按内容定高（DESIGN.md §91.3）：按自然高度量出对话框内容，报给主进程（dialog:fit）。
+ * 主进程等这一次报上来才显示窗口，所以不会先露出旧高度再跳。
  */
 function measureDialog() {
   document.body.classList.add("is-measuring");

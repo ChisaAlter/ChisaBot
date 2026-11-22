@@ -1,3 +1,7 @@
+## Unreleased
+
+- **PC 独立更新进度窗口极简改版（DESIGN §152）**：将桌面更新弹窗升级为独立可缩放/可最大化/可最小化的无边框纯白/深炭居中进度页（`880×600`，Windows `— / □ / ×`、macOS 原生红绿灯），移除 `pc/src/update-backdrop.js` 与 `update:fit` 主窗随动截图链路；接入 `deriveUpdateView` 全状态驱动、`dismissedDownloadVersion` 后台续下与网页「查看更新进度」唤起入口，以及 `feedToDownloadPage` / `resolveManualDownloadUrl` `https://` 手动下载链接（`pc/src/window-chrome.js` · `pc/src/update-placement.js` · `pc/src/build-config.js` · `pc/src/main.js` · `pc/src/preload.js` · `pc/src/ui/chrome.js` · `pc/src/ui/ui.js` · `pc/src/ui/update.*` · `devices.tsx` · `client-update-section.tsx` · `pc/test/update-window.check.js`）。
+
 ## 0.1.180 — 2026-11-22
 
 - 全端发版：`0.1.180`，Android `versionCode 360`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `5d175b026b079ac5`；无需手动数据库迁移。

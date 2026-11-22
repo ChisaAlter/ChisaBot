@@ -50,8 +50,7 @@ const { createUpdater, compareVersion, DEFAULT_PUSH_GAP_MS, DEFAULT_WAKE_GAP_MS 
 const updateSignature = require("./update-signature");
 const shellRefresh = require("./shell-refresh");
 const { animateWindowBounds, createCompactController } = require("./compact-window");
-const { computeUpdateBounds } = require("./update-placement");
-const { expandUpdateWindowBounds, computeBackdropCrop } = require("./update-backdrop");
+const { computeUpdateWindowBounds } = require("./update-placement");
 const windowChrome = require("./window-chrome");
 const { createLocalWebController } = require("./local-web");
 const desktopPrefs = require("./desktop-prefs");
@@ -576,8 +575,6 @@ function openChat(pathname, options) {
   for (const name of ["maximize", "unmaximize", "enter-full-screen", "leave-full-screen"]) win.on(name, sendMaximized);
   // 小窗模式（DESIGN.md §36）：Ctrl+Shift+M 在主窗口里随时可用（网页、离线页都一样，旧网页没有按钮也能切）。
   compactWindows().watch(win);
-  // 「新版本已下载」提示窗挂在主窗口里，主窗口动了它跟着动（DESIGN.md §36.5）。
-  for (const name of ["move", "resize", "show", "hide", "minimize", "restore", "maximize", "unmaximize"]) win.on(name, () => placeUpdateWindow());
   win.on("focus", () => {
     void updater?.nudge({ reason: "focus", minGapMs: DEFAULT_WAKE_GAP_MS });
   });
@@ -704,11 +701,11 @@ function refreshTray() {
           ]
         : []),
       ...(updater?.state.status === "downloaded"
-        ? [{ label: `重启以安装 ${updater.state.version || "新版本"}…`, click: () => openUpdateWindow() }]
+        ? [{ label: `重启以安装 ${updater.state.version || "新版本"}…`, click: () => openUpdateWindow({ focus: true }) }]
         : updater?.state.status === "downloading"
-          ? [{ label: `正在下载新版本 ${updater.state.version || ""}（${Math.round(updater.state.percent || 0)}%）…`, enabled: false }]
+          ? [{ label: `正在下载新版本 ${updater.state.version || ""}（${Math.round(updater.state.percent || 0)}%）…`, click: () => openUpdateWindow({ focus: true }) }]
           : updater?.state.status === "verifying"
-            ? [{ label: `正在校验新版本 ${updater.state.version || ""}…`, enabled: false }]
+            ? [{ label: `正在校验新版本 ${updater.state.version || ""}…`, click: () => openUpdateWindow({ focus: true }) }]
             : []),
       { type: "separator" },
       ...(agent?.fullAccess
@@ -1108,13 +1105,52 @@ function closeApproval(id) {
 }
 
 // ---------- 在线更新 ----------
-// 下载好后弹这个本机窗口（和本机确认同一套对话框）：立即重启 / 稍后。网页只能请它出来，不能替用户点。
+// 发现新版本开始下载或点击「查看更新进度」时打开独立更新进度窗；下载并验签完成后在原位提示立即重启 / 稍后。
+
+let dismissedDownloadVersion = "";
 
 function updateLogger() {
   const write = (level) => (...args) =>
     config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_log", outcome: level, summary: args.map(String).join(" ").slice(0, 300) });
   // 只记 warn / error；info 太多。
   return { info: () => {}, debug: () => {}, warn: write("warn"), error: write("error") };
+}
+
+function updateWindowBackground() {
+  return nativeTheme.shouldUseDarkColors ? "#111318" : "#ffffff";
+}
+
+function manualUpdateDownloadUrl() {
+  return buildConfig.resolveManualDownloadUrl(BUILD, config.get(), {
+    feedUrl: updater?.feedUrl || "",
+    publishUrl: pkg.build?.publish?.[0]?.url || "",
+  });
+}
+
+function currentUpdatePayload() {
+  if (!updater) return null;
+  const st = updater.state;
+  const percent =
+    typeof st.percent === "number" && Number.isFinite(st.percent)
+      ? Math.max(0, Math.min(100, st.percent))
+      : st.status === "downloaded" || st.status === "verifying"
+        ? 100
+        : 0;
+  return {
+    status: st.status || "idle",
+    version: st.version || "",
+    currentVersion: pkg.version,
+    percent,
+    fullInstall: !!updater.state.fullInstall,
+    error: st.error || "",
+    downloadUrl: manualUpdateDownloadUrl(),
+  };
+}
+
+function sendUpdateState() {
+  if (updateWindow && !updateWindow.isDestroyed()) {
+    updateWindow.webContents.send("update:state", currentUpdatePayload());
+  }
 }
 
 function startUpdater() {
@@ -1145,12 +1181,17 @@ function startUpdater() {
     logger: updateLogger(),
     onState: () => {
       refreshTray();
+      sendUpdateState();
     },
     onAvailable: (version) => {
       config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_available", outcome: "succeeded", summary: `发现新版本 ${version || ""}，正在后台下载` });
       if (Notification.isSupported()) new Notification({ title: "ChisaBot", body: `发现新版本 ${version || ""}，正在后台下载…` }).show();
+      if ((!updateWindow || updateWindow.isDestroyed()) && dismissedDownloadVersion !== (version || "")) {
+        openUpdateWindow({ focus: false });
+      }
     },
     onDownloaded: (version) => {
+      dismissedDownloadVersion = "";
       config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_downloaded", outcome: "succeeded", summary: `新版本 ${version || ""} 已下载` });
       promptUpdate(version);
     },
@@ -1175,193 +1216,66 @@ function promptUpdate(version) {
   updatePromptAt = Date.now();
   const alreadyOpen = updateWindow && !updateWindow.isDestroyed() && updateWindow.isVisible();
   if (!alreadyOpen && Notification.isSupported()) new Notification({ title: "ChisaBot", body: `新版本 ${version || ""} 已下载，重启以安装。` }).show();
-  openUpdateWindow();
+  openUpdateWindow({ focus: true });
 }
 
-function currentUpdateBounds() {
+function openUpdateWindow({ focus = true, allowIdle = false } = {}) {
+  const status = updater?.state.status;
+  if (!allowIdle && !["checking", "available", "downloading", "verifying", "downloaded", "error"].includes(status)) return false;
+  if (updateWindow && !updateWindow.isDestroyed()) {
+    if (focus && updateWindow.isMinimized()) updateWindow.restore();
+    sendUpdateState();
+    if (focus) {
+      updateWindow.show();
+      updateWindow.focus();
+    } else {
+      updateWindow.showInactive();
+    }
+    return true;
+  }
   const chat = windows.chat && !windows.chat.isDestroyed() ? windows.chat : null;
   const chatVisible = Boolean(chat?.isVisible() && !chat.isMinimized());
   const workArea = (chat ? screen.getDisplayMatching(chat.getBounds()) : screen.getPrimaryDisplay()).workArea;
-  const b = computeUpdateBounds({ chat: chat ? chat.getBounds() : null, chatVisible, workArea, contentHeight: updateContentHeight });
-  return { ...b, chat: b.attached ? chat : null };
-}
-
-function openUpdateWindow() {
-  if (updater?.state.status !== "downloaded") return false;
-  if (updateWindow && !updateWindow.isDestroyed()) {
-    placeUpdateWindow();
-    void captureUpdateBackdrop({ force: true });
-    updateWindow.show();
-    updateWindow.focus();
-    return true;
-  }
-  updateContentHeight = updater.state.fullInstall ? 280 : 260;
-  updateBackdropKey = "";
-  const initial = currentUpdateBounds();
-  const winBounds = expandUpdateWindowBounds(initial, FRAME);
+  const bounds = computeUpdateWindowBounds({ chat: chat ? chat.getBounds() : null, chatVisible, workArea });
   updateWindow = new BrowserWindow({
-    x: winBounds.x,
-    y: winBounds.y,
-    width: winBounds.width,
-    height: winBounds.height,
-    ...windowChrome.dialogWindowOptions(FRAME, { background: windowBackground() }),
-    parent: initial.chat || undefined,
-    alwaysOnTop: !initial.attached,
+    ...windowChrome.updateWindowOptions({ background: updateWindowBackground() }),
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    icon: WINDOW_ICON,
     show: false,
-    title: "ChisaBot · 新版本",
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true },
   });
-  dialogWidth.set(updateWindow, winBounds.width);
-  updateWindow.loadFile(path.join(UI, "update.html"), { query: windowChrome.frameQuery(FRAME) });
-  updateWindow.on("move", () => scheduleUpdateBackdrop(40));
-  showAfterFit(updateWindow, () => {
-    placeUpdateWindow();
-    void showUpdateWindowWithBackdrop();
+  updateWindow.setMenu(null);
+  updateWindow.loadFile(path.join(UI, "update.html"), { query: windowChrome.frameQuery("dwm") });
+  const sendMax = () => {
+    if (updateWindow && !updateWindow.isDestroyed()) updateWindow.webContents.send("window:local-maximized", updateWindow.isMaximized());
+  };
+  updateWindow.on("maximize", sendMax);
+  updateWindow.on("unmaximize", sendMax);
+  updateWindow.once("ready-to-show", () => {
+    if (!updateWindow || updateWindow.isDestroyed()) return;
+    if (focus) {
+      updateWindow.show();
+      updateWindow.focus();
+    } else {
+      updateWindow.showInactive();
+    }
+    sendUpdateState();
+    sendMax();
+  });
+  updateWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:/i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
   });
   updateWindow.on("closed", () => {
-    clearUpdateBackdropSync();
+    if (updater?.state.status === "downloading" || updater?.state.status === "verifying") {
+      dismissedDownloadVersion = updater.state.version || "";
+    }
     updateWindow = null;
   });
   return true;
-}
-
-/** 提示窗内容的实际高度（update.js 量好后报上来，update:fit）。 */
-let updateContentHeight = 260;
-let updateBackdropSeq = 0;
-let updateBackdropTimer = null;
-let updateBackdropKey = "";
-let updateBackdropChat = null;
-let updateBackdropInputHandler = null;
-
-function detachUpdateBackdropChat() {
-  if (updateBackdropChat && !updateBackdropChat.isDestroyed() && updateBackdropInputHandler) {
-    updateBackdropChat.webContents.removeListener("input-event", updateBackdropInputHandler);
-  }
-  updateBackdropChat = null;
-  updateBackdropInputHandler = null;
-}
-
-function attachUpdateBackdropChat(chat) {
-  if (updateBackdropChat === chat) return;
-  detachUpdateBackdropChat();
-  if (!chat || chat.isDestroyed()) return;
-  const onInput = (_event, input) => {
-    if (input?.type === "mouseWheel" || input?.type === "mouseUp" || input?.type === "keyUp") {
-      scheduleUpdateBackdrop(140, { force: true });
-    }
-  };
-  chat.webContents.on("input-event", onInput);
-  updateBackdropChat = chat;
-  updateBackdropInputHandler = onInput;
-}
-
-function clearUpdateBackdropSync() {
-  if (updateBackdropTimer) {
-    clearTimeout(updateBackdropTimer);
-    updateBackdropTimer = null;
-  }
-  updateBackdropSeq += 1;
-  updateBackdropKey = "";
-  detachUpdateBackdropChat();
-}
-
-function scheduleUpdateBackdrop(delayMs = 50, { force = false } = {}) {
-  if (!updateWindow || updateWindow.isDestroyed()) return;
-  if (updateBackdropTimer) clearTimeout(updateBackdropTimer);
-  if (delayMs <= 0) {
-    updateBackdropTimer = null;
-    void captureUpdateBackdrop({ force });
-    return;
-  }
-  updateBackdropTimer = setTimeout(() => {
-    updateBackdropTimer = null;
-    void captureUpdateBackdrop({ force });
-  }, delayMs);
-}
-
-async function captureUpdateBackdrop({ force = false } = {}) {
-  const win = updateWindow;
-  if (!win || win.isDestroyed()) return;
-  const chat = windows.chat && !windows.chat.isDestroyed() ? windows.chat : null;
-  const attached = Boolean(chat?.isVisible() && !chat.isMinimized() && win.getParentWindow() === chat);
-  if (!attached) {
-    if (updateBackdropKey !== "detached" || force) {
-      updateBackdropKey = "detached";
-      updateBackdropSeq += 1;
-      if (!win.isDestroyed()) win.webContents.send("update:backdrop", null);
-    }
-    return;
-  }
-  const { pad } = expandUpdateWindowBounds({ x: 0, y: 0, width: 0, height: 0 }, FRAME);
-  const crop = computeBackdropCrop({
-    chatContent: chat.getContentBounds(),
-    winBounds: win.getBounds(),
-    pad,
-  });
-  if (!crop) {
-    if (updateBackdropKey !== "detached" || force) {
-      updateBackdropKey = "detached";
-      updateBackdropSeq += 1;
-      if (!win.isDestroyed()) win.webContents.send("update:backdrop", null);
-    }
-    return;
-  }
-  if (!force && crop.key === updateBackdropKey) return;
-  updateBackdropKey = crop.key;
-  const seq = ++updateBackdropSeq;
-  try {
-    const img = await chat.webContents.capturePage(crop.rect);
-    if (seq !== updateBackdropSeq || !updateWindow || updateWindow !== win || win.isDestroyed()) return;
-    const jpeg = img.toJPEG(85);
-    if (!jpeg?.length) return;
-    win.webContents.send("update:backdrop", {
-      url: `data:image/jpeg;base64,${jpeg.toString("base64")}`,
-      drawX: crop.drawX,
-      drawY: crop.drawY,
-      drawW: crop.drawW,
-      drawH: crop.drawH,
-    });
-  } catch {
-    // 截屏失败（窗口刚切换或渲染暂停）时静默保持磨砂兜底色，不影响更新弹窗交互。
-  }
-}
-
-async function showUpdateWindowWithBackdrop() {
-  const win = updateWindow;
-  if (!win || win.isDestroyed()) return;
-  await Promise.race([captureUpdateBackdrop({ force: true }), new Promise((resolve) => setTimeout(resolve, 180))]);
-  if (updateWindow === win && !win.isDestroyed()) win.showInactive();
-}
-
-/**
- * 提示窗位置（DESIGN.md §36.5，update-placement.js）：主窗口看得见就挂在主窗口里（子窗口、正中央居中、跟着走）；
- * 主窗口在托盘里 / 最小化就放到它所在显示器的右下角并置顶。主窗口移动、改大小、显示 / 隐藏、进出小窗时都会重新调用。
- */
-function placeUpdateWindow() {
-  if (!updateWindow || updateWindow.isDestroyed()) return;
-  const b = currentUpdateBounds();
-  const winBounds = expandUpdateWindowBounds(b, FRAME);
-  if (b.attached) {
-    if (updateWindow.getParentWindow() !== b.chat) updateWindow.setParentWindow(b.chat);
-    updateWindow.setAlwaysOnTop(false);
-    attachUpdateBackdropChat(b.chat);
-  } else {
-    if (updateWindow.getParentWindow()) updateWindow.setParentWindow(null);
-    updateWindow.setAlwaysOnTop(true);
-    detachUpdateBackdropChat();
-  }
-  dialogWidth.set(updateWindow, winBounds.width);
-  updateWindow.setBounds({ x: winBounds.x, y: winBounds.y, width: winBounds.width, height: winBounds.height });
-  // 小数缩放（125% / 150%）下 Win32 实际分配宽高可能差几 px：按真实尺寸二次对齐中心，消除视觉偏斜。
-  if (b.attached) {
-    const actual = updateWindow.getBounds();
-    const cx = Math.round(b.x + b.width / 2 - actual.width / 2);
-    const cy = Math.round(b.y + b.height / 2 - actual.height / 2);
-    if (Math.abs(actual.x - cx) > 1 || Math.abs(actual.y - cy) > 1) {
-      updateWindow.setPosition(cx, cy);
-    }
-  }
-  scheduleUpdateBackdrop(b.attached ? 50 : 0);
 }
 
 function installUpdateNow() {
@@ -1732,28 +1646,31 @@ function registerIpc() {
       approvalWindow?.close();
     }
   });
-  handleLocal("update:current", () =>
-    updater && updater.state.status === "downloaded"
-      ? { version: updater.state.version || "", currentVersion: pkg.version, fullInstall: !!updater.state.fullInstall }
-      : null,
-  );
-  handleLocal("update:fit", ({ height } = {}) => {
-    if (typeof height === "number" && Number.isFinite(height)) updateContentHeight = Math.ceil(height);
-    placeUpdateWindow();
-    if (updateWindow) pendingShow.get(updateWindow)?.();
-    return true;
-  });
+  handleLocal("update:current", () => currentUpdatePayload());
   handleLocal("update:answer", ({ restart } = {}) => {
     if (restart === true) return installUpdateNow();
     updateWindow?.close();
     return false;
   });
-  // 本机小窗口自己的窗口按钮（登录窗右上角的最小化 / 关闭，DESIGN.md §91）：只作用于发起调用的那个本机窗口。
+  handleLocal("update:retry", async () => {
+    dismissedDownloadVersion = "";
+    return updater ? updater.check() : currentUpdatePayload();
+  });
+  handleLocal("update:download-latest", () => {
+    const url = manualUpdateDownloadUrl();
+    if (!/^https:\/\//i.test(url)) return false;
+    void shell.openExternal(url);
+    return true;
+  });
+  // 本机小窗口自己的窗口按钮（最小化 / 最大化 / 关闭，DESIGN.md §91、§152）：只作用于发起调用的那个本机窗口。
   handleLocal("window:local", (action, event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed() || win === windows.chat) return false;
     if (action === "minimize" && win.isMinimizable()) win.minimize();
-    else if (action === "close") win.close();
+    else if (action === "toggle-maximize" && win.isMaximizable()) {
+      if (win.isMaximized()) win.unmaximize();
+      else win.maximize();
+    } else if (action === "close") win.close();
     else return false;
     return true;
   });
@@ -1836,9 +1753,19 @@ function registerIpc() {
     else agent.reconnectNow();
     return { status: "reconnecting", message: "正在重新连接…", state: webLocalState() };
   });
-  handleWeb("pc:check-update", async () => (updater ? updater.check() : { supported: false, status: "idle" }));
-  // 网页只能把「新版本已下载」的本机窗口叫出来；立即重启要在那个窗口里由本人点。
-  handleWeb("pc:install-update", () => openUpdateWindow());
+  handleWeb("pc:check-update", async () => {
+    const next = updater ? await updater.check() : { supported: false, status: "idle" };
+    if (["downloading", "verifying", "downloaded"].includes(next?.status)) {
+      dismissedDownloadVersion = "";
+      openUpdateWindow({ focus: true });
+    }
+    return next;
+  });
+  // 网页只能把独立更新进度/就绪窗口叫出来；立即重启要在那个窗口里由本人点。
+  handleWeb("pc:install-update", () => {
+    dismissedDownloadVersion = "";
+    return openUpdateWindow({ focus: true });
+  });
   handleWeb("pc:focus-window", () => {
     focusMainWindow(windows.chat);
     return true;
@@ -1861,7 +1788,7 @@ function registerIpc() {
       config.set({ appearance: next });
       nativeTheme.themeSource = next.dark === null ? "system" : next.dark ? "dark" : "light";
       broadcast("appearance");
-      if (updateWindow && !updateWindow.isDestroyed()) scheduleUpdateBackdrop(120, { force: true });
+      if (updateWindow && !updateWindow.isDestroyed()) updateWindow.setBackgroundColor(updateWindowBackground());
     }
     return true;
   });

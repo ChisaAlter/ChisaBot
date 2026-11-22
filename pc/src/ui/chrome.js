@@ -17,5 +17,14 @@
         if (window.chisa) window.chisa.invoke("window:local", button.dataset.win).catch(() => {});
       });
     }
+    window.chisa?.onWindowMaximized?.((maximized) => {
+      document.documentElement.dataset.maximized = maximized ? "true" : "false";
+      const maxBtn = document.querySelector('[data-win="toggle-maximize"]');
+      if (maxBtn) {
+        const label = maximized ? "还原" : "最大化";
+        maxBtn.setAttribute("aria-label", label);
+        maxBtn.setAttribute("title", label);
+      }
+    });
   });
 })();
