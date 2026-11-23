@@ -1,6 +1,10 @@
 ## Unreleased
 
-- **手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复**：`.chat-msg-action[data-held]` 改用 `display: none` 并以 `.chat-msg-actions` `min-height: 26px` 固定行高，消除回复中幽灵撤回图标与「引用」偏移；`composer.tsx` 与 `styles.css`（`.model-pill` `flex-shrink: 0` + `@container (max-width: 480px)` `flex-wrap`）解决手机端输入框工具栏挤压重叠；`section-rail.tsx` / `account-menu.tsx` 补充按下路由预加载，并优化 `html[data-phone]` 切页 `page-in-phone` 无位移淡入、`touch-action: manipulation` 与抽屉 `will-change: transform`（`styles.css` · `composer.tsx` · `section-rail.tsx` · `account-menu.tsx` · `mobile-chat-ui-fixes.test.tsx`）。
+## 0.1.182 — 2026-11-23
+
+- 全端发版：`0.1.182`，Android `versionCode 362`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `aa77485e962517f3`；无新增数据库迁移。
+- **全站 UI 操作丝滑度与玻璃安全过渡动画全面升级**：统一 `motion.ts`、`motion-primitives.tsx` 与 `styles.css` 动效令牌及 `<SmoothCollapse>`/`useRetainedValue`/`usePresenceMount`/`<ContentEnter>`；修复 `[data-slot="sheet-content"]` 与 8 类弹出层 `backdrop-filter` 过渡并补齐 `glass-hold`；消除深浅色切换 240+ 并发过渡风暴（`theme-provider.tsx`）与 `ToggleTip` 快速点击吞没（`glass-topbar.tsx`）；改造全站 UI 原语、外壳左右栏、右栏面板、单树无闪暗 `Composer`、聊天思考胶囊/干活卡/Spotlight/Lightbox、11+ 二级页弹窗退场保活、20+ 折叠区与 `pc/src/ui/` 独立窗口，实机 `perf/jank.mjs` 多场景帧率提升 +44% 至 +888%（`motion.ts` · `styles.css` · `composer.tsx` · `glass-topbar.tsx` · `panel-rail.tsx` · `pc/src/ui/*`）。
+- **手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复（#581）**：`.chat-msg-action[data-held]` 改用 `display: none` 并以 `.chat-msg-actions` `min-height: 26px` 固定行高，消除回复中幽灵撤回图标与「引用」偏移；`composer.tsx` 与 `styles.css`（`.model-pill` `flex-shrink: 0` + `@container (max-width: 480px)` `flex-wrap`）解决手机端输入框工具栏挤压重叠；`section-rail.tsx` / `account-menu.tsx` 补充按下路由预加载，并优化 `html[data-phone]` 切页 `page-in-phone` 无位移淡入、`touch-action: manipulation` 与抽屉 `will-change: transform`（`styles.css` · `composer.tsx` · `section-rail.tsx` · `account-menu.tsx` · `mobile-chat-ui-fixes.test.tsx`）。
 
 ## 0.1.181 — 2026-11-22
 

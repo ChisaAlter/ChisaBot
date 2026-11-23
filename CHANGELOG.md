@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-- **手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复**：
+## 0.1.182 — 2026-11-23
+
+全端版本 `0.1.182`，Android `versionCode 362`：全站 UI 操作丝滑度与统一玻璃安全过渡动画全面升级（共享动效原语、竖屏面板与全站菜单/弹层/弹窗完整进退场、单树无闪暗输入框、深浅色切换防并发风暴、壁纸交叉淡入与 PC 独立窗口平滑动效），同时并入手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复（PR #581）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `aa77485e962517f3`；无新增数据库迁移。
+
+- **全站 UI 操作丝滑度与玻璃安全过渡架构**：
+  - **动效底层与共享原语**：`app/src/lib/motion.ts`、`app/src/components/ui/motion-primitives.tsx` 与 `app/src/styles.css` 收敛缓动与时长令牌，落地 `<SmoothCollapse>`、`useRetainedValue`、`usePresenceMount`、`smoothScrollIntoView` 与 Backdrop-Root-Safe `<ContentEnter>`；修复 `[data-slot="sheet-content"]` 过渡覆写并清除 8 类弹出层 `backdrop-filter` 过渡泄漏（补齐 `glass-hold`）；`ThemeProvider` 切深浅色加 1 帧 `data-theme-switching="1"` 冻结 240+ 并发过渡风暴；`SkyBackground` 实现 `#sky-root` 双图层壁纸交叉淡入；`StaggerItem` 等消除永久 `transform` 合成层；剥离高频卡片/导航 `box-shadow` 过渡并补全三级降级。
+  - **导航外壳、通用原语与右栏面板**：改造 `select`/`dropdown-menu`/`context-menu`/`combobox`/`dialog`/`sheet`/`popover`/`confirm`/`checkbox`/`switch`/`input`/`message-scroller`；修复 `ToggleTip` 80ms 悬停防快速点击吞没；`PageShell`/`SectionRail`/`DetailPanel`/`AppSidebar`/`PanelRail`/`LivePanels`/`TasksRailCard` 全面接入平滑折叠、退场保活、常驻把手平滑滑移与 GPU `scaleX` 进度条。
+  - **聊天区、输入框、富预览与二级功能页**：`Composer` 合并收起横条与展开工具栏为单一 `<form>`（消除重挂、闪暗与 `offsetHeight` 同步重排），引用条/思考胶囊/干活卡/Spotlight/查找条/审批与提问卡/语音抽屉/Lightbox 补齐完整进退场与拖拽零重渲；11+ 二级页弹窗补全退场保活，20+ 折叠区块与 13 处页内 Tab 补齐平滑展开与淡入，`pc/src/ui/` 独立更新/登录/审批窗升级为 GPU 进度与双向退场。
+- **手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复（#581）**：
   - 修复回复期间用户消息下 `.chat-msg-action[data-held]` 沿用 `visibility: hidden` 占宽并被 `.btn-face` 穿透漏出孤立撤回图标的问题（改用 `display: none` 并在 `.chat-msg-actions` 锁 `min-height: 26px` 保住行高，消除「引用」左侧跑远及幽灵撤回图标）。
   - 修复手机端 `.glass-composer-toolbar` 按钮多时未换行且缺少收缩/裁切约束导致的模型选择器与上下文圆环冲突（`composer.tsx` 划分 `glass-composer-toolbar-start` / `glass-composer-toolbar-end` 与 `busy-send-pill`，`styles.css` 为 `.model-pill` 补充 `flex-shrink: 0; overflow: hidden` 并在 `@container (max-width: 480px)` 下整洁换行收紧）。
   - 优化手机 WebView 切页流畅度：`section-rail.tsx` 与 `account-menu.tsx` 为触控链路补充按下即预加载路由，并在 `styles.css` 为 `html[data-phone]` 添加 `touch-action: manipulation`、无位移纯淡入 `@keyframes page-in-phone`、`.page-scroll` containment、`.kept-chat[data-switching="true"]` 去半透闪烁及抽屉 `will-change: transform`。
