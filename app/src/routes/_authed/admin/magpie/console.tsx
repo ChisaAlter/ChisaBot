@@ -66,7 +66,7 @@ function MagpieConsolePage() {
         />
       </div>
       {available ? (
-        <div className="magpie-frame-wrap sg-card">
+        <div className="magpie-frame-wrap sg-card" data-surface="control">
           {!loaded ? (
             <div aria-label="正在载入 Magpie 控制台" className="magpie-frame-skeleton" role="status">
               <span className="model-pill-shimmer" />

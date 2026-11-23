@@ -53,6 +53,7 @@ const state = {
   wind: 9, windDir: 250,                              // km/h, meteorological degrees
   aqi: 35,                                            // US AQI
   sim: null,                                          // WMO code override, null = live
+  weatherEnabled: false,                              // explicit opt-in: 0 Open-Meteo requests when false
   windSim: null,                                      // manual wind km/h, null = auto
   aqiSim: null,                                       // manual AQI, null = auto
   cloudSim: null,                                     // manual cloud cover %, null = auto
@@ -2337,6 +2338,7 @@ function clearScene(){
 }
 
 function applyScene(sc){
+  state.weatherEnabled = false;
   state.lat = sc.lat; state.lon = sc.lon; state.place = sc.name; state.tz = sc.tz;
   state.sim = sc.sim;
   state.windSim = sc.wind != null ? sc.wind : null;
@@ -2355,8 +2357,6 @@ function applyScene(sc){
   state.hourOverride = ((h % 24) + 24) % 24;
 
   activeScene = sc;
-
-  fetchWeather(true);
 }
 
 
@@ -2386,6 +2386,7 @@ function toast(msg){ post({ type: 'toast', msg: String(msg) }); }
    ============================================================ */
 const SAVE_KEY = 'hark-wallpaper-v1';
 function saveSnapshot(){
+  if (!state.weatherEnabled) return;
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       place: state.place, lat: state.lat, lon: state.lon, tz: state.tz,
@@ -2415,6 +2416,7 @@ function _loadSnapshot(){
 
 
 async function fetchWeather(reset){
+  if (!state.weatherEnabled) return;
   const url = 'https://api.open-meteo.com/v1/forecast'
     + '?latitude=' + state.lat + '&longitude=' + state.lon
     + '&current=temperature_2m,weather_code,cloud_cover,is_day,wind_speed_10m,wind_direction_10m,relative_humidity_2m,cloud_cover_low,cloud_cover_mid,cloud_cover_high,wind_gusts_10m'
@@ -2698,6 +2700,19 @@ function applyGeoPosition(pos){
   catch (e) { state.tz = null; }
   fetchWeather(true);
 }
+function applyLocalTimezonePlace(){
+  let tz = null;
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || null; }
+  catch (e) { tz = null; }
+  const c = tz ? CITIES.find(x => x.tz === tz) : null;
+  if (c){
+    state.lat = c.lat; state.lon = c.lon;
+    state.place = c.name; state.tz = tz;
+    return true;
+  }
+  state.tz = tz;
+  return false;
+}
 /* ---------- API driven by the native controls ---------- */
 window.hark = {
   setLive(on){
@@ -2707,6 +2722,83 @@ window.hark = {
     if (!on) state.hourOverride = localHourLiveSnapshot();
     state.stagedCloud = !on;                      // entering custom stages the 42% default
     tick();
+  },
+  applyFixedScene(i){
+    state.weatherEnabled = false;
+    if (SCENES[i]){ applyScene(SCENES[i]); tick(); }
+  },
+  setAutoTime(h, fade){
+    state.weatherEnabled = false;
+    clearScene();
+    applyLocalTimezonePlace();
+    state.live = false;
+    state.sim = 2;
+    state.windSim = 10;
+    state.aqiSim = 18;
+    state.cloudSim = null;
+    state.aodSim = null;
+    state.stagedCloud = false;
+    state.hourOverride = ((h % 24) + 24) % 24;
+    if (!fade){
+      fadePrev = null;
+      fadeHeld = [];
+      lastTarget = null;
+    } else {
+      rebaseFade();
+    }
+    tick();
+  },
+  setWeatherEnabled(enabled, city){
+    state.weatherEnabled = !!enabled;
+    if (!state.weatherEnabled){
+      state.haveWx = false;
+      try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+      return;
+    }
+    clearScene();
+    state.live = true;
+    state.dateSim = null;
+    state.sim = null;
+    state.windSim = null;
+    state.aqiSim = null;
+    state.cloudSim = null;
+    state.aodSim = null;
+    state.stagedCloud = false;
+    const q = typeof city === 'string' ? city.trim() : '';
+    if (!q){
+      applyLocalTimezonePlace();
+      tick();
+      fetchWeather(true);
+      return;
+    }
+    const local = offlineMatches(q);
+    if (local.length){
+      state.lat = local[0].lat; state.lon = local[0].lon;
+      state.place = local[0].name; state.tz = local[0].tz || null;
+      tick();
+    }
+    const url = 'https://geocoding-api.open-meteo.com/v1/search?name='
+      + encodeURIComponent(q) + '&count=1&language=zh&format=json';
+    fetch(url)
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (!state.weatherEnabled) return;
+        const hit = j && j.results && j.results[0];
+        if (hit && typeof hit.latitude === 'number' && typeof hit.longitude === 'number'){
+          state.lat = hit.latitude;
+          state.lon = hit.longitude;
+          state.place = hit.name || q;
+          state.tz = hit.timezone || null;
+        } else if (!local.length){
+          applyLocalTimezonePlace();
+        }
+        fetchWeather(true);
+      })
+      .catch(() => {
+        if (!state.weatherEnabled) return;
+        if (!local.length) applyLocalTimezonePlace();
+        fetchWeather(true);
+      });
   },
   setHour(h, fade){
     clearScene();
@@ -2890,10 +2982,9 @@ try {
     scenes: SCENES.map(x => x.label),
     presets: PRESETS.map(x => x.label)
   });
-  fetchWeather();
-  setInterval(fetchWeather, 10 * 60 * 1000);
+  setInterval(() => { if (state.weatherEnabled) fetchWeather(); }, 10 * 60 * 1000);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) fetchWeather();      // app resumed elsewhere/later: refresh, then ease
+    if (!document.hidden && state.weatherEnabled) fetchWeather();
   });
   setInterval(tick, 1000);
   tick();

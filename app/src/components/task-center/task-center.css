@@ -1425,12 +1425,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tc-board *,
-  .tc-board-col[data-mobile-active="true"],
-  .tc-disclosure-btn,
-  .tc-service-note {
-    transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
+  html .tc-board *,
+  html .tc-board-col[data-mobile-active="true"],
+  html .tc-disclosure-btn,
+  html .tc-service-note {
+    transition-duration: 0.01ms;
+    animation-duration: 0.01ms;
   }
 }
 

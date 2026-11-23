@@ -8,8 +8,7 @@ import { listenPort } from "../shared/listen-port";
 import { bundleReport } from "./scripts/bundle-report";
 import { chunkGuard } from "./scripts/chunk-graph";
 import { routePreload } from "./scripts/route-preload";
-import { familyBootScript } from "./src/lib/palette";
-import { skyBootScript } from "./src/lib/sky";
+import { appearanceBootScript } from "./src/lib/palette";
 
 /*
  * Announce the server's port to the two runtimes that serve the app through Vite, and to no other.
@@ -97,21 +96,17 @@ const serving = {
 };
 
 /*
- * Inline the time-of-day sky (DESIGN.md §7) as the first thing in <body>, so the pre-JS skeleton
- * already paints the current hour's sky. The palette is `computeSky` itself, serialised, so the boot
- * paint and the app can never disagree.
+ * Inline the single synchronous V2 appearance boot script into <head> before first paint,
+ * so .dark + data-theme + data-material + data-canvas + meta[name=theme-color] are ready before React mounts.
  */
-function skyBoot(): Plugin {
-  const marker = /<!-- chisabot-sky-boot:[^>]*-->/;
+function appearanceBoot(): Plugin {
+  const marker = /<!-- chisabot-appearance-boot(?::[^>]*)? -->/;
   return {
-    name: "chisabot-sky-boot",
+    name: "chisabot-appearance-boot",
     transformIndexHtml(html) {
-      // 时段天空之后是用户选的主题族（deriveSeed 整套派生变量覆盖 --sky-*/--accent-* 等）、
-      // 玻璃材质和地址栏颜色（lib/palette.ts → lib/theme-family.ts）。
       return html.replace(
         marker,
-        () =>
-          `<script>${skyBootScript()}</script><script>${familyBootScript()}</script>`,
+        () => `<script>${appearanceBootScript()}</script>`,
       );
     },
   };
@@ -389,7 +384,7 @@ const appViteConfig = {
   envDir: path.resolve(__dirname, ".."),
   plugins: [
     announceServerPort(apiPort.port),
-    skyBoot(),
+    appearanceBoot(),
     tanstackRouter({
       autoCodeSplitting: true,
       codeSplittingOptions: routeCodeSplittingOptions,

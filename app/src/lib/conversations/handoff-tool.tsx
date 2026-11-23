@@ -177,6 +177,7 @@ export function BotExchangeCard({
   return (
     <div
       className="bot-exchange-card"
+      data-surface="bubble"
       data-state={summary.state}
       data-testid="bot-exchange-card"
     >

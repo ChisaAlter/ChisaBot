@@ -4,11 +4,9 @@ import path from "node:path";
 
 /**
  * 性能模式 / 减少透明度下，普通 filter: blur 也要关（#375 跟进，src/perf-noblur.css）。
- * 不跑浏览器，守住前提：
- *   1. 样式表里每条带 filter: blur 的规则，perf-noblur.css 的两种情况（data-perf="on" 和
- *      prefers-reduced-transparency）都有覆盖它、且 filter 不含 blur 的规则；
- *   2. 组件里不许用内联 style 写 filter: blur（id 优先级压不过内联样式）；壁纸模糊也一样，
- *      关掉后换成按用户模糊值调浓淡的半透明遮罩（::after，不加新元素）。
+ * 覆盖全站全部样式表（styles/tokens.css、canvas.css、materials.css、styles.css、link-card.css、agent-orb.tsx <style>）：
+ *   1. 每条带 filter: blur 的规则，在 perf-noblur.css 的 data-perf="on" 和 prefers-reduced-transparency 两种情况下都有无 blur 的覆盖规则；
+ *   2. 组件内联 style 禁止写 filter: blur（壁纸模糊只传 --canvas-blur CSS 变量，挂载于 #sky-root）。
  */
 const src = path.join(import.meta.dir, "../src");
 const read = (f: string) => readFileSync(path.join(src, f), "utf8");
@@ -18,10 +16,14 @@ function rules(text: string) {
   const out: { selector: string; body: string }[] = [];
   const re = /([^{}]+)\{([^{}]*)\}/g;
   for (let m = re.exec(text); m; m = re.exec(text)) {
-    out.push({ selector: m[1].trim().replace(/\s+/g, " "), body: m[2] });
+    out.push({
+      selector: (m[1] ?? "").trim().replace(/\s+/g, " "),
+      body: m[2] ?? "",
+    });
   }
   return out;
 }
+
 const hasBlurFilter = (body: string) =>
   /(^|[^-])filter\s*:[^;]*blur\(/.test(
     body.replace(/backdrop-filter\s*:[^;]*;?/g, ""),
@@ -30,10 +32,13 @@ const hasBlurFilter = (body: string) =>
 function orbStyle() {
   const tsx = read("components/agents/orb/agent-orb.tsx");
   const m = tsx.match(/<style>\{`([\s\S]*?)`\}<\/style>/);
-  return m ? m[1].replace(/\$\{[^}]*\}/g, "0") : "";
+  return m?.[1] ? m[1].replace(/\$\{[^}]*\}/g, "0") : "";
 }
 
 const sheets: Record<string, string> = {
+  "styles/tokens.css": strip(read("styles/tokens.css")),
+  "styles/canvas.css": strip(read("styles/canvas.css")),
+  "styles/materials.css": strip(read("styles/materials.css")),
   "styles.css": strip(read("styles.css")),
   "components/rich-previews/link-card.css": strip(
     read("components/rich-previews/link-card.css"),
@@ -43,15 +48,11 @@ const sheets: Record<string, string> = {
 
 const noblur = strip(read("perf-noblur.css"));
 
-/**
- * `@media` 块的内容：条件是逗号分隔的几个媒体特性时，只要其中一个是 query 就算命中
- * （`(prefers-reduced-transparency: reduce), (prefers-contrast: more), …` 是一条块）。
- */
 function mediaBodies(css: string, query: string): string {
   const bodies: string[] = [];
   const re = /@media\s+([^{}]+)\{/g;
   for (const m of css.matchAll(re)) {
-    const conditions = m[1].split(",").map((c) => c.trim());
+    const conditions = (m[1] ?? "").split(",").map((c) => c.trim());
     if (!conditions.includes(query)) continue;
     let depth = 1;
     let i = (m.index ?? 0) + m[0].length;
@@ -72,7 +73,6 @@ const perfRules = rules(noblur).filter((r) =>
   r.selector.startsWith('html[data-perf="on"]'),
 );
 
-/** 被模糊的元素选择器（去掉 :hover 之类不影响）里抽出类名 + [data-dimmed] 这样的关键 token。 */
 function key(selector: string) {
   const cls = selector.match(/\.[\w-]+/g) ?? [];
   const last = cls[cls.length - 1] ?? selector;
@@ -82,11 +82,13 @@ function key(selector: string) {
     before: selector.includes("::before"),
   };
 }
+
 function covered(list: typeof perfRules, selector: string) {
   const k = key(selector);
   return list.some((r) => {
-    if (!/(^|[^-])filter\s*:/.test(r.body) || hasBlurFilter(r.body))
+    if (!/(^|[^-])filter\s*:/.test(r.body) || hasBlurFilter(r.body)) {
       return false;
+    }
     if (!r.selector.includes(k.cls)) return false;
     if (k.dimmed && !r.selector.includes("[data-dimmed]")) return false;
     if (k.before !== r.selector.includes("::before")) return false;
@@ -102,7 +104,7 @@ const blurRules = Object.entries(sheets).flatMap(([file, text]) =>
     ),
 );
 
-test("找得到要关的 filter: blur 规则（防止解析失效变成空跑）", () => {
+test("找得到全部要关的 filter: blur 规则（含 canvas.css 中的壁纸模糊）", () => {
   const names = blurRules.map((r) => r.selector).join(" ");
   for (const k of [
     ".chisabot-wallpaper-img",
@@ -137,8 +139,6 @@ test("组件不许用内联 style 写 filter: blur", () => {
       const p = path.join(dir, name);
       if (statSync(p).isDirectory()) walk(p);
       else if (p.endsWith(".tsx")) {
-        // 组件自带的 <style> 是样式表（上面按规则检查过），去掉后剩下的 filter: … blur( 只能是内联 style，
-        // 包括写成三元表达式跨好几行的（原来的壁纸模糊就是这样）。
         const text = readFileSync(p, "utf8").replace(
           /<style>\{`[\s\S]*?`\}<\/style>/g,
           "",
@@ -153,16 +153,16 @@ test("组件不许用内联 style 写 filter: blur", () => {
   expect(offenders).toEqual([]);
 });
 
-test("壁纸模糊：内联 style 只给变量，关模糊后两种情况都有按模糊值调浓淡的遮罩", () => {
+test("壁纸模糊走 --canvas-blur / --canvas-scrim 单通道变量，无内联 filter: blur 与双层叠幕", () => {
   const sky = read("components/sky-background.tsx");
-  expect(sky).toContain('"--wallpaper-blur"');
-  expect(sky).toContain('"--wallpaper-veil"');
+  expect(sky).toContain('"--canvas-blur"');
+  expect(sky).toContain('"--canvas-scrim"');
   expect(sky).not.toMatch(/filter\s*:[^,\n]*blur/);
-  for (const list of [perfRules, reduceRules]) {
-    const veil = list.find((r) =>
-      r.selector.includes(".chisabot-wallpaper-img[data-blur]::after"),
-    );
-    expect(veil?.body).toMatch(/opacity\s*:\s*var\(--wallpaper-veil/);
-    expect(veil?.body).toMatch(/background\s*:\s*var\(--glass-bg-opaque\)/);
-  }
+  expect(sky).not.toContain("chisabot-wallpaper-dim");
+  // canvas.css 只在 .chisabot-wallpaper-img 读 --canvas-blur，在 #sky-root::after 读 --canvas-scrim
+  const canvasCss = sheets["styles/canvas.css"] ?? "";
+  expect(canvasCss).toContain("filter: blur(var(--canvas-blur, 0px));");
+  expect(canvasCss).toContain(
+    "background: rgb(var(--canvas-scrim-rgb) / var(--canvas-scrim, 0.35));",
+  );
 });

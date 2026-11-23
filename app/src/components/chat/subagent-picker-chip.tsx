@@ -75,6 +75,7 @@ function SubagentPickerChipImpl({
             <Popover.Popup
               aria-label="选择子代理"
               className="perm-popover min-w-[260px]"
+              data-surface="elevated"
               data-testid="subagent-picker-popover"
             >
               <div className="perm-popover-head">

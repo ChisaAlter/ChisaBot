@@ -53,6 +53,7 @@ export function AgentsRailCard() {
   return (
     <article
       className="glass-card live-panel agents-rail-card"
+      data-surface="inset"
       data-collapsed={collapsed || undefined}
     >
       <header className="live-panel-head">

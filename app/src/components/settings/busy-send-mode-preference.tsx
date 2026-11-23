@@ -37,7 +37,10 @@ export function BusySendModePreference() {
   };
 
   return (
-    <Item data-setting-item="回复中途发消息默认方式" size="sm">
+    <Item
+      data-setting-item="general.busy-send-mode 回复中途发消息默认方式 回复中途发消息"
+      size="sm"
+    >
       <ItemContent>
         <ItemTitle>{"回复中途发消息"}</ItemTitle>
         <ItemDescription>
@@ -50,6 +53,7 @@ export function BusySendModePreference() {
         <fieldset
           aria-label={"回复中途发消息默认方式"}
           className="sg-segmented m-0 min-w-0"
+          data-surface="inset"
           onKeyDown={onGroupKeyDown}
         >
           {OPTIONS.map(({ value, label }) => (

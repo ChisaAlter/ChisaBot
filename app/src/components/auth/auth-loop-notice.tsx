@@ -47,6 +47,7 @@ export function AuthLoopCard({
         aria-labelledby="auth-loop-title"
         aria-modal="true"
         className="page-loader-card"
+        data-surface="elevated"
         data-btn-state="error"
         role="alertdialog"
       >

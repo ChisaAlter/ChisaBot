@@ -130,7 +130,13 @@ export function PcLinkHint() {
   const Icon = problem === "outdated" ? IconDeviceDesktopDown : IconPlugConnected;
 
   return (
-    <div className="install-hint pc-link-hint" data-state={closing ? "closed" : "open"} role="status" aria-live="polite">
+    <div
+      aria-live="polite"
+      className="install-hint pc-link-hint"
+      data-state={closing ? "closed" : "open"}
+      data-surface="elevated"
+      role="status"
+    >
       <div className="install-hint-row">
         <button
           aria-expanded={problem === "outdated" ? open : undefined}

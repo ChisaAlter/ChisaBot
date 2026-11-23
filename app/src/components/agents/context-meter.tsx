@@ -192,7 +192,7 @@ function ContextMeterImpl({
           side="top"
           sideOffset={8}
         >
-          <Popover.Popup className="context-popover">
+          <Popover.Popup className="context-popover" data-surface="elevated">
             <div className="context-popover-head">
               <span className="context-popover-title">上下文</span>
               {size ? (

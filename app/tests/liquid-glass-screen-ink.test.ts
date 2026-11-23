@@ -1,10 +1,9 @@
 /**
- * 液态玻璃安装器的整屏墨色（DESIGN.md §10.6），在 happy-dom 里跑真的 installLiquidGlass：
- * 背景光栅换成一块可调灰度的假画布，面板给上假布局，验证
- * - 整屏一种墨，亮背景浅釉、真暗才深釉，0.40 / 0.50 迟滞；
- * - 用户自己的气泡跟着整屏墨色走；
- * - 后渲染的卡片当场挂上整屏墨色、并参与下一次判定；首屏一块面板都没有时也不会落空；
- * - 判定不写存储，旧版本存下的 chisabot-lg-ink 启动时清掉、也不再拿来预涂。
+ * 液态玻璃下线与纯 CSS 材质门禁（路径由 AGENTS.md §7 与 docs-truth-guards.test.ts 锁定）：
+ *  1. 重型液态玻璃 SVG 位移透镜与 JS 光栅采样已彻底下线（无 `liquid-glass.ts` / `sky-snapshot.ts` /
+ *     `data-lg-lens` / `data-lg-ink` / `chisabot-lg-lens` / `chisabot-glass-alpha` 残留）；
+ *  2. 全材质（glass / clear / solid）纯 CSS 驱动，DOM 变更与滚动期间零 `getBoundingClientRect` 扫描、零 JS 空转；
+ *  3. 光学字缘保护与对比度防线：仅单层轻影 `0 1px 1px` 护读裸露文字，气泡/卡片/代码块/控件严格 `text-shadow: none`。
  */
 import {
   afterAll,
@@ -15,553 +14,206 @@ import {
   expect,
   test,
 } from "bun:test";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { cleanup } from "@testing-library/react";
+import { settleReactWork } from "./settle-react-work";
 
-let gray = 200;
-let installLiquidGlass: typeof import("../src/lib/liquid-glass").installLiquidGlass;
-let LG_INK_STORAGE_KEY: string;
-let initResizeState: typeof import("../src/lib/resize-state").initResizeState;
-let RESIZE_SETTLE_MS = 0;
-let uninstall: (() => void) | null = null;
-const restores: Array<() => void> = [];
+const srcDir = path.join(import.meta.dir, "../src");
+const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "");
 
-function fakeCtx(canvas: HTMLCanvasElement) {
-  const grad = { addColorStop() {} };
-  return {
-    canvas,
-    fillStyle: "",
-    setTransform() {},
-    fillRect() {},
-    drawImage() {},
-    putImageData() {},
-    createLinearGradient: () => grad,
-    createRadialGradient: () => grad,
-    getImageData(_x: number, _y: number, w: number, h: number) {
-      const data = new Uint8ClampedArray(w * h * 4);
-      for (let i = 0; i < data.length; i += 4) {
-        data[i] = gray;
-        data[i + 1] = gray;
-        data[i + 2] = gray;
-        data[i + 3] = 255;
-      }
-      return { data, width: w, height: h };
-    },
-  };
-}
-
-function patch<T extends object, K extends keyof T>(
-  obj: T,
-  key: K,
-  desc: PropertyDescriptor,
-) {
-  const prev = Object.getOwnPropertyDescriptor(obj, key);
-  Object.defineProperty(obj, key, { configurable: true, ...desc });
-  restores.push(() => {
-    if (prev) Object.defineProperty(obj, key, prev);
-    else delete (obj as Record<PropertyKey, unknown>)[key as PropertyKey];
-  });
-}
-
-beforeAll(async () => {
-  GlobalRegistrator.register({
-    url: "http://localhost/",
-    width: 1440,
-    height: 900,
-  });
-  const contexts = new WeakMap<HTMLCanvasElement, ReturnType<typeof fakeCtx>>();
-  patch(HTMLCanvasElement.prototype, "getContext", {
-    value(this: HTMLCanvasElement) {
-      let c = contexts.get(this);
-      if (!c) {
-        c = fakeCtx(this);
-        contexts.set(this, c);
-      }
-      return c;
-    },
-  });
-  // happy-dom 没有布局：每块面板按 data-rect 给位置，offsetParent 恒有。
-  patch(HTMLElement.prototype, "offsetParent", {
-    get() {
-      return document.body;
-    },
-  });
-  const rectDesc: PropertyDescriptor = {
-    value(this: Element) {
-      const [x, y, w, h] = (this.getAttribute("data-rect") ?? "0,0,0,0")
-        .split(",")
-        .map(Number);
-      return {
-        x,
-        y,
-        left: x,
-        top: y,
-        width: w,
-        height: h,
-        right: x + w,
-        bottom: y + h,
-        toJSON() {},
-      } as DOMRect;
-    },
-  };
-  // 同进程里别的测试可能在 HTMLElement.prototype 上换过 getBoundingClientRect，两层都换。
-  patch(Element.prototype, "getBoundingClientRect", rectDesc);
-  patch(HTMLElement.prototype, "getBoundingClientRect", rectDesc);
-  // 「减少透明度」查询一律不命中（别的测试可能把 matchMedia 换成恒 true 的替身）。
-  patch(window, "matchMedia", {
-    value: (query: string) =>
-      ({
-        matches: false,
-        media: query,
-        addEventListener() {},
-        removeEventListener() {},
-        addListener() {},
-        removeListener() {},
-      }) as unknown as MediaQueryList,
-  });
-  if (typeof globalThis.ResizeObserver === "undefined") {
-    globalThis.ResizeObserver = class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    } as unknown as typeof ResizeObserver;
+function listSourceFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const full = path.join(dir, name);
+    if (statSync(full).isDirectory()) {
+      out.push(...listSourceFiles(full));
+    } else if (/\.(?:tsx?|css|html)$/.test(name)) {
+      out.push(full);
+    }
   }
-  const mod = await import("../src/lib/liquid-glass");
-  installLiquidGlass = mod.installLiquidGlass;
-  LG_INK_STORAGE_KEY = mod.LG_INK_STORAGE_KEY;
-  ({ initResizeState, RESIZE_SETTLE_MS } = await import(
-    "../src/lib/resize-state"
-  ));
-});
-
-afterAll(async () => {
-  for (const r of restores.reverse()) r();
-  await GlobalRegistrator.unregister();
-});
-
-beforeEach(() => {
-  gray = 200;
-  window.localStorage.clear();
-  // 同进程里别的测试会留下 data-perf / data-theme-family 等根属性（性能模式会让液态玻璃整套撤掉）。
-  const de = document.documentElement;
-  for (const name of de.getAttributeNames()) de.removeAttribute(name);
-  de.setAttribute("data-glass", "liquid");
-  document.body.innerHTML = "";
-});
-
-afterEach(() => {
-  uninstall?.();
-  uninstall = null;
-});
-
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** 侧栏、右栏、输入框、一张对话卡片、一个用户气泡。 */
-function mountShell() {
-  document.body.innerHTML = `
-    <aside class="glass-side-card" data-rect="16,56,280,820"></aside>
-    <aside class="rail-card" data-rect="1124,56,300,820"></aside>
-    <main class="glass-main">
-      <div class="jr-card" data-rect="340,180,700,100"></div>
-      <div data-slot="message" data-align="end"><div data-slot="bubble" data-align="end">
-        <div data-slot="bubble-content" id="user-bubble" data-rect="820,80,220,44"></div>
-      </div></div>
-      <div class="glass-composer" data-rect="330,800,780,80"></div>
-    </main>`;
+  return out;
 }
 
-function inks(): string[] {
-  return [
-    ...document.querySelectorAll(
-      '.glass-side-card, .rail-card, .jr-card, [data-slot="bubble-content"], .glass-composer',
-    ),
-  ].map((el) => el.getAttribute("data-lg-ink") ?? "light");
-}
-
-/** 让安装器重采一次（<html> 上被监听的属性变化 → refresh → 160ms 节流后采样）。 */
-async function resample(g: number) {
-  gray = g;
-  const de = document.documentElement;
-  de.setAttribute(
-    "data-theme",
-    de.getAttribute("data-theme") === "light-tick" ? "light" : "light-tick",
-  );
-  await wait(260);
-}
-
-describe("liquid glass installer: one ink for the whole screen", () => {
-  test("bright backdrop stays light; a really dark one flips every panel (user bubble too) together", async () => {
-    mountShell();
-    uninstall = installLiquidGlass();
-    await wait(260);
-    expect(new Set(inks())).toEqual(new Set(["light"]));
-    await resample(80); // 0.31
-    expect(inks().every((i) => i === "dark")).toBe(true);
-    expect(
-      document.getElementById("user-bubble")?.getAttribute("data-lg-ink"),
-    ).toBe("dark");
+describe("1) 重型液态玻璃 SVG 透镜与 JS 光栅采样已彻底下线", () => {
+  test("已删除 app/src/lib/liquid-glass.ts 与 app/src/lib/sky-snapshot.ts", () => {
+    expect(existsSync(path.join(srcDir, "lib/liquid-glass.ts"))).toBe(false);
+    expect(existsSync(path.join(srcDir, "lib/sky-snapshot.ts"))).toBe(false);
   });
 
-  test("hysteresis: dark under 0.40, back to light only at ≥0.50; 0.45 keeps whichever it was", async () => {
-    mountShell();
-    uninstall = installLiquidGlass();
-    await wait(260);
-    await resample(115); // 0.45，上次浅 → 浅
-    expect(new Set(inks())).toEqual(new Set(["light"]));
-    await resample(97); // 0.38 → 深
-    expect(new Set(inks())).toEqual(new Set(["dark"]));
-    await resample(115); // 0.45，上次深 → 深
-    expect(new Set(inks())).toEqual(new Set(["dark"]));
-    await resample(125); // 0.49 → 仍深
-    expect(new Set(inks())).toEqual(new Set(["dark"]));
-    await resample(133); // 0.52 → 浅
-    expect(new Set(inks())).toEqual(new Set(["light"]));
-  });
+  test("app/src 全目录无 liquid-glass / sky-snapshot / data-lg-lens / data-lg-ink 等历史残留", () => {
+    const files = listSourceFiles(srcDir);
+    const forbidden: Array<{ name: string; pattern: RegExp }> = [
+      { name: "liquid-glass import", pattern: /lib\/liquid-glass/ },
+      { name: "sky-snapshot import", pattern: /lib\/sky-snapshot/ },
+      { name: "installLiquidGlass", pattern: /\binstallLiquidGlass\b/ },
+      { name: "captureSkySnapshot", pattern: /\bcaptureSkySnapshot\b/ },
+      { name: "data-lg-lens", pattern: /data-lg-lens/ },
+      { name: "data-lg-ink", pattern: /data-lg-ink/ },
+      { name: "chisabot-lg-lens", pattern: /chisabot-lg-lens/ },
+      { name: "chisabot-lg-ink", pattern: /chisabot-lg-ink/ },
+      { name: "--lg-lens-url", pattern: /--lg-lens-url/ },
+      { name: "--lg-aa-boost", pattern: /--lg-aa-boost/ },
+      { name: "--lg-density-k", pattern: /--lg-density-k/ },
+      { name: "feDisplacementMap", pattern: /feDisplacementMap/ },
+    ];
 
-  test("the decision is never persisted; a stale stored dark ink is cleared and not pre-painted", async () => {
-    window.localStorage.setItem(LG_INK_STORAGE_KEY, "dark");
-    mountShell();
-    uninstall = installLiquidGlass();
-    // 启动当下不再按旧存储预涂深釉。
-    expect(new Set(inks())).toEqual(new Set(["light"]));
-    expect(window.localStorage.getItem(LG_INK_STORAGE_KEY)).toBeNull();
-    await resample(60);
-    expect(new Set(inks())).toEqual(new Set(["dark"]));
-    expect(window.localStorage.getItem(LG_INK_STORAGE_KEY)).toBeNull();
-  });
-
-  test("a late-rendered card takes the screen ink at once and joins the next sample", async () => {
-    mountShell();
-    uninstall = installLiquidGlass();
-    await wait(260);
-    await resample(70);
-    expect(new Set(inks())).toEqual(new Set(["dark"]));
-    const card = document.createElement("div");
-    card.className = "jr-card";
-    card.setAttribute("data-rect", "340,300,700,160");
-    document.querySelector(".glass-main")?.appendChild(card);
-    await wait(0); // MutationObserver 回调（微任务）
-    expect(card.getAttribute("data-lg-ink")).toBe("dark");
-    await wait(260);
-    expect(card.style.getPropertyValue("--lg-density-k")).not.toBe("");
-  });
-
-  test("first sample is not lost when the panels render after the installer starts", async () => {
-    uninstall = installLiquidGlass();
-    await wait(260); // 首次采样时一块面板都没有
-    gray = 60;
-    mountShell();
-    await wait(400);
-    expect(new Set(inks())).toEqual(new Set(["dark"]));
-    const side = document.querySelector<HTMLElement>(".glass-side-card");
-    expect(side?.style.getPropertyValue("--lg-density-k")).not.toBe("");
-  });
-
-  test("dark scheme never sets the light-scheme dark-glaze attribute", async () => {
-    document.documentElement.classList.add("dark");
-    mountShell();
-    uninstall = installLiquidGlass();
-    await wait(260);
-    expect(new Set(inks())).toEqual(new Set(["light"]));
-    expect(window.localStorage.getItem(LG_INK_STORAGE_KEY)).toBeNull();
-  });
-
-  test("mist / crystal / frosted keep frosted translucency and clear any leftover --lg-aa-boost", async () => {
-    for (const style of ["mist", "crystal", "frosted"] as const) {
-      document.documentElement.classList.add("dark");
-      document.documentElement.setAttribute("data-glass", "liquid");
-      gray = 230;
-      mountShell();
-      uninstall = installLiquidGlass();
-      await wait(260);
-      const rail = document.querySelector<HTMLElement>(".rail-card");
-      expect(
-        Number(rail?.style.getPropertyValue("--lg-aa-boost")),
-      ).toBeGreaterThan(1.2);
-
-      document.documentElement.setAttribute("data-glass", style);
-      await wait(260);
-      expect(rail?.hasAttribute("data-lg-ink")).toBe(false);
-      expect(rail?.style.getPropertyValue("--lg-aa-boost")).toBe("");
-      expect(rail?.style.getPropertyValue("--lg-density-k")).toBe("");
-      uninstall();
-      uninstall = null;
-    }
-  });
-
-  test("position: fixed glass surfaces (offsetParent === null, e.g. .rail-sheet) still receive liquid contrast sampling", async () => {
-    document.documentElement.classList.add("dark");
-    document.documentElement.setAttribute("data-glass", "liquid");
-    gray = 230;
-    mountShell();
-    const rail = document.querySelector<HTMLElement>(".rail-card");
-    expect(rail).toBeTruthy();
-    if (!rail) return;
-    Object.defineProperty(rail, "offsetParent", {
-      configurable: true,
-      get: () => null,
-    });
-    uninstall = installLiquidGlass();
-    await wait(260);
-    expect(
-      Number(rail.style.getPropertyValue("--lg-aa-boost")),
-    ).toBeGreaterThan(1.2);
-  });
-});
-
-function mountWallpaper(url: string) {
-  mountShell();
-  const img = document.createElement("div");
-  img.className = "chisabot-wallpaper-img";
-  img.style.backgroundImage = `url("${url}")`;
-  document.body.appendChild(img);
-  document.documentElement.setAttribute("data-wallpaper", "on");
-}
-
-describe("liquid glass installer: wallpaper image change and scroll sampling", () => {
-  test("changing only the custom wallpaper image retriggers sampling (data-wallpaper stays on)", async () => {
-    mountWallpaper("https://example.test/a.jpg");
-    uninstall = installLiquidGlass();
-    await wait(260);
-    expect(new Set(inks())).toEqual(new Set(["light"]));
-
-    // 只换图片 URL，根属性 data-wallpaper 仍是 on：以前不会重采。
-    gray = 60;
-    const img = document.querySelector<HTMLElement>(".chisabot-wallpaper-img");
-    expect(img).toBeTruthy();
-    expect(document.documentElement.getAttribute("data-wallpaper")).toBe("on");
-    img!.style.backgroundImage = 'url("https://example.test/b.jpg")';
-    await wait(260);
-    expect(document.documentElement.getAttribute("data-wallpaper")).toBe("on");
-    expect(new Set(inks())).toEqual(new Set(["dark"]));
-  });
-
-  test("inserting a wallpaper node after start also retriggers sampling", async () => {
-    mountShell();
-    document.documentElement.setAttribute("data-wallpaper", "on");
-    uninstall = installLiquidGlass();
-    await wait(260);
-    expect(new Set(inks())).toEqual(new Set(["light"]));
-    gray = 60;
-    const img = document.createElement("div");
-    img.className = "chisabot-wallpaper-img";
-    img.style.backgroundImage = 'url("https://example.test/c.jpg")';
-    document.body.appendChild(img);
-    await wait(260);
-    expect(document.documentElement.getAttribute("data-wallpaper")).toBe("on");
-    expect(new Set(inks())).toEqual(new Set(["dark"]));
-  });
-
-  test("sampling is paused while scroll events keep arriving and runs after scroll settles", async () => {
-    mountShell();
-    uninstall = installLiquidGlass();
-    await wait(260);
-    expect(new Set(inks())).toEqual(new Set(["light"]));
-
-    gray = 60;
-    const ticking = window.setInterval(() => {
-      window.dispatchEvent(new Event("scroll"));
-    }, 40);
-    // 同步改一个被观察的根属性，按修前逻辑 160ms 后就会重采。
-    document.documentElement.setAttribute("data-theme", "light-tick");
-    await wait(400);
-    expect(new Set(inks())).toEqual(new Set(["light"]));
-    window.clearInterval(ticking);
-    await wait(500);
-    expect(new Set(inks())).toEqual(new Set(["dark"]));
-  });
-});
-
-describe("liquid glass installer: resize pause and atomic lens swap", () => {
-  test("sampling pauses while window resize events keep arriving and runs after resize settles", async () => {
-    const teardownResize = initResizeState();
-    try {
-      mountShell();
-      uninstall = installLiquidGlass();
-      await wait(260);
-      expect(new Set(inks())).toEqual(new Set(["light"]));
-
-      gray = 60;
-      const ticking = window.setInterval(() => {
-        window.dispatchEvent(new Event("resize"));
-      }, 40);
-      try {
-        window.dispatchEvent(new Event("resize"));
-        document.documentElement.setAttribute("data-theme", "light-resize");
-        await wait(360);
-        expect(new Set(inks())).toEqual(new Set(["light"]));
-      } finally {
-        window.clearInterval(ticking);
+    const hits: string[] = [];
+    for (const file of files) {
+      const rel = path.relative(srcDir, file).replace(/\\/g, "/");
+      const content = stripComments(readFileSync(file, "utf8"));
+      for (const { name, pattern } of forbidden) {
+        if (pattern.test(content)) {
+          hits.push(`${rel}: ${name}`);
+        }
       }
-
-      await wait(RESIZE_SETTLE_MS + 400);
-      expect(new Set(inks())).toEqual(new Set(["dark"]));
-    } finally {
-      teardownResize();
     }
+    expect(hits).toEqual([]);
   });
 
-  test("lens rebuild swaps atomically after displacement map decodes without clearing data-lg-lens", async () => {
-    const origCss = globalThis.CSS;
-    const origDecodeDesc = Object.getOwnPropertyDescriptor(
-      Image.prototype,
-      "decode",
+  test("materials.css 仅声明 3 档纯 CSS 材质（glass / clear / solid），无 SVG 滤镜或 liquid 材质分支", () => {
+    const materialsCss = stripComments(
+      readFileSync(path.join(srcDir, "styles/materials.css"), "utf8"),
     );
-    const pendingDecodes: Array<() => void> = [];
-    let holdDecode = false;
+    expect(materialsCss).toContain('html[data-material="glass"]');
+    expect(materialsCss).toContain('html[data-material="clear"]');
+    expect(materialsCss).toContain('html[data-material="solid"]');
+    expect(materialsCss).not.toContain('data-glass="liquid"');
+    expect(materialsCss).not.toContain('data-material="liquid"');
+    expect(materialsCss).not.toMatch(/backdrop-filter\s*:[^;]*url\(/);
+  });
+});
 
-    Object.defineProperty(globalThis, "CSS", {
-      configurable: true,
-      value: {
-        supports: (prop: string, val?: string) =>
-          prop === "backdrop-filter" && Boolean(val?.includes("url(")),
-      },
-    });
-    Object.defineProperty(Image.prototype, "decode", {
-      configurable: true,
-      value() {
-        if (!holdDecode) return Promise.resolve();
-        return new Promise<void>((resolve) => {
-          pendingDecodes.push(resolve);
-        });
-      },
-    });
+describe("2) 全材质零 JS 光栅采样与零空转", () => {
+  type Appearance = typeof import("../src/lib/appearance");
+  let appearance: Appearance;
 
-    try {
-      document.body.innerHTML =
-        '<aside class="glass-side-card" data-rect="16,56,280,820"></aside>';
-      const side = document.querySelector<HTMLElement>(".glass-side-card");
-      expect(side).toBeTruthy();
-      if (!side) return;
-      side.style.willChange = "auto";
-      side.style.transform = "none";
-      side.style.filter = "none";
-
-      uninstall = installLiquidGlass();
-      await wait(320);
-
-      const id1 = side.getAttribute("data-lg-lens");
-      expect(id1).toBeTruthy();
-      if (!id1) return;
-      expect(document.getElementById(id1)).not.toBeNull();
-
-      holdDecode = true;
-      side.setAttribute("data-rect", "16,56,420,820");
-      document.documentElement.setAttribute("data-theme", "light-rescan");
-      await wait(320);
-
-      expect(pendingDecodes.length).toBe(1);
-      expect(side.getAttribute("data-lg-lens")).toBe(id1);
-      expect(document.getElementById(id1)).not.toBeNull();
-
-      holdDecode = false;
-      pendingDecodes.shift()?.();
-      await wait(40);
-
-      const id2 = side.getAttribute("data-lg-lens");
-      expect(id2).toBeTruthy();
-      expect(id2).not.toBe(id1);
-      expect(document.getElementById(id1)).toBeNull();
-      expect(document.getElementById(String(id2))).not.toBeNull();
-      const lensStyleText =
-        document.getElementById("chisabot-lg-lens")?.textContent ?? "";
-      expect(lensStyleText).toContain(`[data-lg-lens="${id2}"]`);
-      expect(lensStyleText).not.toContain(`[data-lg-lens="${id1}"]`);
-    } finally {
-      Object.defineProperty(globalThis, "CSS", {
-        configurable: true,
-        value: origCss,
-      });
-      if (origDecodeDesc) {
-        Object.defineProperty(Image.prototype, "decode", origDecodeDesc);
-      } else {
-        delete (Image.prototype as { decode?: unknown }).decode;
-      }
-    }
+  beforeAll(async () => {
+    GlobalRegistrator.register({ url: "http://localhost/" });
+    appearance = await import("../src/lib/appearance");
   });
 
-  test("non-liquid modes (mist/frosted/crystal) stay dormant on DOM mutations and scroll without scanning surfaces", async () => {
-    document.documentElement.setAttribute("data-glass", "mist");
-    mountShell();
+  afterAll(async () => {
+    await settleReactWork();
+    await GlobalRegistrator.unregister();
+  });
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    appearance.resetAppearance();
+    appearance.flushAppearanceWrites();
+    document.body.innerHTML = "";
+  });
+
+  afterEach(() => {
+    cleanup();
+    appearance.resetAppearance();
+    appearance.flushAppearanceWrites();
+    document.body.innerHTML = "";
+  });
+
+  test("glass / clear / solid 三档材质在切换、插入消息与滚动时零 getBoundingClientRect 扫描且零透镜/动态样式注入", async () => {
     let rectReads = 0;
-    const origRect = HTMLElement.prototype.getBoundingClientRect;
-    Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
+    const origRect = Element.prototype.getBoundingClientRect;
+    const origDescriptor = Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      "getBoundingClientRect",
+    );
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
       configurable: true,
-      value(this: HTMLElement) {
+      writable: true,
+      value(this: Element) {
         rectReads += 1;
         return origRect.call(this);
       },
     });
+
     try {
-      uninstall = installLiquidGlass();
-      for (let i = 0; i < 5; i++) {
-        const msg = document.createElement("div");
-        msg.setAttribute("data-slot", "bubble-content");
-        msg.setAttribute("data-rect", `340,${100 + i * 60},500,48`);
-        document.querySelector(".glass-main")?.appendChild(msg);
+      document.body.innerHTML = `
+        <aside class="glass-side-card" data-surface="panel"></aside>
+        <main class="glass-main"></main>
+      `;
+
+      for (const material of ["glass", "clear", "solid"] as const) {
+        appearance.setMaterial(material);
+        expect(document.documentElement.getAttribute("data-material")).toBe(
+          material,
+        );
+
+        for (let i = 0; i < 5; i++) {
+          const bubble = document.createElement("div");
+          bubble.setAttribute("data-surface", "bubble");
+          document.querySelector(".glass-main")?.appendChild(bubble);
+        }
+        window.dispatchEvent(new Event("scroll"));
+        await new Promise((r) => setTimeout(r, 30));
       }
-      window.dispatchEvent(new Event("scroll"));
-      await wait(450);
+
       expect(rectReads).toBe(0);
       expect(document.getElementById("chisabot-lg-lens")).toBeNull();
+      expect(document.getElementById("chisabot-glass-alpha")).toBeNull();
+      expect(document.querySelector("[data-lg-lens]")).toBeNull();
+      expect(document.querySelector("[data-lg-ink]")).toBeNull();
     } finally {
-      Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
-        configurable: true,
-        value: origRect,
-      });
+      if (origDescriptor) {
+        Object.defineProperty(
+          Element.prototype,
+          "getBoundingClientRect",
+          origDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(Element.prototype, "getBoundingClientRect");
+      }
+    }
+  });
+});
+
+describe("3) 光学字缘保护与对比度防线", () => {
+  const materialsCss = stripComments(
+    readFileSync(path.join(srcDir, "styles/materials.css"), "utf8"),
+  );
+  const stylesCss = stripComments(
+    readFileSync(path.join(srcDir, "styles.css"), "utf8"),
+  );
+
+  test("光学字缘保护仅单层轻影 0 1px 1px 作用于非实色裸露容器，气泡/卡片/代码块/表单控件严格 text-shadow: none", () => {
+    expect(materialsCss).toMatch(
+      /html\.dark:not\(\[data-material="solid"\]\)\s*:is\(\.glass-shell,\s*\.rail-sheet,\s*\[data-surface="elevated"\],\s*\.hk-drawer\)\s*\{\s*text-shadow:\s*0 1px 1px rgba\(0,\s*0,\s*0,\s*0\.\d+\);/,
+    );
+    expect(materialsCss).toMatch(
+      /html:not\(\.dark\)\[data-canvas="wallpaper"\]:not\(\[data-material="solid"\]\)\s*:is\(\.glass-shell,\s*\.rail-sheet,\s*\[data-surface="elevated"\],\s*\.hk-drawer\)\s*\{\s*text-shadow:\s*0 1px 1px rgba\(255,\s*255,\s*255,\s*0\.\d+\);/,
+    );
+
+    const exemptMatch = materialsCss.match(
+      /:is\(([\s\S]*?)\)\s*\{\s*text-shadow:\s*none;\s*\}/,
+    );
+    expect(exemptMatch).toBeTruthy();
+    const exemptList = exemptMatch?.[1] ?? "";
+    for (const sel of [
+      '[data-surface="bubble"]',
+      '[data-surface="control"]',
+      '[data-surface="inset"]',
+      '[data-slot="bubble-content"]',
+      ".jr-card",
+      "pre",
+      "code",
+      "input",
+      "textarea",
+    ]) {
+      expect(exemptList).toContain(sel);
     }
   });
 
-  test("liquid mode skips SVG displacement lenses on chat bubbles and cards while keeping panel lenses", async () => {
-    const origCss = globalThis.CSS;
-    const origDecodeDesc = Object.getOwnPropertyDescriptor(
-      Image.prototype,
-      "decode",
-    );
-    Object.defineProperty(globalThis, "CSS", {
-      configurable: true,
-      value: {
-        supports: (prop: string, val?: string) =>
-          prop === "backdrop-filter" && Boolean(val?.includes("url(")),
-      },
-    });
-    Object.defineProperty(Image.prototype, "decode", {
-      configurable: true,
-      value: () => Promise.resolve(),
-    });
-    try {
-      mountShell();
-      for (const el of document.querySelectorAll<HTMLElement>(
-        '.glass-side-card, .jr-card, [data-slot="bubble-content"]',
-      )) {
-        el.style.willChange = "auto";
-        el.style.transform = "none";
-        el.style.filter = "none";
-      }
-      uninstall = installLiquidGlass();
-      await wait(320);
-      expect(
-        document
-          .querySelector(".glass-side-card")
-          ?.getAttribute("data-lg-lens"),
-      ).toBeTruthy();
-      expect(
-        document.querySelector(".jr-card")?.getAttribute("data-lg-lens"),
-      ).toBeNull();
-      expect(
-        document
-          .querySelector('[data-slot="bubble-content"]')
-          ?.getAttribute("data-lg-lens"),
-      ).toBeNull();
-    } finally {
-      Object.defineProperty(globalThis, "CSS", {
-        configurable: true,
-        value: origCss,
-      });
-      if (origDecodeDesc) {
-        Object.defineProperty(Image.prototype, "decode", origDecodeDesc);
-      } else {
-        delete (Image.prototype as { decode?: unknown }).decode;
-      }
+  test("data-resizing 严禁剥离模糊或切换不透明黑底", () => {
+    const combined = `${materialsCss}\n${stylesCss}`;
+    for (const m of combined.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sel = m[1] ?? "";
+      const body = m[2] ?? "";
+      if (!sel.includes("data-resizing")) continue;
+      expect(body).not.toMatch(/backdrop-filter\s*:/);
+      expect(body).not.toMatch(/--surface-blur\s*:/);
+      expect(body).not.toMatch(/background\s*:[^;]*(?:#000|opaque)/);
     }
   });
 });

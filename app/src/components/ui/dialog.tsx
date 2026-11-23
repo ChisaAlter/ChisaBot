@@ -65,6 +65,8 @@ function DialogContent({
    */
   overlayClassName?: string;
 }) {
+  const isTransparent =
+    typeof className === "string" && className.includes("bg-transparent");
   return (
     <DialogPortal>
       <DialogOverlay
@@ -73,6 +75,7 @@ function DialogContent({
       />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
+        data-surface={isTransparent ? "bare" : "elevated"}
         className={cn(
           /*
            * `max-h-[85svh]` with the body scrolling, not the popup growing: a form that is long on a

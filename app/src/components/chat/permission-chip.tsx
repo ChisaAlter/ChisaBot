@@ -75,7 +75,12 @@ function PermissionChipImpl({ agentId, disabled = false }: { agentId: string; di
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner align="start" className="isolate z-50" side="top" sideOffset={8}>
-          <Popover.Popup aria-label={title} className="perm-popover" data-testid="permission-popover">
+          <Popover.Popup
+            aria-label={title}
+            className="perm-popover"
+            data-surface="elevated"
+            data-testid="permission-popover"
+          >
             <div className="perm-popover-head">
               <span className="perm-popover-title">{title}</span>
               <Link className="perm-popover-more" onClick={() => setOpen(false)} to="/settings/approvals" hash="about">

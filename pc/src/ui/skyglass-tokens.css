@@ -1,163 +1,336 @@
-/* 由 pc/scripts/sync-skyglass.mjs 从 app/src/styles.css 生成，请勿手改。 */
+/* 由 pc/scripts/sync-skyglass.mjs 从 app/src/styles/tokens.css 生成，请勿手改。 */
 
+/* ==========================================================================================
+ * ChisaBot 单通道 5 层设计令牌体系（Wave A · tokens.css）
+ *
+ * 架构原则：
+ * 1. 声明唯一全局级联层序，并将核心令牌置为未分层顶层规则，彻底免疫第三方依赖（如 prompt-area）
+ *    在后续样式中注入的未分层 :root / .dark 默认值；
+ * 2. 表面高频变量通过 @property { inherits: false } 注册为不继承属性，严禁在仅命中 <html>
+ *    的规则上声明，避免切材质 / 调滑块触发整页样式重算（theme-glass-perf）；
+ * 3. 深浅色全站统一仅用 html.dark（彻底废除 [data-theme="dark|light"] 与 html:root 特异度戏法）；
+ * 4. 7 套色彩主题（sky / mist / celadon / sakura / amber / violet / mono）浅/深双版严格满足
+ *    WCAG AA >= 4.5:1，且独立语义色 --task-info / --sem-* 永不随主题改写（DESIGN.md §127）；
+ * 5. 薄别名区将历史变量名（--foreground / --text-* / --glass-ink* / --accent-blue / --border 等）
+ *    全部单向桥接到新 5 层核心令牌，消灭平行通道冲突。
+ * ========================================================================================== */
+
+@layer reset, tokens, canvas, surfaces, components, overrides;
+
+/* ── 画布变量（仅挂在 #sky-root contain: strict 上，严禁声明在 <html>；需继承给 #sky-root::after 与 .chisabot-wallpaper-img） ── */
+@property --canvas-blur {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+@property --canvas-scrim {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0.35;
+}
+
+/* ── 表面高频属性注册（严格不继承，仅挂在表面节点自身，守住 theme-glass-perf） ── */
+
+@property --surface-bg {
+  syntax: "*";
+  inherits: false;
+}
+@property --surface-bg-solid {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #f4f7fc;
+}
+@property --surface-blur {
+  syntax: "*";
+  inherits: false;
+}
+@property --surface-border {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: rgba(15, 23, 42, 0.08);
+}
+@property --surface-highlight {
+  syntax: "*";
+  inherits: false;
+}
+@property --surface-shadow {
+  syntax: "*";
+  inherits: false;
+}
+@property --surface-ink {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #0f172a;
+}
+@property --surface-ink-2 {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #1e293b;
+}
+
+/* ========================================================================================
+ * 基础几何、动效、Ink 层、Accent & Semantic 层与默认主题（sky · 浅色）
+ * ======================================================================================== */
 :root {
-  /* 字体：Inter Variable 打头，中文回落到系统黑体。 */
-  --font: "Inter Variable", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
 
-  /* 文字层级：一个基色 + 两个透明度，二级 / 三级由基色算出，预设只换 --text。 */
-  --text: rgb(29, 29, 31);
-  --text-on: rgb(249, 249, 250);
-  --text-secondary-alpha: 0.5;
-  --text-tertiary-alpha: 0.3;
-  --text-primary: var(--text);
-  --text-secondary: color-mix(in srgb, var(--text) calc(var(--text-secondary-alpha) * 100%), transparent);
-  --text-tertiary: color-mix(in srgb, var(--text) calc(var(--text-tertiary-alpha) * 100%), transparent);
-  --text-primary-on: var(--text-on);
-  --fill-primary: var(--text);
-  --fill-secondary: var(--text-secondary);
-  --fill-tertiary: rgba(29, 29, 31, 0.05);
+  /* 字体与排版 */
+  --font:
+    "Inter Variable", "PingFang SC", "HarmonyOS Sans SC", "MiSans",
+    "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC",
+    "Microsoft YaHei UI", "WenQuanYi Zen Hei", system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --font-code:
+    "JetBrains Mono", "SF Mono", "Cascadia Code", ui-monospace, Menlo, Consolas,
+    monospace;
 
-  /* 底色（Hark 浅色） */
-  --regular-bg: rgba(255, 255, 255, 0.668);
-  --thin-bg: rgba(255, 255, 255, 0.55);
-  --composer-bg: rgba(255, 255, 255, 0.55);
-  --cell-bg: rgba(255, 255, 255, 0.6);
-  --bubble-user-bg: rgba(255, 255, 255, 0.3);
-  --bubble-agent-bg: rgba(255, 255, 255, 0.98);
-  --hover-wash: rgba(29, 29, 31, 0.05);
-  --stroke-primary: rgba(29, 29, 31, 0.14);
-  --stroke-secondary: rgba(29, 29, 31, 0.07);
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-15: 15px;
+  --fs-16: 16px;
+  --fs-20: 20px;
+  --fs-24: 24px;
+  --fs-28: 28px;
+  --fs-32: 32px;
+  --fs-48: 48px;
 
-  /* 强调色（预设覆盖） */
-  --accent-color: #2f74f0;
-  --accent-soft: rgba(47, 116, 240, 0.14);
+  --lh-none: 1;
+  --lh-snug: 1.16;
+  --lh-heading: 1.2;
+  --lh-tight: 1.3;
+  --lh-body: 1.32;
+  --lh-relaxed: 1.4;
+  --lh: 1.6;
+  --ls-tight: -0.01em;
+  --ls-tighter: -0.02em;
 
-  /* 状态色 */
-  --status-success: #17955c;
-  --status-info: #2f74f0;
-  --status-error: rgba(217, 61, 64, 0.9);
-  --status-warning: rgba(201, 122, 12, 0.9);
-  --status-attention: #ff4d00;
-
-  /* 圆角 / 字号 / 行高 / 字距 / 间距 */
-  --r-4: 4px; --r-8: 8px; --r-12: 12px; --r-16: 16px; --r-20: 20px; --r-24: 24px; --r-full: 9999px;
-  --fs-12: 12px; --fs-13: 13px; --fs-14: 14px; --fs-15: 15px; --fs-20: 20px; --fs-24: 24px; --fs-28: 28px; --fs-48: 48px;
-  --lh-none: 1; --lh-snug: 1.16; --lh-heading: 1.2; --lh-body: 1.32; --lh-relaxed: 1.4;
-  --ls-tight: -0.01em; --ls-tighter: -0.02em;
+  /* 间距与尺寸 */
   --sp-half: 2px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
 
-  /* 阴影 */
-  --elev-1: 0 2px 8px rgba(0, 0, 0, 0.2);
-  --elev-2: 0 4px 16px rgba(0, 0, 0, 0.15);
-  --elev-3: 0 8px 24px rgba(0, 0, 0, 0.4);
-  --shadow-popover: 0 8px 40px #1d1d1f1f;
+  --left-w: 276px;
+  --left-w-slim: 80px;
+  --right-w: 340px;
+  --ctl-sm: 32px;
+  --ctl-md: 40px;
+  --ctl-lg: 48px;
 
-  /* 动效：按下缩放、三档时长；只写明确的属性，不用 transition: all。 */
+  /* 圆角 */
+  --r-4: 4px;
+  --r-xs: 6px;
+  --r-8: 8px;
+  --r-sm: 10px;
+  --r-12: 12px;
+  --r-md: 14px;
+  --r-16: 16px;
+  --r-bubble: 16px;
+  --r-20: 20px;
+  --r-lg: 20px;
+  --r-24: 24px;
+  --r-xl: 24px;
+  --r-pill: 999px;
+  --r-full: 9999px;
+  --radius: 14px;
+
+  /* 动效与过渡 */
+  --dur-1: 150ms;
+  --dur-2: 200ms;
+  --dur-3: 260ms;
+  --dur-exit: 150ms;
+  --dur-collapse: 260ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
   --press-scale: 0.97;
-  --t-fast: 0.15s; --t-base: 0.2s; --t-slow: 0.3s;
-  --t-ease: ease;
+  --t-fast: var(--dur-1);
+  --t-base: var(--dur-2);
+  --t-slow: var(--dur-3);
+  --t-ease: var(--ease-out);
 
-  /* 玻璃（唯一一种材质：macOS 式半透明液态玻璃）。数值按渲染预算（#363）：大面板 20px、弹层 12px，
-   * 饱和度 160%（预算允许 160–180%）。--glass-blur / --glass-pop-blur 只是半径，backdrop-filter 读 --glass-filter / --glass-pop-filter。 */
-  --glass-bg: rgba(255, 255, 255, 0.6);
+  /* 渲染预算内模糊刻度（全站上限 <= 20px） */
+  --blur-1: 12px;
+  --blur-2: 20px;
+  --blur-3: 20px;
   --glass-blur: 20px;
   --glass-pop-blur: 12px;
   --glass-saturate: 160%;
   --glass-filter: saturate(var(--glass-saturate)) blur(var(--glass-blur));
-  --glass-pop-filter: saturate(var(--glass-saturate)) blur(var(--glass-pop-blur));
-  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 0 0 1px rgba(255, 255, 255, 0.45);
-  --glass-shadow: 0 8px 40px rgba(29, 29, 31, 0.12), 0 0 0 0.5px rgba(29, 29, 31, 0.06);
-  --glass-pop-bg: rgba(255, 255, 255, 0.82);
-  --glass-pop-shadow: 0 12px 48px rgba(29, 29, 31, 0.16);
-  --glass-input-bg: rgba(255, 255, 255, 0.55);
-  --glass-bg-solid: rgba(255, 255, 255, 0.96);
+  --glass-pop-filter: saturate(var(--glass-saturate))
+    blur(var(--glass-pop-blur));
 
-  /* 默认静态壁纸（sky）。动态天空是另一种可选壁纸，不是默认。 */
-  --wallpaper: linear-gradient(180deg, #7fa6dc 0%, #a9c4ea 42%, #dbe6f4 100%);
-}
+  /* ── Layer 1: Ink 墨色层（严格单调 1 > 2 > 3 >= 4，全矩阵 WCAG AA >= 4.5:1） ── */
+  --ink-1: #0b1220;
+  --ink-2: #172234;
+  --ink-3: #253348;
+  --ink-4: #3e4e65;
+  --ink-on-accent: #ffffff;
+  --ink-primary: #15203a;
+  --ink-primary-hover: #24314f;
+  --on-primary: #ffffff;
 
-.dark {
-  --text: rgb(245, 245, 247);
-  --text-on: rgb(29, 29, 31);
-  --fill-tertiary: rgba(245, 245, 247, 0.05);
+  /* 侧栏小字与头像字母对比度保底令牌 */
+  --side-sec-main-ink: #553600;
+  --side-sub-ink: #253348;
+  --avatar-ink: #1e2a4a;
 
-  --regular-bg: rgba(29, 29, 31, 0.618);
-  --thin-bg: rgba(29, 29, 31, 0.615);
-  --composer-bg: rgba(29, 29, 31, 0.618);
-  --cell-bg: rgba(255, 255, 255, 0.05);
-  --bubble-user-bg: rgba(29, 29, 31, 0.3);
-  --bubble-agent-bg: rgba(29, 29, 31, 0.7);
-  --hover-wash: rgba(245, 245, 247, 0.05);
-  --stroke-primary: rgba(245, 245, 247, 0.14);
-  --stroke-secondary: rgba(245, 245, 247, 0.07);
+  /* ── Layer 2: Accent 强调层（随主题 / customAccent 切换） ── */
+  --accent: #2563eb;
+  --accent-ink: #103486;
+  --accent-soft: rgba(37, 99, 235, 0.13);
+  --accent-ring: rgba(37, 99, 235, 0.34);
 
-  --accent-color: #a1d0ff;
-  --accent-soft: rgba(161, 208, 255, 0.16);
+  /* ── Layer 2b: Semantic 独立语义色（永不随主题改写，守住 DESIGN.md §127） ── */
+  --task-info: #1f5fd6;
+  --sem-success: #15803d;
+  --sem-success-soft: rgba(21, 128, 61, 0.13);
+  --sem-warn: #b45309;
+  --sem-warn-soft: rgba(180, 83, 9, 0.15);
+  --sem-danger: #c8282b;
+  --sem-danger-soft: rgba(200, 40, 43, 0.12);
+  --status-attention: #e54800;
 
-  --status-success: #96f0b0;
-  --status-info: #a1d0ff;
-  --status-error: rgba(255, 100, 100, 0.9);
-  --status-warning: rgba(255, 200, 50, 0.8);
+  /* ── Layer 3: 主题色调参数（供画布层 & 表面层按材质档位组装） ── */
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #d8e7fa 0%,
+    #eaf2fc 48%,
+    #f5f8fd 100%
+  );
+  --canvas-pure-base: #eaf2fc;
+  --canvas-scrim-rgb: 244 248 255;
+  --sky-veil-bg: linear-gradient(
+    180deg,
+    rgba(224, 239, 255, 0.36) 0%,
+    rgba(236, 246, 255, 0.3) 52%,
+    rgba(246, 251, 255, 0.26) 100%
+  );
 
-  --glass-bg: rgba(29, 29, 31, 0.52);
-  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 1px rgba(245, 245, 247, 0.1);
-  --glass-shadow: 0 8px 40px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.3);
-  --glass-pop-bg: rgba(29, 29, 31, 0.78);
-  --glass-pop-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
-  --glass-input-bg: rgba(29, 29, 31, 0.618);
-  --glass-bg-solid: rgba(29, 29, 31, 0.96);
+  --surface-tint-rgb: 255 255 255;
+  --surface-accent-tint: rgba(47, 116, 240, 0.045);
+  --surface-solid-panel: #f4f7fc;
+  --surface-solid-elevated: #f8faff;
+  --surface-solid-bubble: #f6f9fe;
+  --surface-solid-inset: #e8eef7;
+  --surface-solid-control: #eef3fa;
+  --surface-edge-rgb: 15 23 42;
+  --surface-hl-top: rgba(255, 255, 255, 0.82);
+  --surface-hl-ring: rgba(255, 255, 255, 0.48);
 
-  --wallpaper: linear-gradient(180deg, #192c56 0%, #3c5077 55%, #5a6484 100%);
-}
+  /* 线条、交互洗底与焦点 */
+  --line: rgba(15, 23, 42, 0.08);
+  --line-strong: rgba(15, 23, 42, 0.15);
+  --line-subtle: rgba(15, 23, 42, 0.12);
+  --stroke: rgba(15, 23, 42, 0.1);
+  --stroke-primary: rgba(15, 23, 42, 0.12);
+  --stroke-secondary: rgba(15, 23, 42, 0.07);
+  --stroke-primary-on: rgba(255, 255, 255, 0.24);
+  --stroke-composer: rgba(15, 23, 42, 0.1);
+  --hover-wash: rgba(15, 23, 42, 0.055);
+  --fill-tertiary: rgba(15, 23, 42, 0.055);
+  --accent-fill-paper: rgba(255, 255, 255, 0.78);
+  --accent-fill-veil: rgba(255, 255, 255, 0.44);
+  --focus: var(--accent-ring);
+  --focus-line: var(--accent-ink);
 
-:root {
-  --font: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "WenQuanYi Zen Hei", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-code: "JetBrains Mono", "SF Mono", "Cascadia Code", ui-monospace, Menlo, Consolas, monospace;
-  --fs-12: 12px; --fs-13: 13px; --fs-14: 14px; --fs-16: 16px; --fs-20: 20px; --fs-24: 24px; --fs-32: 32px;
-  --lh-tight: 1.3; --lh: 1.6;
-  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px; --sp-16: 64px;
-  --r-xs: 6px; --r-sm: 10px; --r-md: 14px; --r-lg: 20px; --r-xl: 24px; --r-pill: 999px;
-  /* v4.1：对话气泡四角一致的圆角矩形（用户 / 机器人、亮 / 暗都一样，没有尖角「尾巴」）。 */
-  --r-bubble: 16px;
-  --blur-1: 12px; --blur-2: 20px; --blur-3: 24px;
-  --dur-1: 150ms; --dur-2: 220ms; --dur-3: 300ms; --dur-collapse: 260ms;
-  --ease-out: cubic-bezier(0.22, 0.8, 0.24, 1); --ease-in: cubic-bezier(0.4, 0, 1, 1); --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
-  --left-w: 276px; --left-w-slim: 80px; --right-w: 340px;
-  --ctl-sm: 32px; --ctl-md: 40px; --ctl-lg: 48px;
+  /* 阴影层级 */
+  --elev-1: 0 2px 8px rgba(15, 23, 42, 0.12);
+  --elev-2: 0 4px 16px rgba(15, 23, 42, 0.12);
+  --elev-3: 0 10px 28px rgba(15, 23, 42, 0.22);
+  --shadow-1:
+    0 1px 2px rgba(15, 23, 42, 0.05), 0 6px 20px rgba(15, 23, 42, 0.07);
+  --shadow-2:
+    0 2px 6px rgba(15, 23, 42, 0.06), 0 14px 36px rgba(15, 23, 42, 0.12);
+  --shadow-3:
+    0 14px 36px rgba(15, 23, 42, 0.2), 0 4px 12px rgba(15, 23, 42, 0.09);
+  --shadow-popover: 0 10px 36px rgba(15, 23, 42, 0.14);
+  --card-shadow:
+    0 8px 28px rgba(15, 23, 42, 0.08), 0 2px 6px rgba(15, 23, 42, 0.04);
+  --inset-hl: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 
-  --glass-1: rgba(255, 255, 255, calc(0.46 + var(--sky-lift, 0)));
-  --glass-2: rgba(255, 255, 255, calc(0.66 + var(--sky-lift, 0)));
-  --glass-3: rgba(255, 255, 255, calc(0.86 + var(--sky-lift, 0)));
-  --glass-hover: rgba(255, 255, 255, 0.38);
-  --stroke: rgba(255, 255, 255, 0.72);
-  --line: rgba(22, 36, 62, 0.08);
-  --line-strong: rgba(22, 36, 62, 0.14);
-  --ink-1: #111a2b; --ink-2: #3b4659; --ink-3: var(--sky-muted, #5f6673); --ink-4: rgba(17, 26, 43, 0.36);
-  --ink-primary: #15203a; --ink-primary-hover: #24314f; --on-primary: #ffffff;
-  --accent-blue: #2f74f0; --accent-blue-ink: #1f5fd6; --accent-blue-soft: rgba(47, 116, 240, 0.12); --focus: rgba(22, 36, 62, 0.18); --focus-line: rgba(22, 36, 62, 0.42);
-  --success: #17955c; --success-soft: rgba(23, 149, 92, 0.13);
-  --warn: #c97a0c; --warn-soft: rgba(217, 138, 28, 0.15);
-  --danger: #d93d40; --danger-soft: rgba(217, 61, 64, 0.12);
-  --shadow-1: 0 1px 2px rgba(20, 35, 70, 0.05), 0 6px 20px rgba(30, 52, 96, 0.07);
-  --shadow-2: 0 2px 6px rgba(20, 35, 70, 0.06), 0 14px 36px rgba(30, 52, 96, 0.13);
-  --shadow-3: 0 30px 80px rgba(14, 24, 50, 0.28), 0 6px 18px rgba(14, 24, 50, 0.12);
-  --inset-hl: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  /* ── 薄别名桥接（单向指向新 5 层核心令牌，消灭历史 6 套打架通道） ── */
+  --text: var(--ink-1);
+  --text-primary: var(--ink-1);
+  --text-secondary: var(--ink-2);
+  --text-tertiary: var(--ink-3);
+  --text-on: var(--ink-on-accent);
+  --text-primary-on: var(--ink-on-accent);
+  --text-secondary-alpha: 0.78;
+  --text-tertiary-alpha: 0.64;
+  --fill-primary: var(--ink-1);
+  --fill-secondary: var(--ink-2);
 
-  /* aliases: older names → unified tokens */
   --glass-ink: var(--ink-1);
   --glass-ink-2: var(--ink-2);
   --glass-ink-3: var(--ink-3);
   --glass-ink-4: var(--ink-4);
+  --glass-dark: var(--ink-primary);
+  --glass-dark-ink: var(--on-primary);
+
+  --accent-color: var(--accent);
+  --accent-blue: var(--accent);
+  --accent-blue-ink: var(--accent-ink);
+  --accent-blue-soft: var(--accent-soft);
+  --pal-accent: var(--accent);
+  --pal-accent-soft: var(--accent-soft);
+
+  --status-info: var(--task-info);
+  --status-success: var(--sem-success);
+  --status-warning: var(--sem-warn);
+  --status-error: var(--sem-danger);
+  --success: var(--sem-success);
+  --success-soft: var(--sem-success-soft);
+  --warn: var(--sem-warn);
+  --warn-soft: var(--sem-warn-soft);
+  --danger: var(--sem-danger);
+  --danger-soft: var(--sem-danger-soft);
+  --destructive: var(--sem-danger);
+
+  /* 玻璃与容器薄别名 */
+  --glass-bg-opaque: var(--surface-solid-panel);
+  --glass-bg-solid: var(--surface-solid-elevated);
+  --hk-drawer-solid: var(--surface-solid-panel);
+  --glass-1: rgba(255, 255, 255, 0.56);
+  --glass-2: rgba(255, 255, 255, 0.7);
+  --glass-3: rgba(255, 255, 255, 0.86);
   --glass: var(--glass-1);
   --glass-strong: var(--glass-3);
   --glass-tile: var(--glass-2);
+  --glass-dim: rgba(255, 255, 255, 0.44);
+  --glass-hover: rgba(255, 255, 255, 0.46);
   --glass-line: var(--stroke);
-  --glass-dark: var(--ink-primary);
-  --glass-dark-ink: var(--on-primary);
+  --glass-border: var(--stroke);
+  --glass-bg: var(--glass-2);
+  --glass-pop-bg: var(--glass-3);
+  --glass-input-bg: var(--glass-2);
+  --glass-highlight:
+    inset 0 1px 0 var(--surface-hl-top), inset 0 0 0 1px var(--surface-hl-ring);
   --glass-shadow: var(--shadow-1);
   --glass-shadow-sm: var(--shadow-1);
   --glass-shadow-pop: var(--shadow-3);
+  --glass-pop-shadow: var(--shadow-3);
+
+  --regular-bg: var(--glass-2);
+  --thin-bg: var(--glass-1);
+  --composer-bg: var(--glass-2);
+  --cell-bg: var(--glass-2);
+  --bubble-user-bg: rgba(255, 255, 255, 0.72);
+  --bubble-agent-bg: rgba(255, 255, 255, 0.76);
+  --wallpaper: var(--canvas-pure-bg);
+
+  /* shadcn 语义桥接 */
+  --background: var(--glass-1);
   --foreground: var(--ink-1);
+  --card: var(--glass-2);
   --card-foreground: var(--ink-1);
   --popover: var(--glass-3);
   --popover-foreground: var(--ink-1);
@@ -165,68 +338,555 @@
   --primary-foreground: var(--on-primary);
   --secondary: var(--glass-2);
   --secondary-foreground: var(--ink-1);
+  --muted: var(--hover-wash);
+  --muted-foreground: var(--ink-3);
   --accent-foreground: var(--ink-1);
-  --destructive: var(--danger);
   --border: var(--line);
   --input: var(--line-strong);
-  --ring: var(--focus);
-  --radius: 14px;
+  --ring: var(--accent-ring);
+  --sidebar: var(--glass-1);
   --sidebar-foreground: var(--ink-1);
   --sidebar-primary: var(--ink-primary);
-  --sidebar-ring: var(--focus);
+  --sidebar-primary-foreground: var(--ink-3);
+  --sidebar-accent: var(--glass-2);
+  --sidebar-accent-foreground: var(--ink-1);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--accent-ring);
+
+  /* 图表刻度 */
+  --chart-1: #93b4d8;
+  --chart-2: #5b8ec4;
+  --chart-3: #3b6fa8;
+  --chart-4: #2a5285;
+  --chart-5: #1c3a63;
 }
 
-.dark {
-  --glass-1: rgba(16, 25, 44, 0.52);
-  --glass-2: rgba(30, 42, 66, 0.62);
-  --glass-3: rgba(22, 32, 54, 0.9);
-  --glass-hover: rgba(255, 255, 255, 0.05);
-  --stroke: rgba(255, 255, 255, 0.09);
-  --line: rgba(255, 255, 255, 0.07);
-  --line-strong: rgba(255, 255, 255, 0.13);
-  --ink-1: #e9eef8; --ink-2: #b7c1d3; --ink-3: #8b97ab; --ink-4: rgba(233, 238, 248, 0.32);
-  --ink-primary: #e9eff9; --ink-primary-hover: #ffffff; --on-primary: #0e1628;
-  --accent-blue: #5b95ff; --accent-blue-ink: #8ab4ff; --accent-blue-soft: rgba(91, 149, 255, 0.16); --focus: rgba(235, 241, 255, 0.22); --focus-line: rgba(235, 241, 255, 0.5);
-  --success: #3ccf8a; --success-soft: rgba(60, 207, 138, 0.15);
-  --warn: #f0b04a; --warn-soft: rgba(240, 176, 74, 0.15);
-  --danger: #ff6b6e; --danger-soft: rgba(255, 107, 110, 0.15);
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.25), 0 8px 24px rgba(0, 0, 0, 0.18);
-  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.3), 0 16px 40px rgba(0, 0, 0, 0.3);
-  --shadow-3: 0 30px 90px rgba(0, 0, 0, 0.55), 0 6px 18px rgba(0, 0, 0, 0.3);
-  --inset-hl: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --sidebar-primary: var(--ink-primary);
+/* ========================================================================================
+   * 深色模式基底（唯一标记：html.dark；默认主题 sky · 深色）
+   * ======================================================================================== */
+html.dark {
+  color-scheme: dark;
+
+  /* Layer 1: Ink */
+  --ink-1: #f8fafc;
+  --ink-2: #eaf0f8;
+  --ink-3: #d8e2f0;
+  --ink-4: #b0bed2;
+  --ink-on-accent: #0b1220;
+  --ink-primary: #eef4fc;
+  --ink-primary-hover: #ffffff;
+  --on-primary: #0b1220;
+
+  --side-sec-main-ink: #f5c85c;
+  --side-sub-ink: #eef4fc;
+  --avatar-ink: #1e2a4a;
+
+  /* Layer 2: Accent (sky · dark) */
+  --accent: #74aeff;
+  --accent-ink: #c2ddff;
+  --accent-soft: rgba(116, 174, 255, 0.18);
+  --accent-ring: rgba(116, 174, 255, 0.42);
+
+  /* Layer 2b: Semantic（永不随主题改写，守住 §127） */
+  --task-info: #8ab4ff;
+  --sem-success: #3ccf8a;
+  --sem-success-soft: rgba(60, 207, 138, 0.16);
+  --sem-warn: #f0b04a;
+  --sem-warn-soft: rgba(240, 176, 74, 0.16);
+  --sem-danger: #ff6b6e;
+  --sem-danger-soft: rgba(255, 107, 110, 0.16);
+
+  /* Layer 3: 主题色调参数 (sky · dark) */
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #0b1424 0%,
+    #111e34 52%,
+    #172742 100%
+  );
+  --canvas-pure-base: #111e34;
+  --canvas-scrim-rgb: 8 13 24;
+  --sky-veil-bg: linear-gradient(
+    180deg,
+    rgba(6, 10, 20, 0.34) 0%,
+    rgba(8, 14, 26, 0.42) 55%,
+    rgba(10, 16, 30, 0.48) 100%
+  );
+
+  --surface-tint-rgb: 16 23 38;
+  --surface-accent-tint: rgba(116, 174, 255, 0.06);
+  --surface-solid-panel: #161d2b;
+  --surface-solid-elevated: #1b2334;
+  --surface-solid-bubble: #192131;
+  --surface-solid-inset: #222b3e;
+  --surface-solid-control: #20293b;
+  --surface-edge-rgb: 248 250 252;
+  --surface-hl-top: rgba(255, 255, 255, 0.15);
+  --surface-hl-ring: rgba(255, 255, 255, 0.08);
+
+  /* 线条与洗底 */
+  --line: rgba(248, 250, 252, 0.08);
+  --line-strong: rgba(248, 250, 252, 0.15);
+  --line-subtle: rgba(248, 250, 252, 0.13);
+  --stroke: rgba(248, 250, 252, 0.11);
+  --stroke-primary: rgba(248, 250, 252, 0.14);
+  --stroke-secondary: rgba(248, 250, 252, 0.08);
+  --stroke-composer: rgba(248, 250, 252, 0.14);
+  --hover-wash: rgba(248, 250, 252, 0.08);
+  --fill-tertiary: rgba(248, 250, 252, 0.075);
+  --accent-fill-paper: rgba(255, 255, 255, 0.15);
+  --accent-fill-veil: rgba(12, 18, 32, 0.42);
+
+  /* 阴影 */
+  --elev-1: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --elev-2: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --elev-3: 0 12px 32px rgba(0, 0, 0, 0.48);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.26), 0 8px 24px rgba(0, 0, 0, 0.22);
+  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.32), 0 16px 40px rgba(0, 0, 0, 0.32);
+  --shadow-3: 0 16px 38px rgba(0, 0, 0, 0.48), 0 4px 12px rgba(0, 0, 0, 0.28);
+  --shadow-popover: 0 12px 42px rgba(0, 0, 0, 0.44);
+  --card-shadow: 0 10px 32px rgba(0, 0, 0, 0.38), 0 2px 8px rgba(0, 0, 0, 0.22);
+  --inset-hl: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+  /* 深色玻璃薄别名 */
+  --glass-1: rgba(16, 23, 38, 0.62);
+  --glass-2: rgba(22, 31, 50, 0.72);
+  --glass-3: rgba(24, 34, 54, 0.88);
+  --glass-dim: rgba(255, 255, 255, 0.07);
+  --glass-hover: rgba(255, 255, 255, 0.08);
+  --bubble-user-bg: rgba(22, 31, 50, 0.72);
+  --bubble-agent-bg: rgba(18, 26, 42, 0.72);
+
+  /* 显式压过第三方未分层 .dark（如 prompt-area/tailwind.css 的 0,1,0 默认值），特异度 (0,1,1) */
+  --radius: 14px;
+  --background: var(--glass-1);
+  --foreground: var(--ink-1);
+  --card: var(--glass-2);
+  --card-foreground: var(--ink-1);
+  --popover: var(--glass-3);
+  --popover-foreground: var(--ink-1);
+  --primary: var(--ink-primary);
+  --primary-foreground: var(--on-primary);
+  --secondary: var(--glass-2);
+  --secondary-foreground: var(--ink-1);
+  --muted: var(--hover-wash);
+  --muted-foreground: var(--ink-3);
+  --accent-foreground: var(--ink-1);
+  --destructive: var(--sem-danger);
+  --border: var(--line);
+  --input: var(--line-strong);
+  --ring: var(--accent-ring);
 }
 
-@property --sky-1 { syntax: "<color>"; inherits: false; initial-value: #6f9bc7; }
+/* 浅色高特异度桥接守卫（0,1,1）：稳压后续 styles.css 中 prompt-area/tailwind.css 的未分层 :root (0,1,0)，
+     同时置于 7 套 html[data-theme="..."] (0,1,1) 之前，让各主题的 --accent 等精准覆盖。 */
+html:not(.dark) {
+  --radius: 14px;
+  --background: var(--glass-1);
+  --foreground: var(--ink-1);
+  --card: var(--glass-2);
+  --card-foreground: var(--ink-1);
+  --popover: var(--glass-3);
+  --popover-foreground: var(--ink-1);
+  --primary: var(--ink-primary);
+  --primary-foreground: var(--on-primary);
+  --secondary: var(--glass-2);
+  --secondary-foreground: var(--ink-1);
+  --muted: var(--hover-wash);
+  --muted-foreground: var(--ink-3);
+  --accent: #2563eb;
+  --accent-foreground: var(--ink-1);
+  --destructive: var(--sem-danger);
+  --border: var(--line);
+  --input: var(--line-strong);
+  --ring: var(--accent-ring);
+}
 
-@property --sky-2 { syntax: "<color>"; inherits: false; initial-value: #9dbddc; }
+/* ========================================================================================
+   * 7 套精调色彩主题（浅/深双版，严格正交：只管色相/墨色/净色底，绝不改画布类型/材质/语义色）
+   * ======================================================================================== */
 
-@property --sky-3 { syntax: "<color>"; inherits: false; initial-value: #c9dbeb; }
+/* 1. 晴空（sky）：同 :root / html.dark 默认值，显式声明保持契约完整 */
+html[data-theme="sky"] {
+  --accent: #2563eb;
+  --accent-ink: #103486;
+  --accent-soft: rgba(37, 99, 235, 0.13);
+  --accent-ring: rgba(37, 99, 235, 0.34);
+  --surface-accent-tint: rgba(37, 99, 235, 0.045);
+}
+html.dark[data-theme="sky"] {
+  --accent: #74aeff;
+  --accent-ink: #c2ddff;
+  --accent-soft: rgba(116, 174, 255, 0.18);
+  --accent-ring: rgba(116, 174, 255, 0.42);
+  --surface-accent-tint: rgba(116, 174, 255, 0.06);
+}
 
-@property --sky-4 { syntax: "<color>"; inherits: false; initial-value: #e4ecf3; }
+/* 2. 晨雾（mist）：克制冷灰蓝，中性低饱和 */
+html[data-theme="mist"] {
+  --ink-1: #0d131f;
+  --ink-2: #1a2230;
+  --ink-3: #2a3444;
+  --ink-4: #434e60;
+  --ink-primary: #1f2937;
+  --ink-primary-hover: #334155;
+  --accent: #475569;
+  --accent-ink: #243040;
+  --accent-soft: rgba(71, 85, 105, 0.13);
+  --accent-ring: rgba(71, 85, 105, 0.34);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #e2e6ec 0%,
+    #edf0f4 50%,
+    #f6f7f9 100%
+  );
+  --canvas-pure-base: #edf0f4;
+  --canvas-scrim-rgb: 245 246 248;
+  --surface-tint-rgb: 252 253 254;
+  --surface-accent-tint: rgba(71, 85, 105, 0.035);
+  --surface-solid-panel: #f4f5f7;
+  --surface-solid-elevated: #f8f9fb;
+  --surface-solid-bubble: #f5f7f9;
+  --surface-solid-inset: #e8ebef;
+  --surface-solid-control: #eef0f4;
+}
+html.dark[data-theme="mist"] {
+  --ink-1: #f8fafc;
+  --ink-2: #eceff4;
+  --ink-3: #dce2ec;
+  --ink-4: #b3bdc9;
+  --ink-primary: #e5e9f0;
+  --ink-primary-hover: #ffffff;
+  --accent: #94a3b8;
+  --accent-ink: #dce4f0;
+  --accent-soft: rgba(148, 163, 184, 0.2);
+  --accent-ring: rgba(148, 163, 184, 0.42);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #111419 0%,
+    #171b22 52%,
+    #1e232c 100%
+  );
+  --canvas-pure-base: #171b22;
+  --canvas-scrim-rgb: 14 17 22;
+  --surface-tint-rgb: 22 26 33;
+  --surface-accent-tint: rgba(148, 163, 184, 0.05);
+  --surface-solid-panel: #1a1e26;
+  --surface-solid-elevated: #20252f;
+  --surface-solid-bubble: #1d222b;
+  --surface-solid-inset: #272d38;
+  --surface-solid-control: #242a35;
+}
 
-@property --sky-cloud { syntax: "<color>"; inherits: false; initial-value: rgba(255, 255, 255, 0.75); }
+/* 3. 青瓷（celadon）：润玉松青，清雅护眼 */
+html[data-theme="celadon"] {
+  --ink-1: #0a1a17;
+  --ink-2: #152b26;
+  --ink-3: #223d37;
+  --ink-4: #38554e;
+  --ink-primary: #10322b;
+  --ink-primary-hover: #19473e;
+  --accent: #0f766e;
+  --accent-ink: #074642;
+  --accent-soft: rgba(15, 118, 110, 0.13);
+  --accent-ring: rgba(15, 118, 110, 0.34);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #d7efe7 0%,
+    #e9f6f2 50%,
+    #f4fbf8 100%
+  );
+  --canvas-pure-base: #e9f6f2;
+  --canvas-scrim-rgb: 243 250 247;
+  --surface-tint-rgb: 251 255 253;
+  --surface-accent-tint: rgba(15, 118, 110, 0.045);
+  --surface-solid-panel: #f2f9f6;
+  --surface-solid-elevated: #f7fcfa;
+  --surface-solid-bubble: #f4faf7;
+  --surface-solid-inset: #e3f0eb;
+  --surface-solid-control: #eaf5f0;
+}
+html.dark[data-theme="celadon"] {
+  --ink-1: #f2fbf8;
+  --ink-2: #e3f5ef;
+  --ink-3: #d0ebe2;
+  --ink-4: #a7cbc0;
+  --ink-primary: #dff5ee;
+  --ink-primary-hover: #ffffff;
+  --accent: #4fd1b5;
+  --accent-ink: #a6f2df;
+  --accent-soft: rgba(79, 209, 181, 0.18);
+  --accent-ring: rgba(79, 209, 181, 0.42);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #081714 0%,
+    #0e221e 52%,
+    #142d28 100%
+  );
+  --canvas-pure-base: #0e221e;
+  --canvas-scrim-rgb: 7 20 17;
+  --surface-tint-rgb: 14 31 27;
+  --surface-accent-tint: rgba(79, 209, 181, 0.06);
+  --surface-solid-panel: #11221e;
+  --surface-solid-elevated: #162a25;
+  --surface-solid-bubble: #142622;
+  --surface-solid-inset: #1d342e;
+  --surface-solid-control: #1a302b;
+}
 
-@property --sky-glow { syntax: "<color>"; inherits: false; initial-value: rgba(255, 255, 255, 0); }
+/* 4. 落樱（sakura）：温润淡绯，柔和明净 */
+html[data-theme="sakura"] {
+  --ink-1: #210f17;
+  --ink-2: #331925;
+  --ink-3: #462535;
+  --ink-4: #5e3b4c;
+  --ink-primary: #3b1929;
+  --ink-primary-hover: #52243a;
+  --accent: #be3364;
+  --accent-ink: #7e193f;
+  --accent-soft: rgba(190, 51, 100, 0.13);
+  --accent-ring: rgba(190, 51, 100, 0.34);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #f8dfea 0%,
+    #fcedf3 50%,
+    #fdf6f9 100%
+  );
+  --canvas-pure-base: #fcedf3;
+  --canvas-scrim-rgb: 252 243 247;
+  --surface-tint-rgb: 255 252 254;
+  --surface-accent-tint: rgba(190, 51, 100, 0.045);
+  --surface-solid-panel: #fbf3f7;
+  --surface-solid-elevated: #fdf8fa;
+  --surface-solid-bubble: #fcf5f8;
+  --surface-solid-inset: #f2e4eb;
+  --surface-solid-control: #f6ebf0;
+}
+html.dark[data-theme="sakura"] {
+  --ink-1: #fdf5f8;
+  --ink-2: #f5e6ed;
+  --ink-3: #ead3de;
+  --ink-4: #ccb1bf;
+  --ink-primary: #f7e6ee;
+  --ink-primary-hover: #ffffff;
+  --accent: #f08ab0;
+  --accent-ink: #ffd1e2;
+  --accent-soft: rgba(240, 138, 176, 0.19);
+  --accent-ring: rgba(240, 138, 176, 0.42);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #1c0f16 0%,
+    #261520 52%,
+    #301c2a 100%
+  );
+  --canvas-pure-base: #261520;
+  --canvas-scrim-rgb: 24 12 19;
+  --surface-tint-rgb: 34 20 29;
+  --surface-accent-tint: rgba(240, 138, 176, 0.06);
+  --surface-solid-panel: #251721;
+  --surface-solid-elevated: #2d1c28;
+  --surface-solid-bubble: #291a24;
+  --surface-solid-inset: #362330;
+  --surface-solid-control: #32202c;
+}
 
-@property --sky-glow-x { syntax: "<percentage>"; inherits: false; initial-value: 50%; }
+/* 5. 琥珀（amber）：暖杏流金，沉稳书卷 */
+html[data-theme="amber"] {
+  --ink-1: #1c140c;
+  --ink-2: #2d2115;
+  --ink-3: #3f3020;
+  --ink-4: #564533;
+  --ink-primary: #33220f;
+  --ink-primary-hover: #4a3217;
+  --accent: #b45309;
+  --accent-ink: #6f2e06;
+  --accent-soft: rgba(180, 83, 9, 0.14);
+  --accent-ring: rgba(180, 83, 9, 0.34);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #f5e5cc 0%,
+    #faf0e1 50%,
+    #fcf8f1 100%
+  );
+  --canvas-pure-base: #faf0e1;
+  --canvas-scrim-rgb: 251 246 238;
+  --surface-tint-rgb: 255 253 249;
+  --surface-accent-tint: rgba(180, 83, 9, 0.045);
+  --surface-solid-panel: #faf5ec;
+  --surface-solid-elevated: #fdfaf5;
+  --surface-solid-bubble: #fbf7f0;
+  --surface-solid-inset: #efe6d8;
+  --surface-solid-control: #f4ece0;
+}
+html.dark[data-theme="amber"] {
+  --ink-1: #fcf8f2;
+  --ink-2: #f4ece0;
+  --ink-3: #e9dcc9;
+  --ink-4: #cbbca6;
+  --ink-primary: #f6ede0;
+  --ink-primary-hover: #ffffff;
+  --accent: #eab65c;
+  --accent-ink: #ffe2ad;
+  --accent-soft: rgba(234, 182, 92, 0.19);
+  --accent-ring: rgba(234, 182, 92, 0.42);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #17110b 0%,
+    #211910 52%,
+    #2b2116 100%
+  );
+  --canvas-pure-base: #211910;
+  --canvas-scrim-rgb: 20 15 10;
+  --surface-tint-rgb: 31 24 17;
+  --surface-accent-tint: rgba(234, 182, 92, 0.06);
+  --surface-solid-panel: #211a12;
+  --surface-solid-elevated: #282017;
+  --surface-solid-bubble: #241d15;
+  --surface-solid-inset: #31281d;
+  --surface-solid-control: #2d241a;
+}
 
-@property --sky-glow-y { syntax: "<percentage>"; inherits: false; initial-value: 20%; }
+/* 6. 暮紫（violet）：清冷紫罗兰，雅致层次 */
+html[data-theme="violet"] {
+  --ink-1: #161022;
+  --ink-2: #241b38;
+  --ink-3: #362a4f;
+  --ink-4: #4d3f68;
+  --ink-primary: #261942;
+  --ink-primary-hover: #38255e;
+  --accent: #6d3be0;
+  --accent-ink: #411b9e;
+  --accent-soft: rgba(109, 59, 224, 0.13);
+  --accent-ring: rgba(109, 59, 224, 0.34);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #e5dcf9 0%,
+    #f0ebfc 50%,
+    #f8f6fe 100%
+  );
+  --canvas-pure-base: #f0ebfc;
+  --canvas-scrim-rgb: 247 244 253;
+  --surface-tint-rgb: 253 252 255;
+  --surface-accent-tint: rgba(109, 59, 224, 0.045);
+  --surface-solid-panel: #f5f2fc;
+  --surface-solid-elevated: #faf8fe;
+  --surface-solid-bubble: #f7f4fd;
+  --surface-solid-inset: #e8e2f5;
+  --surface-solid-control: #efeaf9;
+}
+html.dark[data-theme="violet"] {
+  --ink-1: #f7f4fe;
+  --ink-2: #ece6fa;
+  --ink-3: #ded6f2;
+  --ink-4: #beb4d8;
+  --ink-primary: #eee8fb;
+  --ink-primary-hover: #ffffff;
+  --accent: #b896ff;
+  --accent-ink: #e4d6ff;
+  --accent-soft: rgba(184, 150, 255, 0.19);
+  --accent-ring: rgba(184, 150, 255, 0.42);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #130e1e 0%,
+    #1c152b 52%,
+    #241c38 100%
+  );
+  --canvas-pure-base: #1c152b;
+  --canvas-scrim-rgb: 16 12 26;
+  --surface-tint-rgb: 27 21 42;
+  --surface-accent-tint: rgba(184, 150, 255, 0.06);
+  --surface-solid-panel: #1c162b;
+  --surface-solid-elevated: #231c35;
+  --surface-solid-bubble: #201930;
+  --surface-solid-inset: #2c2341;
+  --surface-solid-control: #28203c;
+}
+
+/* 7. 素墨（mono）：纯粹高对比黑白灰，极致克制 */
+html[data-theme="mono"] {
+  --ink-1: #09090b;
+  --ink-2: #18181b;
+  --ink-3: #2d2d33;
+  --ink-4: #46464f;
+  --ink-primary: #09090b;
+  --ink-primary-hover: #27272a;
+  --accent: #18181b;
+  --accent-ink: #09090b;
+  --accent-soft: rgba(24, 24, 27, 0.11);
+  --accent-ring: rgba(24, 24, 27, 0.34);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #e4e4e7 0%,
+    #f1f1f3 50%,
+    #fafafa 100%
+  );
+  --canvas-pure-base: #f1f1f3;
+  --canvas-scrim-rgb: 248 248 249;
+  --surface-tint-rgb: 255 255 255;
+  --surface-accent-tint: rgba(24, 24, 27, 0.025);
+  --surface-solid-panel: #f5f5f6;
+  --surface-solid-elevated: #ffffff;
+  --surface-solid-bubble: #f7f7f8;
+  --surface-solid-inset: #e7e7ea;
+  --surface-solid-control: #eeeeef;
+}
+html.dark[data-theme="mono"] {
+  --ink-1: #fafafa;
+  --ink-2: #ebebee;
+  --ink-3: #dcdce2;
+  --ink-4: #bdbdc6;
+  --ink-on-accent: #09090b;
+  --ink-primary: #fafafa;
+  --ink-primary-hover: #ffffff;
+  --on-primary: #09090b;
+  --accent: #f4f4f5;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(244, 244, 245, 0.16);
+  --accent-ring: rgba(244, 244, 245, 0.42);
+  --canvas-pure-bg: linear-gradient(
+    165deg,
+    #09090b 0%,
+    #111114 52%,
+    #18181c 100%
+  );
+  --canvas-pure-base: #111114;
+  --canvas-scrim-rgb: 9 9 11;
+  --surface-tint-rgb: 22 22 26;
+  --surface-accent-tint: rgba(255, 255, 255, 0.03);
+  --surface-solid-panel: #161619;
+  --surface-solid-elevated: #1c1c20;
+  --surface-solid-bubble: #19191d;
+  --surface-solid-inset: #242429;
+  --surface-solid-control: #212126;
+}
+
+/* 壁纸模式下最淡辅助字自动抬高一级，守住全壁纸可读性 */
+html[data-canvas="wallpaper"] {
+  --ink-4: var(--ink-3);
+}
+
+/* ==========================================================================================
+ * ChisaBot 唯一背景画布层（Wave A · canvas.css）
+ *
+ * 严格三选一互斥：
+ *   html[data-canvas="pure"]      — 极简主题微渐变，零 GPU 动画，零 WebGL
+ *   html[data-canvas="sky"]       — WebGL #gl / #skyph 占位 + 单层轻薄天空护读幕
+ *   html[data-canvas="wallpaper"] — .chisabot-wallpaper-img（--canvas-blur）+ 全站唯一单层护眼薄幕（--canvas-scrim）
+ *
+ * 性能与门禁红线：
+ * - 彻底移除旧 body 6 层渐变、body::before 星空、.chisabot-ambient-orbs、.chisabot-wallpaper-dim
+ *   与双层叠幕，全站仅保留一层统一护眼薄幕；
+ * - 严禁给 body / body::before 写无条件 transition；仅在 html[data-sky-ease] 等短时态下过渡；
+ * - #sky-root 保持 contain: strict，--canvas-blur / --canvas-scrim 仅挂在 #sky-root 并仅在子树内继承；
+ * - 置为未分层顶层规则，确保不被 Tailwind @layer base 覆盖。
+ * ========================================================================================== */
 
 body {
   margin: 0;
   position: relative;
   min-width: 20rem;
   min-height: 100vh;
-  background:
-    radial-gradient(560px 560px at var(--sky-glow-x) var(--sky-glow-y), var(--sky-glow), transparent 62%),
-    radial-gradient(900px 380px at 18% 22%, var(--sky-cloud), transparent 70%),
-    radial-gradient(700px 300px at 72% 12%, color-mix(in srgb, var(--sky-cloud) 73%, transparent), transparent 70%),
-    radial-gradient(1100px 420px at 60% 78%, color-mix(in srgb, var(--sky-cloud) 93%, transparent), transparent 70%),
-    radial-gradient(600px 260px at 90% 60%, color-mix(in srgb, var(--sky-cloud) 60%, transparent), transparent 70%),
-    linear-gradient(180deg, var(--sky-1) 0%, var(--sky-2) 38%, var(--sky-3) 68%, var(--sky-4) 100%);
-  background-attachment: fixed;
-  background-color: var(--sky-2);
+  background: var(--canvas-pure-bg);
+  background-color: var(--canvas-pure-base);
   color: var(--foreground);
   font-family: var(--font);
   font-size: var(--fs-14);
@@ -234,29 +894,188 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-.dark body {
-  --sky-1: #0c1626;
-  --sky-2: #12203a;
-  --sky-3: #172a46;
-  --sky-4: #1b304d;
-  --sky-cloud: rgba(110, 150, 215, 0.18);
-}
-
-body::before {
-  content: "";
+#sky-root {
+  --canvas-blur: 0px;
+  --canvas-scrim: 0.35;
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: 0;
   pointer-events: none;
-  opacity: var(--sky-stars, 0);
-  background-image:
-    radial-gradient(1.4px 1.4px at 37px 53px, #fff 40%, transparent 100%),
-    radial-gradient(1px 1px at 151px 97px, #fff 40%, transparent 100%),
-    radial-gradient(1.6px 1.6px at 263px 181px, #fff 40%, transparent 100%),
-    radial-gradient(1px 1px at 89px 301px, rgba(255, 255, 255, 0.85) 40%, transparent 100%),
-    radial-gradient(1.2px 1.2px at 401px 59px, #fff 40%, transparent 100%),
-    radial-gradient(1.8px 1.8px at 317px 419px, rgba(255, 250, 235, 0.95) 40%, transparent 100%);
-  background-size: 211px 173px, 293px 241px, 379px 307px, 457px 389px, 547px 463px, 613px 521px;
-  mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.55) 45%, transparent 82%);
+  overflow: hidden;
+  contain: strict;
+  background: var(--canvas-pure-bg);
 }
 
+#sky-root #gl {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#sky-root #skyfreeze {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#sky-root #skyfreeze.on {
+  opacity: 1;
+}
+
+#sky-root #skyph {
+  position: absolute;
+  inset: 0;
+  background: var(--canvas-pure-bg);
+  transition: opacity 0.22s ease;
+}
+
+html[data-sky-painted] #sky-root #skyph {
+  opacity: 0;
+}
+
+#sky-root #glfail {
+  display: none;
+}
+
+/* ── 1. 净色画布（pure）：纯主题微渐变，隐藏 WebGL 与壁纸节点，零额外薄幕 ── */
+html[data-canvas="pure"] #sky-root #gl,
+html[data-canvas="pure"] #sky-root #skyfreeze,
+html[data-canvas="pure"] #sky-root .chisabot-wallpaper {
+  display: none;
+}
+html[data-canvas="pure"] #sky-root #skyph {
+  opacity: 1;
+}
+html[data-canvas="pure"] #sky-root::after {
+  content: none;
+}
+
+/* ── 2. 动态天空画布（sky）：WebGL 天空 + 单层轻薄护读幕 ── */
+html[data-canvas="sky"] #sky-root .chisabot-wallpaper {
+  display: none;
+}
+html[data-canvas="sky"] #sky-root::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--sky-veil-bg);
+}
+/* 静止动态背景 / 天空停用：停画 WebGL，露出主题静态渐变占位 */
+html:is([data-static-bg="on"], [data-sky-off]) #sky-root #gl {
+  visibility: hidden;
+}
+html:is([data-static-bg="on"], [data-sky-off]) #sky-root #skyph {
+  opacity: 1;
+}
+
+/* ── 3. 壁纸画布（wallpaper）：单图（读 #sky-root 的 --canvas-blur）+ 全站唯一护眼薄幕（--canvas-scrim） ── */
+html[data-canvas="wallpaper"] #sky-root #gl,
+html[data-canvas="wallpaper"] #sky-root #skyfreeze,
+html[data-canvas="wallpaper"] #sky-root #skyph {
+  display: none;
+}
+
+.chisabot-wallpaper {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.chisabot-wallpaper-img {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  filter: blur(var(--canvas-blur, 0px));
+  transition: transform 0.25s ease;
+}
+
+/* 当启用壁纸模糊时轻微放大防边缘露白（仅依赖 --canvas-blur > 0 场景由组件/属性标记） */
+.chisabot-wallpaper-img[data-blur="on"],
+.chisabot-wallpaper-img[data-blur] {
+  inset: -24px;
+}
+
+/* 全站唯一壁纸护眼薄幕：只画这唯一一层，严禁卡片/气泡或 .chisabot-wallpaper::after 再叠第二层 */
+html[data-canvas="wallpaper"] #sky-root::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: rgb(var(--canvas-scrim-rgb) / var(--canvas-scrim, 0.35));
+}
+
+/* 仅在显式短时态 html[data-sky-ease] 下对画布占位做柔和过渡，绝不触碰 body 无条件 transition */
+html[data-sky-ease] #sky-root #skyph {
+  transition: opacity 0.6s ease;
+}
+
+/* 壁纸双图层交叉淡入（在 #sky-root contain: strict 内，零主线程重排） */
+@keyframes ch-wallpaper-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.chisabot-wallpaper-img-prev {
+  z-index: 0;
+}
+.chisabot-wallpaper-img-enter {
+  z-index: 1;
+  animation: ch-wallpaper-fade var(--dur-3) var(--ease-out);
+}
+
+/* 主工作台、登录与引导舞台浮于 #sky-root 之上，并消除祖先动画导致的 Backdrop Root 截断 */
+.glass-shell,
+.sign-stage,
+.onb-stage {
+  position: relative;
+  z-index: 1;
+}
+.glass-shell,
+[data-slot="sidebar-wrapper"],
+.glass-side-full,
+.glass-mini,
+.page,
+.jr-el,
+.live-panel {
+  animation: none;
+}
+
+:root {
+  --dur-0: 100ms;        /* 按下、菜单项高亮、Tooltip 退出 */
+  --dur-1: 150ms;        /* 悬停、颜色、焦点、Tooltip 出现 */
+  --dur-2: 200ms;        /* 状态切换、菜单 / 弹出层 / Select 进入、Tab 滑块、列表项进场 */
+  --dur-3: 260ms;        /* 弹窗、抽屉、toast 进入、壁纸交叉淡入 */
+  --dur-exit: 150ms;     /* 所有退出（菜单、弹窗、抽屉、toast）都比进入快 */
+  --dur-collapse: 260ms; /* 左右栏收起 / 展开、网格折叠展开 */
+  --dur-shimmer: 1400ms; /* 骨架流光一个周期 */
+  --dur-success-hold: 1500ms; /* 异步按钮 ✓ 停留（实现见 async-action.ts） */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);    /* 进入、展开、滑动（与 lib/motion.ts EASE_OUT 1:1 对齐） */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);          /* 退出、收起到消失 */
+  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);       /* 原地变化（颜色、底色、边框） */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1); /* ✓ 对号弹出、小徽标弹入，只用于小元素 */
+  --rise-sm: 4px;        /* 菜单、弹出层、列表项进入的位移 */
+  --rise-md: 8px;        /* 弹窗、toast、页面进入的位移 */
+  --scale-pop: 0.96;     /* 菜单 / 弹窗进入起始缩放 */
+  --scale-exit: 0.98;    /* 菜单 / 弹窗退出目标缩放 */
+  --scale-press: 0.97;   /* 按下 */
+  --glass-collapse-ms: var(--dur-collapse);
+  --glass-collapse-ease: var(--ease-out);
+}
+
+.dark { --brand-ribbon: #ff4d5a; --brand-ocean: #4f9fc4; }

@@ -1,19 +1,21 @@
 import {
   IconAlarm,
+  IconDeviceDesktop,
   IconInbox,
   IconListCheck,
   IconLogout,
   IconMoon,
   IconQrcode,
   IconSettings,
+  IconSun,
   IconUserCircle,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { type ReactNode, type RefObject, useRef, useState } from "react";
 import { GlassAvatar } from "@/components/layout/glass-topbar";
-import { useTheme } from "@/components/theme-provider";
 import { useOpenTaskCenter } from "@/components/task-center/task-center-provider";
+import { useTheme } from "@/components/theme-provider";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,16 +25,32 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { openAccountDialog, preloadAccountDialogs } from "./account-dialogs";
-import { Switch } from "@/components/ui/switch";
+import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { signOutMutationOptions } from "@/lib/auth/mutations";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { usePendingActionCount } from "@/lib/pending-actions";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
+import type { AppearanceMode } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { openAccountDialog, preloadAccountDialogs } from "./account-dialogs";
+
+const ACCOUNT_MODE_OPTIONS: readonly {
+  value: AppearanceMode;
+  shortLabel: string;
+  label: string;
+}[] = [
+  { value: "system", shortLabel: "系统", label: "跟随系统" },
+  { value: "light", shortLabel: "浅色", label: "浅色" },
+  { value: "dark", shortLabel: "深色", label: "深色" },
+];
+
+function nextAppearanceMode(mode: AppearanceMode): AppearanceMode {
+  if (mode === "system") return "light";
+  if (mode === "light") return "dark";
+  return "system";
+}
 
 
 /**
@@ -51,7 +69,7 @@ export function AccountMenu({
   anchorRef?: RefObject<HTMLElement | null>;
 }) {
   const { data: user } = useQuery(currentUserQueryOptions());
-  const { dark, setDark } = useTheme();
+  const { mode, setMode } = useTheme();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const router = useRouter();
@@ -201,17 +219,48 @@ export function AccountMenu({
         </DropdownMenuGroup>
         <DropdownMenuSeparator className="glass-sep" />
         <DropdownMenuGroup className="py-1">
-          <DropdownMenuItem className="glass-mi" closeOnClick={false} onClick={() => setDark(!dark)}>
+          <DropdownMenuItem
+            className="glass-mi"
+            closeOnClick={false}
+            data-testid="account-mode-row"
+            onClick={() => setMode(nextAppearanceMode(mode))}
+          >
             <span className="mi-lead">
-              <IconMoon className={icon} />
+              {mode === "system" ? (
+                <IconDeviceDesktop className={icon} />
+              ) : mode === "light" ? (
+                <IconSun className={icon} />
+              ) : (
+                <IconMoon className={icon} />
+              )}
             </span>
-            <span className="t-line min-w-0 flex-1">{"暗色外观"}</span>
-            <Switch
-              aria-label={"暗色外观"}
-              checked={dark}
-              onCheckedChange={setDark}
+            <span className="t-line min-w-0 flex-1">{"外观"}</span>
+            <fieldset
+              aria-label={"外观模式"}
+              className="sg-segmented m-0 border-0 p-0.5"
+              data-surface="inset"
               onClick={(event) => event.stopPropagation()}
-            />
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              {ACCOUNT_MODE_OPTIONS.map((opt) => (
+                <button
+                  aria-label={opt.label}
+                  aria-pressed={mode === opt.value}
+                  className="sg-segmented-item"
+                  data-testid={`account-mode-${opt.value}`}
+                  key={opt.value}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMode(opt.value);
+                  }}
+                  style={{ height: 24, padding: "0 8px", fontSize: 12 }}
+                  title={opt.label}
+                  type="button"
+                >
+                  {opt.shortLabel}
+                </button>
+              ))}
+            </fieldset>
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator className="glass-sep" />
@@ -258,7 +307,7 @@ function Row({
 export function AccountCard() {
   const card = useRef<HTMLDivElement>(null);
   return (
-    <div className="glass-card acct-card" ref={card}>
+    <div className="glass-card acct-card" data-surface="panel" ref={card}>
       <AccountMenu anchorRef={card} />
     </div>
   );

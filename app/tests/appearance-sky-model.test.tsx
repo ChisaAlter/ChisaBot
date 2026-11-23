@@ -7,29 +7,30 @@ import {
   test,
 } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { resolveSkyTarget } from "../src/components/sky-background";
 import {
   flushAppearanceWrites,
-  getAppearanceState,
-  HARK_SCENE_INFO,
-  PALETTE_STORAGE_KEY,
+  getAppearanceConfig,
   reloadAppearanceFromStorage,
-  resetAppearanceDefaults,
-  resolveEffectiveHarkScene,
-  resolveSkyReadability,
-  setHarkSkyScene,
-  setSkySource,
-  setThemeHalf,
-  setWallpaperPreset,
-  SKY_SOURCE_STORAGE_KEY,
-  usesThemeGradientSky,
+  resetAppearance,
+  resolveAutoSkyHour,
+  SKY_SCENE_TO_HARK_INDEX,
+  setCanvas,
+  setMaterial,
+  setSkyScene,
+  setSkyWeather,
+  setTheme,
+  setWallpaperSource,
+  shouldFetchLiveWeather,
 } from "../src/lib/appearance";
 import { settleReactWork } from "./settle-react-work";
 
 /**
- * CB-134 → CB-140 外观模型（模式 × 主题族 × 背景）的契约测试：
- * - 主题族与天空解耦，背景三选一互斥；点族卡的半边只写对应族槽、不碰天空；
- * - 昼 / 夜场景按外观明暗自动配对（任何存储路径都造不出错配天空）；
- * - --sky-lift / --sky-muted 由有效天空明暗真实驱动。
+ * V2 四轴正交背景画布与天空天气引擎契约：
+ *  - 背景三选一严格互斥（pure / sky / wallpaper），切主题或材质绝不改变画布类型；
+ *  - 4 个固定天空时刻（dawn=11 / day=0 / dusk=6 / night=4）严格还原用户所选，绝不做静默昼夜调包；
+ *  - 默认 `sky / auto` 关闭实时天气（0 Open-Meteo 网络请求），仅按本机时间沿柔和弧线演化；
+ *  - 开启实时天气才允许拉取 Open-Meteo，切到固定时刻或其他画布立即关闭天气请求。
  */
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
@@ -38,187 +39,156 @@ afterAll(async () => {
   await GlobalRegistrator.unregister();
 });
 
-beforeEach(() => {
-  resetAppearanceDefaults();
+beforeEach(async () => {
+  window.localStorage.clear();
+  resetAppearance();
   flushAppearanceWrites();
   window.localStorage.clear();
+  await reloadAppearanceFromStorage();
 });
 
-describe("天空来源（skySource）", () => {
-  test("老存档迁移：皮肤非 default 且没有来源键 → 主题渐变；default → Hark 引擎", () => {
-    window.localStorage.setItem(PALETTE_STORAGE_KEY, "aurora");
-    window.localStorage.removeItem(SKY_SOURCE_STORAGE_KEY);
-    void reloadAppearanceFromStorage();
-    expect(getAppearanceState().skySource).toBe("theme");
-    expect(usesThemeGradientSky(getAppearanceState())).toBe(true);
+describe("四轴正交与背景画布互斥三选一", () => {
+  test("旧存档迁移：sky-source=theme → pure；hark-scene=live → sky/auto + 开启天气", async () => {
+    window.localStorage.setItem("chisabot-sky-source", "theme");
+    await reloadAppearanceFromStorage();
+    expect(getAppearanceConfig().canvas).toEqual({ kind: "pure" });
 
-    window.localStorage.setItem(PALETTE_STORAGE_KEY, "default");
-    window.localStorage.removeItem(SKY_SOURCE_STORAGE_KEY);
-    void reloadAppearanceFromStorage();
-    expect(getAppearanceState().skySource).toBe("hark");
-    expect(usesThemeGradientSky(getAppearanceState())).toBe(false);
+    window.localStorage.clear();
+    window.localStorage.setItem("chisabot-sky-source", "hark");
+    window.localStorage.setItem("chisabot-hark-scene", "live");
+    await reloadAppearanceFromStorage();
+    expect(getAppearanceConfig().canvas).toEqual({
+      kind: "sky",
+      scene: "auto",
+      weather: { enabled: true, city: null },
+    });
+    expect(shouldFetchLiveWeather(getAppearanceConfig())).toBe(true);
   });
 
-  test("已存来源键时按存的读，不再按皮肤推", () => {
-    window.localStorage.setItem(PALETTE_STORAGE_KEY, "aurora");
-    window.localStorage.setItem(SKY_SOURCE_STORAGE_KEY, "hark");
-    void reloadAppearanceFromStorage();
-    expect(getAppearanceState().skySource).toBe("hark");
-  });
+  test("切换色彩主题或界面材质不会劫持或改变当前背景画布", () => {
+    setCanvas({ kind: "pure" });
+    setTheme("sakura");
+    setMaterial("clear");
+    expect(getAppearanceConfig().canvas).toEqual({ kind: "pure" });
 
-  test("点族卡半边：只写对应族槽，天空来源与壁纸都不动", () => {
-    setHarkSkyScene("0");
-    expect(getAppearanceState().skySource).toBe("hark");
-    setThemeHalf("light", "sakura");
-    expect(getAppearanceState().familyLight).toBe("sakura");
-    expect(getAppearanceState().familyDark).toBe("azure");
-    // 选族不再劫持天空：hark 引擎照常跑，主题渐变只是备选
-    expect(getAppearanceState().skySource).toBe("hark");
-
-    setWallpaperPreset("waterlily-pond");
-    setThemeHalf("dark", "celadon");
-    expect(getAppearanceState().familyDark).toBe("celadon");
-    expect(getAppearanceState().wallpaperId).toBe("waterlily-pond");
-    expect(getAppearanceState().skySource).toBe("hark");
-  });
-
-  test("点天象卡：切到 Hark 引擎并退出壁纸", () => {
-    setWallpaperPreset("fuji-sakura");
-    setHarkSkyScene("6");
-    expect(getAppearanceState().skySource).toBe("hark");
-    expect(getAppearanceState().wallpaperId).toBe("none");
-  });
-
-  test("主题天空卡：切回主题渐变并退出壁纸", () => {
-    setWallpaperPreset("red-maple");
-    setSkySource("theme");
-    expect(getAppearanceState().skySource).toBe("theme");
-    expect(getAppearanceState().wallpaperId).toBe("none");
-  });
-
-  test("恢复默认 → Hark 引擎 + auto", () => {
-    setSkySource("theme");
-    resetAppearanceDefaults();
-    expect(getAppearanceState().skySource).toBe("hark");
-    expect(getAppearanceState().harkScene).toBe("auto");
-  });
-});
-
-describe("昼夜场景配对", () => {
-  test("浅色外观下夜景自动落到黄昏 / 雨景配对", () => {
-    setHarkSkyScene("4"); // 柏林夜
-    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(11);
-    expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe(4);
-
-    setHarkSkyScene("2"); // 雷克雅未克午夜
-    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(1);
-
-    setHarkSkyScene("10"); // 迈阿密风暴
-    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(3);
-  });
-
-  test("深色外观下日景自动落到夜景配对", () => {
-    setHarkSkyScene("0"); // Palo Alto 正午
-    expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe(4);
-    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(0);
-
-    setHarkSkyScene("5"); // 太浩湖雪霁
-    expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe(2);
-  });
-
-  test("晨昏场景两种外观都直接呈现，live 不配对", () => {
-    for (const scene of ["1", "6", "8", "11"] as const) {
-      setHarkSkyScene(scene);
-      expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(
-        Number(scene),
-      );
-      expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe(
-        Number(scene),
-      );
+    setWallpaperSource("waterlily-pond");
+    setTheme("celadon");
+    setMaterial("solid");
+    const afterWallpaper = getAppearanceConfig();
+    expect(afterWallpaper.canvas.kind).toBe("wallpaper");
+    if (afterWallpaper.canvas.kind === "wallpaper") {
+      expect(afterWallpaper.canvas.source).toBe("waterlily-pond");
     }
-    setHarkSkyScene("live");
-    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe("live");
-    expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe("live");
+
+    setSkyScene("dusk");
+    setTheme("violet");
+    expect(getAppearanceConfig().canvas).toEqual({
+      kind: "sky",
+      scene: "dusk",
+      weather: { enabled: false, city: null },
+    });
   });
 
-  test("配对目标本身不触发二次配对（配对图无环）", () => {
-    for (const [i, info] of HARK_SCENE_INFO.entries()) {
-      if (info.lightPair !== null) {
-        expect(HARK_SCENE_INFO[info.lightPair].daylight).not.toBe("night");
-      }
-      if (info.darkPair !== null) {
-        expect(HARK_SCENE_INFO[info.darkPair].daylight).not.toBe("day");
-      }
-      expect(info.lightPair).not.toBe(i);
-      expect(info.darkPair).not.toBe(i);
+  test("切换壁纸 / 天空 / 净色严格互斥，恢复默认回到动态天空 auto 且关闭天气", () => {
+    setWallpaperSource("fuji-sakura");
+    expect(getAppearanceConfig().canvas.kind).toBe("wallpaper");
+
+    setSkyScene("dawn");
+    expect(getAppearanceConfig().canvas).toEqual({
+      kind: "sky",
+      scene: "dawn",
+      weather: { enabled: false, city: null },
+    });
+
+    setCanvas({ kind: "pure" });
+    expect(getAppearanceConfig().canvas).toEqual({ kind: "pure" });
+
+    resetAppearance();
+    expect(getAppearanceConfig().canvas).toEqual({
+      kind: "sky",
+      scene: "auto",
+      weather: { enabled: false, city: null },
+    });
+    expect(shouldFetchLiveWeather(getAppearanceConfig())).toBe(false);
+  });
+});
+
+describe("4 固定时刻精确映射（零静默昼夜调包）与实时天气守门", () => {
+  test("dawn / day / dusk / night 在浅色与深色下都精确映射到 11 / 0 / 6 / 4", () => {
+    for (const [scene, harkIndex] of Object.entries(SKY_SCENE_TO_HARK_INDEX) as [
+      "dawn" | "day" | "dusk" | "night",
+      number,
+    ][]) {
+      setSkyScene(scene);
+      const cfg = getAppearanceConfig();
+      expect(resolveSkyTarget(cfg, false)).toEqual({
+        kind: "fixed",
+        scene,
+        harkIndex,
+      });
+      expect(resolveSkyTarget(cfg, true)).toEqual({
+        kind: "fixed",
+        scene,
+        harkIndex,
+      });
+      expect(shouldFetchLiveWeather(cfg)).toBe(false);
     }
   });
-});
 
-describe("主题族不绑定外观模式", () => {
-  test("选族不切外观模式（CB-134 的明暗绑定皮肤已被双槽独立族取代）", () => {
-    // 任何族两个模式的 seed 都成立，选谁都不会强制翻转 dark——
-    // 「mono 深色半边的黑夜观感」用「深色槽选 mono」表达，不再靠 boundMode。
-    const darkBefore = document.documentElement.classList.contains("dark");
-    setThemeHalf("light", "mono");
-    setThemeHalf("dark", "mono");
-    expect(document.documentElement.classList.contains("dark")).toBe(
-      darkBefore,
-    );
-    expect(getAppearanceState().familyLight).toBe("mono");
-    expect(getAppearanceState().familyDark).toBe("mono");
+  test("auto 关闭天气时按本机时间沿浅色昼弧线 / 深色夜弧线演化，严格 0 天气请求", () => {
+    setSkyScene("auto");
+    const cfg = getAppearanceConfig();
+    expect(shouldFetchLiveWeather(cfg)).toBe(false);
+
+    // 浅色：任何本机时刻都保持在明亮昼/晨昏区间 [6, 18.5]
+    for (const h of [0, 3, 9, 14, 21, 23.5]) {
+      const resolved = resolveAutoSkyHour(h, false);
+      expect(resolved).toBeGreaterThanOrEqual(6);
+      expect(resolved).toBeLessThanOrEqual(18.5);
+    }
+
+    // 深色：任何本机时刻都保持在暮/星夜区间 [18.5..24) ∪ [0..6)
+    for (const h of [0, 3, 9, 14, 19, 23]) {
+      const resolved = resolveAutoSkyHour(h, true);
+      expect(resolved >= 18.5 || resolved < 6).toBe(true);
+    }
+
+    const noon = new Date(2026, 5, 1, 12, 0, 0);
+    expect(resolveSkyTarget(cfg, false, noon)).toEqual({
+      kind: "auto-time",
+      hour: 12,
+    });
+    const darkNoon = resolveSkyTarget(cfg, true, noon);
+    expect(darkNoon.kind).toBe("auto-time");
   });
 
-  test("auto 场景跟随当前族 seed：seed.scene 经昼夜配对后呈现", () => {
-    setHarkSkyScene("auto");
-    // azure 浅色 seed.scene = 0（昼景）→ 浅外观直接呈现
-    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(0);
-    // azure 深色 seed.scene = 4（夜景）→ 深外观直接呈现
-    expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe(4);
-    setThemeHalf("dark", "celadon");
-    // celadon 深色 seed.scene = 5（太浩湖雪霁）→ 日景在深外观下配对到 2（雷克雅未克夜）
-    expect(resolveEffectiveHarkScene(getAppearanceState(), true)).toBe(2);
-    setThemeHalf("light", "violet");
-    // violet 浅色 seed.scene = 2 → 夜景在浅外观下配对到 1（纽约日落）
-    expect(resolveEffectiveHarkScene(getAppearanceState(), false)).toBe(1);
-  });
-});
+  test("开启实时天气仅在 sky/auto 生效，支持保存城市；切固定时刻或非天空画布自动停用天气请求", () => {
+    setSkyWeather({ enabled: true, city: "杭州" });
+    let cfg = getAppearanceConfig();
+    expect(shouldFetchLiveWeather(cfg)).toBe(true);
+    expect(resolveSkyTarget(cfg, false)).toEqual({
+      kind: "weather",
+      city: "杭州",
+    });
 
-describe("浅色可读性旋钮（--sky-lift / --sky-muted）", () => {
-  test("深色 / 壁纸 / 主题渐变下不需要旋钮（返回 null）", () => {
-    setHarkSkyScene("6");
-    expect(resolveSkyReadability(getAppearanceState(), true)).toBeNull();
+    // 切固定时刻自动停用天气
+    setSkyScene("night");
+    cfg = getAppearanceConfig();
+    expect(shouldFetchLiveWeather(cfg)).toBe(false);
+    expect(resolveSkyTarget(cfg, false)).toEqual({
+      kind: "fixed",
+      scene: "night",
+      harkIndex: 4,
+    });
 
-    setWallpaperPreset("snow-river");
-    expect(resolveSkyReadability(getAppearanceState(), false)).toBeNull();
-
-    setWallpaperPreset("none");
-    setSkySource("theme");
-    expect(resolveSkyReadability(getAppearanceState(), false)).toBeNull();
-  });
-
-  test("浅色 + 昼景：旋钮为 0；浅色 + 晨昏：加厚且次要文字加深", () => {
-    setHarkSkyScene("0"); // Palo Alto 正午，darkness 0.15
-    const day = resolveSkyReadability(getAppearanceState(), false);
-    expect(day).not.toBeNull();
-    expect(day?.lift).toBe(0);
-    expect(day?.muted).toBe("#5f6673");
-
-    setHarkSkyScene("6"); // 凤凰城黄金时刻，darkness 0.45
-    const dusk = resolveSkyReadability(getAppearanceState(), false);
-    expect(dusk).not.toBeNull();
-    expect(dusk?.lift).toBeGreaterThan(0);
-    expect(dusk?.lift).toBeLessThanOrEqual(0.14);
-    expect(dusk?.muted).not.toBe("#5f6673");
-  });
-
-  test("浅色 + live：按本机时间给出旋钮值", () => {
-    setHarkSkyScene("live");
-    const live = resolveSkyReadability(getAppearanceState(), false);
-    expect(live).not.toBeNull();
-    expect(live?.lift).toBeGreaterThanOrEqual(0);
-    expect(live?.lift).toBeLessThanOrEqual(0.14);
-    // computeSky 在分钟刻度间插值，muted 可能是 hex 或 rgba()，只要是有效颜色值即可
-    expect(live?.muted).toMatch(/^(#[0-9a-f]{6}|rgba?\([\d.,\s]+\))$/i);
+    // 非天空画布返回 off
+    setCanvas({ kind: "pure" });
+    expect(resolveSkyTarget(getAppearanceConfig(), false)).toEqual({
+      kind: "off",
+    });
+    setWallpaperSource("snow-river");
+    expect(resolveSkyTarget(getAppearanceConfig(), false)).toEqual({
+      kind: "off",
+    });
   });
 });

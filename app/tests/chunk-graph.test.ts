@@ -150,10 +150,15 @@ test("first-screen bundle boundaries stay free of Zod, liquid-glass, motion barr
   expect(railSrc).not.toMatch(/from\s+["']\.\/tasks-rail-card["']/);
   expect(railSrc).toContain('import("./tasks-rail-card")');
 
-  // 3. liquid-glass 仅按需动态加载，默认 mist 零加载
+  // 3. 液态玻璃重型模块已彻底下线，sky-background 零引用 liquid-glass
   const skySrc = read("app/src/components/sky-background.tsx");
-  expect(skySrc).not.toMatch(/from\s+["']@\/lib\/liquid-glass["']/);
-  expect(skySrc).toContain('import("@/lib/liquid-glass")');
+  expect(skySrc).not.toContain("liquid-glass");
+  expect(
+    fs.existsSync(path.join(import.meta.dir, "../src/lib/liquid-glass.ts")),
+  ).toBe(false);
+  expect(
+    fs.existsSync(path.join(import.meta.dir, "../src/lib/sky-snapshot.ts")),
+  ).toBe(false);
 
   // 4. hooks 桶不 re-export useVoiceCall，切断 motion-dom 链；__root 不重复导入 Inter 且低频提示走 AfterIdle
   expect(read("app/src/hooks/index.ts")).not.toContain("use-voice-call");

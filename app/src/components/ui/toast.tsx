@@ -122,6 +122,7 @@ export function Toaster() {
             className="glass-toast"
             data-kind={item.kind}
             data-leaving={item.leaving ? "true" : undefined}
+            data-surface="elevated"
             key={item.id}
             role={item.kind === "error" ? "alert" : "status"}
           >

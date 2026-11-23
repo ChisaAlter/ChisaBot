@@ -43,6 +43,7 @@ function PopoverContent({
             className,
           )}
           data-slot="popover-content"
+          data-surface="elevated"
           {...props}
         />
       </PopoverPrimitive.Positioner>

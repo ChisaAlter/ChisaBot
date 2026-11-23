@@ -192,6 +192,7 @@ export function BookmarksBar({
   ) => (
     <div
       className="bm-pop bm-menu"
+      data-surface="elevated"
       data-leaving={leaving ? "true" : undefined}
       onAnimationEnd={(event) => {
         if (leaving && event.target === event.currentTarget) onExited();
@@ -254,6 +255,7 @@ export function BookmarksBar({
           {dropdownPresence.mounted ? (
             <div
               className="bm-pop bm-menu bm-drop-list"
+              data-surface="elevated"
               data-leaving={!dropdownOpen ? "true" : undefined}
               onAnimationEnd={(event) => {
                 if (!dropdownOpen && event.target === event.currentTarget) {
@@ -459,6 +461,7 @@ function BookmarkManager({
       aria-label={"管理收藏夹"}
       aria-modal="false"
       className="bm-pop bm-manager"
+      data-surface="elevated"
       data-leaving={leaving ? "true" : undefined}
       onAnimationEnd={(event) => {
         if (leaving && event.target === event.currentTarget) onExited();

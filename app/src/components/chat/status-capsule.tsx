@@ -49,6 +49,7 @@ export function StatusCapsule({
     <div
       aria-hidden={leaving || undefined}
       className="rs-capsule"
+      data-surface="bubble"
       data-leaving={leaving ? "true" : undefined}
       data-state="live"
       data-testid={leaving ? undefined : testId}

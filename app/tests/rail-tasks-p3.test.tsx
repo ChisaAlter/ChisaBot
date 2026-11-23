@@ -50,7 +50,14 @@ import type {
   TaskCenterTask,
 } from "../../shared/task-center";
 import type { WorkflowRunView } from "../../shared/workflows";
-import { FAMILY_IDS, lastDecl, stylesCss } from "./contrast-model";
+import {
+  FAMILY_IDS,
+  lastDecl,
+  materialsCss,
+  stylesCss,
+  tokenColor,
+  tokensCss,
+} from "./contrast-model";
 import { settleReactWork } from "./settle-react-work";
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
@@ -357,12 +364,17 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
     expect(ruleBody(".task-rail-status svg")).toContain(
       "color: var(--task-tone-icon);",
     );
-    expect(lastDecl(railCss, ":root", "--task-info")).toBe(
-      lastDecl(stylesCss, ":root", "--accent-blue-ink"),
-    );
-    expect(lastDecl(railCss, ".dark", "--task-info")).toBe(
-      lastDecl(stylesCss, ".dark", "--accent-blue-ink"),
-    );
+    // --task-info 统一托管于 tokens.css，绝不随主题改写
+    expect(lastDecl(tokensCss, ":root", "--task-info")).toBeTruthy();
+    expect(lastDecl(tokensCss, "html.dark", "--task-info")).toBeTruthy();
+    for (const id of FAMILY_IDS) {
+      expect(
+        lastDecl(tokensCss, `html[data-theme="${id}"]`, "--task-info"),
+      ).toBeUndefined();
+      expect(
+        lastDecl(tokensCss, `html.dark[data-theme="${id}"]`, "--task-info"),
+      ).toBeUndefined();
+    }
   });
 
   test("浅色 / 深色 × 默认与 7 种配色 × 5 种色调，在最差的卡片底色上都 ≥ 4.5:1", () => {
@@ -409,10 +421,10 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
     const failures: string[] = [];
     let worst = Number.POSITIVE_INFINITY;
     for (const mode of modes) {
-      const token = (name: string) => {
-        const v = lastDecl(stylesCss, mode.root, name);
-        if (!v) throw new Error(`${mode.root} ${name} missing`);
-        return hex(v);
+      const scheme = mode.name as "light" | "dark";
+      const token = (name: string): RGB => {
+        const [r, g, b] = tokenColor("sky", scheme, name);
+        return [r, g, b];
       };
       for (const inkHex of mode.inks) {
         const ink = hex(inkHex);
@@ -421,8 +433,8 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
           mode.name === "light" ? [255, 255, 255] : [16, 25, 44],
           0.76,
         );
-        // 信息蓝固定用 --task-info，不跟配色改写 --accent-blue-ink。
-        const info = hex(lastDecl(railCss, mode.root, "--task-info")!);
+        // 信息蓝固定用 --task-info，不跟主题改写 --accent-ink。
+        const info = token("--task-info");
         const tones: [string, RGB][] = [
           ["info", info],
           ["warning", mix(token("--warn"), ink, toneMix("warning", "--warn"))],
@@ -502,10 +514,10 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
     const failures: string[] = [];
     let worst = Number.POSITIVE_INFINITY;
     for (const mode of modes) {
-      const token = (name: string) => {
-        const v = lastDecl(stylesCss, mode.root, name);
-        if (!v) throw new Error(`${mode.root} ${name} missing`);
-        return hex(v);
+      const scheme = mode.name as "light" | "dark";
+      const token = (name: string): RGB => {
+        const [r, g, b] = tokenColor("sky", scheme, name);
+        return [r, g, b];
       };
       for (const inkHex of mode.inks) {
         const ink = hex(inkHex);
@@ -515,7 +527,7 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
           0.76,
         );
         const tones: [string, RGB][] = [
-          ["info", hex(lastDecl(railCss, mode.root, "--task-info")!)],
+          ["info", token("--task-info")],
           ["warning", mix(token("--warn"), ink, toneMix("warning", "--warn"))],
           [
             "success",
@@ -566,10 +578,10 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
     ];
     const pairs: { de: number; label: string }[] = [];
     for (const mode of modes) {
-      const token = (name: string) => {
-        const v = lastDecl(stylesCss, mode.root, name);
-        if (!v) throw new Error(`${mode.root} ${name} missing`);
-        return hex(v);
+      const scheme = mode.name as "light" | "dark";
+      const token = (name: string): RGB => {
+        const [r, g, b] = tokenColor("sky", scheme, name);
+        return [r, g, b];
       };
       for (const inkHex of mode.inks) {
         const ink = hex(inkHex);
@@ -579,7 +591,7 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
           0.76,
         );
         const tones: [string, RGB][] = [
-          ["active", hex(lastDecl(railCss, mode.root, "--task-info")!)],
+          ["active", token("--task-info")],
           [
             "attention",
             mix(token("--warn"), ink, toneMix("warning", "--warn")),
@@ -1317,18 +1329,14 @@ describe("既有：面板抽屉关闭后焦点回到触发按钮", () => {
   });
 });
 
-describe("既有：液态玻璃下实心按钮的图标不被 blend 冲淡", () => {
-  test("实心按钮里的 svg 固定 mix-blend-mode: normal，且优先级高于液态玻璃那条", () => {
+describe("既有：实心按钮的图标固定 mix-blend-mode: normal 且无历史液态玻璃 blend 残留", () => {
+  test("实心按钮里的 svg 固定 mix-blend-mode: normal，且样式表已彻底清除 --lg-blend", () => {
     const rule = stylesCss.match(
       /\[data-slot="button"\]\[data-variant="default"\] svg,[^{]*\{([^}]*)\}/,
     );
     expect(rule?.[1]).toContain("mix-blend-mode: normal");
-    // 液态玻璃那条：:where(html…) :is(.rail-card, …) :where(svg) → 优先级 (0,1,0)
-    expect(stylesCss).toMatch(
-      /:is\([^)]*\.rail-card[^)]*\)\s*:where\(svg\)\s*\{\s*mix-blend-mode: var\(--lg-blend, multiply\);/,
-    );
-    // 本规则 [data-slot][data-variant] svg → (0,2,1)，紧跟在按钮状态规则后面、同为非分层样式，按优先级胜出。
-    // 真浏览器里的 getComputedStyle 结果见 /workspace/cb-dev/516-shots/r3/measure.json。
+    expect(stylesCss).not.toContain("--lg-blend");
+    expect(materialsCss).not.toContain("--lg-blend");
     const idx = stylesCss.indexOf(
       '[data-slot="button"][data-variant="default"] svg',
     );

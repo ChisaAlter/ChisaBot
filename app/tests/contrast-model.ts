@@ -1,71 +1,86 @@
 /**
- * 左栏小字和头像字母的 WCAG 对比度模型（模块 11 第 6 条，tests/a11y-contrast.test.ts 用）。
+ * V2 单通道 5 层 CSS 对比度模型（供 a11y-contrast.test.ts 等门禁使用）。
  *
- * 不跑浏览器，只用 styles.css / perf-noblur.css 里的真实令牌和 lib/appearance.ts 的配色天空，
- * 把文字背后的每一层按 alpha 叠出来，再算 WCAG 2.x 对比度：
+ * 直接解析生产样式表：
+ *   - `app/src/styles/tokens.css`（7 主题 × 浅/深基础令牌、语义色、--surface-solid-*）
+ *   - `app/src/styles/canvas.css`（pure / sky / wallpaper 画布与全站唯一护眼薄幕）
+ *   - `app/src/styles/materials.css`（glass / clear / solid × panel / elevated / bubble / control / inset）
+ *   - `app/src/styles.css`（侧栏行状态、头像底色、输入框占位等）
+ *   - `app/src/perf-noblur.css` / `app/src/a11y-modes.css`（实底降级与高对比度模式）
  *
- *   天空（主题族 seed 经 deriveSeed 派生的 --fam-sky-* 4 个色标）
- *   → 天幕薄纱 #sky-root::after（按同一高度插值）
- *   → 左栏卡片的玻璃 --lg-surface（3 种材质 × 雾度 5% / 55%，取渐变起点：文字在卡片左上）
- *     或不透明底色 --glass-bg-opaque（性能模式 / 减少透明度 / 增加对比度）
- *   → 机器人行的悬停 / 选中底色（只对副标题）
- *
- * 自定义壁纸 / 预设壁纸时，天空换成壁纸图（.chisabot-wallpaper，z-index 1，在薄纱下面）：
- *   壁纸像素（纯白、纯黑、所有预设 SVG 里出现的色标，按不透明算，偏保守）
- *   → 压暗遮罩 .chisabot-wallpaper-dim（两个色标 × 不透明度 0 / 0.75，即 wallpaperDim 存储范围 0–75）
- *   → 壁纸薄幕 .chisabot-wallpaper::after（--wallpaper-scrim，整个界面只有这一层，卡片 / 气泡 / 输入框不再各自垫）
- *   → 天幕薄纱 → 每层玻璃（或不透明底色）→ 行底色。
- *
- * 结果是每个元素在每种「配色 × 浅 / 深」下的最小 / 最大对比度。
+ * 严格按 CSS Color 5 预乘 sRGB 规则计算 `color-mix(in srgb, ...)`、`rgb(R G B / A)`、
+ * `linear-gradient(...)` 与 alpha 合成，无任何硬编码颜色副本。
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  deriveSeed,
-  familySeed,
-  resolveThemeFamily,
-  THEME_FAMILIES,
+  type MaterialId,
+  THEMES,
+  type ThemeId,
 } from "../src/lib/appearance";
-import {
-  alphaForContrast,
-  decideInk,
-  LG_WORST_INK,
-} from "../src/lib/liquid-glass";
 
 export type RGBA = [number, number, number, number];
+export type Scheme = "light" | "dark";
+export type SurfaceRole = "panel" | "elevated" | "bubble" | "control" | "inset";
+
+export const SCHEMES: readonly Scheme[] = ["light", "dark"] as const;
+export const THEME_IDS: readonly ThemeId[] = THEMES.map((t) => t.id);
+/** 兼容 rail-tasks-p3.test.tsx 等历史门禁引用的主题列表名。 */
+export const FAMILY_IDS: readonly ThemeId[] = THEME_IDS;
+export const MATERIAL_IDS: readonly MaterialId[] = [
+  "glass",
+  "clear",
+  "solid",
+] as const;
+export const SURFACE_ROLES: readonly SurfaceRole[] = [
+  "panel",
+  "elevated",
+  "bubble",
+  "control",
+  "inset",
+] as const;
 
 const strip = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "");
-export const stylesCss = strip(
-  readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8"),
-);
-export const noblurCss = strip(
-  readFileSync(path.join(import.meta.dir, "../src/perf-noblur.css"), "utf8"),
-);
+const readCss = (rel: string) =>
+  strip(readFileSync(path.join(import.meta.dir, "../src", rel), "utf8"));
 
-/** 选择器完全等于 selector 的所有规则体（不在 @media 里的也好、在里面的也好都算）。 */
+export const tokensCss = readCss("styles/tokens.css");
+export const canvasCss = readCss("styles/canvas.css");
+export const materialsCss = readCss("styles/materials.css");
+export const stylesCss = readCss("styles.css");
+export const noblurCss = readCss("perf-noblur.css");
+export const a11yModesCss = readCss("a11y-modes.css");
+
 const norm = (s: string) => s.trim().replace(/\s+/g, " ");
 const ruleCache = new Map<string, Map<string, string[]>>();
+
+/** 选择器规范化后完全等于 selector 的所有最内层规则体（含 @layer / @media 内）。 */
 export function blocks(css: string, selector: string): string[] {
   let bySelector = ruleCache.get(css);
   if (!bySelector) {
     bySelector = new Map();
     for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      const key = norm(m[1]);
-      bySelector.set(key, [...(bySelector.get(key) ?? []), m[2]]);
+      const sel = m[1];
+      const body = m[2];
+      if (sel === undefined || body === undefined) continue;
+      const key = norm(sel);
+      bySelector.set(key, [...(bySelector.get(key) ?? []), body]);
     }
     ruleCache.set(css, bySelector);
   }
   return bySelector.get(norm(selector)) ?? [];
 }
 
-/** 规则体里某个声明的值（取最后一个）。 */
+/** 规则体里某个声明的最后一个值。 */
 export function decl(body: string, name: string): string | undefined {
   const re = new RegExp(
     `(?:^|[;\\s])${name.replace(/[-]/g, "\\-")}\\s*:\\s*([^;]+);`,
     "g",
   );
   let value: string | undefined;
-  for (const m of body.matchAll(re)) value = m[1].trim();
+  for (const m of body.matchAll(re)) {
+    if (m[1] !== undefined) value = m[1].trim();
+  }
   return value;
 }
 
@@ -80,6 +95,60 @@ export function lastDecl(
   return value;
 }
 
+/** 提取 `@media <query> { ... }` 内的 CSS 正文（按大括号深度精确配对）。 */
+export function extractMediaBlock(css: string, query: string): string {
+  const target = `@media ${query}`;
+  const start = css.indexOf(target);
+  if (start < 0) return "";
+  const open = css.indexOf("{", start);
+  if (open < 0) return "";
+  let depth = 0;
+  for (let i = open; i < css.length; i++) {
+    if (css[i] === "{") depth++;
+    else if (css[i] === "}" && --depth === 0) {
+      return css.slice(open + 1, i);
+    }
+  }
+  return "";
+}
+
+function collectDecls(css: string, selector: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const body of blocks(css, selector)) {
+    for (const m of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
+      if (m[1] && m[2]) out[m[1]] = m[2].trim();
+    }
+  }
+  return out;
+}
+
+const tokenMapCache = new Map<string, Record<string, string>>();
+
+/** 某个「主题 × 浅/深 × 画布类型」组合下 `tokens.css` 计算出的完整自定义属性表。 */
+export function themeTokenMap(
+  themeId: ThemeId,
+  scheme: Scheme,
+  canvas: "pure" | "sky" | "wallpaper" = "pure",
+): Record<string, string> {
+  const cacheKey = `${themeId}|${scheme}|${canvas}`;
+  const hit = tokenMapCache.get(cacheKey);
+  if (hit) return hit;
+
+  const map: Record<string, string> = {
+    ...collectDecls(tokensCss, ":root"),
+    ...(scheme === "dark" ? collectDecls(tokensCss, "html.dark") : {}),
+    ...collectDecls(tokensCss, `html[data-theme="${themeId}"]`),
+    ...(scheme === "dark"
+      ? collectDecls(tokensCss, `html.dark[data-theme="${themeId}"]`)
+      : {}),
+    ...(canvas === "wallpaper"
+      ? collectDecls(tokensCss, 'html[data-canvas="wallpaper"]')
+      : {}),
+  };
+  tokenMapCache.set(cacheKey, map);
+  return map;
+}
+
 function hsl(h: number, s: number, l: number): RGBA {
   const sat = s / 100;
   const light = l / 100;
@@ -90,29 +159,133 @@ function hsl(h: number, s: number, l: number): RGBA {
   return [f(0) * 255, f(8) * 255, f(4) * 255, 1];
 }
 
-/** #rrggbb、rgb()/rgba()、hsl(h s% l%)。alpha 里允许是数字。 */
-export function parseColor(value: string): RGBA {
-  const v = value.trim();
+/** 递归展开表达式中的所有 `var(--name[, fallback])`。 */
+export function expandVars(
+  expr: string,
+  tokens: Record<string, string>,
+  depth = 0,
+): string {
+  if (depth > 16 || !expr.includes("var(")) return expr;
+  let out = "";
+  let i = 0;
+  while (i < expr.length) {
+    if (expr.startsWith("var(", i)) {
+      let level = 1;
+      let j = i + 4;
+      let comma = -1;
+      for (; j < expr.length && level > 0; j++) {
+        const ch = expr[j];
+        if (ch === "(") level++;
+        else if (ch === ")") level--;
+        else if (ch === "," && level === 1 && comma < 0) comma = j;
+      }
+      if (level === 0) {
+        const name = (
+          comma >= 0 ? expr.slice(i + 4, comma) : expr.slice(i + 4, j - 1)
+        ).trim();
+        const fallback =
+          comma >= 0 ? expr.slice(comma + 1, j - 1).trim() : undefined;
+        const resolved = tokens[name];
+        if (resolved !== undefined) {
+          out += expandVars(resolved, tokens, depth + 1);
+        } else if (fallback !== undefined) {
+          out += expandVars(fallback, tokens, depth + 1);
+        } else {
+          throw new Error(`unresolved CSS variable: ${name}`);
+        }
+        i = j;
+        continue;
+      }
+    }
+    out += expr[i];
+    i++;
+  }
+  return out;
+}
+
+/** 按顶层逗号切分参数（跳过括号内逗号）。 */
+function splitTopLevelCommas(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of text) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      parts.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  return parts;
+}
+
+/** 解析 `#rrggbb`、`rgb(r g b / a)`、`rgba(r, g, b, a)`、`hsl(...)` 与 `color-mix(in srgb, ...)`。 */
+export function parseColor(
+  value: string,
+  tokens: Record<string, string> = {},
+): RGBA {
+  const v = expandVars(value, tokens).trim();
+  if (v === "transparent") return [0, 0, 0, 0];
+
   const hex = v.match(/^#([0-9a-f]{6})$/i);
-  if (hex) {
+  if (hex?.[1]) {
     const n = Number.parseInt(hex[1], 16);
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1];
   }
+
   const h = v.match(/^hsl\(\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%\s*\)$/);
-  if (h) return hsl(Number(h[1]), Number(h[2]), Number(h[3]));
+  if (h?.[1] && h[2] && h[3]) {
+    return hsl(Number(h[1]), Number(h[2]), Number(h[3]));
+  }
+
+  if (v.startsWith("color-mix(") && v.endsWith(")")) {
+    const inner = v.slice("color-mix(".length, -1).trim();
+    const parts = splitTopLevelCommas(inner);
+    if (parts.length === 3 && /^in\s+srgb$/i.test(parts[0] ?? "")) {
+      const parseArg = (arg: string): { color: RGBA; pct: number } => {
+        const m = arg.match(/^(.*)\s+([\d.]+)%$/);
+        if (m?.[1] && m[2]) {
+          return {
+            color: parseColor(m[1].trim(), tokens),
+            pct: Number(m[2]) / 100,
+          };
+        }
+        return { color: parseColor(arg, tokens), pct: 0.5 };
+      };
+      const a = parseArg(parts[1] ?? "");
+      const b = parseArg(parts[2] ?? "");
+      const sum = a.pct + b.pct || 1;
+      const w1 = a.pct / sum;
+      const w2 = b.pct / sum;
+      const alpha = a.color[3] * w1 + b.color[3] * w2;
+      if (alpha <= 0) return [0, 0, 0, 0];
+      return [
+        (a.color[0] * a.color[3] * w1 + b.color[0] * b.color[3] * w2) / alpha,
+        (a.color[1] * a.color[3] * w1 + b.color[1] * b.color[3] * w2) / alpha,
+        (a.color[2] * a.color[3] * w1 + b.color[2] * b.color[3] * w2) / alpha,
+        alpha,
+      ];
+    }
+  }
+
   const rgb = v.match(/^rgba?\(([^)]*)\)$/);
-  if (rgb) {
+  if (rgb?.[1]) {
     const parts = rgb[1]
       .split(/[\s,/]+/)
       .filter(Boolean)
       .map(Number);
-    if (parts.length >= 3 && parts.every((x) => Number.isFinite(x)))
-      return [parts[0], parts[1], parts[2], parts[3] ?? 1];
+    if (parts.length >= 3 && parts.every((x) => Number.isFinite(x))) {
+      return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+    }
   }
-  throw new Error(`unsupported color: ${value}`);
+
+  throw new Error(`unsupported color: ${value} (expanded: ${v})`);
 }
 
-/** top 叠在不透明的 bottom 上。 */
+/** `top` 按 alpha 叠在不透明的 `bottom` 上。 */
 export function over(top: RGBA, bottom: RGBA): RGBA {
   const a = top[3];
   return [
@@ -123,8 +296,12 @@ export function over(top: RGBA, bottom: RGBA): RGBA {
   ];
 }
 
-const mix = (a: RGBA, b: RGBA, t: number): RGBA =>
-  a.map((x, i) => x + (b[i] - x) * t) as RGBA;
+const mix = (a: RGBA, b: RGBA, t: number): RGBA => [
+  a[0] + (b[0] - a[0]) * t,
+  a[1] + (b[1] - a[1]) * t,
+  a[2] + (b[2] - a[2]) * t,
+  a[3] + (b[3] - a[3]) * t,
+];
 
 export function luminance(c: RGBA): number {
   const ch = (x: number) => {
@@ -140,406 +317,187 @@ export function contrast(a: RGBA, b: RGBA): number {
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
 
-type Stop = { at: number; color: RGBA };
-
-/** linear-gradient(...) 里带百分比位置的色标。 */
-function gradientStops(value: string): Stop[] {
-  const stops: Stop[] = [];
-  for (const m of value.matchAll(
-    /(rgba?\([^)]*\)|#[0-9a-f]{6}|var\(--[\w-]+,\s*#[0-9a-f]{6}\))\s+([\d.]+)%/gi,
-  )) {
-    const raw = m[1].startsWith("var(")
-      ? (m[1].match(/#[0-9a-f]{6}/i)?.[0] ?? "")
-      : m[1];
-    stops.push({ at: Number(m[2]), color: parseColor(raw) });
+/** 解析单个颜色或 `linear-gradient(...)` 中的全部色标颜色（用于最坏对比度采样）。 */
+export function extractPaintColors(
+  expr: string,
+  tokens: Record<string, string>,
+): RGBA[] {
+  const expanded = expandVars(expr, tokens).trim();
+  if (expanded.startsWith("linear-gradient(") && expanded.endsWith(")")) {
+    const inner = expanded.slice("linear-gradient(".length, -1);
+    const args = splitTopLevelCommas(inner);
+    const startIdx =
+      args[0] && (/deg$/i.test(args[0]) || /^to\s+/i.test(args[0])) ? 1 : 0;
+    const colors: RGBA[] = [];
+    for (let i = startIdx; i < args.length; i++) {
+      const stop = (args[i] ?? "").replace(/\s+[\d.]+%$/, "").trim();
+      if (stop) colors.push(parseColor(stop, tokens));
+    }
+    if (colors.length === 0) {
+      throw new Error(`empty gradient stops: ${expr}`);
+    }
+    return colors;
   }
-  return stops;
+  return [parseColor(expanded, tokens)];
 }
 
-function sample(stops: Stop[], at: number): RGBA {
-  if (at <= stops[0].at) return stops[0].color;
-  for (let i = 1; i < stops.length; i++) {
-    if (at <= stops[i].at) {
-      const a = stops[i - 1];
-      const b = stops[i];
-      return mix(a.color, b.color, (at - a.at) / (b.at - a.at));
+/** 从 `materials.css` 中查找「材质 × 深浅 × 表面角色」的 `--surface-bg` 原始声明。 */
+function findSurfaceDecl(
+  material: MaterialId,
+  scheme: Scheme,
+  role: SurfaceRole,
+  prop: "--surface-bg" | "--surface-bg-solid",
+): string {
+  const scopePrefix =
+    material === "solid"
+      ? ':where(html[data-material="solid"])'
+      : material === "glass"
+        ? scheme === "dark"
+          ? ':where(html.dark[data-material="glass"], html.dark:not([data-material]))'
+          : ':where(html[data-material="glass"], html:not([data-material]))'
+        : scheme === "dark"
+          ? ':where(html.dark[data-material="clear"])'
+          : ':where(html[data-material="clear"])';
+
+  let found: string | undefined;
+  for (const m of materialsCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const sel = norm(m[1] ?? "");
+    const body = m[2] ?? "";
+    if (!sel.startsWith(scopePrefix)) continue;
+    if (!sel.includes(`[data-surface="${role}"]`)) continue;
+    const v = decl(body, prop);
+    if (v) found = v;
+  }
+  if (!found) {
+    throw new Error(`missing ${prop} for ${material}/${scheme}/${role}`);
+  }
+  return found;
+}
+
+/** 主题净色画布（`--canvas-pure-bg`）的全部色标。 */
+export function pureCanvasColors(themeId: ThemeId, scheme: Scheme): RGBA[] {
+  const tokens = themeTokenMap(themeId, scheme, "pure");
+  const bg = tokens["--canvas-pure-bg"];
+  if (!bg) throw new Error(`--canvas-pure-bg missing for ${themeId}/${scheme}`);
+  return extractPaintColors(bg, tokens);
+}
+
+/** 壁纸画布在极值纯黑 / 纯白像素上叠加 `canvas.css` 唯一护眼薄幕后的背景底色。 */
+export function wallpaperCanvasBases(themeId: ThemeId, scheme: Scheme): RGBA[] {
+  const tokens = themeTokenMap(themeId, scheme, "wallpaper");
+  const scrimDecl = lastDecl(
+    canvasCss,
+    'html[data-canvas="wallpaper"] #sky-root::after',
+    "background",
+  );
+  if (!scrimDecl) {
+    throw new Error("wallpaper scrim rule missing in canvas.css");
+  }
+  const defaultScrim = lastDecl(canvasCss, "#sky-root", "--canvas-scrim");
+  const scrimTokens = {
+    ...tokens,
+    ...(defaultScrim ? { "--canvas-scrim": defaultScrim } : {}),
+  };
+  const scrimColor = parseColor(scrimDecl, scrimTokens);
+  const extremes: RGBA[] = [
+    [0, 0, 0, 1],
+    [255, 255, 255, 1],
+  ];
+  return extremes.map((px) => over(scrimColor, px));
+}
+
+/** 某主题 × 浅/深 × 材质 × 表面角色在净色或极值黑白壁纸下的全部不透明合成底色。 */
+export function surfaceBackdrops(
+  themeId: ThemeId,
+  scheme: Scheme,
+  material: MaterialId,
+  role: SurfaceRole,
+  canvas: "pure" | "wallpaper",
+): RGBA[] {
+  const tokens = themeTokenMap(themeId, scheme, canvas);
+  const bgExpr = findSurfaceDecl(material, scheme, role, "--surface-bg");
+  const surfaceColors = extractPaintColors(bgExpr, tokens);
+  const bases =
+    canvas === "wallpaper"
+      ? wallpaperCanvasBases(themeId, scheme)
+      : pureCanvasColors(themeId, scheme);
+
+  // inset 嵌在 panel 内，因此先将 panel 叠在画布上再叠 inset
+  const underLayers =
+    role === "inset" && material !== "solid"
+      ? surfaceBackdrops(themeId, scheme, material, "panel", canvas)
+      : bases;
+
+  const out: RGBA[] = [];
+  for (const s of surfaceColors) {
+    if (s[3] >= 0.999) {
+      out.push([s[0], s[1], s[2], 1]);
+    } else {
+      for (const b of underLayers) {
+        out.push(over(s, b));
+      }
     }
   }
-  return stops[stops.length - 1].color;
+  return out;
 }
 
-export type Scheme = "light" | "dark";
-export const SCHEMES: Scheme[] = ["light", "dark"];
-export const GLASS_STYLES = ["liquid", "mist", "crystal", "frosted"] as const;
-/** lib/appearance.ts 存储 / 校验的雾度范围（clampNumber(…, 5, 55, …)）。 */
-export const HAZE_RANGE = [0.05, 0.55] as const;
-
-/** 天空：带高度位置的 4 个色标（CB-140：族 seed 派生的 --fam-sky-* 四段）。 */
-export function skyStops(familyId: string, scheme: Scheme): Stop[] {
-  const sel =
-    scheme === "dark"
-      ? 'html.dark #sky-root #skyph, html[data-theme="dark"] #sky-root #skyph'
-      : "#sky-root #skyph";
-  const placeholder = gradientStops(
-    lastDecl(stylesCss, sel, "background") ?? "",
-  );
-  if (placeholder.length !== 4) throw new Error(`#skyph stops for ${scheme}`);
-  const dark = scheme === "dark";
-  const vars = deriveSeed(familySeed(resolveThemeFamily(familyId), dark), dark);
-  return placeholder.map((p, i) => ({
-    at: p.at,
-    color: parseColor(vars.root[`--fam-sky-${i}`] ?? "#000000"),
-  }));
+/** 某主题 × 浅/深下的全部不透明实色表面（`solid` / `perf` / `prefers-contrast: more` 共用）。 */
+export function solidSurfaceColors(themeId: ThemeId, scheme: Scheme): RGBA[] {
+  const tokens = themeTokenMap(themeId, scheme, "pure");
+  const keys = [
+    "--surface-solid-panel",
+    "--surface-solid-elevated",
+    "--surface-solid-bubble",
+    "--surface-solid-inset",
+    "--surface-solid-control",
+  ] as const;
+  return keys.map((k) => {
+    const v = tokens[k];
+    if (!v) throw new Error(`${k} missing for ${themeId}/${scheme}`);
+    return parseColor(v, tokens);
+  });
 }
 
-/** 天幕薄纱 #sky-root::after。 */
-export function veilStops(scheme: Scheme): Stop[] {
-  const sel =
-    scheme === "dark"
-      ? 'html.dark #sky-root::after, html[data-theme="dark"] #sky-root::after'
-      : "html:not(.dark) #sky-root::after";
-  const stops = gradientStops(lastDecl(stylesCss, sel, "background") ?? "");
-  if (stops.length < 2) throw new Error(`veil stops for ${scheme}`);
-  return stops;
-}
-
-/**
- * 三档玻璃的材质规则（c74d5567 起）：`--lg-*` 不再挂在根上，而是按「材质 × 深浅」写在
- * `:where(<html 作用域>) :where(<读变量的元素名单>) { --lg-surface: … }` 里。元素名单会跟着
- * 样式表变（theme-glass-perf 守它和 GLASS_SURFACE_SELECTOR 一致），这里只认外层那一节 :where。
- */
-const GLASS_SCOPE: Record<string, RegExp> = {
-  "liquid-light": /^:where\(html\[data-glass="liquid"\]\)/,
-  "liquid-dark": /^:where\(html\.dark\[data-glass="liquid"\]\)/,
-  "crystal-light": /^:where\(html\[data-glass="crystal"\]\)/,
-  "crystal-dark": /^:where\(html\.dark\[data-glass="crystal"\]\)/,
-  "frosted-light": /^:where\(html\[data-glass="frosted"\]\)/,
-  "frosted-dark": /^:where\(html\.dark\[data-glass="frosted"\]\)/,
-  "mist-light":
-    /^:where\(html\[data-glass="mist"\], html:not\(\[data-glass\]\)\)/,
-  "mist-dark":
-    /^:where\(html\.dark\[data-glass="mist"\], html\.dark:not\(\[data-glass\]\)\)/,
-};
-
-/** 某档材质某个 scheme 的材质规则里 token 的值（取最后一条命中的规则）。 */
-const glassDeclCache = new Map<string, string | undefined>();
-function glassDecl(
+/** 解析某主题 × 浅/深 × 画布下指定文字令牌的最终颜色。 */
+export function tokenColor(
+  themeId: ThemeId,
+  scheme: Scheme,
   token: string,
-  style: (typeof GLASS_STYLES)[number],
-  scheme: Scheme,
-): string | undefined {
-  const key = `${token}|${style}|${scheme}`;
-  const hit = glassDeclCache.get(key);
-  if (hit !== undefined || glassDeclCache.has(key)) return hit;
-  const scope = GLASS_SCOPE[`${style}-${scheme}`];
-  let value: string | undefined;
-  for (const m of stylesCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    if (scope.test(norm(m[1]))) value = decl(m[2], token) ?? value;
-  }
-  glassDeclCache.set(key, value);
-  return value;
-}
-
-/**
- * 液态玻璃材质规则里解析出来的参数：
- * --lg-tint-rgb 基色 + --lg-tint-a 的 clamp(lo, alpha × 各标量, hi) 公式 + 内光 --lg-hl。
- * data-lg-ink="dark" 的深釉档参数写死在 lib/liquid-glass.ts 的材质规则里，这里同写一份
- * （applyAdapt 的 mul 1.4、lo 0.1、hl 0.08 见 styles.css data-lg-ink 规则）。
- */
-interface LiquidMaterial {
-  tintRGB: [number, number, number];
-  lo: number;
-  hi: number;
-  mul: number;
-  hl: number;
-}
-const liquidMaterialCache = new Map<Scheme, LiquidMaterial>();
-export function liquidMaterial(scheme: Scheme): LiquidMaterial {
-  const cached = liquidMaterialCache.get(scheme);
-  if (cached) return cached;
-  const rgb = (glassDecl("--lg-tint-rgb", "liquid", scheme) ?? "")
-    .trim()
-    .split(/\s+/)
-    .map(Number);
-  const ta = glassDecl("--lg-tint-a", "liquid", scheme) ?? "";
-  const m =
-    /clamp\(\s*var\(--lg-tint-lo\)\s*,\s*calc\(var\(--lg-alpha,\s*([\d.]+)\)((?:\s*\*\s*var\(--[\w-]+(?:,\s*[\d.]+)?\))*)\)\s*,\s*var\(--lg-tint-hi\)\s*\)/.exec(
-      ta,
-    );
-  const lo = Number.parseFloat(
-    glassDecl("--lg-tint-lo", "liquid", scheme) ?? "",
-  );
-  const hi = Number.parseFloat(
-    glassDecl("--lg-tint-hi", "liquid", scheme) ?? "",
-  );
-  if (
-    !m ||
-    !Number.isFinite(lo) ||
-    !Number.isFinite(hi) ||
-    rgb.length < 3 ||
-    rgb.some((n) => !Number.isFinite(n))
-  )
-    throw new Error(`liquid material for ${scheme}`);
-  // 公式里除了 --lg-alpha 以外的标量因子（--lg-tint-mul / --lg-density-k / …）：
-  // var 带 fallback 用 fallback，否则读同规则里声明的默认值（都是 1）。
-  let mul = 1;
-  for (const f of m[2].matchAll(/\*\s*var\(--([\w-]+)(?:,\s*([\d.]+))?\)/g)) {
-    const fb = Number(f[2]);
-    mul *= Number.isFinite(fb)
-      ? fb
-      : Number.parseFloat(glassDecl(`--${f[1]}`, "liquid", scheme) ?? "") || 1;
-  }
-  const hl = Number.parseFloat(glassDecl("--lg-hl", "liquid", scheme) ?? "0");
-  const mat = {
-    tintRGB: [rgb[0], rgb[1], rgb[2]] as [number, number, number],
-    lo,
-    hi,
-    mul,
-    hl: Number.isFinite(hl) ? hl : 0,
-  };
-  liquidMaterialCache.set(scheme, mat);
-  return mat;
-}
-
-/** 采样用的亮度（weighted sRGB，与 lib/liquid-glass.ts 的 sampleStats 同公式）。 */
-const bgLum = (c: RGBA) => (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
-
-/** 一行底色的判定结果：底色合成后的不透明色 + 字该用哪个 scheme 的墨色。 */
-export interface Backdrop {
-  bg: RGBA;
-  inkScheme: Scheme;
-}
-
-/**
- * 液态玻璃在某个底色上的自适应合成（和 lib/liquid-glass.ts applyAdapt 同一份判定）：
- * 浅色档按亮度决定浅釉深墨 / 深釉浅墨，密度系数取两端（0.7 / 1.3 覆盖整个密度区间），
- * 釉色不够对比时按「升密度」求到 4.5——alphaForContrast 就是产品里跑的那一份。
- */
-function liquidComposite(
-  base: RGBA,
-  scheme: Scheme,
-  haze: number,
-  strong: boolean,
-): Backdrop[] {
-  const mat = liquidMaterial(scheme);
-  const ink = decideInk(scheme, bgLum(base), null);
-  const under = scheme === "light" && ink === "dark";
-  const tintRGB: [number, number, number] = under ? [16, 18, 22] : mat.tintRGB;
-  const lo = under ? 0.1 : mat.lo;
-  const mul = under ? 1.4 : mat.mul;
-  const hl = under ? 0.08 : mat.hl;
-  const hi = under ? 0.95 : mat.hi;
-  const out: Backdrop[] = [];
-  for (const dk of [0.7, 1.3]) {
-    const raw = Math.min(hi, Math.max(lo, haze * mul * dk));
-    const boost = alphaForContrast({
-      bg: base,
-      tintRGB,
-      hlAlpha: hl,
-      ink,
-      base: raw,
-      max: hi,
-      inkColor: LG_WORST_INK[ink],
-    });
-    const alpha = Math.min(boost * (strong ? 1.4 : 1), 0.9);
-    const surf = over(
-      [255, 255, 255, hl],
-      [tintRGB[0], tintRGB[1], tintRGB[2], alpha],
-    );
-    out.push({
-      bg: over(surf, base),
-      inkScheme: ink === "dark" ? "dark" : "light",
-    });
-  }
-  return out;
-}
-
-const GLASS_STOP_RE =
-  /rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*(?:min\([\d.]+,\s*calc\()?clamp\(\s*([\d.]+),\s*calc\(var\(--lg-alpha,\s*[\d.]+\)\s*\*\s*([\d.]+)\),\s*([\d.]+)\)(?:\s*\*\s*var\(--lg-aa-boost,\s*1\)\)\))?\)/g;
-
-/** 非液态材质的玻璃面（mist / crystal / frosted）：按基准（--lg-aa-boost = 1）解析渐变首段。 */
-function glassSurface(
-  style: (typeof GLASS_STYLES)[number],
-  scheme: Scheme,
-  haze: number,
+  canvas: "pure" | "sky" | "wallpaper" = "pure",
 ): RGBA {
-  const value = glassDecl("--lg-surface", style, scheme);
-  const first = [...(value ?? "").matchAll(GLASS_STOP_RE)][0];
-  if (!first) throw new Error(`--lg-surface for ${style}/${scheme}`);
-  const [, r, g, b, lo, k, hi] = first.map(Number);
-  const alpha = Math.min(hi, Math.max(lo, haze * k));
-  return [r, g, b, alpha];
+  const tokens = themeTokenMap(themeId, scheme, canvas);
+  const raw = tokens[token];
+  if (!raw) throw new Error(`${token} missing for ${themeId}/${scheme}`);
+  return parseColor(raw, tokens);
 }
 
-/** 不透明玻璃底色（perf-noblur.css）。 */
-export function opaqueSurface(scheme: Scheme): RGBA {
-  const value = lastDecl(
-    noblurCss,
-    scheme === "dark" ? "html.dark" : "html",
-    "--glass-bg-opaque",
-  );
-  if (!value) throw new Error(`--glass-bg-opaque for ${scheme}`);
-  return parseColor(value);
-}
-
-/** 机器人行悬停 / 选中的底色（选中是渐变，取所有色标）。 */
+/** 机器人行悬停 / 选中的底色（从 `styles.css` 解析）。 */
 export function rowFills(scheme: Scheme): RGBA[] {
-  const d = scheme === "dark" ? ".dark " : "";
-  const hover = lastDecl(stylesCss, `${d}.glass-bot-row:hover`, "background");
-  const on = lastDecl(stylesCss, `${d}.glass-bot-row.is-on`, "background");
-  if (!hover || !on) throw new Error(`row fills for ${scheme}`);
-  const onStops = [...on.matchAll(/rgba\([^)]*\)/g)].map((m) =>
-    parseColor(m[0]),
-  );
-  return [parseColor(hover), ...onStops];
-}
-
-/** 左栏卡片上文字背后所有可能的不透明底色（液态玻璃按底色自适应出合成结果）。 */
-export function panelBackdrops(familyId: string, scheme: Scheme): Backdrop[] {
-  const sky = skyStops(familyId, scheme);
-  const veil = veilStops(scheme);
-  const out: Backdrop[] = [{ bg: opaqueSurface(scheme), inkScheme: scheme }];
-  for (const stop of sky) {
-    const base = over(sample(veil, stop.at), stop.color);
-    for (const style of GLASS_STYLES)
-      for (const haze of HAZE_RANGE) {
-        if (style === "liquid") {
-          out.push(...liquidComposite(base, scheme, haze, false));
-        } else {
-          out.push({
-            bg: over(glassSurface(style, scheme, haze), base),
-            inkScheme: scheme,
-          });
-        }
-      }
-  }
-  return out;
-}
-
-/** 壁纸压暗遮罩 .chisabot-wallpaper-dim 的色标。 */
-export function wallpaperDimStops(scheme: Scheme): RGBA[] {
-  const sel =
+  const hoverSel =
+    scheme === "dark" ? ".dark .glass-bot-row:hover" : ".glass-bot-row:hover";
+  const onSel =
     scheme === "dark"
-      ? ".chisabot-wallpaper-dim"
-      : "html:not(.dark) .chisabot-wallpaper-dim";
-  const value = lastDecl(stylesCss, sel, "background") ?? "";
-  const stops = [...value.matchAll(/rgba\([^)]*\)/g)].map((m) =>
-    parseColor(m[0]),
-  );
-  if (stops.length < 2) throw new Error(`wallpaper dim stops for ${scheme}`);
-  return stops;
+      ? "html.dark :is(.glass-bot-row.is-on, .glass-mini-bot.is-on, .nav-row.is-on)"
+      : "html :is(.glass-bot-row.is-on, .glass-mini-bot.is-on, .nav-row.is-on)";
+  const hover = lastDecl(stylesCss, hoverSel, "background");
+  const on = lastDecl(stylesCss, onSel, "background");
+  if (!hover || !on) throw new Error(`row fills missing for ${scheme}`);
+  return [parseColor(hover), parseColor(on)];
 }
 
-/** lib/appearance.ts 存储的 wallpaperDim 范围（clampNumber(…, 0, 75, …)），换成遮罩不透明度。 */
-export const WALLPAPER_DIM_RANGE = [0, 0.75] as const;
-
-/** 壁纸可能出现的像素：纯白、纯黑（自定义上传的两个极端）+ 预设 SVG 里的所有色标。 */
-export function wallpaperPixels(): RGBA[] {
-  const src = readFileSync(
-    path.join(import.meta.dir, "../src/lib/appearance.ts"),
-    "utf8",
-  );
-  const presets = new Set(
-    [...src.matchAll(/stop-color="(#[0-9a-f]{6})"/gi)].map((m) =>
-      m[1].toLowerCase(),
-    ),
-  );
-  return [
-    [255, 255, 255, 1],
-    [0, 0, 0, 1],
-    ...[...presets].map((c) => parseColor(c)),
-  ];
-}
-
-/**
- * 壁纸薄幕：.chisabot-wallpaper::after 画 --wallpaper-scrim，夹在压暗遮罩和天幕薄纱之间，
- * 整个界面只有这一层（卡片、气泡、输入框不再各自垫）。
- */
-export function wallpaperScrim(scheme: Scheme): RGBA {
-  const paint = lastDecl(stylesCss, ".chisabot-wallpaper::after", "background");
-  if (paint !== "var(--wallpaper-scrim)")
-    throw new Error(
-      ".chisabot-wallpaper::after does not paint --wallpaper-scrim",
-    );
-  const value = lastDecl(
-    stylesCss,
-    scheme === "dark" ? 'html.dark, html[data-theme="dark"]' : ":root",
-    "--wallpaper-scrim",
-  );
-  if (!value) throw new Error(`--wallpaper-scrim for ${scheme}`);
-  // alpha 是用户滑块变量（var(--wallpaper-scrim-alpha, 默认)）：模型按默认值算最差情况。
-  return parseColor(
-    value.replace(/var\(--wallpaper-scrim-alpha,\s*([^)]+)\)/, "$1").trim(),
-  );
-}
-
-/** 壁纸 → 压暗遮罩 → 壁纸薄幕 → 天幕薄纱 叠好后的所有不透明底色（直接落在壁纸上的字就在它上面）。 */
-export function wallpaperBases(scheme: Scheme): RGBA[] {
-  const veil = veilStops(scheme);
-  const scrim = wallpaperScrim(scheme);
-  const out: RGBA[] = [];
-  for (const px of wallpaperPixels())
-    for (const dim of wallpaperDimStops(scheme))
-      for (const opacity of WALLPAPER_DIM_RANGE) {
-        const dimmed = over([dim[0], dim[1], dim[2], dim[3] * opacity], px);
-        const scrimmed = over(scrim, dimmed);
-        for (const v of veil) out.push(over(v.color, scrimmed));
-      }
-  return out;
-}
-
-/** 壁纸模式下左栏卡片上文字背后所有可能的不透明底色。 */
-export function wallpaperPanelBackdrops(scheme: Scheme): Backdrop[] {
-  const out: Backdrop[] = [{ bg: opaqueSurface(scheme), inkScheme: scheme }];
-  for (const base of wallpaperBases(scheme))
-    for (const style of GLASS_STYLES)
-      for (const haze of HAZE_RANGE) {
-        if (style === "liquid") {
-          out.push(...liquidComposite(base, scheme, haze, false));
-        } else {
-          out.push({
-            bg: over(glassSurface(style, scheme, haze), base),
-            inkScheme: scheme,
-          });
-        }
-      }
-  return out;
-}
-
-/** 字母头像的渐变底色（不透明）。 */
+/** 字母头像的渐变底色（含中点，不透明）。 */
 export function avatarStops(): RGBA[] {
   const bg = lastDecl(stylesCss, ".glass-avatar", "background") ?? "";
   const stops = [...bg.matchAll(/#[0-9a-f]{6}/gi)].map((m) => parseColor(m[0]));
-  if (stops.length < 2) throw new Error("avatar gradient");
-  // 渐变中点也算（两端之间的颜色）。
-  return [...stops, mix(stops[0], stops[stops.length - 1], 0.5)];
+  if (stops.length < 2) throw new Error("avatar gradient missing");
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  if (!first || !last) throw new Error("avatar gradient incomplete");
+  return [...stops, mix(first, last, 0.5)];
 }
 
-export type ElementId = "sec-main" | "sub" | "avatar";
-
-export function backdropsFor(
-  element: ElementId,
-  familyId: string,
-  scheme: Scheme,
-  surface: "sky" | "wallpaper" = "sky",
-): Backdrop[] {
-  if (element === "avatar")
-    return avatarStops().map((bg) => ({ bg, inkScheme: scheme }));
-  const panel =
-    surface === "wallpaper"
-      ? wallpaperPanelBackdrops(scheme)
-      : panelBackdrops(familyId, scheme);
-  if (element === "sec-main") return panel;
-  // 行底色跟着墨的档走：深釉浅墨档（inkScheme=dark 的翻转条目）用深色行底。
-  return [
-    ...panel,
-    ...panel.flatMap(({ bg, inkScheme }) =>
-      rowFills(inkScheme).map((r) => ({ bg: over(r, bg), inkScheme })),
-    ),
-  ];
-}
-
-export function range(
+/** 给定前景色与一组不透明底色的最小/最大对比度。 */
+export function contrastRange(
   text: RGBA,
   backdrops: RGBA[],
 ): { min: number; max: number } {
@@ -547,327 +505,14 @@ export function range(
   return { min: Math.min(...values), max: Math.max(...values) };
 }
 
-/** 自适应底色：每条底色的墨按它自己的 inkScheme 取（深釉档翻成深色墨色）。 */
-export function rangeAdaptive(
-  textFor: (inkScheme: Scheme) => RGBA,
-  backdrops: Backdrop[],
-): { min: number; max: number } {
-  const values = backdrops.map(({ bg, inkScheme }) => {
-    const text = textFor(inkScheme);
-    return contrast(over(text, bg), bg);
-  });
-  return { min: Math.min(...values), max: Math.max(...values) };
-}
-
-export const FAMILY_IDS = THEME_FAMILIES.map((f) => f.id);
-
-/* ---------- 壁纸下的其他面板和主区（#420 审查第二轮） ---------- */
-
-const ROOT_BLOCK: Record<Scheme, string> = {
-  light: ':root, [data-theme="light"]',
-  dark: '.dark, [data-theme="dark"]',
-};
-
-function splitTopVar(expr: string): { name: string; fallback?: string } | null {
-  const trimmed = expr.trim();
-  if (!trimmed.startsWith("var(") || !trimmed.endsWith(")")) return null;
-  const inner = trimmed.slice(4, -1);
-  let depth = 0;
-  let comma = -1;
-  for (let i = 0; i < inner.length; i++) {
-    const ch = inner[i];
-    if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    else if (ch === "," && depth === 0) {
-      comma = i;
-      break;
-    }
-  }
-  const name = (comma >= 0 ? inner.slice(0, comma) : inner).trim();
-  if (!/^--[\w-]+$/.test(name)) return null;
-  return comma >= 0
-    ? { name, fallback: inner.slice(comma + 1).trim() }
-    : { name };
-}
-
-function resolveColorExpr(
-  scheme: Scheme,
-  expr: string,
-  overrides?: Record<string, string>,
-): RGBA {
-  const ref = splitTopVar(expr);
-  if (!ref) return parseColor(expr);
-  const fromOverride = overrides?.[ref.name];
-  if (fromOverride) return resolveColorExpr(scheme, fromOverride, overrides);
-  const fromCss =
-    lastDecl(stylesCss, ROOT_BLOCK[scheme], ref.name) ??
-    lastDecl(stylesCss, ROOT_BLOCK.light, ref.name);
-  if (fromCss) return resolveColorExpr(scheme, fromCss, overrides);
-  if (ref.fallback) return resolveColorExpr(scheme, ref.fallback, overrides);
-  throw new Error(`${ref.name} missing for ${scheme}`);
-}
-
-/** 文字令牌的最终值：先找深 / 浅色令牌块，没有就退回浅色块；支持嵌套 var() 与主题族变量覆盖。 */
-export function tokenColor(
-  scheme: Scheme,
-  token: string,
-  overrides?: Record<string, string>,
-): RGBA {
-  const raw =
-    overrides?.[token] ??
-    lastDecl(stylesCss, ROOT_BLOCK[scheme], token) ??
-    lastDecl(stylesCss, ROOT_BLOCK.light, token);
-  if (!raw) throw new Error(`${token} missing for ${scheme}`);
-  return resolveColorExpr(scheme, raw, overrides);
-}
-
-/** 某个主题族运行时（deriveSeed 写入 DOM 后）文字令牌的实际颜色。 */
-export function familySurfaceInk(
-  familyId: string,
-  scheme: Scheme,
-  ink: string,
-): RGBA {
-  const dark = scheme === "dark";
-  const overrides = deriveSeed(
-    familySeed(resolveThemeFamily(familyId), dark),
-    dark,
-  ).root;
-  const v = lastDecl(stylesCss, 'html[data-wallpaper="on"]', ink);
-  const ref = v?.match(/^var\((--[\w-]+)\)$/)?.[1];
-  return tokenColor(scheme, ref ?? ink, overrides);
-}
-
-/** --lg-surface / --lg-surface-strong 渐变的全部色标（文字可能落在任何位置；只用于非液态材质）。 */
-export function glassStops(
-  token: "--lg-surface" | "--lg-surface-strong",
-  style: (typeof GLASS_STYLES)[number],
-  scheme: Scheme,
-  haze: number,
-): RGBA[] {
-  if (style === "liquid") throw new Error("liquid uses liquidComposite");
-  const value = glassDecl(token, style, scheme);
-  const stops = [...(value ?? "").matchAll(GLASS_STOP_RE)].map((m) => {
-    const [, r, g, b, lo, k, hi] = m.map(Number);
-    return [r, g, b, Math.min(hi, Math.max(lo, haze * k))] as RGBA;
-  });
-  if (stops.length < 2) throw new Error(`${token} for ${style}/${scheme}`);
-  return stops;
-}
-
-/** 某个选择器上的半透明底色令牌（如 --bubble-user-bg）。 */
-function fillToken(scheme: Scheme, token: string): RGBA {
-  const sel =
-    scheme === "dark"
-      ? 'html.dark, html[data-theme="dark"]'
-      : 'html:root, html[data-theme="light"]';
-  const raw =
-    lastDecl(stylesCss, sel, token) ??
-    lastDecl(stylesCss, ROOT_BLOCK[scheme], token);
-  if (!raw) throw new Error(`${token} for ${scheme}`);
-  return parseColor(raw);
-}
-
-export type SurfaceId =
-  | "on-wallpaper"
-  | "acct-card"
-  | "mini-card"
-  | "rail-card"
-  | "bubble-assistant"
-  | "jr-card"
-  | "jr-card-in-bubble"
-  | "bubble-user"
-  | "composer";
-
-type Layer = "--lg-surface" | "--lg-surface-strong" | "--bubble-user-bg";
-
-/** 左栏 / 账号卡 / 收起态左栏 / 右栏容器共用的那条玻璃规则（styles.css 里原样的选择器）。 */
-const SIDE_RULE =
-  ":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)";
-/** 机器人气泡和对话内嵌卡片共用的玻璃规则。 */
-const BUBBLE_CARD_RULE =
-  '.glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"], .jr-card';
-const COMPOSER_RULE =
-  ".glass-composer, .dark .glass-composer, .glass-composer:focus-within, .dark .glass-composer:focus-within";
-
-/**
- * 壁纸上的每种文字位置：文字令牌 + 从壁纸往上叠的玻璃层（layers，从下到上）+ 画这些玻璃的规则
- * （rules，和 layers 一一对应，按完整选择器精确查 styles.css，不做子串匹配）。
- */
-export const SURFACES: Record<
-  SurfaceId,
-  { inks: string[]; layers: Layer[]; rules: string[] }
-> = {
-  // 直接落在壁纸上的字：消息时间 / 耗时、空聊天的名字和简介、步骤行、记忆提示、顶栏、各页面正文。
-  "on-wallpaper": {
-    inks: [
-      "--ink-1",
-      "--ink-2",
-      "--ink-3",
-      "--ink-4",
-      "--muted-foreground",
-      "--glass-ink",
-      "--glass-ink-2",
-      "--glass-ink-3",
-      "--glass-ink-4",
-      "--text-primary",
-      "--text-secondary",
-      "--text-tertiary",
-    ],
-    layers: [],
-    rules: [],
-  },
-  // 左下角账号卡：名字 .acct-name（--ink-1）、邮箱 / 状态 .acct-sub（--ink-3）。
-  "acct-card": {
-    inks: ["--ink-1", "--ink-3"],
-    layers: ["--lg-surface"],
-    rules: [SIDE_RULE],
-  },
-  // 收起态左栏：导航图标 .rail-mini-item（--ink-2）；字母头像另算（不透明底）。
-  "mini-card": {
-    inks: ["--ink-2", "--ink-3"],
-    layers: ["--lg-surface"],
-    rules: [SIDE_RULE],
-  },
-  // 右栏面板容器：标题、按钮、空状态。
-  "rail-card": {
-    inks: ["--ink-1", "--ink-2", "--ink-3"],
-    layers: ["--lg-surface"],
-    rules: [SIDE_RULE],
-  },
-  // 机器人气泡：正文继承 --glass-ink。
-  "bubble-assistant": {
-    inks: ["--glass-ink", "--text-primary", "--ink-3"],
-    layers: ["--lg-surface-strong"],
-    rules: [BUBBLE_CARD_RULE],
-  },
-  // 气泡外、直接在对话里的 render_ui 卡片。
-  "jr-card": {
-    inks: ["--ink-1", "--ink-2", "--ink-3", "--text-primary"],
-    layers: ["--lg-surface-strong"],
-    rules: [BUBBLE_CARD_RULE],
-  },
-  // 气泡里的卡片：气泡玻璃上再叠卡片玻璃，薄幕仍然只有壁纸那一层（审查：不能叠两层）。
-  "jr-card-in-bubble": {
-    inks: ["--ink-1", "--ink-2", "--ink-3", "--text-primary"],
-    layers: ["--lg-surface-strong", "--lg-surface-strong"],
-    rules: [BUBBLE_CARD_RULE, BUBBLE_CARD_RULE],
-  },
-  // 我的气泡：--bubble-user-bg + --text-primary。
-  "bubble-user": {
-    inks: ["--text-primary"],
-    layers: ["--bubble-user-bg"],
-    rules: [],
-  },
-  // 输入框：输入的字 --text-primary，占位字 --glass-ink-4（壁纸下提到 --glass-ink-3）。
-  composer: {
-    inks: ["--text-primary", "--glass-ink-4"],
-    layers: ["--lg-surface-strong"],
-    rules: [COMPOSER_RULE],
-  },
-};
-
-/**
- * 这条规则的 background 是不是只有一层 var(layer)（没有额外的薄幕层）。
- * `var(--pal-tint-layer,)` 不算一层：它是非 default 配色才定义的强调色叠加，默认配色下这条 var 解析为空，
- * 画的仍然只有那一层玻璃（也不是薄幕，薄幕是 .chisabot-wallpaper::after 那一层 --wallpaper-scrim）。
- */
-export function paintsOnly(rule: string, layer: Layer): boolean {
-  const bg = lastDecl(stylesCss, rule, "background");
-  return (
-    bg
-      ?.replace(/\s*!important$/, "")
-      .replace(/^var\(--pal-tint-layer,\)\s*/, "") === `var(${layer})`
-  );
-}
-
-/** styles.css 里所有画薄幕的规则（background 里出现 scrim 变量，或给 *-scrim-layer 变量赋值）。 */
+/** 扫描全站样式表中所有画薄幕的规则选择器。 */
 export function scrimPainters(): string[] {
-  return [...stylesCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+  const combined = [tokensCss, canvasCss, materialsCss, stylesCss].join("\n");
+  return [...combined.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter((m) =>
-      /(?:^|[;\s])(?:background(?:-image|-color)?\s*:[^;]*var\(--[\w-]*scrim|--[\w-]*scrim-layer\s*:)/.test(
-        m[2],
+      /(?:^|[;\s])background(?:-image|-color)?\s*:[^;]*var\(--[\w-]*scrim/.test(
+        m[2] ?? "",
       ),
     )
-    .map((m) => norm(m[1]));
-}
-
-/** 一种文字位置从壁纸到字之间一共有几层薄幕：壁纸那层 + 每层玻璃规则自带的（应当是 0）。 */
-export function scrimLayers(id: SurfaceId): number {
-  const own = SURFACES[id].layers.filter(
-    (layer, i) =>
-      layer !== "--bubble-user-bg" && !paintsOnly(SURFACES[id].rules[i], layer),
-  ).length;
-  return (
-    scrimPainters().filter((s) => s === ".chisabot-wallpaper::after").length +
-    own
-  );
-}
-
-/** 壁纸下文字令牌的实际颜色：html[data-wallpaper="on"] 改过的（--ink-4 → --ink-3 等）按改过的算。 */
-export function surfaceInk(scheme: Scheme, ink: string): RGBA {
-  const v = lastDecl(stylesCss, 'html[data-wallpaper="on"]', ink);
-  const ref = v?.match(/^var\((--[\w-]+)\)$/)?.[1];
-  return tokenColor(scheme, ref ?? ink);
-}
-
-/** 壁纸下某种文字位置背后所有可能的不透明底色（含每条的墨色档）。 */
-export function wallpaperSurfaceBackdrops(
-  id: SurfaceId,
-  scheme: Scheme,
-): Backdrop[] {
-  const { layers } = SURFACES[id];
-  const bases = wallpaperBases(scheme);
-  if (layers.length === 0)
-    return bases.map((bg) => ({ bg, inkScheme: scheme }));
-  if (layers[0] === "--bubble-user-bg") {
-    // 用户气泡也在玻璃名单里会被采样：深釉档连底色带墨一起翻深（--bubble-user-bg 在
-    // [data-lg-ink="dark"] 里被覆盖成深色档的值）。
-    return bases.map((b) => {
-      const ink = decideInk(scheme, bgLum(b), null);
-      const flipped = scheme === "light" && ink === "dark";
-      const fill = fillToken(flipped ? "dark" : scheme, "--bubble-user-bg");
-      return {
-        bg: over(fill, b),
-        inkScheme: flipped ? ("dark" as Scheme) : scheme,
-      };
-    });
-  }
-  const out: Backdrop[] = [];
-  for (const base of bases)
-    for (const style of GLASS_STYLES)
-      for (const haze of HAZE_RANGE) {
-        if (style === "liquid") {
-          // 每层都按它下面那层重新判定（嵌套卡第二层还是看同一底色附近）。
-          let entries = liquidComposite(
-            base,
-            scheme,
-            haze,
-            layers[0] === "--lg-surface-strong",
-          );
-          for (let i = 1; i < layers.length; i++) {
-            entries = entries.flatMap((e) =>
-              liquidComposite(
-                e.bg,
-                scheme,
-                haze,
-                layers[i] === "--lg-surface-strong",
-              ).map((n) => ({ bg: n.bg, inkScheme: n.inkScheme })),
-            );
-          }
-          out.push(...entries);
-        } else {
-          let stack = [base];
-          for (const layer of layers) {
-            const stops = glassStops(
-              layer as "--lg-surface" | "--lg-surface-strong",
-              style,
-              scheme,
-              haze,
-            );
-            stack = stack.flatMap((b) => stops.map((stop) => over(stop, b)));
-          }
-          out.push(...stack.map((bg) => ({ bg, inkScheme: scheme })));
-        }
-      }
-  return out;
+    .map((m) => norm(m[1] ?? ""));
 }

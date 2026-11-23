@@ -175,6 +175,7 @@ export function PageLoaderHost() {
         aria-modal="true"
         className="page-loader-card"
         data-btn-state={current.phase}
+        data-surface="elevated"
         ref={cardRef}
         role="alertdialog"
         tabIndex={-1}

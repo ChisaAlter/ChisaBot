@@ -97,6 +97,7 @@ export function UpdateBanner(
     <div
       className="update-banner"
       data-leaving={!visible ? "true" : undefined}
+      data-surface="elevated"
       data-update-banner
       onAnimationEnd={(event) => {
         if (!visible && event.target === event.currentTarget) onExited();

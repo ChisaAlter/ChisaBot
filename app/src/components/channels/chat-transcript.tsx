@@ -3411,6 +3411,7 @@ function AttachmentLightbox({
          * far bigger than itself.
          */
         className="inset-0 top-0 left-0 h-full max-h-none w-full max-w-none translate-x-0 translate-y-0 items-center justify-center rounded-none border-0 bg-transparent p-0 shadow-none"
+        data-surface="bare"
         onClick={(event) => {
           if (event.target === event.currentTarget) setOpen(false);
         }}
@@ -4869,6 +4870,7 @@ function ChatTranscriptImpl({
                 {tailTruncated && !virtual && firstMountedVisible ? (
                   <button
                     className="chat-history-more"
+                    data-surface="bubble"
                     onClick={prependHistory}
                     type="button"
                   >

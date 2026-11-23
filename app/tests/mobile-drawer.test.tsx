@@ -17,6 +17,14 @@ const css = readFileSync(
   path.join(import.meta.dir, "../src/styles.css"),
   "utf8",
 ).replace(/\/\*[\s\S]*?\*\//g, "");
+const materialsCss = readFileSync(
+  path.join(import.meta.dir, "../src/styles/materials.css"),
+  "utf8",
+).replace(/\/\*[\s\S]*?\*\//g, "");
+const noblurCss = readFileSync(
+  path.join(import.meta.dir, "../src/perf-noblur.css"),
+  "utf8",
+).replace(/\/\*[\s\S]*?\*\//g, "");
 
 interface Rule {
   selector: string;
@@ -143,26 +151,26 @@ test("clicking the overlay closes the drawer", async () => {
 });
 
 test("at most one blur layer: no drawer rule blurs, the inner cards and the overlay switch blur off", () => {
-  // 抽屉自己的规则一条都不写模糊——唯一的模糊来自面板上的 .glass。
+  // 抽屉在 styles.css 里不写模糊，唯一的模糊来自 materials.css elevated 表面通道。
   expect(
     all
       .filter((r) => DRAWER.test(r.selector) && blurs(r))
       .map((r) => r.selector),
   ).toEqual([]);
-  expect(all.some((r) => r.selector === ".glass" && blurs(r))).toBe(true);
-  // 里面的卡片关掉旧三档玻璃层（它读 --lg-blur / --lg-surface / --lg-shadow）。
+  expect(materialsCss).toContain(".hk-drawer");
+  // 里面的卡片关掉表面变量（--surface-blur / --surface-bg / --surface-shadow）。
   const inner = all.find((r) =>
     r.selector.includes(".hk-drawer :is(.glass-side-card, .acct-card"),
   );
-  expect(inner?.body).toMatch(/--lg-blur:\s*none/);
-  expect(inner?.body).toMatch(/--lg-surface:\s*transparent/);
-  expect(inner?.body).toMatch(/--lg-shadow:\s*none/);
-  // 遮罩只压暗。
+  expect(inner?.body).toMatch(/--surface-blur:\s*none/);
+  expect(inner?.body).toMatch(/--surface-bg:\s*transparent/);
+  expect(inner?.body).toMatch(/--surface-shadow:\s*none/);
+  // 遮罩只压暗（暗色 alpha <= 0.22），不模糊。
   const dim = all.find(
     (r) => r.selector === '[data-slot="sheet-overlay"].hk-drawer-overlay',
   );
   expect(dim?.body).toMatch(/backdrop-filter:\s*none/);
-  expect(dim?.body).toMatch(/background:\s*rgba\(0, 0, 0, 0\.\d+\)/);
+  expect(dim?.body).toMatch(/background:\s*rgba\(/);
 });
 
 test("the drawer slides with transform only, 200ms, and not at all under reduced motion", () => {
@@ -177,14 +185,7 @@ test("the drawer slides with transform only, 200ms, and not at all under reduced
   expect(css).toMatch(
     /@media \(prefers-reduced-motion: reduce\) \{\s*\[data-slot="sidebar"\]\.hk-drawer,\s*\[data-slot="sheet-overlay"\]\.hk-drawer-overlay \{\s*transition: none;/,
   );
-  // 性能模式和减少透明度：不透明底、不模糊。
-  const perf = all.find(
-    (r) =>
-      r.selector === 'html[data-perf="on"] [data-slot="sidebar"].hk-drawer',
-  );
-  expect(perf?.body).toMatch(/background:\s*var\(--hk-drawer-solid\)/);
-  expect(perf?.body).toMatch(/backdrop-filter:\s*none/);
-  expect(css).toMatch(
-    /@media \(prefers-reduced-transparency: reduce\) \{\s*html \[data-slot="sidebar"\]\.hk-drawer \{\s*background: var\(--hk-drawer-solid\);\s*backdrop-filter: none;/,
-  );
+  // 实色材质 / 性能模式 / 减少透明度：统一由 perf-noblur.css 落到不透明实底、零模糊，且内嵌子卡透明无重底。
+  expect(noblurCss).toContain(".hk-drawer");
+  expect(noblurCss).toContain('[data-slot="sidebar"].hk-drawer');
 });

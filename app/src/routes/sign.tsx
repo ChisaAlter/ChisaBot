@@ -249,6 +249,7 @@ function SignScreen() {
       <motion.div
         animate="shown"
         className="auth-card flex w-full max-w-[420px] flex-col items-center px-8 py-10"
+        data-surface="elevated"
         initial="hidden"
         variants={{
           hidden: {},

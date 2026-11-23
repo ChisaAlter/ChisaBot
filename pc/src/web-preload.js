@@ -94,14 +94,22 @@ if (isLocalPage) {
       },
     });
 
-    // 外观：网页在 <html> 上切 .dark；时间天空看 <html data-sky>——SkyBackground 按外观模型
-    // （模式 × 主题族双槽 × 天空来源，DESIGN §140/§143）写 "live"（实时动态天象）/ "snapshot"（固定场景）/
-    // "off"（壁纸 · 主题渐变 · 性能模式），启动脚本在 React 前先写 "time"；旧键 chisabot-sky="off"
-    // 时启动脚本不写属性 → 原生窗不画时间天空（老用户兼容）。
+    // 外观：网页在 <html> 上维护 .dark + data-theme + data-material + data-canvas + data-sky，
+    // 统一经 pc:appearance 上报 { dark, theme, material, canvas, sky }（保留旧 sky 布尔兼容字段）。
     const report = () => {
-      const skyAttr = document.documentElement.getAttribute("data-sky");
-      const sky = skyAttr === "live" || skyAttr === "time";
-      ipcRenderer.invoke("pc:appearance", { dark: document.documentElement.classList.contains("dark"), sky }).catch(() => {});
+      const root = document.documentElement;
+      const skyAttr = root.getAttribute("data-sky");
+      const canvasAttr = root.getAttribute("data-canvas");
+      const sky = skyAttr === "live" || skyAttr === "time" || (skyAttr === null && canvasAttr === "sky");
+      ipcRenderer
+        .invoke("pc:appearance", {
+          dark: root.classList.contains("dark"),
+          theme: root.getAttribute("data-theme") || "sky",
+          material: root.getAttribute("data-material") || "glass",
+          canvas: canvasAttr || "sky",
+          sky,
+        })
+        .catch(() => {});
     };
     let timer = null;
     const schedule = () => {
@@ -110,7 +118,10 @@ if (isLocalPage) {
     };
     window.addEventListener("DOMContentLoaded", () => {
       report();
-      new MutationObserver(schedule).observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-sky"] });
+      new MutationObserver(schedule).observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class", "data-theme", "data-material", "data-canvas", "data-sky"],
+      });
     });
     window.addEventListener("storage", schedule);
   }

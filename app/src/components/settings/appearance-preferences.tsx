@@ -1,10 +1,14 @@
 import {
   IconCheck,
-  IconCloud,
+  IconChevronDown,
+  IconChevronRight,
   IconCrop,
+  IconDeviceDesktop,
+  IconMoon,
+  IconPalette,
   IconPhoto,
-  IconPlus,
   IconRefresh,
+  IconSun,
   IconTrash,
   IconUpload,
 } from "@tabler/icons-react";
@@ -15,56 +19,59 @@ import {
   useRef,
   useState,
 } from "react";
-import { useTheme } from "@/components/theme-provider";
-import { useExternalConnection } from "@/hooks";
+import { PageRows, PageSection } from "@/components/layout/page-shell";
 import {
   WallpaperCropDialog,
   type WallpaperCropSource,
 } from "@/components/settings/wallpaper-crop-dialog";
+import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ContentEnter, SmoothCollapse } from "@/components/ui/motion-primitives";
+import {
+  ContentEnter,
+  SmoothCollapse,
+} from "@/components/ui/motion-primitives";
 import { useSegmentedKeys } from "@/components/ui/segmented";
-import { useRetainedValue } from "@/lib/motion";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
+import { useExternalConnection, useMediaQuery } from "@/hooks";
 import {
   ARTISTIC_WALLPAPER_PRESETS,
+  type ArtisticWallpaperPresetId,
+  type CanvasConfig,
   compressCroppedWallpaper,
-  DEFAULT_GLASS_OPACITY,
-  DEFAULT_GLASS_STYLE,
-  familySkyStops,
-  GLASS_OPACITY_MAX,
-  GLASS_OPACITY_MIN,
-  type GlassStyleId,
-  HARK_SCENE_INFO,
-  HARK_SKY_SCENES,
-  type HarkSkySceneId,
-  listThemeFamilies,
+  isDefaultAppearance,
   loadUploadedWallpaperSource,
-  resetAppearanceDefaults,
-  resolvedSeed,
-  resolvedThemeFamily,
-  saveCustomFamily,
+  MATERIALS,
+  type MaterialId,
+  removeCustomWallpaper,
+  resetAppearance,
+  SKY_SCENES,
+  type SkySceneId,
   saveUploadedWallpaper,
   saveUploadedWallpaperSource,
-  type Seed,
-  setCustomWallpaperUrl,
-  setGlassOpacity,
-  setGlassOpacityDark,
-  setGlassStyle,
-  setHarkSkyScene,
-  setSkySource,
-  setThemeHalf,
-  setWallpaperBlur,
-  setWallpaperDim,
-  setWallpaperPreset,
-  setWallpaperScrim,
-  updateAppearance,
-  useAppearance,
+  setCanvas,
+  setCustomAccent,
+  setMaterial,
+  setSkyScene,
+  setSkyWeather,
+  setStaticBackground,
+  setTheme,
+  setWallpaperAdjustments,
+  setWallpaperSource,
+  THEMES,
+  useAppearanceConfig,
+  useCustomWallpaperUrl,
   validateWallpaperFile,
+  WALLPAPER_BLUR_MAX,
+  WALLPAPER_BLUR_MIN,
   WALLPAPER_CATEGORIES,
+  WALLPAPER_SCRIM_MAX,
+  WALLPAPER_SCRIM_MIN,
   type WallpaperCategoryId,
 } from "@/lib/appearance";
+import type { AppearanceMode } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { dataUrlToBlob } from "@/lib/wallpaper-compress";
 import {
@@ -74,18 +81,25 @@ import {
   type WallpaperAspectPresetId,
 } from "@/lib/wallpaper-crop";
 
-const GLASS_STYLE_OPTIONS: readonly { value: GlassStyleId; label: string }[] = [
-  { value: "liquid", label: "液态玻璃" },
-  { value: "mist", label: "薄雾玻璃" },
-  { value: "crystal", label: "晶莹全透" },
-  { value: "frosted", label: "柔光磨砂" },
+const MODE_OPTIONS: readonly {
+  value: AppearanceMode;
+  label: string;
+  Icon: typeof IconSun;
+}[] = [
+  { value: "system", label: "跟随系统", Icon: IconDeviceDesktop },
+  { value: "light", label: "浅色", Icon: IconSun },
+  { value: "dark", label: "深色", Icon: IconMoon },
 ];
-const GLASS_STYLE_VALUES: readonly GlassStyleId[] = [
-  "liquid",
-  "mist",
-  "crystal",
-  "frosted",
+const MODE_VALUES: readonly AppearanceMode[] = ["system", "light", "dark"];
+
+type CanvasKind = CanvasConfig["kind"];
+const CANVAS_OPTIONS: readonly { value: CanvasKind; label: string }[] = [
+  { value: "pure", label: "净色" },
+  { value: "sky", label: "动态天空" },
+  { value: "wallpaper", label: "壁纸" },
 ];
+const CANVAS_VALUES: readonly CanvasKind[] = ["pure", "sky", "wallpaper"];
+
 const WALLPAPER_CATEGORY_VALUES: readonly WallpaperCategoryId[] =
   WALLPAPER_CATEGORIES.map((c) => c.id);
 
@@ -134,24 +148,24 @@ function readBlobAsDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-/** 自定义族编辑器草稿：name + 两个 seed；None = 编辑器关闭。 */
-type FamilyDraft = { name: string; light: Seed; dark: Seed };
+function materialTitle(id: MaterialId, name: string): string {
+  if (id === "glass") return `${name}（默认）`;
+  if (id === "solid") return `${name}（零模糊）`;
+  return name;
+}
 
 export function AppearancePreferences() {
-  const appearance = useAppearance();
-  const { dark } = useTheme();
-  const glassKeys = useSegmentedKeys<GlassStyleId>({
-    value: appearance.glassStyle,
-    values: GLASS_STYLE_VALUES,
-    onChange: (next) => setGlassStyle(next),
-  });
+  const config = useAppearanceConfig();
+  const customWallpaperUrl = useCustomWallpaperUrl();
+  const { mode, setMode, dark } = useTheme();
+  const reducedTransparency = useMediaQuery(
+    "(prefers-reduced-transparency: reduce)",
+  );
+
+  const [accentOpen, setAccentOpen] = useState(Boolean(config.customAccent));
+  const [cityDraft, setCityDraft] = useState<string | null>(null);
   const [wallpaperCategory, setWallpaperCategory] =
     useState<WallpaperCategoryId>("all");
-  const categoryKeys = useSegmentedKeys<WallpaperCategoryId>({
-    value: wallpaperCategory,
-    values: WALLPAPER_CATEGORY_VALUES,
-    onChange: (next) => setWallpaperCategory(next),
-  });
 
   const [uploading, setUploading] = useState(false);
   const [cropSaving, setCropSaving] = useState(false);
@@ -161,6 +175,16 @@ export function AppearancePreferences() {
   );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const decodeRequestIdRef = useRef(0);
+  const lastSkySceneRef = useRef<SkySceneId>("auto");
+  const lastWallpaperSourceRef = useRef<ArtisticWallpaperPresetId | "custom">(
+    "waterlily-pond",
+  );
+
+  if (config.canvas.kind === "sky") {
+    lastSkySceneRef.current = config.canvas.scene;
+  } else if (config.canvas.kind === "wallpaper") {
+    lastWallpaperSourceRef.current = config.canvas.source;
+  }
 
   const cropPreviewUrl = cropSession?.previewUrl ?? null;
   useExternalConnection(
@@ -170,12 +194,58 @@ export function AppearancePreferences() {
     },
   );
 
+  const modeKeys = useSegmentedKeys<AppearanceMode>({
+    value: mode,
+    values: MODE_VALUES,
+    onChange: (next) => setMode(next),
+  });
+
+  const handleSelectCanvasKind = (kind: CanvasKind) => {
+    if (kind === config.canvas.kind) return;
+    if (kind === "pure") {
+      setCanvas({ kind: "pure" });
+      return;
+    }
+    if (kind === "sky") {
+      setSkyScene(lastSkySceneRef.current);
+      return;
+    }
+    const remembered = lastWallpaperSourceRef.current;
+    const target =
+      remembered === "custom" && !customWallpaperUrl
+        ? "waterlily-pond"
+        : remembered;
+    setWallpaperSource(target);
+  };
+
+  const canvasKeys = useSegmentedKeys<CanvasKind>({
+    value: config.canvas.kind,
+    values: CANVAS_VALUES,
+    onChange: handleSelectCanvasKind,
+  });
+
+  const categoryKeys = useSegmentedKeys<WallpaperCategoryId>({
+    value: wallpaperCategory,
+    values: WALLPAPER_CATEGORY_VALUES,
+    onChange: (next) => setWallpaperCategory(next),
+  });
+
   const busy = uploading || cropSaving;
-  const hasStoredCustomImage = Boolean(appearance.customWallpaperUrl);
+  const isDefault = isDefaultAppearance(config);
+  const activeTheme = THEMES.find((t) => t.id === config.theme) ?? THEMES[0];
+  const activeThemeAccent = dark
+    ? (activeTheme?.dark.accent ?? "#6ea8ff")
+    : (activeTheme?.light.accent ?? "#4176e6");
+  const effectiveAccentHex = config.customAccent ?? activeThemeAccent;
+
+  const hasStoredCustomImage = Boolean(customWallpaperUrl);
   const canRecropStoredCustom =
-    hasStoredCustomImage && appearance.customWallpaperUrl.startsWith("data:");
+    hasStoredCustomImage && customWallpaperUrl.startsWith("data:");
   const isCustomActive =
-    appearance.wallpaperId === "custom" && hasStoredCustomImage;
+    config.canvas.kind === "wallpaper" &&
+    config.canvas.source === "custom" &&
+    hasStoredCustomImage;
+
   const filteredArtWallpapers =
     wallpaperCategory === "all"
       ? ARTISTIC_WALLPAPER_PRESETS
@@ -183,62 +253,30 @@ export function AppearancePreferences() {
           (item) => item.category === wallpaperCategory,
         );
 
-  // 主题族（CB-140）：浅 / 深两槽各自独立；点卡片的某半边只写那一槽。
-  const families = listThemeFamilies(appearance.customFamilies);
-  const resolvedFamily = resolvedThemeFamily(appearance, dark);
-  const [familyDraft, setFamilyDraft] = useState<FamilyDraft | null>(null);
-  const retainedFamilyDraft = useRetainedValue(familyDraft);
+  const skyCanvas = config.canvas.kind === "sky" ? config.canvas : null;
+  const wallpaperCanvas =
+    config.canvas.kind === "wallpaper" ? config.canvas : null;
+  const savedCity = skyCanvas?.weather.city ?? "";
+  const cityInputValue = cityDraft ?? savedCity;
 
-  const openFamilyEditor = () => {
-    // 草稿从两个模式当前各自选中的族复制：改完保存就成一套新族。
-    const light = resolvedThemeFamily(appearance, false).light;
-    const darkSeed = resolvedThemeFamily(appearance, true).dark;
-    setFamilyDraft({
-      name: "",
-      light: { ...light },
-      dark: { ...darkSeed },
-    });
-  };
-
-  const handleSaveCustomFamily = () => {
-    if (!familyDraft) return;
-    const name = familyDraft.name.trim() || "我的主题";
-    saveCustomFamily({
-      id: `custom-${Date.now().toString(36)}`,
-      name,
-      light: familyDraft.light,
-      dark: familyDraft.dark,
-    });
-    setFamilyDraft(null);
-    toast.success(`已保存主题族「${name}」`);
-  };
-
-  const patchDraftSeed = (mode: "light" | "dark", patch: Partial<Seed>) => {
-    setFamilyDraft((draft) =>
-      draft ? { ...draft, [mode]: { ...draft[mode], ...patch } } : draft,
+  const handleSaveCity = () => {
+    const trimmed = cityInputValue.trim();
+    setSkyWeather({ city: trimmed || null });
+    setCityDraft(null);
+    toast.success(
+      trimmed
+        ? `实时天气城市已设为「${trimmed}」`
+        : "已清空城市，将按本机时区获取天气",
     );
   };
 
-  // 编辑器里的背景材质选择：写的就是天空来源三选一（壁纸有已存的自定义图就回填，否则给第一张预设）。
-  const bgPick =
-    appearance.wallpaperId !== "none" ? "wallpaper" : appearance.skySource;
-  const applyBgPick = (pick: "theme" | "hark" | "wallpaper") => {
-    if (pick === "wallpaper") {
-      setWallpaperPreset(
-        appearance.customWallpaperUrl ? "custom" : "waterlily-pond",
-      );
-      return;
-    }
-    setSkySource(pick);
+  const handleClearCity = () => {
+    setSkyWeather({ city: null });
+    setCityDraft(null);
+    toast.success("已清空天气城市");
   };
 
-  // 「主题天空」卡的预览 = 当前族 seed 派生的四段渐变。
-  const famStops = familySkyStops(resolvedSeed(appearance, dark), dark);
-  const themeSkyGradient = `linear-gradient(180deg, ${famStops[0]} 0%, ${famStops[1]} 36%, ${famStops[2]} 72%, ${famStops[3]} 100%)`;
-  const themeSkySubtitle = `「${resolvedFamily.name}」配套的主题渐变天空`;
-
   const openWallpaperCropForFile = async (file: File) => {
-    // 先校验类型和大小，超限的文件不读进内存
     const invalid = validateWallpaperFile(file);
     if (invalid) {
       toast.error(invalid);
@@ -290,9 +328,7 @@ export function AppearancePreferences() {
 
       const sourceDataUrl =
         savedSource?.sourceDataUrl ??
-        (appearance.customWallpaperUrl.startsWith("data:")
-          ? appearance.customWallpaperUrl
-          : "");
+        (customWallpaperUrl.startsWith("data:") ? customWallpaperUrl : "");
       if (!sourceDataUrl) {
         toast.error("当前壁纸不支持重新裁剪，请重新选择本地图片");
         return;
@@ -355,7 +391,6 @@ export function AppearancePreferences() {
         ? undefined
         : pixelCrop;
       const dataUrl = await compressCroppedWallpaper(cropSession.blob, crop);
-      // 存进 IndexedDB 成功后才应用；保存失败会抛错，走下面的错误提示
       await saveUploadedWallpaper(dataUrl);
 
       try {
@@ -410,764 +445,716 @@ export function AppearancePreferences() {
 
   return (
     <>
-      {/* 1. 外观模型（CB-140）：外观 = 模式 × 主题族 × 背景。
-       *    族卡的左右半边分别写浅 / 深族槽（允许混搭）；天空背景在
-       *    「主题天空 / Hark 动态天象 / 壁纸」三选一，昼景只配浅色、夜景只配深色
-       *    （错配在解析层自动落到配对场景），晨昏两相宜。 */}
-      <div
-        className="appearance-block"
-        data-setting-item="主题皮肤 主题配色 主题族 general.sky"
+      <PageSection
+        action={
+          !isDefault ? (
+            <Button
+              data-testid="appearance-reset"
+              onClick={() => {
+                resetAppearance();
+                setCityDraft(null);
+                setAccentOpen(false);
+                toast.success("已恢复默认外观");
+              }}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <IconRefresh className="size-3.5" />
+              {"恢复默认"}
+            </Button>
+          ) : null
+        }
+        description={"外观模式、色彩主题、背景画布与界面材质，保存在此浏览器。"}
+        settingItem="外观"
+        title={"外观"}
       >
-        <div className="appearance-block-head">
-          <div>
-            <div className="appearance-block-title">{"主题族与天空背景"}</div>
-            <div className="appearance-block-desc">
-              {
-                "主题族决定整套强调色、文字与配套天空渐变；浅 / 深模式各选一族。天象由 Hark WebGL 引擎实时渲染，昼夜场景按外观明暗自动配对呈现"
-              }
+        <PageRows>
+          {/* 1. 外观模式 */}
+          <div
+            className="ap-section"
+            data-setting-item="general.theme 外观模式 主题"
+          >
+            <div className="ap-row">
+              <div>
+                <div className="ap-title">{"外观模式"}</div>
+                <div className="ap-desc">
+                  {"跟随系统自动切换，或固定为浅色 / 深色（与账号菜单同步）。"}
+                </div>
+              </div>
+              <div
+                aria-label="外观模式"
+                className="sg-segmented"
+                data-surface="inset"
+                {...modeKeys.groupProps}
+                ref={modeKeys.groupRef}
+                role="radiogroup"
+              >
+                {MODE_OPTIONS.map(({ value, label, Icon }) => (
+                  // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 分段单选控件，配合 ui/segmented.tsx 的 roving-tabindex 与方向键约定，原生 radio 无法替代
+                  <button
+                    aria-checked={mode === value}
+                    className="sg-segmented-item"
+                    data-testid={`appearance-mode-${value}`}
+                    key={value}
+                    onClick={() => setMode(value)}
+                    role="radio"
+                    tabIndex={modeKeys.itemTabIndex(value)}
+                    type="button"
+                  >
+                    <Icon className="size-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-          <div className="appearance-head-actions">
-            {appearance.harkScene !== "auto" ||
-            appearance.familyLight !== "azure" ||
-            appearance.familyDark !== "azure" ||
-            appearance.customFamilies.length > 0 ||
-            appearance.wallpaperId !== "none" ||
-            appearance.glassStyle !== DEFAULT_GLASS_STYLE ||
-            appearance.glassOpacity !== DEFAULT_GLASS_OPACITY ||
-            appearance.glassOpacityDark !== DEFAULT_GLASS_OPACITY ? (
+
+          <Separator />
+
+          {/* 2. 色彩主题 + 自定义强调色 */}
+          <div
+            className="ap-section"
+            data-setting-item="general.palette 色彩主题 主题配色 主题色"
+          >
+            <div className="ap-head">
+              <div>
+                <div className="ap-title">{"色彩主题"}</div>
+                <div className="ap-desc">
+                  {"统一决定强调色、面板微染色与净色画布基调，不会改变背景类型。"}
+                </div>
+              </div>
+            </div>
+
+            <fieldset aria-label="色彩主题选择" className="ap-theme-grid m-0 border-0 p-0">
+              {THEMES.map((theme) => {
+                const active = config.theme === theme.id;
+                const variant = dark ? theme.dark : theme.light;
+                return (
+                  <button
+                    aria-pressed={active}
+                    className={cn("ap-theme-card", active && "is-active")}
+                    data-testid={`theme-card-${theme.id}`}
+                    key={theme.id}
+                    onClick={() => setTheme(theme.id)}
+                    title={theme.description}
+                    type="button"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="ap-theme-swatch grid place-items-center"
+                      style={{
+                        background: variant.accent,
+                        color: dark ? "#0f1115" : "#ffffff",
+                      }}
+                    >
+                      {active ? (
+                        <IconCheck className="size-3.5 stroke-[2.8]" />
+                      ) : null}
+                    </span>
+                    <span className="ap-theme-name">{theme.name}</span>
+                  </button>
+                );
+              })}
+            </fieldset>
+
+            <div>
               <Button
-                onClick={() => {
-                  resetAppearanceDefaults();
-                  setFamilyDraft(null);
-                  toast.success("已恢复默认外观");
-                }}
+                aria-expanded={accentOpen}
+                className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+                data-testid="custom-accent-toggle"
+                onClick={() => setAccentOpen((open) => !open)}
                 size="sm"
                 type="button"
                 variant="ghost"
               >
-                <IconRefresh className="size-3.5" />
-                {"恢复默认"}
+                {accentOpen ? (
+                  <IconChevronDown className="size-3.5" />
+                ) : (
+                  <IconChevronRight className="size-3.5" />
+                )}
+                <IconPalette className="size-3.5" />
+                <span>{"自定义强调色"}</span>
+                {config.customAccent ? (
+                  <span
+                    className="ml-1 inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 font-mono text-[11px] text-foreground"
+                    data-testid="custom-accent-badge"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="inline-block size-2.5 rounded-full"
+                      style={{ background: config.customAccent }}
+                    />
+                    {config.customAccent}
+                  </span>
+                ) : null}
               </Button>
-            ) : null}
-          </div>
-        </div>
 
-        <div className="appearance-subhead">{"主题族"}</div>
-        <fieldset aria-label="主题族选择" className="appearance-fam-grid">
-          {families.map((family) => {
-            return (
-              <div className="appearance-fam-card" key={family.id}>
-                <div className="appearance-fam-preview">
-                  {(["light", "dark"] as const).map((mode) => {
-                    const s = family[mode];
-                    const selected =
-                      (mode === "light"
-                        ? appearance.familyLight
-                        : appearance.familyDark) === family.id;
-                    const current = dark === (mode === "dark");
-                    return (
-                      <button
-                        aria-pressed={selected}
-                        className={cn(
-                          "appearance-fam-half",
-                          selected && "is-sel",
-                        )}
-                        data-testid={`fam-half-${family.id}-${mode}`}
-                        key={mode}
-                        onClick={() => setThemeHalf(mode, family.id)}
-                        style={
-                          {
-                            background: s.bg,
-                            color: s.fg,
-                            "--fam-ac": s.ac,
-                          } as CSSProperties
-                        }
-                        type="button"
-                      >
-                        <span
-                          aria-hidden="true"
-                          className="appearance-fam-mini"
-                        >
-                          <i
-                            className="appearance-fam-dot"
-                            style={{ background: s.ac }}
-                          />
-                          <span className="appearance-fam-lines">
-                            <i />
-                            <i />
-                          </span>
-                        </span>
-                        <span className="appearance-fam-label">
-                          {mode === "light" ? "浅色" : "深色"}
-                          {current ? (
-                            <span className="appearance-fam-current">当前</span>
-                          ) : null}
-                        </span>
-                        {selected ? (
-                          <span className="appearance-fam-check">
-                            <IconCheck className="size-3 stroke-[2.8]" />
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="appearance-fam-meta">
-                  <b>{family.name}</b>
-                  <small>
-                    {family.light.ac} · {family.dark.ac}
-                  </small>
-                </div>
-              </div>
-            );
-          })}
-          <button
-            className="appearance-fam-card appearance-fam-plus"
-            data-testid="fam-custom"
-            onClick={openFamilyEditor}
-            type="button"
-          >
-            <IconPlus className="appearance-fam-plus-ic" />
-            <span className="appearance-fam-plus-tx">{"自定义主题"}</span>
-            <span className="appearance-fam-plus-sub">
-              {"命名 + 双色种子 + 对比度"}
-            </span>
-          </button>
-        </fieldset>
-
-        <SmoothCollapse open={Boolean(familyDraft)} unmountOnExit>
-          {retainedFamilyDraft ? (
-            <div className="appearance-fam-editor" data-testid="fam-editor">
-              <div className="appearance-fam-editor-head">
-                <span>{"自定义主题族"}</span>
-                <Button
-                  onClick={() => setFamilyDraft(null)}
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  {"取消"}
-                </Button>
-              </div>
-              <Input
-                onChange={(e) =>
-                  setFamilyDraft({
-                    ...retainedFamilyDraft,
-                    name: e.target.value,
-                  })
-                }
-                placeholder="主题名称（如：我的晨间）"
-                value={retainedFamilyDraft.name}
-              />
-              <div className="appearance-fam-ed-cols">
-                {(["light", "dark"] as const).map((mode) => {
-                  const s = retainedFamilyDraft[mode];
-                  return (
-                    <div
-                      className="appearance-fam-ed-col"
-                      data-testid={`fam-ed-${mode}`}
-                      key={mode}
+              <SmoothCollapse open={accentOpen} unmountOnExit>
+                <div className="ap-accent-row mt-2" data-testid="custom-accent-panel">
+                  <label className="inline-flex items-center gap-2 text-xs text-foreground">
+                    <input
+                      aria-label="自定义强调色"
+                      className="ap-accent-picker"
+                      data-testid="custom-accent-picker"
+                      onChange={(e) => setCustomAccent(e.target.value)}
+                      type="color"
+                      value={effectiveAccentHex}
+                    />
+                    <span className="font-mono text-xs">
+                      {config.customAccent ?? `${activeThemeAccent}（默认）`}
+                    </span>
+                  </label>
+                  {config.customAccent ? (
+                    <Button
+                      data-testid="custom-accent-reset"
+                      onClick={() => setCustomAccent(null)}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
                     >
-                      <h4>
-                        <i
-                          style={{
-                            background:
-                              mode === "light" ? "#f6c945" : "#7c8db5",
-                          }}
-                        />
-                        {mode === "light" ? "浅色 Light" : "深色 Dark"}
-                      </h4>
-                      <div className="appearance-fam-ed-colors">
-                        {(
-                          [
-                            ["ac", "强调色"],
-                            ["bg", "底色"],
-                            ["fg", "文字"],
-                          ] as const
-                        ).map(([key, label]) => (
-                          <label className="appearance-fam-ed-color" key={key}>
-                            <input
-                              onChange={(e) =>
-                                patchDraftSeed(mode, { [key]: e.target.value })
-                              }
-                              type="color"
-                              value={s[key]}
-                            />
-                            {label}
-                          </label>
-                        ))}
-                        <span
-                          aria-hidden="true"
-                          className="appearance-fam-ed-sample"
-                          style={{ background: s.bg, color: s.fg }}
-                        >
-                          <i style={{ background: s.ac }} />
-                          {"Aa"}
-                        </span>
-                      </div>
-                      <label className="appearance-fam-ed-ct">
-                        {"对比度"}
-                        <input
-                          max={70}
-                          min={30}
-                          onChange={(e) =>
-                            patchDraftSeed(mode, { c: Number(e.target.value) })
-                          }
-                          type="range"
-                          value={s.c}
-                        />
-                        <b>{s.c}</b>
-                      </label>
-                    </div>
-                  );
-                })}
+                      {"恢复主题默认"}
+                    </Button>
+                  ) : null}
+                  <span className="ap-hint">
+                    {"自动按当前浅/深模式校正文字对比度（≥ 4.5:1）。"}
+                  </span>
+                </div>
+              </SmoothCollapse>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* 3. 背景画布（唯一互斥三选一：净色 | 动态天空 | 壁纸） */}
+          <div
+            className="ap-section"
+            data-setting-item="general.sky general.wallpaper 背景画布 动态天空 背景壁纸"
+          >
+            <div className="ap-head">
+              <div>
+                <div className="ap-title">{"背景画布"}</div>
+                <div className="ap-desc">
+                  {"窗口最底层唯一画布，在净色、动态天空与壁纸间三选一。"}
+                </div>
               </div>
-              <div className="appearance-fam-ed-foot">
+              <div className="ap-actions">
                 <div
-                  aria-label="背景材质"
-                  className="appearance-fam-ed-bg"
+                  aria-label="背景画布类型"
+                  className="sg-segmented"
+                  data-surface="inset"
+                  {...canvasKeys.groupProps}
+                  ref={canvasKeys.groupRef}
                   role="radiogroup"
                 >
-                  {(
-                    [
-                      ["theme", "主题天空"],
-                      ["hark", "动态天象"],
-                      ["wallpaper", "壁纸"],
-                    ] as const
-                  ).map(([pick, label]) => (
-                    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片（与下方天空背景组同一模式），原生 radio 换不了
+                  {CANVAS_OPTIONS.map(({ value, label }) => (
+                    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 分段单选控件，配合 ui/segmented.tsx 的 roving-tabindex 与方向键约定，原生 radio 无法替代
                     <button
-                      aria-checked={bgPick === pick}
-                      className={cn(
-                        "appearance-fam-ed-bg-chip",
-                        bgPick === pick && "is-on",
-                      )}
-                      data-testid={`fam-bg-${pick}`}
-                      key={pick}
-                      onClick={() => applyBgPick(pick)}
+                      aria-checked={config.canvas.kind === value}
+                      className="sg-segmented-item"
+                      data-testid={`canvas-kind-${value}`}
+                      key={value}
+                      onClick={() => handleSelectCanvasKind(value)}
                       role="radio"
+                      tabIndex={canvasKeys.itemTabIndex(value)}
                       type="button"
                     >
                       {label}
                     </button>
                   ))}
                 </div>
-                <Button onClick={handleSaveCustomFamily} type="button">
-                  {"保存主题族"}
-                </Button>
               </div>
             </div>
-          ) : null}
-        </SmoothCollapse>
 
-        <div className="appearance-subhead">{"天空背景"}</div>
-        <div
-          aria-label="天空背景选择"
-          className="appearance-wallpaper-grid"
-          role="radiogroup"
-        >
-          {/* 「主题天空」：皮肤配套静态渐变（引擎不启动）。它和天象卡是同一个单选组：
-              壁纸启用时整组都不亮（壁纸盖过天空）。 */}
-          {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片，样式依赖 button 结构，原生 radio 换不了 */}
-          <button
-            aria-checked={
-              appearance.wallpaperId === "none" &&
-              appearance.skySource === "theme"
-            }
-            className={cn(
-              "appearance-wallpaper-card",
-              appearance.wallpaperId === "none" &&
-                appearance.skySource === "theme" &&
-                "is-active",
-            )}
-            data-testid="sky-source-theme"
-            onClick={() => setSkySource("theme")}
-            role="radio"
-            type="button"
-          >
-            <div
-              className="appearance-wallpaper-thumb"
-              style={{ background: themeSkyGradient }}
-            >
-              <div className="appearance-wallpaper-glass-demo">
-                <i />
-                <i />
-              </div>
-              {appearance.wallpaperId === "none" &&
-              appearance.skySource === "theme" ? (
-                <span className="appearance-swatch-check">
-                  <IconCheck className="size-3.5 stroke-[2.6]" />
-                </span>
-              ) : null}
-            </div>
-            <div className="appearance-wallpaper-meta">
-              <span className="appearance-palette-name">{"主题天空"}</span>
-              <span className="appearance-palette-sub">{themeSkySubtitle}</span>
-            </div>
-          </button>
-          {HARK_SKY_SCENES.map((scene) => {
-            const active =
-              appearance.wallpaperId === "none" &&
-              appearance.skySource === "hark" &&
-              appearance.harkScene === scene.id;
-            const daylight =
-              scene.sceneIndex !== null && scene.sceneIndex >= 0
-                ? HARK_SCENE_INFO[scene.sceneIndex]?.daylight
-                : null;
-            return (
-              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片，样式依赖 button 结构，原生 radio 换不了
-              <button
-                aria-checked={active}
-                className={cn(
-                  "appearance-wallpaper-card",
-                  active && "is-active",
-                )}
-                data-testid={`hark-scene-${scene.id}`}
-                key={scene.id}
-                onClick={() => setHarkSkyScene(scene.id as HarkSkySceneId)}
-                role="radio"
-                type="button"
-              >
-                <div
-                  className="appearance-wallpaper-thumb"
-                  style={{ background: scene.previewGradient }}
+            {/* 3a. 净色 */}
+            {config.canvas.kind === "pure" ? (
+              <p className="ap-hint" data-testid="canvas-pure-hint">
+                {"极简主题微渐变，随当前色彩主题与浅/深模式自动过渡，零动画与 GPU 开销。"}
+              </p>
+            ) : null}
+
+            {/* 3b. 动态天空 */}
+            {skyCanvas ? (
+              <div className="flex flex-col gap-3" data-testid="canvas-sky-panel">
+                <div className="ap-subhead">{"天空时刻"}</div>
+                <fieldset
+                  aria-label="动态天空时刻选择"
+                  className="appearance-wallpaper-grid m-0 border-0 p-0"
                 >
-                  <div className="appearance-wallpaper-glass-demo">
-                    <i />
-                    <i />
+                  {SKY_SCENES.map((scene) => {
+                    const active = skyCanvas.scene === scene.id;
+                    return (
+                      <button
+                        aria-pressed={active}
+                        className={cn(
+                          "appearance-wallpaper-card",
+                          active && "is-active",
+                        )}
+                        data-testid={`sky-scene-${scene.id}`}
+                        key={scene.id}
+                        onClick={() => setSkyScene(scene.id)}
+                        type="button"
+                      >
+                        <div
+                          className="appearance-wallpaper-thumb"
+                          style={{ background: scene.previewGradient }}
+                        >
+                          {active ? (
+                            <span className="appearance-swatch-check absolute top-2 right-2">
+                              <IconCheck className="size-3.5 stroke-[2.6]" />
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="appearance-wallpaper-meta">
+                          <span className="appearance-palette-name">
+                            {scene.name}
+                          </span>
+                          <span className="appearance-palette-sub">
+                            {scene.subtitle}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </fieldset>
+
+                <div
+                  className="ap-accent-row flex-col items-stretch gap-2.5"
+                  data-setting-item="实时天气"
+                  data-testid="sky-weather-panel"
+                >
+                  <div className="ap-row">
+                    <div className="min-w-0 flex-1">
+                      <div className="ap-title">{"叠加实时天气"}</div>
+                      <div className="ap-desc">
+                        {skyCanvas.scene !== "auto"
+                          ? "仅在「随时间流动」模式下生效；开启后将自动切回「随时间流动」。关闭时零外网请求。"
+                          : skyCanvas.weather.enabled
+                            ? "已开启：按设定城市（留空则按本机时区）拉取实时云量与降水。"
+                            : "默认关闭，关闭时零外网请求，仅按本机时间沿柔和太阳弧线演进。"}
+                      </div>
+                    </div>
+                    <Switch
+                      aria-label="叠加实时天气"
+                      checked={skyCanvas.weather.enabled}
+                      data-testid="sky-weather-switch"
+                      onCheckedChange={(checked) =>
+                        setSkyWeather({ enabled: checked })
+                      }
+                    />
                   </div>
-                  {daylight ? (
-                    <span className="appearance-scene-daylight">
-                      {daylight === "day"
-                        ? "昼"
-                        : daylight === "night"
-                          ? "夜"
-                          : "暮"}
-                    </span>
-                  ) : null}
-                  {active ? (
-                    <span className="appearance-swatch-check">
-                      <IconCheck className="size-3.5 stroke-[2.6]" />
-                    </span>
-                  ) : null}
+
+                  <SmoothCollapse open={skyCanvas.weather.enabled} unmountOnExit>
+                    <div className="flex flex-col gap-2 pt-1">
+                      {skyCanvas.scene !== "auto" ? (
+                        <p className="ap-hint">
+                          {"当前为固定时刻，实时天气仅在「随时间流动」模式下生效。"}
+                        </p>
+                      ) : null}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Input
+                          aria-label="实时天气城市"
+                          className="max-w-xs flex-1"
+                          data-testid="sky-weather-city-input"
+                          maxLength={80}
+                          onChange={(e) => setCityDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleSaveCity();
+                            }
+                          }}
+                          placeholder="输入城市名（如：上海、Tokyo，留空按时区）"
+                          value={cityInputValue}
+                        />
+                        <Button
+                          data-testid="sky-weather-city-save"
+                          onClick={handleSaveCity}
+                          size="sm"
+                          type="button"
+                          variant="secondary"
+                        >
+                          {"保存"}
+                        </Button>
+                        {savedCity || cityInputValue.trim() ? (
+                          <Button
+                            data-testid="sky-weather-city-clear"
+                            onClick={handleClearCity}
+                            size="sm"
+                            type="button"
+                            variant="ghost"
+                          >
+                            {"清空"}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </SmoothCollapse>
                 </div>
-                <div className="appearance-wallpaper-meta">
-                  <span className="appearance-palette-name">{scene.name}</span>
-                  <span className="appearance-palette-sub">
-                    {scene.subtitle}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 2. 面板玻璃材质与透光率控制 */}
-      <div className="appearance-block" data-setting-item="面板玻璃材质">
-        <div className="appearance-block-head">
-          <div>
-            <div className="appearance-block-title">
-              {"面板玻璃材质与透光率"}
-            </div>
-            <div className="appearance-block-desc">
-              {
-                "液态玻璃（立体镜面高光折射）、薄雾玻璃（旧版柔焦渐变）、晶莹全透（超薄水母级透明）、柔光磨砂（细腻雾面柔焦），均可透出底层流云与壁纸"
-              }
-            </div>
-          </div>
-          <div
-            aria-label="玻璃面板材质"
-            className="sg-segmented"
-            {...glassKeys.groupProps}
-            ref={glassKeys.groupRef}
-            role="radiogroup"
-          >
-            {GLASS_STYLE_OPTIONS.map(({ value, label }) => (
-              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
-              <button
-                aria-checked={appearance.glassStyle === value}
-                className="sg-segmented-item"
-                key={value}
-                onClick={() => setGlassStyle(value)}
-                role="radio"
-                tabIndex={glassKeys.itemTabIndex(value)}
-                type="button"
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="appearance-sliders">
-          <label className="appearance-slider-row">
-            <span className="appearance-slider-label">
-              <span>{"面板雾度 · 浅色（数值越小越通透）"}</span>
-              <span className="appearance-slider-val">
-                {`${appearance.glassOpacity}%（透光率 ${100 - appearance.glassOpacity}%）`}
-              </span>
-            </span>
-            <Input
-              aria-label="玻璃面板不透明度"
-              className="appearance-range"
-              max={GLASS_OPACITY_MAX}
-              min={GLASS_OPACITY_MIN}
-              onChange={(e) => setGlassOpacity(Number(e.target.value))}
-              step={1}
-              style={rangeFillStyle(
-                appearance.glassOpacity,
-                GLASS_OPACITY_MIN,
-                GLASS_OPACITY_MAX,
-              )}
-              type="range"
-              value={appearance.glassOpacity}
-            />
-          </label>
-          <label className="appearance-slider-row">
-            <span className="appearance-slider-label">
-              <span>{"面板雾度 · 深色"}</span>
-              <span className="appearance-slider-val">
-                {`${appearance.glassOpacityDark}%（透光率 ${100 - appearance.glassOpacityDark}%）`}
-              </span>
-            </span>
-            <Input
-              aria-label="深色玻璃面板不透明度"
-              className="appearance-range"
-              max={GLASS_OPACITY_MAX}
-              min={GLASS_OPACITY_MIN}
-              onChange={(e) => setGlassOpacityDark(Number(e.target.value))}
-              step={1}
-              style={rangeFillStyle(
-                appearance.glassOpacityDark,
-                GLASS_OPACITY_MIN,
-                GLASS_OPACITY_MAX,
-              )}
-              type="range"
-              value={appearance.glassOpacityDark}
-            />
-          </label>
-        </div>
-      </div>
-
-      {/* 3. 艺术壁纸图库与自定义图片壁纸 */}
-      <div className="appearance-block" data-setting-item="背景壁纸">
-        <div className="appearance-block-head">
-          <div>
-            <div className="appearance-block-title">
-              {"艺术壁纸图库与自定义壁纸"}
-            </div>
-            <div className="appearance-block-desc">
-              {
-                "精选 15 幅印象油画、东方意境与现代光影画作，或上传本地图片，透过液态玻璃呈现通透景深"
-              }
-            </div>
-          </div>
-          <div className="appearance-block-actions">
-            <input
-              accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
-              className="hidden"
-              onChange={handleFileUpload}
-              ref={fileInputRef}
-              type="file"
-            />
-            <div
-              aria-label="艺术壁纸分类"
-              className="sg-segmented"
-              {...categoryKeys.groupProps}
-              ref={categoryKeys.groupRef}
-              role="radiogroup"
-            >
-              {WALLPAPER_CATEGORIES.map(({ id, label }) => (
-                // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
-                <button
-                  aria-checked={wallpaperCategory === id}
-                  className="sg-segmented-item"
-                  data-testid={`wallpaper-cat-${id}`}
-                  key={id}
-                  onClick={() => setWallpaperCategory(id)}
-                  role="radio"
-                  tabIndex={categoryKeys.itemTabIndex(id)}
-                  type="button"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            {appearance.wallpaperId !== "none" ? (
-              <Button
-                onClick={() => {
-                  updateAppearance({
-                    wallpaperId: "none",
-                    skySource: "hark",
-                  });
-                  toast.success("已切回 Hark 动态天空");
-                }}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                <IconCloud className="size-3.5" />
-                {"切回动态天空"}
-              </Button>
+              </div>
             ) : null}
-          </div>
-        </div>
 
-        {/* 精选艺术壁纸图库网格 */}
-        <ContentEnter
-          aria-label="艺术壁纸图库选择"
-          className="appearance-wallpaper-grid"
-          key={wallpaperCategory}
-          role="radiogroup"
-        >
-          {filteredArtWallpapers.map((item) => {
-            const active = appearance.wallpaperId === item.id;
-            return (
-              // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片，样式依赖 button 结构，原生 radio 换不了
-              <button
-                aria-checked={active}
-                className={cn(
-                  "appearance-wallpaper-card",
-                  active && "is-active",
-                )}
-                data-testid={`wallpaper-preset-${item.id}`}
-                key={item.id}
-                onClick={() => setWallpaperPreset(item.id)}
-                role="radio"
-                type="button"
+            {/* 3c. 壁纸 */}
+            {wallpaperCanvas ? (
+              <div
+                className="flex flex-col gap-3"
+                data-testid="canvas-wallpaper-panel"
               >
+                <div className="ap-row">
+                  <div className="ap-subhead m-0">{"精选艺术壁纸"}</div>
+                  <div
+                    aria-label="艺术壁纸分类"
+                    className="sg-segmented"
+                    data-surface="inset"
+                    {...categoryKeys.groupProps}
+                    ref={categoryKeys.groupRef}
+                    role="radiogroup"
+                  >
+                    {WALLPAPER_CATEGORIES.map(({ id, label }) => (
+                      // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 分段单选控件，配合 ui/segmented.tsx 的 roving-tabindex 与方向键约定，原生 radio 无法替代
+                      <button
+                        aria-checked={wallpaperCategory === id}
+                        className="sg-segmented-item"
+                        data-testid={`wallpaper-cat-${id}`}
+                        key={id}
+                        onClick={() => setWallpaperCategory(id)}
+                        role="radio"
+                        tabIndex={categoryKeys.itemTabIndex(id)}
+                        type="button"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <ContentEnter
+                  aria-label="艺术壁纸图库选择"
+                  className="appearance-wallpaper-grid"
+                  key={wallpaperCategory}
+                >
+                  {filteredArtWallpapers.map((item) => {
+                    const active = wallpaperCanvas.source === item.id;
+                    return (
+                      <button
+                        aria-pressed={active}
+                        className={cn(
+                          "appearance-wallpaper-card",
+                          active && "is-active",
+                        )}
+                        data-testid={`wallpaper-preset-${item.id}`}
+                        key={item.id}
+                        onClick={() => setWallpaperSource(item.id)}
+                        type="button"
+                      >
+                        <div
+                          className="appearance-wallpaper-thumb appearance-art-thumb"
+                          style={{ background: item.previewBackground }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="appearance-art-img"
+                            style={{
+                              backgroundImage: `url("${item.thumbUrl}")`,
+                            }}
+                          />
+                          <span className="appearance-art-badge">
+                            {item.tag}
+                          </span>
+                          {active ? (
+                            <span className="appearance-swatch-check">
+                              <IconCheck className="size-3.5 stroke-[2.6]" />
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="appearance-wallpaper-meta">
+                          <span className="appearance-palette-name">
+                            {item.name}
+                          </span>
+                          <span className="appearance-palette-sub">
+                            {item.subtitle}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </ContentEnter>
+
+                {/* 本地图片上传 / 裁剪 / 更换 / 移除 */}
+                <input
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                  ref={fileInputRef}
+                  type="file"
+                />
+                {/* biome-ignore lint/a11y/useSemanticElements: 拖放区内部嵌套多个操作按钮，HTML 规范不允许 button 嵌套 button */}
                 <div
-                  className="appearance-wallpaper-thumb appearance-art-thumb"
-                  style={{ background: item.previewBackground }}
+                  className={cn(
+                    "appearance-upload-dropzone",
+                    dragOver && "is-dragover",
+                    isCustomActive && "has-custom",
+                  )}
+                  data-testid="wallpaper-upload-dropzone"
+                  onClick={() => {
+                    if (!busy) {
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  onDragEnter={(e) => {
+                    e.preventDefault();
+                    setDragOver(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    setDragOver(false);
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOver(true);
+                  }}
+                  onDrop={handleDrop}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      if (!busy) {
+                        fileInputRef.current?.click();
+                      }
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
                 >
-                  <span
-                    aria-hidden="true"
-                    className="appearance-art-img"
-                    style={{ backgroundImage: `url("${item.thumbUrl}")` }}
-                  />
-                  <span className="appearance-art-badge">{item.tag}</span>
-                  {active ? (
-                    <span className="appearance-swatch-check">
-                      <IconCheck className="size-3.5 stroke-[2.6]" />
+                  {hasStoredCustomImage ? (
+                    <div
+                      className="appearance-upload-preview"
+                      style={{
+                        backgroundImage: `url("${customWallpaperUrl}")`,
+                      }}
+                    />
+                  ) : (
+                    <div className="appearance-upload-icon">
+                      <IconUpload className="size-4.5" />
+                    </div>
+                  )}
+                  <div className="appearance-upload-copy">
+                    <div className="appearance-upload-title">
+                      {cropSaving
+                        ? "正在按选定区域裁剪并保存壁纸…"
+                        : uploading
+                          ? "正在读取壁纸图片…"
+                          : isCustomActive
+                            ? "已启用本地自定义壁纸（点击或拖拽新图片即可更换）"
+                            : hasStoredCustomImage
+                              ? "已保存本地自定义壁纸（点击右侧按钮即可重新启用）"
+                              : "点击选择本地图片，或直接将壁纸拖拽到此处上传"}
+                    </div>
+                    <div className="appearance-upload-sub">
+                      {
+                        "支持 PNG / JPG / WebP / GIF / AVIF（不超过 20 MB），上传时可自由框选裁剪区域"
+                      }
+                    </div>
+                  </div>
+                  <div className="appearance-upload-actions">
+                    {hasStoredCustomImage && !isCustomActive ? (
+                      <Button
+                        data-testid="wallpaper-custom-activate"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setWallpaperSource("custom");
+                        }}
+                        size="sm"
+                        type="button"
+                        variant="secondary"
+                      >
+                        <IconPhoto className="size-3.5" />
+                        {"启用此图片"}
+                      </Button>
+                    ) : null}
+                    {canRecropStoredCustom ? (
+                      <Button
+                        data-testid="wallpaper-custom-recrop"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleOpenRecrop();
+                        }}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <IconCrop className="size-3.5" />
+                        {"裁剪区域"}
+                      </Button>
+                    ) : null}
+                    <Button
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        fileInputRef.current?.click();
+                      }}
+                      size="sm"
+                      type="button"
+                      variant={
+                        hasStoredCustomImage && !isCustomActive
+                          ? "ghost"
+                          : "secondary"
+                      }
+                    >
+                      <IconUpload className="size-3.5" />
+                      {hasStoredCustomImage ? "更换图片" : "选择图片上传"}
+                    </Button>
+                    {hasStoredCustomImage ? (
+                      <Button
+                        data-testid="wallpaper-custom-remove"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeCustomWallpaper();
+                          toast.success("已移除自定义壁纸");
+                        }}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <IconTrash className="size-3.5" />
+                        {"移除"}
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* 仅 2 条微调滑块：背景模糊 (0–24px) 与护眼薄幕 (0–100%) */}
+                <div className="appearance-sliders">
+                  <label className="appearance-slider-row">
+                    <span className="appearance-slider-label">
+                      <span>{"背景模糊"}</span>
+                      <span className="appearance-slider-val">
+                        {`${wallpaperCanvas.blur} px`}
+                      </span>
                     </span>
-                  ) : null}
+                    <Input
+                      aria-label="背景模糊"
+                      className="appearance-range"
+                      data-testid="wallpaper-blur-slider"
+                      max={WALLPAPER_BLUR_MAX}
+                      min={WALLPAPER_BLUR_MIN}
+                      onChange={(e) =>
+                        setWallpaperAdjustments({
+                          blur: Number(e.target.value),
+                        })
+                      }
+                      step={1}
+                      style={rangeFillStyle(
+                        wallpaperCanvas.blur,
+                        WALLPAPER_BLUR_MIN,
+                        WALLPAPER_BLUR_MAX,
+                      )}
+                      type="range"
+                      value={wallpaperCanvas.blur}
+                    />
+                  </label>
+                  <label className="appearance-slider-row">
+                    <span className="appearance-slider-label">
+                      <span>{"护眼薄幕"}</span>
+                      <span className="appearance-slider-val">
+                        {`${wallpaperCanvas.scrim}%`}
+                      </span>
+                    </span>
+                    <Input
+                      aria-label="护眼薄幕"
+                      className="appearance-range"
+                      data-testid="wallpaper-scrim-slider"
+                      max={WALLPAPER_SCRIM_MAX}
+                      min={WALLPAPER_SCRIM_MIN}
+                      onChange={(e) =>
+                        setWallpaperAdjustments({
+                          scrim: Number(e.target.value),
+                        })
+                      }
+                      step={1}
+                      style={rangeFillStyle(
+                        wallpaperCanvas.scrim,
+                        WALLPAPER_SCRIM_MIN,
+                        WALLPAPER_SCRIM_MAX,
+                      )}
+                      type="range"
+                      value={wallpaperCanvas.scrim}
+                    />
+                  </label>
                 </div>
-                <div className="appearance-wallpaper-meta">
-                  <span className="appearance-palette-name">{item.name}</span>
-                  <span className="appearance-palette-sub">
-                    {item.subtitle}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </ContentEnter>
-
-        {/* 本地图片拖拽 / 点击上传横幅 */}
-        {/* biome-ignore lint/a11y/useSemanticElements: 拖放区里还嵌着按钮，外层不能是 <button>（按钮不能嵌套） */}
-        <div
-          className={cn(
-            "appearance-upload-dropzone",
-            dragOver && "is-dragover",
-            isCustomActive && "has-custom",
-          )}
-          data-testid="wallpaper-upload-dropzone"
-          onClick={() => {
-            if (!busy) {
-              fileInputRef.current?.click();
-            }
-          }}
-          onDragEnter={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDrop={handleDrop}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              if (!busy) {
-                fileInputRef.current?.click();
-              }
-            }
-          }}
-          role="button"
-          tabIndex={0}
-        >
-          {hasStoredCustomImage ? (
-            <div
-              className="appearance-upload-preview"
-              style={{
-                backgroundImage: `url("${appearance.customWallpaperUrl}")`,
-              }}
-            />
-          ) : (
-            <div className="appearance-upload-icon">
-              <IconUpload className="size-4.5" />
-            </div>
-          )}
-          <div className="appearance-upload-copy">
-            <div className="appearance-upload-title">
-              {cropSaving
-                ? "正在按选定区域裁剪并保存壁纸…"
-                : uploading
-                  ? "正在读取壁纸图片…"
-                  : isCustomActive
-                    ? "已启用本地自定义壁纸（点击或拖拽新图片即可更换）"
-                    : hasStoredCustomImage
-                      ? "已保存本地自定义壁纸（点击右侧按钮即可重新启用）"
-                      : "点击选择本地图片，或直接将壁纸拖拽到此处上传"}
-            </div>
-            <div className="appearance-upload-sub">
-              {
-                "支持 PNG / JPG / WebP / GIF / AVIF（不超过 20 MB），上传时可按屏幕比例或自由框选裁剪区域"
-              }
-            </div>
+              </div>
+            ) : null}
           </div>
-          <div className="appearance-upload-actions">
-            {hasStoredCustomImage && !isCustomActive ? (
-              <Button
-                data-testid="wallpaper-custom-activate"
-                disabled={busy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setWallpaperPreset("custom");
-                }}
-                size="sm"
-                type="button"
-                variant="secondary"
-              >
-                <IconPhoto className="size-3.5" />
-                {"启用此图片"}
-              </Button>
-            ) : null}
-            {canRecropStoredCustom ? (
-              <Button
-                data-testid="wallpaper-custom-recrop"
-                disabled={busy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void handleOpenRecrop();
-                }}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                <IconCrop className="size-3.5" />
-                {"裁剪区域"}
-              </Button>
-            ) : null}
-            <Button
-              disabled={busy}
-              onClick={(e) => {
-                // 别冒泡到拖放区，否则会再打开一次文件选择
-                e.stopPropagation();
-                fileInputRef.current?.click();
-              }}
-              size="sm"
-              type="button"
-              variant={
-                hasStoredCustomImage && !isCustomActive ? "ghost" : "secondary"
-              }
+
+          <Separator />
+
+          {/* 4. 界面材质 + 静止动态背景（省电） */}
+          <div
+            className="ap-section"
+            data-setting-item="general.material 界面材质 静止动态背景"
+          >
+            <div className="ap-head">
+              <div>
+                <div className="ap-title">{"界面材质"}</div>
+                <div className="ap-desc">
+                  {"控制侧栏、浮层与对话气泡的透光层次；纯 CSS 驱动，按需零模糊。"}
+                </div>
+              </div>
+            </div>
+
+            <fieldset
+              aria-label="界面材质选择"
+              className="ap-material-grid m-0 border-0 p-0"
             >
-              <IconUpload className="size-3.5" />
-              {hasStoredCustomImage ? "更换图片" : "选择图片上传"}
-            </Button>
-            {hasStoredCustomImage ? (
-              <Button
-                disabled={busy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (appearance.wallpaperId === "custom") {
-                    setCustomWallpaperUrl("");
-                  } else {
-                    updateAppearance({ customWallpaperUrl: "" });
-                  }
-                  toast.success("已移除自定义壁纸");
-                }}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                <IconTrash className="size-3.5" />
-                {"移除"}
-              </Button>
-            ) : null}
-          </div>
-        </div>
+              {MATERIALS.map((item) => {
+                const active = config.material === item.id;
+                return (
+                  <button
+                    aria-pressed={active}
+                    className={cn("ap-material-card", active && "is-active")}
+                    data-testid={`material-card-${item.id}`}
+                    key={item.id}
+                    onClick={() => setMaterial(item.id)}
+                    type="button"
+                  >
+                    <span className="ap-material-name">
+                      {materialTitle(item.id, item.name)}
+                    </span>
+                    <span className="ap-material-desc">{item.description}</span>
+                  </button>
+                );
+              })}
+            </fieldset>
 
-        {/* 壁纸模糊度与压暗度微调滑块 */}
-        <SmoothCollapse open={appearance.wallpaperId !== "none"} unmountOnExit>
-          <div className="appearance-sliders">
-            <label className="appearance-slider-row">
-              <span className="appearance-slider-label">
-                <span>{"壁纸景深模糊度"}</span>
-                <span className="appearance-slider-val">
-                  {`${appearance.wallpaperBlur} px`}
-                </span>
-              </span>
-              <Input
-                aria-label="壁纸景深模糊度"
-                className="appearance-range"
-                max={40}
-                min={0}
-                onChange={(e) => setWallpaperBlur(Number(e.target.value))}
-                step={1}
-                style={rangeFillStyle(appearance.wallpaperBlur, 0, 40)}
-                type="range"
-                value={appearance.wallpaperBlur}
+            {reducedTransparency ? (
+              <p
+                className="ap-hint"
+                data-testid="reduced-transparency-hint"
+                role="status"
+              >
+                {"已跟随系统减少透明度自动切换为实色"}
+              </p>
+            ) : null}
+
+            <div className="ap-row pt-1">
+              <div className="min-w-0 flex-1">
+                <div className="ap-title">{"静止动态背景（省电）"}</div>
+                <div className="ap-desc">
+                  {"仅对动态天空生效：将流云定格在静态画面并停止动画循环，降低电量与 GPU 占用。"}
+                </div>
+              </div>
+              <Switch
+                aria-label="静止动态背景（省电）"
+                checked={config.staticBackground}
+                data-testid="static-background-switch"
+                onCheckedChange={(checked) => setStaticBackground(checked)}
               />
-            </label>
-            <label className="appearance-slider-row">
-              <span className="appearance-slider-label">
-                <span>{"壁纸氛围压暗度"}</span>
-                <span className="appearance-slider-val">
-                  {`${appearance.wallpaperDim}%`}
-                </span>
-              </span>
-              <Input
-                aria-label="壁纸氛围压暗度"
-                className="appearance-range"
-                max={75}
-                min={0}
-                onChange={(e) => setWallpaperDim(Number(e.target.value))}
-                step={1}
-                style={rangeFillStyle(appearance.wallpaperDim, 0, 75)}
-                type="range"
-                value={appearance.wallpaperDim}
-              />
-            </label>
-            <label className="appearance-slider-row">
-              <span className="appearance-slider-label">
-                <span>{"壁纸薄幕浓度"}</span>
-                <span className="appearance-slider-val">
-                  {`${appearance.wallpaperScrim}%`}
-                </span>
-              </span>
-              <Input
-                aria-label="壁纸薄幕浓度"
-                className="appearance-range"
-                max={100}
-                min={0}
-                onChange={(e) => setWallpaperScrim(Number(e.target.value))}
-                step={1}
-                style={rangeFillStyle(appearance.wallpaperScrim, 0, 100)}
-                type="range"
-                value={appearance.wallpaperScrim}
-              />
-            </label>
+            </div>
           </div>
-        </SmoothCollapse>
-      </div>
+        </PageRows>
+      </PageSection>
 
       <WallpaperCropDialog
         onApply={handleApplyCroppedWallpaper}

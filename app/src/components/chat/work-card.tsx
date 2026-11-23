@@ -248,6 +248,7 @@ export function WorkRow({
             : "chat-thinking chat-work-card chat-work-done"
         }
         data-state={live ? "live" : "done"}
+        data-surface="bubble"
         data-testid={live ? "chat-work-card" : "chat-work-done"}
         data-unanswered={!live && unanswered ? "" : undefined}
         onClick={() => setOpen((value) => !value)}
@@ -306,6 +307,7 @@ export function WorkRow({
       <SmoothCollapse open={open} unmountOnExit>
         <ol
           className="chat-work-steps"
+          data-surface="bubble"
           data-testid={open ? "chat-work-steps" : undefined}
         >
           {retainedSteps.length === 0 ? <li>{"正在准备"}</li> : null}

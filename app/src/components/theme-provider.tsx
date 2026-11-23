@@ -1,23 +1,33 @@
 import {
   createContext,
   type ReactNode,
+  useCallback,
   useContext,
   useMemo,
   useRef,
-  useState,
+  useSyncExternalStore,
 } from "react";
 import { useDocumentSync, useWindowEvent } from "@/hooks";
 import {
-  readStoredPreference,
-  writeStoredPreference,
-} from "@/lib/preference-storage";
+  APPEARANCE_STORAGE_KEY,
+  applyAppearanceToDocument,
+  getAppearanceConfig,
+  setAppearanceMode,
+  syncAppearanceFromStorage,
+  useAppearanceConfig,
+} from "@/lib/appearance";
 import {
+  type AppearanceMode,
   applyDarkTheme,
-  parseStoredDarkTheme,
-  THEME_STORAGE_KEY,
+  notifyAndroidTheme,
+  prefersSystemDark,
+  resolveDarkTheme,
+  subscribeSystemDark,
 } from "@/lib/theme";
 
 type ThemeContextValue = {
+  mode: AppearanceMode;
+  setMode: (mode: AppearanceMode) => void;
   dark: boolean;
   setDark: (dark: boolean) => void;
 };
@@ -25,14 +35,27 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [dark, setDark] = useState(() =>
-    parseStoredDarkTheme(readStoredPreference(THEME_STORAGE_KEY)),
+  const appearance = useAppearanceConfig();
+  const mode = appearance.mode;
+  const systemDark = useSyncExternalStore(
+    subscribeSystemDark,
+    prefersSystemDark,
+    () => false,
   );
+  const dark = resolveDarkTheme(mode, systemDark);
   const committedDarkRef = useRef(dark);
 
-  useDocumentSync(dark, (doc, isDark) => {
-    const isThemeSwitch = committedDarkRef.current !== isDark;
-    committedDarkRef.current = isDark;
+  const setMode = useCallback((nextMode: AppearanceMode) => {
+    setAppearanceMode(nextMode);
+  }, []);
+
+  const setDark = useCallback((nextDark: boolean) => {
+    setAppearanceMode(nextDark ? "dark" : "light");
+  }, []);
+
+  useDocumentSync({ dark, mode }, (doc, current) => {
+    const isThemeSwitch = committedDarkRef.current !== current.dark;
+    committedDarkRef.current = current.dark;
     const root = doc.documentElement;
     let raf1 = 0;
     let raf2 = 0;
@@ -42,19 +65,20 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       root.setAttribute("data-theme-switching", "1");
     }
 
-    applyDarkTheme(isDark, {
-      setStoredValue: writeStoredPreference,
-      toggleRootClass: (name, force) => root.classList.toggle(name, force),
+    applyDarkTheme(current.dark, {
+      toggleRootClass: (name, force) => {
+        if (root.classList.contains(name) !== force) {
+          root.classList.toggle(name, force);
+        }
+      },
       setRootColorScheme: (scheme) => {
-        root.style.colorScheme = scheme;
+        if (root.style.colorScheme !== scheme) {
+          root.style.colorScheme = scheme;
+        }
       },
     });
-    const bridge = (
-      window as Window & {
-        ChisaAndroid?: { setTheme?: (mode: "dark" | "light") => void };
-      }
-    ).ChisaAndroid;
-    bridge?.setTheme?.(isDark ? "dark" : "light");
+    applyAppearanceToDocument(getAppearanceConfig(), current.dark);
+    notifyAndroidTheme(current.dark, current.mode);
 
     if (!isThemeSwitch) return;
     if (typeof window.requestAnimationFrame === "function") {
@@ -73,21 +97,24 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return undefined;
   });
 
-  // 多标签页同步：别的标签页切了浅色 / 深色，这边跟着切（storage 事件只在别的标签页写入时触发）。
+  // 多标签页同步：别的标签页改了外观存储，这边立即同步。
   useWindowEvent("storage", (event) => {
     if (event.storageArea && event.storageArea !== window.localStorage) return;
-    if (event.key !== null && event.key !== THEME_STORAGE_KEY) return;
-    setDark(parseStoredDarkTheme(readStoredPreference(THEME_STORAGE_KEY)));
+    if (event.key !== null && event.key !== APPEARANCE_STORAGE_KEY) return;
+    void syncAppearanceFromStorage(event.key);
   });
 
-  const value = useMemo(() => ({ dark, setDark }), [dark]);
+  const value = useMemo(
+    () => ({ mode, setMode, dark, setDark }),
+    [mode, setMode, dark, setDark],
+  );
 
   return (
     <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
   );
 }
 
-export function useTheme() {
+export function useTheme(): ThemeContextValue {
   const value = useContext(ThemeContext);
 
   if (!value) {

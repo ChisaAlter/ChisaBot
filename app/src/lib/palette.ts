@@ -1,59 +1,59 @@
 /**
- * CB-140：旧的「10 套皮肤」轴已被主题族（{@link ./theme-family}）取代。
- * 这个文件只剩兼容层：
- *  - 外观存储键（玻璃材质、天空来源）与「存过外观设置」的判定；
- *  - index.html 启动脚本（{@link familyBootScript}，由 vite.config.ts 的
- *    chisabot-sky-boot 插件构建时内联）：族解析 + seed 派生变量 + 材质 + theme-color。
- * 类型与常量 re-export 自 theme-family.ts；lib/appearance.ts 照旧从这里转口。
+ * V2 首屏外观启动脚本（唯一 `appearanceBootScript()`）与地址栏 theme-color 工具。
  *
- * 保持为一个不依赖 React / 别名路径的纯模块（启动脚本要序列化 deriveSeed 进 HTML）。
+ * 由 `app/vite.config.ts` 的 `chisabot-appearance-boot` 插件内联进 `app/index.html` 的 `<head>`，
+ * 在首帧绘制前同步写好：
+ *  - `html.dark` 与 `colorScheme`（支持 `system | light | dark`）
+ *  - `html[data-theme="<ThemeId>"]`
+ *  - `html[data-material="glass|clear|solid"]`
+ *  - `html[data-canvas="pure|sky|wallpaper"]`
+ *  - `html[data-static-bg="on"]` / `html[data-perf="on"]` / `html[data-sky="live|snapshot|off"]`
+ *  - 自定义强调色内联变量（仅当 `customAccent` 非空）
+ *  - `<meta name="theme-color">`
+ *
+ * 保持为不依赖 React / DOM 顶层引用的纯模块，供 Vite 构建时直接导入。
  */
 
 import {
-  CUSTOM_FAMILIES_STORAGE_KEY,
-  DEFAULT_FAMILY_ID,
-  deriveSeed,
-  FAMILY_DARK_STORAGE_KEY,
-  FAMILY_LIGHT_STORAGE_KEY,
-  PALETTE_STORAGE_KEY,
-  type Seed,
-  THEME_FAMILIES,
+  DEFAULT_THEME_ID,
+  deriveCustomAccentVars,
+  LEGACY_THEME_MAP,
+  THEMES,
+  type ThemeId,
 } from "./theme-family";
 
 export {
-  CUSTOM_FAMILIES_STORAGE_KEY,
-  DEFAULT_FAMILY_ID,
-  deriveSeed,
-  FAMILY_DARK_STORAGE_KEY,
-  FAMILY_LIGHT_STORAGE_KEY,
-  familySeed,
-  familySkyStops,
-  familyThemeColor,
-  isValidFamily,
-  isValidFamilyId,
-  listThemeFamilies,
-  migrateLegacyPalette,
-  PALETTE_STORAGE_KEY,
-  parseCustomFamilies,
-  resolveThemeFamily,
-  type Seed,
-  THEME_FAMILIES,
-  type ThemeFamily,
+  CUSTOM_ACCENT_CSS_PROPS,
+  type CustomAccentVars,
+  DEFAULT_THEME_ID,
+  deriveCustomAccentVars,
+  getThemeMeta,
+  isThemeId,
+  LEGACY_THEME_MAP,
+  mapLegacyThemeId,
+  normalizeHexColor,
+  THEMES,
+  type ThemeId,
+  type ThemeMeta,
+  themeMetaColor,
+  VALID_THEME_IDS,
 } from "./theme-family";
 
-/** 默认配色的地址栏 / 状态栏颜色（族解析失败时的兜底，正常情况下永远解析得到 azure）。 */
+export const APPEARANCE_STORAGE_KEY = "chisabot-appearance";
+
+/** 默认配色的地址栏 / 状态栏颜色（兜底值）。 */
 export const DEFAULT_THEME_COLOR = {
   light: "#9dbddc",
   dark: "#0c1626",
 } as const;
 
-/** 把所有 meta[name=theme-color] 改成同一个颜色（两条按系统配色分的 meta 都改，应用主题优先）。 */
+/** 把所有 meta[name=theme-color] 改成同一个颜色（应用主题优先于系统媒体查询）。 */
 export function applyThemeColor(
   color: string,
   doc: Document | undefined = typeof document !== "undefined"
     ? document
     : undefined,
-) {
+): void {
   if (!doc) return;
   for (const meta of doc.querySelectorAll<HTMLMetaElement>(
     'meta[name="theme-color"]',
@@ -63,81 +63,24 @@ export function applyThemeColor(
 }
 
 /**
- * 天空来源（2026-11 外观模型重构）：主题族与背景解耦——族只管整套派生令牌，
- * 天空是「Hark 动态天象」还是「族配套静态主题渐变」由这个键单独决定。
- * - "hark"（默认）：Hark WebGL 引擎渲染的天象（auto / live / 场景）。
- * - "theme"：当前族 seed 派生的静态主题渐变（引擎不启动，更省）。
+ * 唯一首屏同步启动脚本（合并旧 `skyBootScript` 与 `familyBootScript`）：
+ * 纯只读解析 `localStorage["chisabot-appearance"]`（若尚未迁移则按同口径读取旧 16 键），
+ * 首帧前同步挂齐 `.dark` + `data-theme` + `data-material` + `data-canvas` + `<meta name="theme-color">`，
+ * 绝不向 localStorage 回写旧键，避免破坏 `mode: "system"`。
  */
-export const SKY_SOURCE_STORAGE_KEY = "chisabot-sky-source";
-export type SkySourceId = "hark" | "theme";
-export const GLASS_STYLE_STORAGE_KEY = "chisabot-glass-style";
-const BOOT_GLASS_STYLES = ["liquid", "mist", "crystal", "frosted"];
-/** 新用户（从没存过任何外观设置）的默认材质。 */
-export const DEFAULT_GLASS_STYLE = "mist";
-/** 0.1.138 以前的默认材质是 liquid；0.1.155 起统一回落薄雾玻璃（老用户已存的显式选择仍保留）。 */
-export const LEGACY_DEFAULT_GLASS_STYLE = "mist";
-/**
- * 材质以外的外观设置键。只要存过其中任何一个，就算「已保存过外观」的老用户，
- * 材质默认按 {@link LEGACY_DEFAULT_GLASS_STYLE}。
- * 不含 `chisabot-theme`：ThemeProvider 挂载时会自动写入，分不出用户有没有主动选过。
- * CB-140 后主题族键顶替旧的 palette 键；其余键与 appearance.ts 的同名常量对应
- * （tests/default-mist-glass.test.tsx 核对）。
- * 写在这里而不是 appearance.ts：启动脚本要内联这份列表，palette.ts 是不依赖 DOM 的纯模块。
- */
-export const PRIOR_APPEARANCE_STORAGE_KEYS: readonly string[] = [
-  FAMILY_LIGHT_STORAGE_KEY,
-  "chisabot-wallpaper-id",
-  "chisabot-wallpaper-custom-url",
-  "chisabot-wallpaper-blur",
-  "chisabot-wallpaper-dim",
-  "chisabot-glass-opacity",
-  "chisabot-glass-opacity-dark",
-  "chisabot-hark-scene",
-];
-
-/**
- * 没存材质时用哪种：存过任何其他外观设置（不含会自动写入的深浅主题） → LEGACY_DEFAULT_GLASS_STYLE；
- * 什么都没存过（或只有自动写入的 chisabot-theme） → mist。get 读不到（隐私模式抛错）按没存过处理。
- * 判定结果由调用方立刻写入 glass-style，避免随后自动写入的主题键在下次加载时改口径。
- */
-export function fallbackGlassStyle(
-  get: (key: string) => string | null,
-): "liquid" | "mist" {
-  for (const key of PRIOR_APPEARANCE_STORAGE_KEYS) {
-    try {
-      if (get(key) !== null) return LEGACY_DEFAULT_GLASS_STYLE;
-    } catch {
-      return DEFAULT_GLASS_STYLE;
-    }
+export function appearanceBootScript(): string {
+  const themeColors: Record<ThemeId, [string, string]> = {
+    sky: ["#9dbddc", "#0c1626"],
+    mist: ["#cdd4de", "#15181d"],
+    celadon: ["#a8d2c6", "#0a1d18"],
+    sakura: ["#ebc0cf", "#22121b"],
+    amber: ["#e6c8a2", "#1a140d"],
+    violet: ["#c9bbe8", "#171222"],
+    mono: ["#e5e7eb", "#0c0c0e"],
+  };
+  for (const t of THEMES) {
+    themeColors[t.id] = [t.light.themeColor, t.dark.themeColor];
   }
-  return DEFAULT_GLASS_STYLE;
-}
 
-/** 旧 data-palette 轴 → 主题族的迁移表（启动脚本内联一份）。 */
-const LEGACY_PALETTE_TO_FAMILY: Record<string, string> = {
-  default: "azure",
-  ocean: "azure",
-  aurora: "violet",
-  nocturne: "violet",
-  emerald: "celadon",
-  sakura: "sakura",
-  ruby: "sakura",
-  sunset: "amber",
-  gold: "amber",
-  stardust: "mist",
-};
-
-/**
- * index.html 的启动脚本（vite.config.ts 的 chisabot-sky-boot 插件塞在 <body> 第一行、时段天空之后）：
- * - 解析当前模式的主题族（新键优先；旧 palette 键一次性映射迁移；兜底 azure），
- *   在 <html> 上写 data-theme-family，把 deriveSeed 算出的整套变量写进 html/body 内联样式——
- *   启动骨架（读 --sky-1..4、--accent-color 等）React 接管前就是用户的主题；
- * - 写 data-glass（没存材质时按 {@link fallbackGlassStyle} 的同一条规则，并把结果写入 glass-style）；
- * - meta theme-color 取当前族天空渐变顶段。
- * deriveSeed 的函数体在构建时序列化内联（函数必须自包含，不能引用模块级变量）。
- */
-export function familyBootScript(): string {
-  const map: Record<string, { l: Seed; d: Seed }> = {};
-  for (const f of THEME_FAMILIES) map[f.id] = { l: f.light, d: f.dark };
-  return `(function(){try{var d=document.documentElement,s=window.localStorage,F=${JSON.stringify(map)},L=${JSON.stringify(LEGACY_PALETTE_TO_FAMILY)},P=${JSON.stringify(PRIOR_APPEARANCE_STORAGE_KEYS)},g=s.getItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)}),k=d.classList.contains("dark"),c,i,m,w,seed,vars,fid,lm,dm,cu=[];if(${JSON.stringify(BOOT_GLASS_STYLES)}.indexOf(g)<0){g=${JSON.stringify(DEFAULT_GLASS_STYLE)};for(i=0;i<P.length;i++)if(s.getItem(P[i])!==null){g=${JSON.stringify(LEGACY_DEFAULT_GLASS_STYLE)};break}try{s.setItem(${JSON.stringify(GLASS_STYLE_STORAGE_KEY)},g)}catch(e){}}d.setAttribute("data-glass",g);try{var r=s.getItem(${JSON.stringify(CUSTOM_FAMILIES_STORAGE_KEY)});cu=r?JSON.parse(r):[]}catch(e){cu=[]}if(!Array.isArray(cu))cu=[];fid=function(v){if(!v)return null;if(F[v])return v;for(i=0;i<cu.length;i++){var f=cu[i];if(f&&f.id===v&&f.light&&f.dark)return v}return null};lm=s.getItem(${JSON.stringify(FAMILY_LIGHT_STORAGE_KEY)});dm=s.getItem(${JSON.stringify(FAMILY_DARK_STORAGE_KEY)});var lg=L[s.getItem(${JSON.stringify(PALETTE_STORAGE_KEY)})||""]||null;lm=fid(lm)||lg||${JSON.stringify(DEFAULT_FAMILY_ID)};dm=fid(dm)||lg||${JSON.stringify(DEFAULT_FAMILY_ID)};var id=k?dm:lm,fam=F[id];if(!fam){for(i=0;i<cu.length;i++){var cf=cu[i];if(cf&&cf.id===id){fam={l:cf.light,d:cf.dark};break}}}if(!fam){id=${JSON.stringify(DEFAULT_FAMILY_ID)};fam=F[id]}d.setAttribute("data-theme-family",id);seed=k?fam.d:fam.l;var derive=${deriveSeed.toString()};vars=derive(seed,k);for(i in vars.root)d.style.setProperty(i,vars.root[i]);if(document.body)for(i in vars.body)document.body.style.setProperty(i,vars.body[i]);c=vars.root["--fam-sky-0"]||seed.bg;m=document.querySelectorAll('meta[name="theme-color"]');for(i=0;i<m.length;i++)m[i].setAttribute("content",c);w=s.getItem("chisabot-wallpaper-scrim");if(w!=null)w=(Math.min(100,Math.max(0,parseFloat(w)||0))/100).toFixed(2),d.style.setProperty("--wallpaper-scrim-alpha",w)}catch(e){}})();`;
+  return `(function(){try{var d=document.documentElement,s=window.localStorage,C=${JSON.stringify(themeColors)},L=${JSON.stringify(LEGACY_THEME_MAP)},M={glass:1,clear:1,solid:1},K={pure:1,sky:1,wallpaper:1},S={auto:1,dawn:1,day:1,dusk:1,night:1},sys=!!(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches),mode="system",dark=sys,theme=${JSON.stringify(DEFAULT_THEME_ID)},mat="glass",canvas="sky",skyScene="auto",stat=false,accent=null,raw=null,p=null,i,m,c,v,k;function normHex(x){if(typeof x!=="string")return null;x=x.trim();if(/^#[0-9a-fA-F]{6}$/.test(x))return x.toLowerCase();if(/^#[0-9a-fA-F]{3}$/.test(x))return("#"+x[1]+x[1]+x[2]+x[2]+x[3]+x[3]).toLowerCase();return null}try{raw=s.getItem(${JSON.stringify(APPEARANCE_STORAGE_KEY)});if(raw)p=JSON.parse(raw)}catch(e){p=null}if(p&&p.v===2){mode=(p.mode==="dark"||p.mode==="light"||p.mode==="system")?p.mode:"system";dark=mode==="dark"?true:mode==="light"?false:sys;theme=C[p.theme]?p.theme:${JSON.stringify(DEFAULT_THEME_ID)};mat=M[p.material]?p.material:"glass";canvas=(p.canvas&&K[p.canvas.kind])?p.canvas.kind:"sky";skyScene=(canvas==="sky"&&p.canvas&&S[p.canvas.scene])?p.canvas.scene:"auto";stat=!!p.staticBackground;accent=normHex(p.customAccent)}else{var rt=s.getItem("chisabot-theme");mode=rt==="dark"?"dark":rt==="light"?"light":"system";dark=mode==="dark"?true:mode==="light"?false:sys;var perf=s.getItem("chisabot.perf-mode")==="on";var rp=s.getItem("chisabot-theme-palette");var rf=(dark?s.getItem("chisabot-theme-family-dark"):s.getItem("chisabot-theme-family-light"))||(dark?s.getItem("chisabot-theme-family-light"):s.getItem("chisabot-theme-family-dark"))||rp||"";var mapped=L[rf.trim().toLowerCase()];if(mapped){theme=mapped}else if(rf){try{var cf=JSON.parse(s.getItem("chisabot-theme-families")||"[]");if(Array.isArray(cf)){for(i=0;i<cf.length;i++){if(cf[i]&&cf[i].id===rf){var sl=dark?cf[i].dark:cf[i].light;accent=normHex(sl&&sl.ac);break}}}}catch(e){}}var rg=s.getItem("chisabot-glass-style");mat=perf?"solid":(rg==="crystal"||rg==="liquid"?"clear":"glass");stat=perf;var rw=s.getItem("chisabot-wallpaper-id");var rs=s.getItem("chisabot-sky-source");var rh=s.getItem("chisabot-hark-scene");if(rw&&rw!=="none"){canvas="wallpaper"}else if(rs==="theme"||(!rs&&rp&&rp!=="default")||(!rs&&!rh&&s.getItem("chisabot-sky")==="off")){canvas="pure"}else{canvas="sky";skyScene=(!rh||rh==="auto"||rh==="live")?"auto":"day"}}d.classList.toggle("dark",dark);d.style.colorScheme=dark?"dark":"light";d.setAttribute("data-theme",theme);d.setAttribute("data-material",mat);d.setAttribute("data-canvas",canvas);if(stat)d.setAttribute("data-static-bg","on");else d.removeAttribute("data-static-bg");if(mat==="solid"&&stat)d.setAttribute("data-perf","on");else d.removeAttribute("data-perf");d.setAttribute("data-sky",canvas==="sky"&&!stat?(skyScene==="auto"?"live":"snapshot"):"off");if(accent){var derive=${deriveCustomAccentVars.toString()};v=derive(accent,dark);for(k in v)d.style.setProperty(k,v[k])}c=(C[theme]||C.sky)[dark?1:0];m=document.querySelectorAll('meta[name="theme-color"]');for(i=0;i<m.length;i++)m[i].setAttribute("content",c)}catch(e){}})();`;
 }

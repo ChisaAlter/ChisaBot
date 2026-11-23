@@ -99,7 +99,7 @@ export function SectionRail({
     return (
       <Sidebar collapsible="icon" variant="floating" {...props}>
         <nav aria-label={ariaLabel} className="glass-mini" id="chisabot-bot-list">
-          <div className="glass-card glass-mini-card">
+          <div className="glass-card glass-mini-card" data-surface="panel">
             <div className="glass-mini-head">
               <RosterToggle className="glass-mini-toggle" scope={scope} />
             </div>
@@ -155,7 +155,7 @@ export function SectionRail({
   return (
     <Sidebar collapsible="icon" variant="floating" {...props}>
       <SidebarContent className="glass-side-full gap-3 overflow-hidden" id="chisabot-bot-list">
-        <nav aria-label={ariaLabel} className="glass-card glass-side-card min-h-0 flex-1">
+        <nav aria-label={ariaLabel} className="glass-card glass-side-card min-h-0 flex-1" data-surface="panel">
           {/* DESIGN-v3 §6.1：没有「返回应用」胶囊（顶栏主导航就是回去的路），卡片顶部是区域名。 */}
           <div className="rail-title rail-title-row">
             <span className="rail-title-text">{title}</span>

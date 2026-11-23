@@ -15,46 +15,74 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = path.resolve(here, "../../app/src");
 const out = path.resolve(here, "../src/ui");
-const css = fs.readFileSync(path.join(app, "styles.css"), "utf8");
+const tokensPath = path.join(app, "styles/tokens.css");
+const stylesPath = path.join(app, "styles.css");
+const hasModularTokens = fs.existsSync(tokensPath);
+const css = fs.readFileSync(stylesPath, "utf8");
 
-function block(startMarker, from = 0) {
-  const start = css.indexOf(startMarker, from);
-  if (start < 0) throw new Error(`styles.css 里找不到 ${startMarker}`);
+function block(source, startMarker, from = 0) {
+  const start = source.indexOf(startMarker, from);
+  if (start < 0) return null;
   let depth = 0;
-  for (let i = css.indexOf("{", start); i < css.length; i++) {
-    if (css[i] === "{") depth++;
-    else if (css[i] === "}" && --depth === 0)
-      return { text: css.slice(start, i + 1), end: i + 1 };
+  for (let i = source.indexOf("{", start); i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}" && --depth === 0)
+      return { text: source.slice(start, i + 1), end: i + 1 };
   }
   throw new Error(`${startMarker} 没有闭合`);
 }
 
-const tokenStart = css.indexOf("Skyglass design tokens");
-const root = block(":root {", tokenStart);
-const dark = block(".dark {", root.end);
-const properties = css.match(/^@property --sky-[^\n]+$/gm) ?? [];
-const bodyStart = css.indexOf("\nbody {", dark.end);
-const body = block("body {", bodyStart);
-const darkBody = block(".dark body {", body.end);
-const stars = block("body::before {", darkBody.end);
-const lightRoot = block(":root {"); // 最早的 :root：shadcn 基础变量（--background 等）
-const baseDark = block(".dark {");
+if (hasModularTokens) {
+  const tokensCss = fs.readFileSync(tokensPath, "utf8");
+  const canvasPath = path.join(app, "styles/canvas.css");
+  const canvasCss = fs.existsSync(canvasPath)
+    ? fs.readFileSync(canvasPath, "utf8")
+    : "";
+  const legacyRoot = block(css, ":root {");
+  const legacyDark = block(css, ".dark {");
+  fs.writeFileSync(
+    path.join(out, "skyglass-tokens.css"),
+    [
+      "/* 由 pc/scripts/sync-skyglass.mjs 从 app/src/styles/tokens.css 生成，请勿手改。 */",
+      tokensCss.trim(),
+      canvasCss.trim(),
+      legacyRoot?.text ?? "",
+      legacyDark?.text ?? "",
+      "",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  );
+} else {
+  const tokenStart = css.indexOf("Skyglass design tokens");
+  const root = block(css, ":root {", tokenStart);
+  const dark = root ? block(css, ".dark {", root.end) : null;
+  const properties = css.match(/^@property --sky-[^\n]+$/gm) ?? [];
+  const bodyStart = dark ? css.indexOf("\nbody {", dark.end) : -1;
+  const body = bodyStart >= 0 ? block(css, "body {", bodyStart) : null;
+  const darkBody = body ? block(css, ".dark body {", body.end) : null;
+  const stars = darkBody ? block(css, "body::before {", darkBody.end) : null;
+  const lightRoot = block(css, ":root {");
+  const baseDark = block(css, ".dark {");
 
-fs.writeFileSync(
-  path.join(out, "skyglass-tokens.css"),
-  [
-    "/* 由 pc/scripts/sync-skyglass.mjs 从 app/src/styles.css 生成，请勿手改。 */",
-    lightRoot.text,
-    baseDark.text,
-    root.text,
-    dark.text,
-    ...properties,
-    body.text,
-    darkBody.text,
-    stars.text,
-    "",
-  ].join("\n\n"),
-);
+  fs.writeFileSync(
+    path.join(out, "skyglass-tokens.css"),
+    [
+      "/* 由 pc/scripts/sync-skyglass.mjs 从 app/src/styles.css 生成，请勿手改。 */",
+      lightRoot?.text ?? "",
+      baseDark?.text ?? "",
+      root?.text ?? "",
+      dark?.text ?? "",
+      ...properties,
+      body?.text ?? "",
+      darkBody?.text ?? "",
+      stars?.text ?? "",
+      "",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  );
+}
 
 const ts = fs.readFileSync(path.join(app, "lib/sky.ts"), "utf8");
 const fnStart = ts.indexOf("export function computeSky");

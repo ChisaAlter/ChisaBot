@@ -3,62 +3,78 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 /**
- * 渲染预算的静态检查（styles.css 末尾「渲染预算」一节）。
- *
- * 同屏可见的毛玻璃层数要看页面上实际挂了哪些元素，这里不跑浏览器，拆成样式表上能检查的几条：
- *   1. 任何 blur() 都不超过 30px；Hark 玻璃令牌 --glass-blur 20px、--glass-pop-blur 12px，饱和度 160–180%；
- *   2. 会模糊的规则只有下面列出的这些：左栏、右栏、输入框、顶栏、聊天气泡、顶层对话卡片、弹层 / 抽屉 / 对话框（外观设置页自己的预览除外）；
- *   3. 裸代码块气泡、按钮、胶囊、嵌套对话卡片、设置页卡片不模糊（旧的 !important 玻璃层靠本地 --lg-blur: none 关掉）；
- *   4. 无限循环的动画只动 transform / opacity；滚动区不再挂渐隐遮罩。
- * 左右栏 + 输入框 + 顶栏 + 一个弹层，同屏合计 ≤ 6 层。实际页面的数目由浏览器审计记在 PR 里。
+ * V2 全站渲染预算静态门禁（覆盖 tokens.css / canvas.css / materials.css / styles.css / perf-noblur.css / a11y-modes.css）：
+ *  1. 任意样式表内 blur() 半径严格 <= 20px，0 `-webkit-backdrop-filter`，0 `backdrop-filter ... !important`；
+ *  2. 模糊令牌与 3 档材质 × 6 档表面矩阵守住预算（panel <= 20px / elevated <= 12px / bubble <= 8px，inset/control/bare = none）；
+ *  3. 只有 panel / elevated / bubble 表面与手机滚动顶栏挂 backdrop-filter，嵌套卡片与气泡内操作条零模糊；
+ *  4. 0 大容器 `:has()` / `:has(...) *`，0 `data-resizing` 关模糊或切黑底；
+ *  5. solid / perf / reduced-transparency / contrast:more / forced-colors 全部归零模糊；
+ *  6. 无限循环动画只动 transform / opacity；滚动区无渐隐遮罩。
  */
-const css = readFileSync(
-  path.join(import.meta.dir, "../src/styles.css"),
-  "utf8",
-);
-const source = css.replace(/\/\*[\s\S]*?\*\//g, "");
+const srcDir = path.join(import.meta.dir, "../src");
+const strip = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "");
+const readSheet = (rel: string) =>
+  strip(readFileSync(path.join(srcDir, rel), "utf8"));
+
+const SHEETS = {
+  "styles/tokens.css": readSheet("styles/tokens.css"),
+  "styles/canvas.css": readSheet("styles/canvas.css"),
+  "styles/materials.css": readSheet("styles/materials.css"),
+  "styles.css": readSheet("styles.css"),
+  "perf-noblur.css": readSheet("perf-noblur.css"),
+  "a11y-modes.css": readSheet("a11y-modes.css"),
+} as const;
+
+const allCss = Object.values(SHEETS).join("\n");
+const tokensCss = SHEETS["styles/tokens.css"];
+const materialsCss = SHEETS["styles/materials.css"];
+const stylesCss = SHEETS["styles.css"];
+const noblurCss = SHEETS["perf-noblur.css"];
 
 interface Rule {
+  file: string;
   selector: string;
   body: string;
 }
 
-/** 很粗的 CSS 规则切分：够用来读选择器和声明，不处理字符串里的花括号。 */
-function rules(text: string): Rule[] {
+function rules(file: string, text: string): Rule[] {
   const out: Rule[] = [];
   const re = /([^{}]+)\{([^{}]*)\}/g;
   for (let m = re.exec(text); m; m = re.exec(text)) {
-    out.push({ selector: m[1].trim().replace(/\s+/g, " "), body: m[2] });
+    out.push({
+      file,
+      selector: (m[1] ?? "").trim().replace(/\s+/g, " "),
+      body: m[2] ?? "",
+    });
   }
   return out;
 }
 
-const all = rules(source);
+const allRules = Object.entries(SHEETS).flatMap(([file, text]) =>
+  rules(file, text),
+);
+
 const blurs = (r: Rule) =>
   /(^|[;\s])backdrop-filter:\s*(?!\s|none)[^;]+/.test(r.body);
 
-test("no blur radius above 30px anywhere in the stylesheet", () => {
-  const radii = [...source.matchAll(/blur\((\d+(?:\.\d+)?)px\)/g)].map((m) =>
+test("全仓样式表无任何 blur() 半径超过 20px，0 -webkit-backdrop-filter，0 backdrop-filter !important", () => {
+  const radii = [...allCss.matchAll(/blur\((\d+(?:\.\d+)?)px\)/g)].map((m) =>
     Number(m[1]),
   );
   expect(radii.length).toBeGreaterThan(0);
-  expect(Math.max(...radii)).toBeLessThanOrEqual(30);
-  for (const m of source.matchAll(/--blur-\d:\s*(\d+)px/g))
-    expect(Number(m[1])).toBeLessThanOrEqual(30);
+  expect(Math.max(...radii)).toBeLessThanOrEqual(20);
+
+  for (const m of allCss.matchAll(/--blur-\d:\s*(\d+)px/g)) {
+    expect(Number(m[1])).toBeLessThanOrEqual(20);
+  }
+  expect(allCss).not.toContain("-webkit-backdrop-filter");
+  expect(allCss).not.toMatch(/backdrop-filter\s*:[^;{}]*!important/);
 });
 
-test("Hark glass tokens: panel 20px, popover 12px, saturate 160–180%", () => {
-  const radius = (name: string) =>
-    [...source.matchAll(new RegExp(`${name}:\\s*(\\d+)px;`, "g"))].map((m) =>
-      Number(m[1]),
-    );
-  const panel = radius("--glass-blur");
-  const pop = radius("--glass-pop-blur");
-  expect(panel.length).toBeGreaterThan(0);
-  expect(pop.length).toBeGreaterThan(0);
-  for (const v of panel) expect(v).toBe(20);
-  for (const v of pop) expect(v).toBe(12);
-  const saturate = [...source.matchAll(/--glass-saturate:\s*(\d+)%;/g)].map(
+test("模糊刻度与 3 档材质 × 6 档表面预算严格受控（panel ≤ 20px / elevated ≤ 12px / bubble ≤ 8px）", () => {
+  expect(tokensCss).toMatch(/--glass-blur:\s*20px;/);
+  expect(tokensCss).toMatch(/--glass-pop-blur:\s*12px;/);
+  const saturate = [...tokensCss.matchAll(/--glass-saturate:\s*(\d+)%;/g)].map(
     (m) => Number(m[1]),
   );
   expect(saturate.length).toBeGreaterThan(0);
@@ -66,92 +82,96 @@ test("Hark glass tokens: panel 20px, popover 12px, saturate 160–180%", () => {
     expect(v).toBeGreaterThanOrEqual(160);
     expect(v).toBeLessThanOrEqual(180);
   }
-  // 滤镜只由令牌拼出来，不再写死半径。
-  expect(source).toMatch(
+  expect(tokensCss).toMatch(
     /--glass-filter:\s*saturate\(var\(--glass-saturate\)\) blur\(var\(--glass-blur\)\);/,
   );
-  expect(source).toMatch(
-    /--glass-pop-filter:\s*saturate\(var\(--glass-saturate\)\) blur\(var\(--glass-pop-blur\)\);/,
+  expect(tokensCss).toMatch(
+    /--glass-pop-filter:\s*saturate\(var\(--glass-saturate\)\)\s*blur\(var\(--glass-pop-blur\)\);/,
   );
-  // 旧名字的滤镜写法不再出现：backdrop-filter 只读 --glass-filter / --glass-pop-filter。
-  expect(source).not.toMatch(/backdrop-filter:\s*var\(--glass-blur\b/);
+
+  // materials.css 明确覆盖三档材质
+  expect(materialsCss).toContain('html[data-material="glass"]');
+  expect(materialsCss).toContain('html[data-material="clear"]');
+  expect(materialsCss).toContain('html[data-material="solid"]');
+  expect(materialsCss).toContain("--surface-blur: blur(20px) saturate(160%);");
+  expect(materialsCss).toContain("--surface-blur: blur(16px) saturate(180%);");
+  expect(materialsCss).toContain("--surface-blur: blur(12px) saturate(160%);");
+  expect(materialsCss).toContain("--surface-blur: blur(8px) saturate(155%);");
+  expect(materialsCss).toContain("--surface-blur: blur(6px) saturate(170%);");
 });
 
-test("Hark text tiers: secondary .5, tertiary .3", () => {
-  expect(source).toMatch(/--text-secondary-alpha:\s*0\.5;/);
-  expect(source).toMatch(/--text-tertiary-alpha:\s*0\.3;/);
-});
+test("只有 panel / elevated / bubble 表面与手机滚动顶栏挂 backdrop-filter，其余表面严格零模糊", () => {
+  const blurringRules = allRules.filter(blurs);
+  expect(blurringRules.length).toBe(4);
+  const summary = blurringRules.map((r) => `${r.file} :: ${r.selector}`);
+  expect(
+    summary.some(
+      (s) =>
+        s.startsWith("styles/materials.css :: ") &&
+        s.includes('[data-surface="panel"]'),
+    ),
+  ).toBe(true);
+  expect(
+    summary.some(
+      (s) =>
+        s.startsWith("styles/materials.css :: ") &&
+        s.includes('[data-surface="elevated"]'),
+    ),
+  ).toBe(true);
+  expect(
+    summary.some(
+      (s) =>
+        s.startsWith("styles/materials.css :: ") &&
+        s.includes('[data-surface="bubble"]'),
+    ),
+  ).toBe(true);
+  expect(summary).toContain(
+    "styles.css :: html[data-phone] body[data-page-scrolled] .glass-topbar",
+  );
 
-test("only the rails, the composer, the top bar and popups blur", () => {
-  const selectors = all
-    .filter(blurs)
-    .map((r) => r.selector)
-    .filter((s) => !s.includes(".appearance-"));
-  expect(selectors).toEqual([
-    '[data-slot="dropdown-menu-content"], [data-slot="context-menu-content"], [data-slot="select-content"], [data-slot="popover-content"], [data-slot="combobox-content"]',
-    '[data-slot="dialog-content"], [data-slot="sheet-content"]',
-    '[data-slot="sidebar-inner"]',
-    ".glass-seg",
-    ".glass-search",
-    ".glass-card",
-    ".glass-composer",
-    ".page-loader-card",
-    ".glass-toast",
-    ".sg-savebar",
-    ".auth-card",
-    ".topbar-search[data-open] .glass-search",
-    '.rail-sheet[data-slot="sheet-content"]',
-    ".update-banner",
-    ".context-popover",
-    "html[data-phone] body[data-page-scrolled] .glass-topbar",
-    ".install-hint",
-    ".live-panel-src-pop",
-    ".chat-spotlight-panel",
-    // 主工作台大板块（左栏 / 账号卡 / 右栏）与全站弹窗/抽屉/菜单/浮层（§147）：统一跟随设置里的材质、雾度与深浅色。
-    ":is(.glass-side-card, .acct-card, .acct-mini-card, .glass-mini-card, .rail-card)",
-    ':is( [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="popover-content"], [data-slot="combobox-content"], [data-slot="dialog-content"]:not(.bg-transparent), [data-slot="sheet-content"], .model-popover, .perm-popover, .context-popover, .chat-spotlight-panel, .live-panel-src-pop, .rail-lib, .bm-menu, .bm-manager, .glass-toast, .page-loader-card, .sg-savebar, .auth-card, .update-banner, .install-hint )',
-    ":is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab)",
-    "html.dark :is(.glass-seg, .glass-search, .glass-pill, .glass-newchat, .glass-icon-btn, .glass-mini-new, .rail-tab)",
-    ".glass-composer, .dark .glass-composer, .glass-composer:focus-within, .dark .glass-composer:focus-within",
-    '.glass-main [data-slot="message"][data-align="start"] [data-slot="bubble"][data-variant="ghost"] > [data-slot="bubble-content"], .jr-card',
-    '.glass-main [data-slot="bubble"][data-align="end"] > [data-slot="bubble-content"]',
-    // 聊天区浮在壁纸上的卡与状态胶囊（确认/提问/核对/历史/交接/窗口按钮条/思考与干活胶囊）：和气泡同档釉面与磨砂模糊。
-    ":is(.cf-card, .gh-card, .page-card, .schedule-card, .bot-exchange-card, .chat-question, .chat-work-steps, .chat-draft-card, .chat-history-notice, .chat-history-more, .to-card, .hr-card, .win-ctrls, .rs-capsule, .chat-thinking)",
-    ".page-rows, .sg-card, .page-section > form, .page :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(.border-dashed):not(.page-rows)",
-    // Hark 唯一玻璃材质（第 1 步只定义，组件在第 2–4 步换上）。
-    ".glass",
-    ".glass.is-pop",
-  ]);
-});
-
-test("bare code bubbles, buttons, pills and settings cards switch the old glass layer off", () => {
-  const off = all.filter(
+  // inset / control / bare / 嵌套 .jr-card / 气泡内操作条显式零模糊
+  const noneRules = allRules.filter(
     (r) =>
-      /--lg-blur:\s*none/.test(r.body) &&
-      !r.selector.startsWith("html[data-perf") &&
-      !r.selector.startsWith("html:root"),
+      r.file === "styles/materials.css" &&
+      /backdrop-filter:\s*none;/.test(r.body),
   );
-  const covered = off.map((r) => r.selector).join(", ");
-  for (const s of [
-    ".glass-pill",
-    ".glass-newchat",
-    ".glass-icon-btn",
-    ".glass-mini-new",
+  const noneSelectors = noneRules.map((r) => r.selector).join(" ");
+  for (const token of [
+    '[data-surface="inset"]',
+    '[data-surface="control"]',
+    '[data-surface="bare"]',
     '.chat-bubble-bare > [data-slot="bubble-content"]',
-    ".page-rows",
-    ".sg-card",
-    ".page-section > form",
+    ":is(.jr-card, .live-panel-body) .jr-card",
+    '[data-streamdown="code-block-actions"]',
   ]) {
-    expect(covered).toContain(s);
+    expect(noneSelectors).toContain(token);
   }
 });
 
-test("performance mode and reduced transparency turn every glass token off", () => {
-  expect(source).toMatch(
-    /html\[data-perf="on"\] \{\s*--glass-filter: none;\s*--glass-pop-filter: none;/,
+test("零大容器 :has() / :has(...) *，且 data-resizing 严禁关模糊或切黑底", () => {
+  expect(allCss).not.toMatch(/:has\([^)]*\)\s+\*/);
+  for (const r of allRules) {
+    if (
+      /(?:^|[\s,])(?:html|body|\.glass-shell|\.glass-main|\.chat-bubbles)[^,{]*:has\(/.test(
+        r.selector,
+      )
+    ) {
+      throw new Error(`forbidden container :has() in ${r.file}: ${r.selector}`);
+    }
+    if (r.selector.includes("data-resizing")) {
+      expect(r.body).not.toMatch(/backdrop-filter\s*:/);
+      expect(r.body).not.toMatch(/--surface-blur\s*:/);
+      expect(r.body).not.toMatch(/background\s*:[^;]*(?:#000|rgb\(0|opaque)/);
+    }
+  }
+});
+
+test("solid / perf / reduced-transparency / contrast:more / forced-colors 全部将模糊令牌归零", () => {
+  expect(noblurCss).toMatch(
+    /html:is\(\[data-material="solid"\],\s*\[data-perf="on"\]\):not\(#chisabot-no-blur\)\s*\{\s*--glass-filter:\s*none;\s*--glass-pop-filter:\s*none;/,
   );
-  expect(source).toMatch(
-    /@media \(prefers-reduced-transparency: reduce\) \{\s*html:root \{\s*--glass-filter: none;/,
+  expect(noblurCss).toMatch(
+    /@media \(prefers-reduced-transparency: reduce\),\s*\(prefers-contrast: more\),\s*\(forced-colors: active\)\s*\{\s*html:not\(#chisabot-no-blur\)\s*\{\s*--glass-filter:\s*none;\s*--glass-pop-filter:\s*none;/,
   );
 });
 
@@ -176,11 +196,11 @@ const KEYWORDS = new Set([
   "step-end",
 ]);
 
-test("infinite animations only move transform or opacity", () => {
+test("无限循环动画只动 transform 或 opacity", () => {
   const names = new Set(
-    [...source.matchAll(/animation:\s*([^;]*\binfinite\b[^;]*);/g)].flatMap(
+    [...allCss.matchAll(/animation:\s*([^;]*\binfinite\b[^;]*);/g)].flatMap(
       (m) =>
-        m[1]
+        (m[1] ?? "")
           .split(",")
           .flatMap((part) => part.trim().split(/\s+/))
           .filter((word) => /^[a-z][\w-]*$/i.test(word) && !KEYWORDS.has(word)),
@@ -189,25 +209,39 @@ test("infinite animations only move transform or opacity", () => {
   expect(names.size).toBeGreaterThan(0);
   const offenders: string[] = [];
   for (const name of names) {
-    const block = source.match(
+    const block = allCss.match(
       new RegExp(`@keyframes ${name}\\s*\\{((?:[^{}]*\\{[^{}]*\\})*[^{}]*)\\}`),
     );
-    if (!block) continue;
+    if (!block?.[1]) continue;
     for (const p of block[1].matchAll(/([a-z-]+)\s*:/g)) {
-      if (!["transform", "opacity"].includes(p[1]))
+      if (p[1] && !["transform", "opacity"].includes(p[1])) {
         offenders.push(`${name}: ${p[1]}`);
+      }
     }
   }
   expect(offenders).toEqual([]);
 });
 
-test("scroll areas have no fade masks", () => {
-  for (const r of all) {
+test("滚动区不挂渐隐 mask-image", () => {
+  for (const r of allRules) {
     if (
       /scroll|carousel-track|btabs-track/.test(r.selector) &&
       /mask-image:\s*(?!\s|none)/.test(r.body)
     ) {
-      throw new Error(`scroll mask on ${r.selector}`);
+      throw new Error(`scroll mask in ${r.file} on ${r.selector}`);
     }
   }
+});
+
+test("新样式表核心文件（tokens / canvas / materials / perf-noblur / a11y-modes）全部 0 !important", () => {
+  for (const file of [
+    "styles/tokens.css",
+    "styles/canvas.css",
+    "styles/materials.css",
+    "perf-noblur.css",
+    "a11y-modes.css",
+  ] as const) {
+    expect(SHEETS[file]).not.toContain("!important");
+  }
+  expect(stylesCss.length).toBeGreaterThan(0);
 });

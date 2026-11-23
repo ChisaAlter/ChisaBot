@@ -90,7 +90,7 @@ export function RenderUiPlaceholder() {
       className="jr-surface jr-placeholder"
       role="status"
     >
-      <div className="jr-card">
+      <div className="jr-card" data-surface="bubble">
         <div className="jr-card-h">
           <span className="jr-skel-title" />
         </div>

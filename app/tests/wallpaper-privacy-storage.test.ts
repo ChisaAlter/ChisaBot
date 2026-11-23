@@ -11,33 +11,28 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
+  APPEARANCE_STORAGE_KEY,
   assertWallpaperDataUrlSize,
   compressUploadedWallpaper,
   flushAppearanceWrites,
-  flushGlassAlpha,
-  GLASS_OPACITY_STORAGE_KEY,
-  getAppearanceState,
+  getAppearanceConfig,
+  getCustomWallpaperUrl,
   MAX_WALLPAPER_DATA_URL_CHARS,
   MAX_WALLPAPER_FILE_BYTES,
-  readGlassAlpha,
   reloadAppearanceFromStorage,
-  resetAppearanceDefaults,
-  resolveActiveWallpaperCss,
+  removeCustomWallpaper,
+  resetAppearance,
+  resolveWallpaperCssFromConfig,
   SLIDER_WRITE_DELAY_MS,
   saveUploadedWallpaper,
-  setCustomWallpaperUrl,
-  setGlassOpacity,
-  setWallpaperBlur,
-  setWallpaperDim,
+  setWallpaperAdjustments,
+  setWallpaperSource,
   validateWallpaperFile,
-  WALLPAPER_BLUR_STORAGE_KEY,
   WALLPAPER_CUSTOM_URL_STORAGE_KEY,
-  WALLPAPER_DIM_STORAGE_KEY,
   WALLPAPER_ID_STORAGE_KEY,
 } from "../src/lib/appearance";
 import {
   setWallpaperBackend,
-  WALLPAPER_IDB_MARKER,
   type WallpaperBackend,
 } from "../src/lib/wallpaper-store";
 
@@ -75,18 +70,21 @@ let restore: WallpaperBackend;
 beforeAll(() => GlobalRegistrator.register());
 afterAll(() => GlobalRegistrator.unregister());
 
-beforeEach(() => {
+beforeEach(async () => {
   mem = memoryBackend();
   restore = setWallpaperBackend(mem.backend);
-  resetAppearanceDefaults();
+  window.localStorage.clear();
+  resetAppearance();
   flushAppearanceWrites();
   window.localStorage.clear();
+  await reloadAppearanceFromStorage();
 });
 
 afterEach(() => {
-  resetAppearanceDefaults();
+  resetAppearance();
   flushAppearanceWrites();
   setWallpaperBackend(restore);
+  document.body.innerHTML = "";
 });
 
 describe("1) 隐私：天空引擎不再调用 ipapi.co", () => {
@@ -159,8 +157,8 @@ describe("2) 壁纸上传：类型、大小上限与保存失败提示", () => {
     await expect(saveUploadedWallpaper(DATA_URL)).rejects.toThrow(
       "壁纸保存失败",
     );
-    expect(getAppearanceState().wallpaperId).toBe("none");
-    expect(getAppearanceState().customWallpaperUrl).toBe("");
+    expect(getAppearanceConfig().canvas.kind).toBe("sky");
+    expect(getCustomWallpaperUrl()).toBe("");
   });
 
   test("上传组件用现有 toast 提示校验与保存错误", () => {
@@ -171,113 +169,122 @@ describe("2) 壁纸上传：类型、大小上限与保存失败提示", () => {
   });
 
   test("自定义壁纸 URL 写进 CSS 时转义反斜杠、引号并去掉换行", () => {
-    setCustomWallpaperUrl('https://example.com/a"b\\c\nd.jpg');
-    expect(resolveActiveWallpaperCss(getAppearanceState())).toBe(
-      'url("https://example.com/a\\"b\\\\cd.jpg")',
-    );
+    setWallpaperSource("custom");
+    expect(
+      resolveWallpaperCssFromConfig(
+        getAppearanceConfig(),
+        'https://example.com/a"b\\c\nd.jpg',
+      ),
+    ).toBe('url("https://example.com/a\\"b\\\\cd.jpg")');
   });
 });
 
-describe("4) 外观滑块：localStorage 写入防抖，预览实时", () => {
-  test("连续拖动只在停手后写一次，状态每一步都立即更新", async () => {
-    const storage = window.localStorage;
-    const keys = [
-      GLASS_OPACITY_STORAGE_KEY,
-      WALLPAPER_BLUR_STORAGE_KEY,
-      WALLPAPER_DIM_STORAGE_KEY,
-    ];
-    for (let v = 6; v <= 30; v += 1) {
-      setGlassOpacity(v);
-      setWallpaperBlur(v);
-      setWallpaperDim(v);
-      expect(getAppearanceState().glassOpacity).toBe(v);
-      expect(getAppearanceState().wallpaperBlur).toBe(v);
-      // 玻璃雾度写进 #chisabot-glass-alpha 那条规则（合并到下一帧），不写 <html> 行内样式。
-      flushGlassAlpha();
-      expect(readGlassAlpha()).toBe((v / 100).toFixed(2));
+describe("4) 壁纸滑块：localStorage 写入防抖，#sky-root 预览实时", () => {
+  test("连续拖动模糊与薄幕只在停手后写一次 chisabot-appearance，#sky-root 变量每步实时更新且不碰 <html>", async () => {
+    const skyRoot = document.createElement("div");
+    skyRoot.id = "sky-root";
+    document.body.appendChild(skyRoot);
+
+    setWallpaperSource("waterlily-pond");
+    const beforeStored = window.localStorage.getItem(APPEARANCE_STORAGE_KEY);
+
+    for (let v = 4; v <= 20; v += 2) {
+      setWallpaperAdjustments({ blur: v, scrim: v * 2 });
+      const cfg = getAppearanceConfig();
+      expect(cfg.canvas.kind).toBe("wallpaper");
+      if (cfg.canvas.kind === "wallpaper") {
+        expect(cfg.canvas.blur).toBe(v);
+        expect(cfg.canvas.scrim).toBe(v * 2);
+      }
+      expect(skyRoot.style.getPropertyValue("--canvas-blur")).toBe(`${v}px`);
+      expect(skyRoot.style.getPropertyValue("--canvas-scrim")).toBe(
+        ((v * 2) / 100).toFixed(2),
+      );
       expect(
-        document.documentElement.style.getPropertyValue("--lg-alpha"),
+        document.documentElement.style.getPropertyValue("--canvas-blur"),
       ).toBe("");
-      // 拖动过程中一个滑块键都没写
-      for (const k of keys) expect(storage.getItem(k)).toBeNull();
+      expect(
+        document.documentElement.style.getPropertyValue("--canvas-scrim"),
+      ).toBe("");
+      // 防抖窗口内尚未覆写存储
+      expect(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBe(
+        beforeStored,
+      );
     }
+
     await new Promise((r) => setTimeout(r, SLIDER_WRITE_DELAY_MS + 80));
-    for (const k of keys) expect(storage.getItem(k)).toBe("30");
+    const saved = JSON.parse(
+      window.localStorage.getItem(APPEARANCE_STORAGE_KEY) ?? "{}",
+    );
+    expect(saved.canvas).toEqual({
+      kind: "wallpaper",
+      source: "waterlily-pond",
+      blur: 20,
+      scrim: 40,
+    });
   });
 
-  test("flushAppearanceWrites 立即写出（pagehide 时调用）", () => {
-    setGlassOpacity(22);
-    expect(window.localStorage.getItem(GLASS_OPACITY_STORAGE_KEY)).toBeNull();
+  test("flushAppearanceWrites 立即落盘（pagehide 时调用）", () => {
+    setWallpaperSource("waterlily-pond");
+    setWallpaperAdjustments({ blur: 12, scrim: 55 });
+    const before = JSON.parse(
+      window.localStorage.getItem(APPEARANCE_STORAGE_KEY) ?? "{}",
+    );
+    expect(before.canvas.blur).toBe(0);
+
     flushAppearanceWrites();
-    expect(window.localStorage.getItem(GLASS_OPACITY_STORAGE_KEY)).toBe("22");
+    const after = JSON.parse(
+      window.localStorage.getItem(APPEARANCE_STORAGE_KEY) ?? "{}",
+    );
+    expect(after.canvas.blur).toBe(12);
+    expect(after.canvas.scrim).toBe(55);
   });
 });
 
-describe("5) 壁纸图片数据存 IndexedDB，不进 localStorage", () => {
-  test("上传后 localStorage 只有占位标记，刷新后从 IndexedDB 读回", async () => {
+describe("5) 壁纸图片数据存 IndexedDB，绝不进 localStorage", () => {
+  test("上传后 localStorage 仅存 V2 source:\"custom\"，刷新后从 IndexedDB 读回", async () => {
     await saveUploadedWallpaper(DATA_URL);
-    expect(getAppearanceState().customWallpaperUrl).toBe(DATA_URL);
-    expect(window.localStorage.getItem(WALLPAPER_CUSTOM_URL_STORAGE_KEY)).toBe(
-      WALLPAPER_IDB_MARKER,
-    );
-    expect(window.localStorage.getItem(WALLPAPER_ID_STORAGE_KEY)).toBe(
-      "custom",
-    );
+    expect(getCustomWallpaperUrl()).toBe(DATA_URL);
+    const savedJson = window.localStorage.getItem(APPEARANCE_STORAGE_KEY) ?? "";
+    expect(savedJson).not.toContain("data:image/");
+    expect(JSON.parse(savedJson).canvas.source).toBe("custom");
     expect(mem.box.value).toBe(DATA_URL);
     expect(mem.box.puts).toBe(1);
 
     await reloadAppearanceFromStorage();
-    expect(getAppearanceState().wallpaperId).toBe("custom");
-    expect(getAppearanceState().customWallpaperUrl).toBe(DATA_URL);
-    expect(resolveActiveWallpaperCss(getAppearanceState())).toContain(
+    expect(getAppearanceConfig().canvas.kind).toBe("wallpaper");
+    expect(getCustomWallpaperUrl()).toBe(DATA_URL);
+    expect(resolveWallpaperCssFromConfig(getAppearanceConfig())).toContain(
       "data:image/webp",
     );
   });
 
-  test("旧版本 localStorage 里的 Data URL 迁移进 IndexedDB 并清掉", async () => {
+  test("旧版本 localStorage 里的 Data URL 自动迁移进 IndexedDB 并清掉旧键", async () => {
     window.localStorage.setItem(WALLPAPER_ID_STORAGE_KEY, "custom");
     window.localStorage.setItem(WALLPAPER_CUSTOM_URL_STORAGE_KEY, DATA_URL);
     await reloadAppearanceFromStorage();
-    expect(getAppearanceState().customWallpaperUrl).toBe(DATA_URL);
+    expect(getCustomWallpaperUrl()).toBe(DATA_URL);
     expect(mem.box.value).toBe(DATA_URL);
-    expect(window.localStorage.getItem(WALLPAPER_CUSTOM_URL_STORAGE_KEY)).toBe(
-      WALLPAPER_IDB_MARKER,
-    );
+    expect(window.localStorage.getItem(WALLPAPER_CUSTOM_URL_STORAGE_KEY)).toBeNull();
   });
 
-  test("迁移失败时保留旧数据，壁纸不丢", async () => {
+  test("迁移写入 IndexedDB 失败时保留旧 Data URL 键，壁纸不丢", async () => {
     mem.box.fail = true;
     window.localStorage.setItem(WALLPAPER_ID_STORAGE_KEY, "custom");
     window.localStorage.setItem(WALLPAPER_CUSTOM_URL_STORAGE_KEY, DATA_URL);
     await reloadAppearanceFromStorage();
-    expect(getAppearanceState().customWallpaperUrl).toBe(DATA_URL);
+    expect(getCustomWallpaperUrl()).toBe(DATA_URL);
     expect(window.localStorage.getItem(WALLPAPER_CUSTOM_URL_STORAGE_KEY)).toBe(
       DATA_URL,
     );
   });
 
-  test("移除壁纸会清掉 IndexedDB 里的图片；普通网址仍存 localStorage", async () => {
+  test("移除壁纸会清掉 IndexedDB 图片并自动退回动态天空", async () => {
     await saveUploadedWallpaper(DATA_URL);
-    setCustomWallpaperUrl("");
+    removeCustomWallpaper();
     await tick();
     expect(mem.box.value).toBeNull();
-    expect(window.localStorage.getItem(WALLPAPER_CUSTOM_URL_STORAGE_KEY)).toBe(
-      "",
-    );
-
-    setCustomWallpaperUrl("https://example.com/wall.jpg");
-    expect(window.localStorage.getItem(WALLPAPER_CUSTOM_URL_STORAGE_KEY)).toBe(
-      "https://example.com/wall.jpg",
-    );
-    expect(mem.box.value).toBeNull();
-  });
-
-  test("直接设置 Data URL 也只写占位标记，图片写进 IndexedDB", async () => {
-    setCustomWallpaperUrl(DATA_URL);
-    await tick();
-    expect(window.localStorage.getItem(WALLPAPER_CUSTOM_URL_STORAGE_KEY)).toBe(
-      WALLPAPER_IDB_MARKER,
-    );
-    expect(mem.box.value).toBe(DATA_URL);
+    expect(getCustomWallpaperUrl()).toBe("");
+    expect(getAppearanceConfig().canvas.kind).toBe("sky");
   });
 });

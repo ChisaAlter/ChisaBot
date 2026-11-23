@@ -114,6 +114,7 @@ export function QuickSpotlight() {
     >
       <div
         className="chat-spotlight-panel"
+        data-surface="elevated"
         data-leaving={leaving ? "true" : undefined}
       >
         <form

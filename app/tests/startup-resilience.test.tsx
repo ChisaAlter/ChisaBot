@@ -14,6 +14,10 @@ import { act, cleanup, render } from "@testing-library/react";
 import { SidebarShell } from "@/components/layout/sidebar-shell";
 import { ThemeProvider, useTheme } from "@/components/theme-provider";
 import { useSidebar } from "@/components/ui/sidebar";
+import {
+  flushAppearanceWrites,
+  resetAppearance,
+} from "@/lib/appearance";
 import { router as appRouter } from "@/router";
 import type { RouterContext } from "@/router-context";
 import { Route as RootRoute } from "@/routes/__root";
@@ -33,6 +37,9 @@ afterEach(async () => {
   globalThis.fetch = originalFetch;
   if (storageDescriptor)
     Object.defineProperty(window, "localStorage", storageDescriptor);
+  resetAppearance();
+  flushAppearanceWrites();
+  document.documentElement.classList.remove("dark");
   await settleReactWork();
 });
 afterAll(() => GlobalRegistrator.unregister());

@@ -1,5 +1,10 @@
 ## Unreleased
 
+## 0.1.183 — 2026-11-23
+
+- 全端发版：`0.1.183`，Android `versionCode 363`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `3cbd7edf912a2f07`；无新增数据库迁移。
+- **主题、背景画布与纯 CSS 材质四轴重设计（DESIGN §154）**：外观体系重构为「模式（补齐 Web 跟随系统）× 7 套主题/单强调色 × 互斥三画布（净色 / 动态天空 / 壁纸）× 纯 CSS 三档材质（`glass`/`clear`/`solid`）」四条正交轴，彻底下线重型液态玻璃 SVG 透镜与 JS 光栅采样（删除 `liquid-glass.ts`、`sky-snapshot.ts`、`perf-mode-preference.tsx`）；动态天空 4 固定时刻精确映射且实时天气默认关闭（关闭/非天空/固定时刻保证 0 Open-Meteo 请求并支持城市设置），壁纸收敛为模糊 + 单层护眼薄幕 2 条滑块；CSS 拆分为 `tokens.css` / `canvas.css` / `materials.css` 5 层单通道与 `[data-surface]` 6 档语义（全仓 `!important` 188 → 81）；`AppearanceConfigV2`（`chisabot-appearance`）提供旧 16 键一次性无损迁移与唯一首屏 `appearanceBootScript()`，设置页将「忙碌发送模式」「隐私遮罩」迁回「对话与隐私」区块并升级账号菜单三态切换，同步更新 PC 原生窗桥接与 Android `WebScreen.kt` 跟随系统（`app/src/styles/{tokens,canvas,materials}.css` · `styles.css` · `appearance.ts` · `palette.ts` · `theme.ts` · `theme-family.ts` · `sky-background.tsx` · `wallpaper_core.html` · `appearance-preferences.tsx` · `settings/index.tsx` · `account-menu.tsx` · `pc/src/*` · `android/.../WebScreen.kt`）。
+
 ## 0.1.182 — 2026-11-23
 
 - 全端发版：`0.1.182`，Android `versionCode 362`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `b1ab90640bd413a2`；无新增数据库迁移。

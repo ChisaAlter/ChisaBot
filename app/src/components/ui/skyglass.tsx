@@ -22,6 +22,7 @@ export function Card({
     <div
       className={cn("sg-card", interactive && "is-interactive", dashed && "is-dashed", className)}
       data-slot="sg-card"
+      data-surface="control"
       {...props}
     />
   );
@@ -229,7 +230,13 @@ export function SaveBar({
 }) {
   const host = typeof document === "undefined" ? null : document.querySelector(".glass-main");
   const bar = (
-    <div aria-hidden={!show} className={cn("sg-savebar", show && "is-shown")} role="region" aria-label={"未保存的更改"}>
+    <div
+      aria-hidden={!show}
+      aria-label={"未保存的更改"}
+      className={cn("sg-savebar", show && "is-shown")}
+      data-surface="elevated"
+      role="region"
+    >
       <span aria-hidden className="sg-savebar-pulse" />
       <span className="sg-savebar-msg">{message}</span>
       <span className="flex items-center gap-2">{children}</span>

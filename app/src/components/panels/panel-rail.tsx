@@ -377,6 +377,7 @@ export function PanelRail({ className }: { className?: string }) {
             aria-label={"打开面板"}
             className="rail-tab is-narrow"
             data-hidden={sheetOpen ? "true" : undefined}
+            data-surface="control"
             inert={sheetOpen || undefined}
             onClick={() => openPanelSheet("user")}
             tabIndex={sheetOpen ? -1 : undefined}
@@ -471,6 +472,7 @@ export function PanelRail({ className }: { className?: string }) {
         {/* DESIGN-v4：面板栏是一张独立的玻璃卡；标题和收起在卡片自己的头部里。 */}
         <section
           className={PANEL_CARD_CLASS}
+          data-surface="panel"
           ref={cardRef}
           style={{ width: cardWidth }}
         >
@@ -495,6 +497,7 @@ function PanelRailHandle({ open }: { open: boolean }) {
         aria-label={"展开面板"}
         className="rail-tab hidden xl:flex"
         data-hidden={open ? "true" : undefined}
+        data-surface="control"
         inert={open || undefined}
         onClick={() => setPanelRailOpen(true)}
         tabIndex={open ? -1 : undefined}
@@ -827,6 +830,7 @@ function RailSwitch({
       aria-label={"右栏内容"}
       className="sg-segmented rail-tabs"
       data-count={values.length}
+      data-surface="inset"
       data-tab={tab}
       {...keys.groupProps}
       ref={keys.groupRef}
@@ -922,7 +926,7 @@ const TasksRailCard = lazyPart(
 
 function RailNote({ children }: { children: React.ReactNode }) {
   return (
-    <p className="glass-card p-4 text-muted-foreground text-sm">{children}</p>
+    <p className="glass-card p-4 text-muted-foreground text-sm" data-surface="inset">{children}</p>
   );
 }
 

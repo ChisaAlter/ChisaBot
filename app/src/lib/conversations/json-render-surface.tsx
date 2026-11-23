@@ -163,6 +163,7 @@ export function JsonRenderSurface({
       aria-busy={streaming || undefined}
       aria-label={title || "机器人生成的界面"}
       className={shell ? "jr-surface jr-card" : "jr-surface"}
+      data-surface={shell ? "bubble" : undefined}
       data-streaming={streaming || undefined}
       role="region"
     >

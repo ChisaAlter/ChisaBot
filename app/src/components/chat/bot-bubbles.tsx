@@ -756,13 +756,14 @@ const Segment = memo(function Segment({
       );
     }
   }
+  const isBareCode = kind === "code" && /^\s*(`{3,}|~{3,})/.test(text);
   return (
     <>
       {quoteNode}
       <Bubble
         align="start"
         className={
-          kind === "code" && /^\s*(`{3,}|~{3,})/.test(text)
+          isBareCode
             ? "chat-bubble-bare w-full"
             : wide
               ? "w-full"
@@ -771,7 +772,10 @@ const Segment = memo(function Segment({
         data-cb-bubble={kind}
         variant="ghost"
       >
-        <BubbleContent className={wide ? "w-full" : undefined}>
+        <BubbleContent
+          className={wide ? "w-full" : undefined}
+          data-surface={isBareCode ? "bare" : "bubble"}
+        >
           <SmoothStreamdown
             components={components as never}
             streaming={streaming}
@@ -958,6 +962,7 @@ export function DraftCard({
     <section
       aria-label={title ? `草稿：${title}` : "草稿"}
       className="chat-draft-card"
+      data-surface="bubble"
       data-testid="chat-draft-card"
     >
       <header className="chat-draft-head">
@@ -1045,6 +1050,7 @@ export function DocCard({
       <section
         aria-label={title ? `文档：${title}` : "文档"}
         className="chat-draft-card chat-doc-card"
+        data-surface="bubble"
         data-testid="chat-doc-card"
         onClick={(event) => {
           const sel =
@@ -1452,6 +1458,7 @@ export function ArtifactCard({
       <section
         aria-label={`${artifact.title} (${badgeLabel})`}
         className="chat-draft-card chat-doc-card chat-artifact-card"
+        data-surface="bubble"
         data-artifact-lang={artifact.lang}
         data-cb-bubble="code"
         data-testid="chat-artifact-card"
@@ -1654,6 +1661,7 @@ export function BriefCard({
       <section
         aria-label={parsed.title}
         className="chat-draft-card chat-brief-card"
+        data-surface="bubble"
         data-testid="chat-brief-card"
       >
         <header className="chat-brief-hero">
@@ -1814,6 +1822,7 @@ export function StatusCardGroup({
       <section
         aria-label={card.title}
         className="chat-draft-card chat-doc-card w-full"
+        data-surface="bubble"
         data-testid="chat-status-card"
       >
         <header className="chat-doc-head items-start">
@@ -1863,6 +1872,7 @@ export function StatusCardGroup({
         <section
           aria-label={card.title}
           className="chat-draft-card chat-doc-card w-full"
+        data-surface="bubble"
           data-testid="chat-status-card"
           // biome-ignore lint/suspicious/noArrayIndexKey: 从消息正文解析的静态卡片列表，按文档顺序只读展示且标题可能重复
           key={idx}

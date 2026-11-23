@@ -19,13 +19,13 @@ import { AppearancePreferences } from "@/components/settings/appearance-preferen
 import { ThemeProvider } from "@/components/theme-provider";
 import {
   flushAppearanceWrites,
-  getAppearanceState,
+  getAppearanceConfig,
   loadUploadedWallpaperSource,
-  resetAppearanceDefaults,
+  removeCustomWallpaper,
+  resetAppearance,
   saveUploadedWallpaper,
   saveUploadedWallpaperSource,
-  setCustomWallpaperUrl,
-  setWallpaperPreset,
+  setWallpaperSource,
 } from "@/lib/appearance";
 import {
   compressBitmapToBlob,
@@ -529,7 +529,7 @@ describe("wallpaper source persistence", () => {
     backend = createInMemoryBackend();
     setWallpaperBackend(backend);
     localStorage.clear();
-    resetAppearanceDefaults();
+    resetAppearance();
     flushAppearanceWrites();
   });
 
@@ -549,7 +549,7 @@ describe("wallpaper source persistence", () => {
     });
 
     // 切到预设艺术壁纸时保留原图缓存与已裁剪结果
-    setWallpaperPreset("waterlily-pond");
+    setWallpaperSource("waterlily-pond");
     await Promise.resolve();
     expect(backend.records.get("custom")).toBe(
       "data:image/webp;base64,CROPPED",
@@ -557,7 +557,7 @@ describe("wallpaper source persistence", () => {
     expect(await loadUploadedWallpaperSource()).not.toBeNull();
 
     // 清空自定义壁纸时同步清除原图缓存
-    setCustomWallpaperUrl("");
+    removeCustomWallpaper();
     await Promise.resolve();
     expect(backend.records.get("custom")).toBeUndefined();
     expect(await loadUploadedWallpaperSource()).toBeNull();
@@ -569,7 +569,7 @@ describe("wallpaper source persistence", () => {
       preset: "9:16",
       rect: { x: 0.3, y: 0, width: 0.4, height: 1 },
     });
-    resetAppearanceDefaults();
+    resetAppearance();
     await Promise.resolve();
     expect(await loadUploadedWallpaperSource()).toBeNull();
   });
@@ -606,7 +606,7 @@ describe("AppearancePreferences wallpaper crop dialog integration", () => {
     backend = createInMemoryBackend();
     setWallpaperBackend(backend);
     localStorage.clear();
-    resetAppearanceDefaults();
+    resetAppearance();
     flushAppearanceWrites();
 
     createdBlobUrls = [];
@@ -693,8 +693,9 @@ describe("AppearancePreferences wallpaper crop dialog integration", () => {
   const body = () => within(document.body);
 
   test("rejects unsupported file types without opening crop dialog", async () => {
-    const { container } = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
-    const input = container.querySelector('input[type="file"]');
+    const view = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
+    fireEvent.click(view.getByTestId("canvas-kind-wallpaper"));
+    const input = view.container.querySelector('input[type="file"]');
     expect(input).not.toBeNull();
     if (!input) return;
 
@@ -707,8 +708,9 @@ describe("AppearancePreferences wallpaper crop dialog integration", () => {
   });
 
   test("opens crop dialog on upload, supports cancel without mutating wallpaper", async () => {
-    const { container } = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
-    const input = container.querySelector('input[type="file"]');
+    const view = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
+    fireEvent.click(view.getByTestId("canvas-kind-wallpaper"));
+    const input = view.container.querySelector('input[type="file"]');
     expect(input).not.toBeNull();
     if (!input) return;
 
@@ -730,12 +732,17 @@ describe("AppearancePreferences wallpaper crop dialog integration", () => {
       expect(body().queryByTestId("wallpaper-crop-dialog") === null).toBe(true);
     });
     expect(revokedBlobUrls).toEqual(createdBlobUrls);
-    expect(getAppearanceState().wallpaperId).toBe("none");
+    const cfg = getAppearanceConfig();
+    expect(cfg.canvas.kind).toBe("wallpaper");
+    if (cfg.canvas.kind === "wallpaper") {
+      expect(cfg.canvas.source).not.toBe("custom");
+    }
   });
 
   test("supports preset switch, handle drag, zoom slider, keyboard move, apply, and lossless recrop", async () => {
-    const { container } = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
-    const input = container.querySelector('input[type="file"]');
+    const view = render(<ThemeProvider><AppearancePreferences /></ThemeProvider>);
+    fireEvent.click(view.getByTestId("canvas-kind-wallpaper"));
+    const input = view.container.querySelector('input[type="file"]');
     expect(input).not.toBeNull();
     if (!input) return;
 
@@ -845,7 +852,11 @@ describe("AppearancePreferences wallpaper crop dialog integration", () => {
     expect(cropDrawCall?.length).toBe(9);
     // 原图 2400×1600 中心裁剪 450×800 -> sx=975, sy=400, sw=450, sh=800
     expect(cropDrawCall?.slice(1, 5)).toEqual([975, 400, 450, 800]);
-    expect(getAppearanceState().wallpaperId).toBe("custom");
+    const afterApply = getAppearanceConfig();
+    expect(afterApply.canvas.kind).toBe("wallpaper");
+    if (afterApply.canvas.kind === "wallpaper") {
+      expect(afterApply.canvas.source).toBe("custom");
+    }
     expect(backend.records.get("custom")).toStartWith(
       "data:image/webp;base64,",
     );

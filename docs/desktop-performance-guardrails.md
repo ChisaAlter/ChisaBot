@@ -1,6 +1,6 @@
 # 桌面端流畅度与竖屏防卡顿/防回跳硬红线
 
-本文档沉淀 2026-11-22 桌面端全面流畅度治理、Windows 小窗切换卡顿修复与竖屏面板回跳根治中实证的全部根因、工程红线、实测前后对比与防复发门禁，与 [DESIGN.md](../DESIGN.md)（§41、§147–§151、§153）配套执行。
+本文档沉淀 2026-11-22 桌面端全面流畅度治理、Windows 小窗切换卡顿修复与竖屏面板回跳根治中实证的全部根因、工程红线、实测前后对比与防复发门禁，并与 2026-11-23（§154）纯 CSS 三档材质与单通道 `[data-surface]` 重构同步，配套 [DESIGN.md](../DESIGN.md)（§41、§147–§151、§153、§154）执行。
 
 在修改 PC Electron 外壳、聊天滚动容器、玻璃材质与样式层、或高频 React Context / 侧栏 / 右栏 / 输入框之前，必须逐条核对对应域的硬红线。
 
@@ -106,27 +106,21 @@
 
 ## 三、渲染合成、玻璃材质与 CSS/DOM
 
-### 3.1 滚动区全量气泡/卡片叠加高半径 `backdrop-filter` 与 `liquid` SVG 位移透镜风暴
+### 3.1 滚动区全量气泡/卡片高半径 `backdrop-filter` 与已下线的 `liquid` SVG 位移透镜风暴
 
-- **现象与触发路径**：聊天页开启壁纸并渲染百余条消息时，页面存在 `160–186` 个并发 `backdrop-filter` 合成层；默认 `mist` 滚轮仅 `3.6 fps`，切换 `liquid` 模式流式输出直接跌至 `2.2 fps`（`p95 = 2,971ms`，`forcedMs = 3,961ms`）。
-- **根因（文件与机制）**：
-  - `app/src/styles.css` 给滚动区内每一条 `[data-slot="bubble-content"]` 与聊天卡片施加了与大面板相同的 `20px`（`mist`）/ `28px`（`frosted`）大半径高斯模糊，且气泡内部 Streamdown 代码块/操作条还会二次嵌套 `backdrop-blur`。
-  - `app/src/lib/liquid-glass.ts` 的 `LENS_SKIP_SELECTOR` 漏掉了 `[data-slot="bubble-content"]` 及 `.jr-card` / `.cf-card` / `.gh-card` / `.page-card` / `.schedule-card` / `.bot-exchange-card` / `.chat-question` / `.chat-work-steps` / `.chat-draft-card` / `.chat-history-notice` / `.chat-history-more` / `.to-card` / `.hr-card`，导致 `liquid` 模式下为每条气泡同步逐像素构建位移图 PNG 并挂 9 原语 SVG 滤镜。
-- **硬红线**：
-  - 滚动区聊天气泡与对话卡片在保留 §151 四档磨砂质感的前提下，必须通过 0 特异度 `:where` 覆写轻量 `--lg-blur`（`mist` `8px`、`frosted` `10px`、`crystal` `6px`），**禁止**在气泡内二次嵌套 `backdrop-filter`；裸代码块气泡保持 `--lg-blur: none`，且绝不覆盖性能模式与减少透明度规则。
-  - 所有滚动区聊天气泡与聊天卡片类必须常驻 `liquid-glass.ts` 的 `LENS_SKIP_SELECTOR`，**禁止**为高频滚动元素挂载 SVG 位移透镜；大面板位移图在 `mapFor()` 中必须按尺寸做 2×–4× 降采样生成。
+- **历史现象与根因（2026-11-22）**：百余条消息气泡曾叠加 `20px`/`28px` 大半径 `backdrop-filter` 且二次嵌套代码块模糊；旧 `liquid` 模式下的 `liquid-glass.ts` 还曾为气泡与卡片逐像素构建位移图 PNG 并挂 9 原语 SVG 滤镜，导致滚轮与流式帧率跌至 `2.2–3.6 fps`。
+- **现行硬红线（含 §154 纯 CSS 三档材质重构）**：
+  - 全站已彻底下线重型液态玻璃 SVG 位移透镜与 JS 光栅采样（删除 `app/src/lib/liquid-glass.ts` 与 `app/src/lib/sky-snapshot.ts`），全面收敛为纯 CSS 三档材质（`glass` / `clear` / `solid`）× 6 档 `[data-surface]` 单通道（`app/src/styles/tokens.css`、`canvas.css`、`materials.css`）；**严禁**重新引入 `data-lg-lens`、`data-lg-ink` 或运行时全页 SVG 位移滤镜。
+  - 滚动区聊天气泡与顶层对话卡片（`[data-surface="bubble"]`）维持轻模糊预算（`glass` `8px`、`clear` `6px`、`solid` `none`），主面板 `[data-surface="panel"]` 最大模糊半径不超过 `20px`，**禁止**在气泡内二次嵌套 `backdrop-filter`；裸代码块与透明灯箱（`[data-surface="bare"]`）保持无底无模糊，且绝不覆盖 `solid` / `data-perf="on"` / `prefers-reduced-transparency` / `prefers-contrast: more` 实底降级。
 - **防复发自动门禁**：`app/tests/liquid-glass-screen-ink.test.ts`、`app/tests/render-budget.test.ts`、`app/tests/theme-glass-perf.test.tsx`、`app/tests/no-backdrop.test.ts`。
 
-### 3.2 `liquid-glass.ts` 非液态模式常驻全树观察器与 `liquid` 读写交错强排
+### 3.2 下线重型液态玻璃运行时，禁止全树观察器与 JS 光栅采样空转
 
-- **现象与触发路径**：即使使用默认 `mist`（非 `liquid`）或性能模式，流式输出、打字、开弹窗、停滚都会在后台扫描全文档 59 个玻璃选择器并反复清理属性；开启 `liquid` 时每轮采样引发 O(N) 强排。
-- **根因（文件与机制）**：
-  - `app/src/lib/liquid-glass.ts` 启动时无条件挂载全树 `MutationObserver`、`ResizeObserver` 与捕获阶段 `window scroll`，非液态模式下每次 DOM 变动仍跑 `GLASS_SURFACE_SELECTOR` 匹配、`syncWallpaperWatch()` 和 `rescan()` 全页查询；每次停滚 150ms 后 `clearAdapted()` 无脏标记全页 `querySelectorAll` 清属性。
-  - `liquid` 模式下 `onMutations` 未跳过自身 `svgHost`/`lensStyle` 形成自激，且 `sample()` → `applyAdapt()` 在循环内交错写属性与调 `getComputedStyle(el).getPropertyValue("--lg-alpha")`、重复调 `getBoundingClientRect()`。
-- **硬红线**：
-  - `LiquidGlass` 在非 `liquid` 或被抑制（`data-perf` / `prefers-reduced-transparency`）时必须保持休眠：仅保留监听 `<html>` 属性的轻量 `htmlObs`，断开 `mutationObs`、`resizeObs`、捕获 `scroll` 与天空/壁纸监听，且仅在 `hasAdapted === true` 时做一次性清理。
-  - `liquid` 模式下 `onMutations` 必须跳过 `svgHost`/`lensStyle` 与纯文本变动；`rescan()` 必须先用零布局 `el.closest(LENS_SKIP_SELECTOR)` 预筛并合并为单次几何/样式读取；`sample()` 必须严格分 Read / Compute / Write 三阶段，全局 `--lg-alpha` 从 `#chisabot-glass-alpha` CSSOM 一次性读取（零逐元素 `getComputedStyle`）。
-- **防复发自动门禁**：`app/tests/liquid-glass-screen-ink.test.ts`（含 `mist` 模式下 DOM 变更/滚动 0 次 `getBoundingClientRect` 扫描与气泡跳过 SVG 透镜回归用例）、`app/tests/liquid-glass.test.ts`。
+- **历史现象与根因（2026-11-22）**：旧 `liquid-glass.ts` 曾常驻全树 `MutationObserver`、`ResizeObserver` 与捕获阶段 `window scroll`，即使在非液态模式下也会反复扫描 59 个硬编码玻璃选择器；开启 `liquid` 时每轮 5×3 光栅采样还曾交错读写 DOM 引发 O(N) 强排。
+- **现行硬红线（含 §154）**：
+  - 已彻底删除 `app/src/lib/liquid-glass.ts`、`app/src/lib/sky-snapshot.ts` 与 `#chisabot-glass-alpha` 动态样式注入，所有材质与可读性均由 `app/src/styles/{tokens,canvas,materials}.css` 与 `[data-surface]` 静态 CSS 单通道完成，实现全材质 **零 JS 光栅采样、零全树 DOM 扫描空转**。
+  - 8 个 `--surface-*` 注册 `@property` 必须保持 `inherits: false`，`--canvas-blur` 与 `--canvas-scrim` 仅允许挂在 `#sky-root`（**禁止**挂在 `<html>` / `:root` 引发全树样式重算）。
+- **防复发自动门禁**：`app/tests/liquid-glass-screen-ink.test.ts`（断言无 `liquid-glass.ts` / `sky-snapshot.ts` / `data-lg-lens` / `data-lg-ink` 残留及光学对比度保护）、`app/tests/a11y-contrast.test.ts`。
 
 ### 3.3 全屏遮罩双层模糊与菜单/浮层/抽屉缺失 `glass-hold`
 
@@ -136,36 +130,36 @@
   - `styles.css` 原仅给 `dialog`/`sheet` 配了 `glass-hold` 与 `[data-ending-style]` 去模糊，下拉菜单、Popover、Select、业务小浮层与 `.hk-drawer` 均未在开合动画期间剥离模糊，且静止态使用与大面板相同的 `20px`/`28px` 模糊。
 - **硬红线**：
   - **禁止**在全屏弹窗/抽屉/灯箱遮罩上叠加 `backdrop-blur-*`，遮罩仅保留轻量半透暗底（暗色弹窗遮罩 alpha `<= 0.28`，见 §147）。
-  - 全站菜单、Popover、Select、Combobox、业务浮层与 `.hk-drawer` 必须在起始/退出/关闭态剥离 `--lg-blur: none; backdrop-filter: none;`；transition 驱动弹层与 `.hk-drawer` 打开过渡期必须使用 `glass-hold` 暂停模糊（不干扰 Tailwind `animate-in` 菜单自身动效），静止态菜单/小浮层收敛至 `12px` 轻模糊。
+  - 全站菜单、Popover、Select、Combobox、业务浮层与 `.hk-drawer`（`[data-surface="elevated"]`）必须在起始/退出/关闭态剥离 `--surface-blur: none; backdrop-filter: none;`；transition 驱动弹层与 `.hk-drawer` 打开过渡期必须使用 `glass-hold` 暂停模糊（不干扰 Tailwind `animate-in` 菜单自身动效），静止态弹层收敛至 `12px` 轻模糊。
 - **防复发自动门禁**：`app/tests/glass-hold-panels.test.ts`、`app/tests/mobile-drawer.test.tsx`、`app/tests/theme-glass-perf.test.tsx`、`app/tests/render-budget.test.ts`。
 
-### 3.4 窗口缩放期过渡与 7 项 `@property` 过渡滥用
+### 3.4 窗口缩放期过渡与 `@property` 过渡滥用
 
-- **现象与触发路径**：窗口缩放或切换玻璃参数时，数百条气泡与静态卡片同步跑 7 个注册自定义属性的主线程插值动画。
-- **根因（文件与机制）**：`app/src/styles.css` 移除了 `resize-pause.css`（§148 避免黑闪）后未保留纯粹的 `transition: none` 抑制，且将 7 个 `@property` 过渡挂到了 `[data-slot="bubble-content"]`、`.jr-card`、设置页静态卡片等 50 余类选择器上。
+- **现象与触发路径**：窗口缩放或切换材质参数时，数百条气泡与静态卡片同步跑多组注册自定义属性的主线程插值动画。
+- **根因（文件与机制）**：`app/src/styles.css` 早期移除 `resize-pause.css`（§148 避免黑闪）后未保留纯粹的 `transition: none` 抑制，且曾将 7 项 `@property` 过渡挂到气泡与 50 余类静态卡片选择器上。
 - **硬红线**：
-  - `html[data-resizing]` 规则内**严禁**出现 `backdrop-filter`、`--lg-blur`、`--glass-bg-opaque`（防止恢复拉伸黑闪，§148），但应仅对主框架面板、侧栏槽与壁纸层设 `transition: none`。
-  - **禁止**在聊天气泡和设置页静态大列表卡片上挂载 7 项 `@property` 过渡；完整自适应属性过渡仅在 `html[data-glass="liquid"]` 的主框架与胶囊上启用。
-- **防复发自动门禁**：`app/tests/resize-pause.test.ts`、`app/tests/liquid-glass.test.ts`。
+  - `html[data-resizing]` 规则内**严禁**出现 `backdrop-filter`、`--surface-blur`、`--surface-bg-solid`（防止恢复拉伸黑闪，§148），仅对主框架面板、侧栏槽与壁纸层设 `transition: none`。
+  - **禁止**在聊天气泡和设置页静态大列表卡片上挂载大批量 `@property` 过渡；外观模式切换继续由 `ThemeProvider` 的 `data-theme-switching="1"` 短冻结避免并发过渡风暴。
+- **防复发自动门禁**：`app/tests/resize-pause.test.ts`、`app/tests/liquid-glass-screen-ink.test.ts`。
 
 ### 3.5 `.glass-shell` 全局双层模糊 `text-shadow` 波及长文气泡
 
 - **现象与触发路径**：深色或浅色壁纸模式下渲染长篇 Markdown 回复或滚动对话时，文本光栅化成本高。
-- **根因（文件与机制）**：`app/src/styles.css` 对 `.glass-shell` 施加双层模糊 `text-shadow: 0 1px 2px ..., 0 0 1px ...`，继承穿透到每一条聊天气泡与卡片里的上千个字形。
+- **根因（文件与机制）**：早期 `app/src/styles.css` 对 `.glass-shell` 施加双层模糊 `text-shadow: 0 1px 2px ..., 0 0 1px ...`，继承穿透到每一条聊天气泡与卡片里的上千个字形。
 - **硬红线**：
-  - 壁纸光学字缘描影（§145）仅用单层轻影（`0 1px 1px`），且自带完整磨砂釉面的 `[data-slot="bubble-content"]`、`.jr-card`、`.page-rows`、`.sg-card`、`.chat-work-steps`、`.chat-draft-card` 必须列入 `text-shadow: none` 豁免名单；仅直接裸浮于壁纸上的文字保留描影。
-- **防复发自动门禁**：`app/tests/a11y-contrast.test.ts`（确保对比度模型全族全表面 WCAG AA >= 4.5:1）。
+  - 壁纸光学字缘描影（§145 / §154，定义于 `app/src/styles/materials.css`）仅用单层轻影（`0 1px 1px`），且自带完整磨砂底面的 `[data-surface="bubble"]` / `[data-surface="control"]` / `.page-rows` / `.sg-card` 等必须保持 `text-shadow: none` 豁免；仅直接裸浮于壁纸上的文字保留描影。
+- **防复发自动门禁**：`app/tests/a11y-contrast.test.ts`（确保 7 主题 × 浅/深 × 3 材质 × 极值壁纸全矩阵 WCAG AA >= 4.5:1）。
 
-### 3.6 壁纸模式下冗余全屏背景层与天空引擎定时器空转
+### 3.6 互斥三画布单层化与天空引擎零空转 / 零偷跑天气请求
 
-- **现象与触发路径**：用户启用自定义/预设壁纸后，GPU 仍绘制被遮挡的多重渐变、星空与流光球，主线程每秒仍被天空引擎唤醒。
+- **现象与触发路径**：早期启用壁纸后，GPU 仍绘制被遮挡的多重 `body` 渐变、星空与流光球，主线程每秒仍被天空引擎唤醒，且固定天象下仍偷发 Open-Meteo 天气请求。
 - **根因（文件与机制）**：
-  - `body` 多重 `radial-gradient`、`body::before` 星空、`#skyph` 与 `.chisabot-ambient-orbs` 在 `html[data-wallpaper="on"]` 下仍处于渲染树中，`#sky-root` 缺少 `contain: strict`。
-  - `app/public/wallpaper_core.html` 内部直接调用 `setInterval(tick, 1000)` 与 `setInterval(fetchWeather, 10 * 60 * 1000)`，未受 `sky.mode === "off"` 或 `document.hidden` 控制。
+  - 旧样式在 `body` 叠加 6 层背景（多重渐变、`body::before` 星空、`#skyph`、WebGL `#gl`、`.chisabot-ambient-orbs`、壁纸/压暗/双层薄幕），且 `#sky-root` 缺少 `contain: strict`。
+  - `app/public/wallpaper_core.html` 内部定时 `tick` 与 `fetchWeather` 此前未按画布互斥与天气开关严格门控。
 - **硬红线**：
-  - `#sky-root` 必须保留 `contain: strict`；`html[data-wallpaper="on"]` 下必须关闭 `body` 的 `background-image`（保留纯色 `background-color` 首帧兜底），并 `display: none` 隐藏 `body::before`、`#skyph` 与 `.chisabot-ambient-orbs`。
-  - `app/src/components/sky-background.tsx` 启动引擎脚本时必须注入受控 `engineSetInterval`，在 `sky.mode === "off"` 或 `document.hidden` 时跳过 `tick` 与 `fetchWeather`。
-- **防复发自动门禁**：`app/tests/perf-noblur-filter.test.ts`、`app/tests/a11y-modes.test.ts`、`app/tests/wallpaper-loading.test.tsx`、`app/tests/sky-snapshot.test.ts`。
+  - 背景画布统一收口至 `app/src/styles/canvas.css` 下的 `#sky-root`（`contain: strict`）并严格三选一互斥（`html[data-canvas="pure" | "sky" | "wallpaper"]`），彻底移除旧 `body::before` 星空、`.chisabot-ambient-orbs` 与 `.chisabot-wallpaper-dim`，全站仅保留唯一单层护眼薄幕 `--canvas-scrim`。
+  - `app/src/components/sky-background.tsx` 与 `app/public/wallpaper_core.html` 必须保持受控 `engineSetInterval` 与双重 `createHarkFetch` 拦截：非 `sky` 画布、开启 `staticBackground` 或 `document.hidden` 时不运行渲染循环；非 `sky` 画布、固定时刻（`dawn`/`day`/`dusk`/`night`）或关闭实时天气时严格 **0 Open-Meteo 请求** 且不写 `hark-wallpaper-v1`。
+- **防复发自动门禁**：`app/tests/perf-noblur-filter.test.ts`、`app/tests/a11y-modes.test.ts`、`app/tests/wallpaper-loading.test.tsx`、`app/tests/appearance-v2.test.tsx`。
 
 ### 3.7 历史气泡残留 `motion.div` 合成层与状态胶囊旋转图标牵连重绘
 
@@ -186,7 +180,7 @@
 - **硬红线**：
   - 全站大容器（`html`/`body`/`:root`/`.glass-shell`/`.glass-topbar`/`.glass-main`）保持 **零 `:has()`**，统一改用组件直接输出的 `data-*` 属性（如 `data-winctrls="3"`）。
   - `[data-slot="message-scroller-item"]` 保留 `contain: layout style`（**严禁**对聊天消息行使用 `content-visibility: auto`，以免虚报高度破坏滚动锚点）。
-  - 弹窗主阴影模糊半径控制在 `<= 36px`，`liquid` 边缘投影控制在 3 层以内，**禁止**对 `filter` 属性做 CSS `transition`。
+  - 弹窗主阴影模糊半径控制在 `<= 36px`，材质边缘投影控制在 3 层以内，**禁止**对 `filter` 属性做 CSS `transition`。
 - **防复发自动门禁**：`app/tests/no-container-has.test.ts`（`LEGACY` 清零）、`app/tests/no-group-has.test.ts`、`app/tests/no-body-has.test.ts`、`app/tests/theme-glass-perf.test.tsx`。
 
 ---
@@ -320,7 +314,7 @@
 凡修改以下任一区域，**合并前必须跑对应单测与实机基准**：
 
 - 改动 `pc/src/compact-window.js`、`pc/src/local-web.js`、`pc/src/desktop-prefs.js`、`pc/src/main.js` 或 `app/src/lib/desktop-window.ts`；
-- 改动 `app/src/styles.css` 玻璃材质/遮罩/阴影/过渡、`app/src/lib/liquid-glass.ts`、`app/src/components/sky-background.tsx` 或气泡动画；
+- 改动 `app/src/styles/{tokens,canvas,materials}.css`、`app/src/styles.css`、`app/src/perf-noblur.css`、`app/src/a11y-modes.css`、`app/src/components/sky-background.tsx` 或气泡动画；
 - 改动 `app/src/components/channels/chat-transcript.tsx`、`panel-rail.tsx` 或 `app/src/vendor/shadcn-react-message-scroller/lib/index.js`；
 - 改动 `app/src/lib/chat/`、`app/src/lib/conversations/`、`app/src/components/app-sidebar/`、`composer/dock.tsx` 或全局 Context Provider。
 
@@ -340,7 +334,7 @@ bun test \
   app/tests/narrow-rail-sheet-stability.test.tsx \
   app/tests/settle-reflow-instant.test.tsx \
   app/tests/runtime-render-stability.test.tsx \
-  app/tests/liquid-glass.test.ts \
+  app/tests/appearance-v2.test.tsx \
   app/tests/liquid-glass-screen-ink.test.ts \
   app/tests/render-budget.test.ts \
   app/tests/theme-glass-perf.test.tsx \
@@ -355,7 +349,6 @@ node tests/chat-scroll/portrait-panel-jump.mjs
 node tests/chat-scroll/work-card-jump.mjs
 
 # 5. 实机 Chromium 4x CPU 卡顿基准（Windows 显式传 --chrome 指向 Chrome/Edge 可执行文件）
-node perf/jank.mjs --dist=app/dist --out=/tmp/perf-mist --scenario=all --runs=1 --cpu=4
-node perf/jank.mjs --dist=app/dist --out=/tmp/perf-liquid --glass=liquid --scenario=idle,scroll,stream --runs=1 --cpu=4 --trace
+node perf/jank.mjs --dist=app/dist --out=/tmp/perf-glass --scenario=all --runs=1 --cpu=4
 node perf/compare.mjs /tmp/perf-before /tmp/perf-after --interactions
 ```

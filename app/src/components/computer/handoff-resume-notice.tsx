@@ -115,6 +115,7 @@ export function HandoffResumeNotice({
   return (
     <div
       className="hr-card mb-3 flex flex-wrap items-center gap-2 rounded-md border border-amber-500/50 p-3 text-sm"
+      data-surface="bubble"
       role="status"
     >
       <span>

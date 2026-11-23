@@ -71,6 +71,7 @@ export function ToolOutcomeNotice({
     return (
       <div
         className="to-card ch-content-enter mb-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--line-strong)] p-3 text-sm"
+        data-surface="bubble"
         role="alert"
       >
         <span>无法读取待核对操作。</span>
@@ -141,6 +142,7 @@ function OutcomeForm({
   return (
     <section
       className="to-card mb-3 rounded-xl border border-[var(--line-strong)] p-3 text-sm"
+      data-surface="bubble"
       aria-label={active ? "核对操作结果" : undefined}
     >
       <h3 className="font-medium">这一步的结果需要你核对</h3>

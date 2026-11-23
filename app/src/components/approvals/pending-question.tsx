@@ -130,6 +130,7 @@ export function PendingQuestion({
       <section
         aria-label={active ? `需要你回答：${shown.question}` : undefined}
         className="chat-question"
+        data-surface="bubble"
       >
         <div className="chat-question-head">
           <p className="chat-question-t">{`${name}问你：${shown.question}`}</p>
