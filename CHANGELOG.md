@@ -4,7 +4,7 @@
 
 ## 0.1.182 — 2026-11-23
 
-全端版本 `0.1.182`，Android `versionCode 362`：全站 UI 操作丝滑度与统一玻璃安全过渡动画全面升级（共享动效原语、竖屏面板与全站菜单/弹层/弹窗完整进退场、单树无闪暗输入框、深浅色切换防并发风暴、壁纸交叉淡入与 PC 独立窗口平滑动效），同时并入手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复（PR #581）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `aa77485e962517f3`；无新增数据库迁移。
+全端版本 `0.1.182`，Android `versionCode 362`：全站 UI 操作丝滑度与统一玻璃安全过渡动画全面升级（共享动效原语、竖屏面板与全站菜单/弹层/弹窗完整进退场、单树无闪暗输入框、深浅色切换防并发风暴、壁纸交叉淡入与 PC 独立窗口平滑动效），同时并入手机端消息动作栏、输入框工具栏防重叠与切页流畅度修复（PR #581）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `b1ab90640bd413a2`；无新增数据库迁移。
 
 - **全站 UI 操作丝滑度与玻璃安全过渡架构**：
   - **动效底层与共享原语**：`app/src/lib/motion.ts`、`app/src/components/ui/motion-primitives.tsx` 与 `app/src/styles.css` 收敛缓动与时长令牌，落地 `<SmoothCollapse>`、`useRetainedValue`、`usePresenceMount`、`smoothScrollIntoView` 与 Backdrop-Root-Safe `<ContentEnter>`；修复 `[data-slot="sheet-content"]` 过渡覆写并清除 8 类弹出层 `backdrop-filter` 过渡泄漏（补齐 `glass-hold`）；`ThemeProvider` 切深浅色加 1 帧 `data-theme-switching="1"` 冻结 240+ 并发过渡风暴；`SkyBackground` 实现 `#sky-root` 双图层壁纸交叉淡入；`StaggerItem` 等消除永久 `transform` 合成层；剥离高频卡片/导航 `box-shadow` 过渡并补全三级降级。

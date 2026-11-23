@@ -2827,15 +2827,16 @@ function ComposerImpl({
             {retainedReplyQuote.text}
           </span>
           <button
-            aria-label="取消引用"
+            aria-label={replyQuoteOpen ? "取消引用" : undefined}
             className="composer-reply-clear"
-            data-testid="composer-reply-quote-clear"
+            data-testid={replyQuoteOpen ? "composer-reply-quote-clear" : undefined}
+            disabled={!replyQuoteOpen}
             onClick={() => {
               quoteRevision.current++;
               replyQuoteRef.current = null;
               setReplyQuote(null);
             }}
-            title="取消引用"
+            title={replyQuoteOpen ? "取消引用" : undefined}
             type="button"
           >
             <IconX className="size-3.5" />
