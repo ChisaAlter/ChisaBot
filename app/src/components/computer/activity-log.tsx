@@ -32,6 +32,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { tryClient } from "@/lib/client";
 import {
@@ -310,7 +311,11 @@ function StepRow({
           ) : null}
         </span>
       </button>
-      {open ? <StepDetails computerId={computerId} step={step} /> : null}
+      {expandable ? (
+        <SmoothCollapse open={open} unmountOnExit>
+          <StepDetails computerId={computerId} step={step} />
+        </SmoothCollapse>
+      ) : null}
     </li>
   );
 }
@@ -367,7 +372,7 @@ function BatchRow({
           />
         </span>
       </button>
-      {open ? (
+      <SmoothCollapse open={open} unmountOnExit>
         <ul className="activity-batch-list">
           {steps.map((step) => (
             <StepRow
@@ -378,7 +383,7 @@ function BatchRow({
             />
           ))}
         </ul>
-      ) : null}
+      </SmoothCollapse>
     </li>
   );
 }

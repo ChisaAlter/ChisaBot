@@ -31,6 +31,7 @@ import { toast } from "@/components/ui/toast";
 import { useExternalConnection } from "@/hooks";
 import type { GatewayAccount } from "@/lib/accounts";
 import { objectConnectionKey } from "@/lib/connection-key";
+import { useRetainedValue } from "@/lib/motion";
 import {
   adminQuotasQueryOptions,
   formatTokenCount,
@@ -228,6 +229,7 @@ function QuotaEditDialog({
   onClose: () => void;
 }) {
   const saveQuota = useUpdateUserQuotaMutation();
+  const retainedDisplayName = useRetainedValue(row ? displayName : null) ?? displayName;
   const [draft, setDraft] = useState<QuotaFormDraft>(() =>
     quotaDraftFromRecord(row?.quota ?? null),
   );
@@ -285,7 +287,7 @@ function QuotaEditDialog({
     >
       <DialogContent className="im-dialog max-w-lg">
         <DialogHeader>
-          <DialogTitle>{`配置配额 · ${displayName}`}</DialogTitle>
+          <DialogTitle>{`配置配额 · ${retainedDisplayName}`}</DialogTitle>
           <DialogDescription>
             {"设置该用户的每日、每月模型配额上限；留空表示不限制。"}
           </DialogDescription>

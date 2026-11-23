@@ -32,6 +32,7 @@ export function StatusCapsule({
   since,
   testId = "status-capsule",
   variant,
+  leaving = false,
 }: {
   label: string;
   /** 从什么时候算起（这一轮开始的时刻）。 */
@@ -39,14 +40,18 @@ export function StatusCapsule({
   testId?: string;
   /** `pause`：说了一句之后的停顿。和以前停顿时的占位一样高（22px），来新字时它让位，下面不多跳。 */
   variant?: "pause";
+  /** 退场淡出态（固定 38px 槽内 150ms 淡出，aria-hidden 且不占 testId）。 */
+  leaving?: boolean;
 }) {
-  const now = useNow(true);
+  const now = useNow(!leaving);
   const time = capsuleSeconds(since, Math.max(now, since));
   return (
     <div
+      aria-hidden={leaving || undefined}
       className="rs-capsule"
+      data-leaving={leaving ? "true" : undefined}
       data-state="live"
-      data-testid={testId}
+      data-testid={leaving ? undefined : testId}
       data-variant={variant}
     >
       <CapsuleSpinner />

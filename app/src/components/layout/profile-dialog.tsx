@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { useExternalConnection } from "@/hooks";
 import { authKeys, currentUserQueryOptions } from "@/lib/auth/queries";
 import { client } from "@/lib/client";
+import { usePresenceMount } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 /**
@@ -320,8 +321,15 @@ export function ProfileDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const formMount = usePresenceMount(open);
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={(next) => {
+        if (!next) formMount.onExited();
+      }}
+      open={open}
+    >
       <DialogContent className="glass-modal profile-dialog max-w-[400px]">
         <DialogTitle className="font-semibold text-lg">
           {"个人资料"}
@@ -329,7 +337,9 @@ export function ProfileDialog({
         <DialogDescription className="text-xs">
           {"头像和名称显示在左下角的账号卡上。"}
         </DialogDescription>
-        {open ? <ProfileForm onSaved={() => onOpenChange(false)} /> : null}
+        {formMount.mounted ? (
+          <ProfileForm onSaved={() => onOpenChange(false)} />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -345,8 +355,14 @@ export function ProfileSetupGate() {
   const [done, setDone] = useState(false);
   const open =
     Boolean(user?.profileNeedsSetup) && !done && pathname !== "/onboarding";
+  const formMount = usePresenceMount(open);
   return (
-    <Dialog open={open}>
+    <Dialog
+      onOpenChangeComplete={(next) => {
+        if (!next) formMount.onExited();
+      }}
+      open={open}
+    >
       <DialogContent
         className="glass-modal profile-dialog max-w-[420px]"
         overlayClassName="profile-setup-overlay"
@@ -358,7 +374,9 @@ export function ProfileSetupGate() {
         <DialogDescription className="text-center text-xs">
           {"先设置你的头像和名称，就可以开始了。"}
         </DialogDescription>
-        {open ? <ProfileForm onSaved={() => setDone(true)} required /> : null}
+        {formMount.mounted ? (
+          <ProfileForm onSaved={() => setDone(true)} required />
+        ) : null}
       </DialogContent>
     </Dialog>
   );

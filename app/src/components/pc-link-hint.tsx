@@ -2,6 +2,7 @@ import { IconDeviceDesktopDown, IconPlugConnected, IconX } from "@tabler/icons-r
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTimeout } from "@/hooks";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { type PcLocalState, pcBridge, usePcLocal } from "@/lib/pc-bridge";
 
 /**
@@ -150,18 +151,20 @@ export function PcLinkHint() {
           <IconX className="size-4" />
         </button>
       </div>
-      {problem === "outdated" && open ? (
-        <ol className="install-hint-ios">
-          <li>
-            {"在 "}
-            <button className="pc-link-hint-link" onClick={goDevices} type="button">
-              {"设置 → 设备"}
-            </button>
-            {" 下载最新的 ChisaBot 安装包。"}
-          </li>
-          <li>{"在 Windows「设置 → 应用」里卸载旧的 ChisaBot（旧版本号更大，新版装不上去）。"}</li>
-          <li>{"运行新安装包，用这个账号登录。托盘图标变蓝就连上了，机器人就能在你批准后操作这台电脑。"}</li>
-        </ol>
+      {problem === "outdated" ? (
+        <SmoothCollapse open={open} unmountOnExit>
+          <ol className="install-hint-ios">
+            <li>
+              {"在 "}
+              <button className="pc-link-hint-link" onClick={goDevices} type="button">
+                {"设置 → 设备"}
+              </button>
+              {" 下载最新的 ChisaBot 安装包。"}
+            </li>
+            <li>{"在 Windows「设置 → 应用」里卸载旧的 ChisaBot（旧版本号更大，新版装不上去）。"}</li>
+            <li>{"运行新安装包，用这个账号登录。托盘图标变蓝就连上了，机器人就能在你批准后操作这台电脑。"}</li>
+          </ol>
+        </SmoothCollapse>
       ) : null}
     </div>
   );

@@ -438,7 +438,6 @@ function TaskDetailModalContent({
       className="task-rail-detail-dialog"
       data-testid="task-rail-detail-dialog"
       data-tone={tone}
-      overlayClassName="task-rail-detail-overlay"
     >
       <DialogHeader className="task-rail-modal-header">
         <div className="task-rail-modal-badges">
@@ -604,9 +603,9 @@ function TaskDetailModalContent({
             className="task-rail-loading"
             role="status"
           >
-            <span />
-            <span />
-            <span />
+            <span className="sky-skel-glass" />
+            <span className="sky-skel-glass" />
+            <span className="sky-skel-glass" />
           </div>
         ) : null}
 
@@ -703,8 +702,9 @@ function TaskDetailModalContent({
               </button>
             </div>
 
-            {tab === "overview" ? (
-              <div className="task-rail-modal-sections">
+            <div className="ch-view-enter" key={`${target.taskId}:${tab}`}>
+              {tab === "overview" ? (
+                <div className="task-rail-modal-sections">
                 {task.summary ? (
                   <section className="task-rail-modal-card task-rail-modal-deliverable">
                     <div className="task-rail-modal-card-head">
@@ -905,6 +905,7 @@ function TaskDetailModalContent({
             ) : (
               <ModalTaskTracePanel task={task} />
             )}
+            </div>
           </>
         ) : null}
       </DialogBody>
@@ -1213,7 +1214,6 @@ function WorkflowRunModalContent({
       className="task-rail-detail-dialog"
       data-testid="task-rail-detail-dialog"
       data-tone={tone}
-      overlayClassName="task-rail-detail-overlay"
     >
       <DialogHeader className="task-rail-modal-header">
         <div className="task-rail-modal-badges">
@@ -1436,8 +1436,9 @@ function WorkflowRunModalContent({
               </button>
             </div>
 
-            {tab === "steps" ? (
-              <div className="task-rail-modal-sections">
+            <div className="ch-view-enter" key={`${target.runId}:${tab}`}>
+              {tab === "steps" ? (
+                <div className="task-rail-modal-sections">
                 {run.output ? (
                   <section className="task-rail-modal-card task-rail-modal-deliverable">
                     <div className="task-rail-modal-card-head">
@@ -1543,6 +1544,7 @@ function WorkflowRunModalContent({
                 )}
               </div>
             )}
+            </div>
           </>
         ) : null}
       </DialogBody>

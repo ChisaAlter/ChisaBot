@@ -1,8 +1,10 @@
+import { Popover } from "@base-ui/react/popover";
 import {
   IconActivity,
   IconAdjustments,
   IconArrowUpRight,
   IconCheck,
+  IconChevronDown,
   IconCircleCheck,
   IconClock,
   IconHistory,
@@ -22,13 +24,15 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { useExternalConnection, useResizeObserver } from "@/hooks";
 import { AgentsRailCard } from "@/components/panels/agents-rail-card";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ContentEnter, SmoothCollapse } from "@/components/ui/motion-primitives";
+import { smoothScrollIntoView } from "@/lib/motion";
 import {
   decisionListOptions,
   taskCenterApi,
@@ -137,10 +141,7 @@ export function TaskCenter({
     if (!nav) return;
     const selected = nav.querySelector<HTMLElement>('[aria-current="page"]');
     if (!selected || nav.scrollWidth <= nav.clientWidth) return;
-    const item = selected.getBoundingClientRect();
-    const strip = nav.getBoundingClientRect();
-    nav.scrollLeft +=
-      item.left - strip.left - (nav.clientWidth - item.width) / 2;
+    smoothScrollIntoView(selected, { inline: "center", block: "nearest" });
   };
   useExternalConnection(view, () => {
     navigation.current?.closest(".page-scroll")?.scrollTo({ top: 0 });
@@ -200,10 +201,11 @@ export function TaskCenter({
       }
     >
       <div className="tc-service-bar">
-        <details className="tc-service-help">
-          <summary
+        <Popover.Root>
+          <Popover.Trigger
             className="tc-service-state"
             data-running={data?.running ?? false}
+            type="button"
           >
             <span aria-hidden />
             {data
@@ -211,13 +213,20 @@ export function TaskCenter({
                 ? "后台巡检运行中"
                 : "后台巡检已停止"
               : "正在连接任务中心"}
-          </summary>
-          <p className="tc-service-note">
-            {data?.running
-              ? "后台正在按信息源设置检查待办，任务进展会显示在这里。"
-              : "保存的任务会保留，服务恢复后继续检查。"}
-          </p>
-        </details>
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Positioner align="start" className="isolate z-[60]" sideOffset={8}>
+              <Popover.Popup
+                className="tc-service-note"
+                data-slot="popover-content"
+              >
+                {data?.running
+                  ? "后台正在按信息源设置检查待办，任务进展会显示在这里。"
+                  : "保存的任务会保留，服务恢复后继续检查。"}
+              </Popover.Popup>
+            </Popover.Positioner>
+          </Popover.Portal>
+        </Popover.Root>
         {data ? (
           <span className="tc-muted">
             每人最多并行 {data.concurrency} 个任务
@@ -293,7 +302,7 @@ export function TaskCenter({
       {snapshot.isPending ? <PageSkeleton rows={4} /> : null}
       {data ? (
         <div className={cn("tc-workspace", taskId && "has-detail")}>
-          <div className="tc-main">
+          <ContentEnter className="tc-main" key={view}>
             {view !== "sources" && view !== "context" ? (
               <div className="tc-section-heading">
                 <h2>{titles[view]}</h2>
@@ -435,10 +444,13 @@ export function TaskCenter({
                   />
                 ) : null}
                 {handled.length ? (
-                  <details className="tc-decision-history">
-                    <summary>已处理的决定</summary>
+                  <TcDisclosure
+                    className="tc-decision-history"
+                    summary="已处理的决定"
+                  >
                     {handled.map((decision) => (
                       <button
+                        className="tc-decision-history-item"
                         key={decision.id}
                         type="button"
                         onClick={() => onNavigate("outbox", decision.taskId)}
@@ -461,7 +473,7 @@ export function TaskCenter({
                       loading={resolved.isFetchingNextPage}
                       onMore={() => void resolved.fetchNextPage()}
                     />
-                  </details>
+                  </TcDisclosure>
                 ) : null}
               </>
             ) : null}
@@ -478,15 +490,16 @@ export function TaskCenter({
             ) : null}
             {view === "context" ? <ContextSettings /> : null}
             {view === "capabilities" ? <Capabilities /> : null}
-          </div>
+          </ContentEnter>
           {taskId ? (
-            <TaskDetail
-              key={taskId}
-              id={taskId}
-              allTasks={[...data.tasks, ...displayed]}
-              onClose={() => onNavigate(view)}
-              onSelect={(id) => onNavigate(view, id)}
-            />
+            <ContentEnter key={taskId}>
+              <TaskDetail
+                id={taskId}
+                allTasks={[...data.tasks, ...displayed]}
+                onClose={() => onNavigate(view)}
+                onSelect={(id) => onNavigate(view, id)}
+              />
+            </ContentEnter>
           ) : null}
         </div>
       ) : null}
@@ -627,14 +640,13 @@ function Decision({
       </div>
       <h3>{decision.proposedAction.title}</h3>
       <p className="tc-prose">{decision.summary}</p>
-      <details open>
-        <summary>拟执行的内容</summary>
+      <TcDisclosure defaultOpen summary="拟执行的内容">
         <p className="tc-prose">{decision.proposedAction.description}</p>
         <p className="tc-meta">
           执行方式：
           {formatExecutorLabel(decision.proposedAction.executor, capabilities)}
         </p>
-      </details>
+      </TcDisclosure>
       {decision.notificationError ? (
         <p className="tc-error">通知未送达：{decision.notificationError}</p>
       ) : null}
@@ -728,6 +740,37 @@ function Capabilities() {
       {!capabilities.length ? (
         <p className="tc-notice">尚未报告可用能力，请检查服务器执行器配置。</p>
       ) : null}
+    </div>
+  );
+}
+
+function TcDisclosure({
+  summary,
+  className,
+  defaultOpen = false,
+  children,
+}: {
+  summary: string;
+  className?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={className}>
+      <button
+        aria-expanded={open}
+        className="tc-disclosure-btn"
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
+        <IconChevronDown
+          aria-hidden
+          className={`size-3.5 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
+        <span>{summary}</span>
+      </button>
+      <SmoothCollapse open={open}>{children}</SmoothCollapse>
     </div>
   );
 }

@@ -86,10 +86,10 @@ html:root {
   --elev-3: 0 8px 24px rgba(0, 0, 0, 0.4);
   --shadow-popover: 0 8px 40px #1d1d1f1f;
 
-  /* 动效：按下缩放、三档时长；只写明确的属性，不用 transition: all。 */
+  /* 动效：按下缩放、三档时长（统一映射至 --dur-* / --ease-*）；只写明确的属性，不用 transition: all。 */
   --press-scale: 0.97;
-  --t-fast: 0.15s; --t-base: 0.2s; --t-slow: 0.3s;
-  --t-ease: ease;
+  --t-fast: var(--dur-1, 150ms); --t-base: var(--dur-2, 200ms); --t-slow: var(--dur-3, 260ms);
+  --t-ease: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
 
   /* 玻璃（唯一一种材质：macOS 式半透明液态玻璃）。数值按渲染预算（#363）：大面板 20px、弹层 12px，
    * 饱和度 160%（预算允许 160–180%）。--glass-blur / --glass-pop-blur 只是半径，backdrop-filter 读 --glass-filter / --glass-pop-filter。 */
@@ -266,8 +266,8 @@ html.dark {
   /* v4.1：对话气泡四角一致的圆角矩形（用户 / 机器人、亮 / 暗都一样，没有尖角「尾巴」）。 */
   --r-bubble: 16px;
   --blur-1: 12px; --blur-2: 20px; --blur-3: 24px;
-  --dur-1: 150ms; --dur-2: 220ms; --dur-3: 300ms; --dur-collapse: 260ms;
-  --ease-out: cubic-bezier(0.22, 0.8, 0.24, 1); --ease-in: cubic-bezier(0.4, 0, 1, 1); --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-1: 150ms; --dur-2: 200ms; --dur-3: 260ms; --dur-collapse: 260ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1); --ease-in: cubic-bezier(0.4, 0, 1, 1); --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
   --left-w: 276px; --left-w-slim: 80px; --right-w: 340px;
   --ctl-sm: 32px; --ctl-md: 40px; --ctl-lg: 48px;
 
@@ -1005,7 +1005,7 @@ html[data-sky-ease] body::before {
   align-items: center;
   border-radius: 14px;
   color: var(--glass-ink-2);
-  transition: background-color 120ms ease, box-shadow 120ms ease;
+  transition: background-color var(--dur-0, 100ms) var(--ease-std), color var(--dur-0, 100ms) var(--ease-std);
 }
 .glass-bot-row:hover {
   background: rgba(255, 255, 255, 0.42);
@@ -1255,7 +1255,8 @@ html[data-sky-ease] body::before {
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.7);
   box-shadow: var(--glass-shadow-sm);
-  transition: height 0.15s ease, background 0.15s ease;
+  transform: scaleY(1);
+  transition: transform var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-std);
 }
 .dark .glass-rail-handle::after {
   background: rgba(255, 255, 255, 0.25);
@@ -1263,7 +1264,7 @@ html[data-sky-ease] body::before {
 .glass-rail-handle:hover::after,
 .glass-rail-handle:focus-visible::after,
 .glass-rail-handle.is-dragging::after {
-  height: 80px;
+  transform: scaleY(1.8);
   background: #fff;
 }
 .glass-rail-scroll {
@@ -1437,7 +1438,7 @@ html[data-sky-ease] body::before {
   display: grid;
   place-items: center;
   outline: none;
-  transition: background 0.15s ease, box-shadow 0.15s ease;
+  transition: background-color var(--dur-1) var(--ease-std), scale var(--dur-1) var(--ease-std);
 }
 .glass-mini-bot > :first-child {
   border-radius: 12px;
@@ -2436,7 +2437,7 @@ html[data-auth-loop-open] #chisabot-startup-loading { display: none; }
   font-size: 12px;
   color: var(--glass-ink-3);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background-color var(--dur-1) var(--ease-std), color var(--dur-1) var(--ease-std), opacity var(--dur-1) var(--ease-std);
 }
 .chat-msg-action:hover {
   background: rgba(255, 255, 255, 0.6);
@@ -2456,6 +2457,7 @@ button.chat-bottom-pill {
   color: var(--glass-ink);
   font-size: 13px;
   font-weight: 500;
+  transition: translate var(--dur-2) var(--ease-out), scale var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out), background-color var(--dur-1) var(--ease-std);
 }
 button.chat-bottom-pill:hover {
   background: rgba(255, 255, 255, 0.95);
@@ -2789,7 +2791,7 @@ button.chat-bottom-pill:hover {
 }
 .page-loader-progress > i {
   display: block; height: 100%; border-radius: inherit; background: var(--pal-accent, #3b82f6);
-  transition: width 0.3s ease-out;
+  transition: width var(--dur-3) var(--ease-out);
 }
 .page-loader-steps { display: flex; flex-direction: column; gap: 6px; width: 100%; text-align: left; font-size: 13px; }
 .page-loader-steps li { display: flex; align-items: center; gap: 8px; color: var(--glass-ink-3, var(--muted-foreground)); transition: color 0.2s; }
@@ -3014,7 +3016,7 @@ button.chat-bottom-pill:hover {
   border-radius: var(--r-md);
   color: var(--ink-1);
   outline: none;
-  transition: background var(--dur-1), box-shadow var(--dur-1);
+  transition: background-color var(--dur-1) var(--ease-std), color var(--dur-1) var(--ease-std);
 }
 .nav-row:hover { background: var(--glass-hover); }
 .nav-row.is-on { background: var(--glass-3); box-shadow: var(--shadow-1); }
@@ -3146,7 +3148,7 @@ button.chat-bottom-pill:hover {
 .page-skeleton-row { padding: 16px 20px; }
 
 /* Cards & rows (components/ui/skyglass.tsx) */
-.sg-card.is-interactive { cursor: pointer; transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2); }
+.sg-card.is-interactive { cursor: pointer; transition: transform var(--dur-2) var(--ease-out), border-color var(--dur-1) var(--ease-std), background-color var(--dur-1) var(--ease-std); }
 .sg-card.is-interactive:hover { transform: translateY(-2px); box-shadow: var(--shadow-2), var(--inset-hl); }
 .sg-card.is-dashed { background: rgba(255, 255, 255, 0.18) !important; border: 1.5px dashed rgba(255, 255, 255, 0.75) !important; box-shadow: none; }
 .dark .sg-card.is-dashed { background: rgba(255, 255, 255, 0.03) !important; border-color: rgba(255, 255, 255, 0.16) !important; }
@@ -3326,7 +3328,8 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 }
 /* 分段控件 */
 .sg-segmented { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-pill); background: var(--glass-hover); border: 1px solid var(--line); }
-.sg-segmented-item { display: inline-flex; flex: none; white-space: nowrap; align-items: center; gap: 6px; height: 30px; padding: 0 14px; border-radius: var(--r-pill); font-size: 13px; font-weight: 500; color: var(--ink-2); transition: background var(--dur-2), color var(--dur-2), box-shadow var(--dur-2); }
+.sg-segmented-item { display: inline-flex; flex: none; white-space: nowrap; align-items: center; gap: 6px; height: 30px; padding: 0 14px; border-radius: var(--r-pill); font-size: 13px; font-weight: 500; color: var(--ink-2); transition: background-color var(--dur-1) var(--ease-std), color var(--dur-1) var(--ease-std), scale var(--dur-0) var(--ease-std); }
+.sg-segmented-item:active:not(:disabled) { scale: var(--scale-press); }
 .sg-segmented-item:hover { color: var(--ink-1); }
 .sg-segmented-item[aria-checked="true"],
 .sg-segmented-item[aria-pressed="true"] { background: var(--glass-3); color: var(--ink-1); box-shadow: var(--shadow-1); }
@@ -3853,7 +3856,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
 @media (min-width: 1280px) { .glass-ghost-btn.xl\:grid { display: grid; } }
 .glass-ghost-btn:hover { background: var(--glass-hover); color: var(--ink-1); }
 .glass-ghost-btn:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
-.glass-ghost-btn-ico { width: 18px; height: 18px; animation: glass-fade-in var(--dur-2) ease-out; }
+.glass-ghost-btn-ico { width: 18px; height: 18px; animation: glass-ico-in var(--dur-2) var(--ease-out); }
 .glass-seg { padding: 3px; gap: 2px; box-shadow: none; border: 1px solid var(--stroke); }
 .glass-seg-item { padding: 6px 18px; }
 .glass-search { height: 36px; width: 220px; padding: 0 10px 0 14px; box-shadow: none; }
@@ -3949,7 +3952,7 @@ th { font-size: 12px; font-weight: 500; color: var(--ink-3); }
   line-height: 1.6;
   color: var(--ink-3);
 }
-.glass-rail-handle::after { opacity: 0; transition: opacity var(--dur-2), height var(--dur-1); }
+.glass-rail-handle::after { opacity: 0; transition: opacity var(--dur-2) var(--ease-std), transform var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-std); }
 .glass-rail-handle:hover::after,
 .glass-rail-handle:focus-visible::after,
 .glass-rail-handle.is-dragging::after { opacity: 1; }
@@ -4099,83 +4102,118 @@ body[data-has-collapsed-sidebar] .glass-shell .glass-topbar-start { width: auto;
  * 放在最后，压过上面的旧规则。只写不带前缀的 backdrop-filter。
  * ========================================================================================== */
 
-/* ---------- 动效令牌（DESIGN-v3 §8）：时长 / 缓动 / 位移 / 缩放，组件只引用这些名字 ---------- */
+/* ---------- 动效令牌（DESIGN-v3 §8 / 2026-11-23 全站动效收敛）：时长 / 缓动 / 位移 / 缩放，组件只引用这些名字 ---------- */
 :root {
-  --dur-0: 100ms;        /* 按下、菜单项高亮 */
-  --dur-1: 150ms;        /* 悬停、颜色、提示出现 */
-  --dur-2: 220ms;        /* 状态切换、菜单 / 弹出层进入、搜索展开、开关 */
-  --dur-3: 300ms;        /* 弹窗、抽屉、页面进入、toast 进入 */
-  --dur-exit: 160ms;     /* 所有退出（菜单、弹窗、toast）都比进入快 */
-  --dur-collapse: 260ms; /* 左右栏收起 / 展开 */
+  --dur-0: 100ms;        /* 按下、菜单项高亮、Tooltip 退出 */
+  --dur-1: 150ms;        /* 悬停、颜色、焦点、Tooltip 出现 */
+  --dur-2: 200ms;        /* 状态切换、菜单 / 弹出层 / Select 进入、Tab 滑块、列表项进场 */
+  --dur-3: 260ms;        /* 弹窗、抽屉、toast 进入、壁纸交叉淡入 */
+  --dur-exit: 150ms;     /* 所有退出（菜单、弹窗、抽屉、toast）都比进入快 */
+  --dur-collapse: 260ms; /* 左右栏收起 / 展开、网格折叠展开 */
   --dur-shimmer: 1400ms; /* 骨架流光一个周期 */
   --dur-success-hold: 1500ms; /* 异步按钮 ✓ 停留（实现见 async-action.ts） */
-  --ease-out: cubic-bezier(0.22, 0.8, 0.24, 1);   /* 进入、展开 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);    /* 进入、展开、滑动（与 lib/motion.ts EASE_OUT 1:1 对齐） */
   --ease-in: cubic-bezier(0.4, 0, 1, 1);          /* 退出、收起到消失 */
-  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);       /* 原地变化（颜色、宽度互换） */
-  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1); /* ✓ 对号弹出、按下回弹，只用于小元素 */
+  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);       /* 原地变化（颜色、底色、边框） */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1); /* ✓ 对号弹出、小徽标弹入，只用于小元素 */
   --rise-sm: 4px;        /* 菜单、弹出层、列表项进入的位移 */
   --rise-md: 8px;        /* 弹窗、toast、页面进入的位移 */
   --scale-pop: 0.96;     /* 菜单 / 弹窗进入起始缩放 */
+  --scale-exit: 0.98;    /* 菜单 / 弹窗退出目标缩放 */
   --scale-press: 0.97;   /* 按下 */
   --glass-collapse-ms: var(--dur-collapse);
   --glass-collapse-ease: var(--ease-out);
 }
 
-/* 菜单 / 弹出层 / 下拉选择 / 右键菜单：淡入 + 0.96→1 缩放 + 4px 从触发方向滑入；退出更快、ease-in。 */
+/* 菜单 / 弹出层 / 下拉选择 / 右键菜单：显式收敛为纯 GPU opacity/transform/scale 过渡（彻底消灭默认 transition: all 引发的 backdrop-filter 过渡），
+ * 并以 Base UI data-starting-style / data-ending-style 驱动 4px 方向进出，打开动画期由 glass-hold 暂停模糊。 */
 :is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"]) {
   --tw-enter-scale: var(--scale-pop);
-  --tw-exit-scale: 0.98;
-  animation-duration: var(--dur-2) !important;
-  animation-timing-function: var(--ease-out) !important;
+  --tw-exit-scale: var(--scale-exit);
+  transition-property: opacity, transform, translate, scale;
+  transition-duration: var(--dur-2);
+  transition-timing-function: var(--ease-out);
 }
-:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"])[data-side="bottom"] { --tw-enter-translate-y: calc(var(--rise-sm) * -1); }
-:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"])[data-side="top"] { --tw-enter-translate-y: var(--rise-sm); }
-:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"])[data-closed] {
-  animation-duration: var(--dur-exit) !important;
-  animation-timing-function: var(--ease-in) !important;
+:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"])[data-starting-style] {
+  opacity: 0;
+  scale: var(--scale-pop);
 }
-/* 提示：150ms 淡入，100ms 淡出，不缩放。 */
-[data-slot="tooltip-content"] { --tw-enter-scale: 1; --tw-exit-scale: 1; animation-duration: var(--dur-1) !important; animation-timing-function: var(--ease-out) !important; }
-[data-slot="tooltip-content"][data-closed] { animation-duration: var(--dur-0) !important; }
+:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"])[data-ending-style] {
+  opacity: 0;
+  scale: var(--scale-exit);
+  transition-duration: var(--dur-exit);
+  transition-timing-function: var(--ease-in);
+}
+:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"])[data-side="bottom"]:is([data-starting-style], [data-ending-style]) { transform: translateY(calc(var(--rise-sm) * -1)); }
+:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"])[data-side="top"]:is([data-starting-style], [data-ending-style]) { transform: translateY(var(--rise-sm)); }
+:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"])[data-side="left"]:is([data-starting-style], [data-ending-style]) { transform: translateX(var(--rise-sm)); }
+:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"])[data-side="right"]:is([data-starting-style], [data-ending-style]) { transform: translateX(calc(var(--rise-sm) * -1)); }
+/* 对齐触发项的 Select 不做位移、只保留轻缩放淡入。 */
+[data-slot="select-content"][data-align-trigger="true"]:is([data-starting-style], [data-ending-style]) { transform: none; scale: var(--scale-exit); }
+:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"])[data-open]:not([data-ending-style]) {
+  animation: glass-hold var(--dur-2) step-end !important;
+}
+:is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"]):is([data-ending-style], [data-closed]) {
+  animation: none !important;
+}
+/* 提示：150ms 淡入，100ms 淡出，不缩放；显式限定 transition-property 防默认 all。 */
+[data-slot="tooltip-content"] {
+  --tw-enter-scale: 1;
+  --tw-exit-scale: 1;
+  transition-property: opacity, transform, translate;
+  transition-duration: var(--dur-1);
+  transition-timing-function: var(--ease-out);
+  animation: none !important;
+}
+[data-slot="tooltip-content"][data-starting-style] { opacity: 0; }
+[data-slot="tooltip-content"][data-ending-style] { opacity: 0; transition-duration: var(--dur-0); transition-timing-function: var(--ease-in); }
+[data-slot="tooltip-content"][data-side="top"]:is([data-starting-style], [data-ending-style]) { transform: translateY(var(--rise-sm)); }
+[data-slot="tooltip-content"][data-side="bottom"]:is([data-starting-style], [data-ending-style]) { transform: translateY(calc(var(--rise-sm) * -1)); }
+[data-slot="tooltip-content"][data-side="left"]:is([data-starting-style], [data-ending-style]) { transform: translateX(var(--rise-sm)); }
+[data-slot="tooltip-content"][data-side="right"]:is([data-starting-style], [data-ending-style]) { transform: translateX(calc(var(--rise-sm) * -1)); }
 /* 菜单项高亮跟手：100ms。 */
-.glass-mi[data-slot="dropdown-menu-item"] { transition: background var(--dur-0) linear, color var(--dur-0) linear; }
+.glass-mi[data-slot="dropdown-menu-item"] { transition: background-color var(--dur-0) linear, color var(--dur-0) linear; }
 
-/* 弹窗：遮罩 220ms 淡入；卡片 300ms 淡入 + 0.96→1 + 8px 上浮；退出 160ms ease-in，只缩到 0.98。 */
+/* 弹窗：遮罩 200ms 纯 opacity 淡入；卡片 260ms 淡入 + 0.96→1 + 8px 上浮；退出 150ms ease-in，只缩到 0.98。 */
 :is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"]) {
-  transition-property: opacity, backdrop-filter;
+  transition-property: opacity;
   transition-duration: var(--dur-2);
   transition-timing-function: var(--ease-out);
 }
 :is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"])[data-ending-style] { transition-duration: var(--dur-exit); transition-timing-function: var(--ease-in); }
 [data-slot="dialog-content"] {
-  transition-property: opacity, scale, transform;
+  transition-property: opacity, transform, translate, scale;
   transition-duration: var(--dur-3);
   transition-timing-function: var(--ease-out);
 }
 [data-slot="dialog-content"][data-starting-style] { opacity: 0; scale: var(--scale-pop); transform: translateY(var(--rise-md)); }
-[data-slot="dialog-content"][data-ending-style] { opacity: 0; scale: 0.98; transform: none; transition-duration: var(--dur-exit); transition-timing-function: var(--ease-in); }
-/* 抽屉（面板库、移动端左栏）：300ms 从边缘滑入，160ms 退出。 */
-[data-slot="sheet-content"] { transition-duration: var(--dur-3); transition-timing-function: var(--ease-out); }
+[data-slot="dialog-content"][data-ending-style] { opacity: 0; scale: var(--scale-exit); transform: none; transition-duration: var(--dur-exit); transition-timing-function: var(--ease-in); }
+/* 抽屉（面板栏、移动端左栏）：显式声明 transition-property，确保压过 :where(.rail-card) 的 --lg-alpha 过渡。 */
+[data-slot="sheet-content"] {
+  transition-property: opacity, transform, translate, scale;
+  transition-duration: var(--dur-3);
+  transition-timing-function: var(--ease-out);
+}
 [data-slot="sheet-content"][data-ending-style] { transition-duration: var(--dur-exit); transition-timing-function: var(--ease-in); }
 
-/* Toast：260→300ms 上浮淡入，160ms 淡出下沉。 */
+/* Toast：260ms 上浮淡入，150ms 淡出下沉。 */
 .glass-toast { animation-duration: var(--dur-3); animation-timing-function: var(--ease-out); }
 .glass-toast[data-leaving="true"] { animation-duration: var(--dur-exit); animation-timing-function: var(--ease-in); }
 /* 骨架流光：统一 1.4s 线性。 */
 .sky-skel-glass, .page-skeleton-bar, .page-skeleton-dot { animation-duration: var(--dur-shimmer) !important; }
-/* 页面进入：300ms，8px 上浮。 */
+/* 页面进入：260ms，8px 上浮。 */
 @keyframes page-in { from { opacity: 0; transform: translateY(var(--rise-md)); } to { opacity: 1; transform: none; } }
-/* 列表新项：220ms，从上方 4px 落下。 */
-@keyframes list-enter { from { opacity: 0; transform: translateY(calc(var(--rise-sm) * -1)); } }
-.list-enter { animation: list-enter var(--dur-2) var(--ease-out) both; }
+/* 列表新项：200ms，从上方 4px 落下，结束还原 transform: none。 */
+@keyframes list-enter { from { opacity: 0; transform: translateY(calc(var(--rise-sm) * -1)); } to { opacity: 1; transform: none; } }
+.list-enter { animation: list-enter var(--dur-2) var(--ease-out); }
 
-/* 按下：所有按钮 100ms 缩到 0.97，松开 150ms 回弹（用独立的 scale 属性，不和 transform 打架）。 */
-:is([data-slot="button"], .glass-ghost-btn, .rail-head-btn, .glass-list-add, .glass-seg-item, .win-ctrl, .rail-switch, .glass-mini-bot) {
-  transition-property: background, color, box-shadow, border-color, opacity, scale;
+/* 按下：全站按钮与图标钮 100ms 缩到 0.97，松开 150ms 回弹（独立 scale 属性，不过渡 box-shadow）。 */
+:is([data-slot="button"], .glass-ghost-btn, .rail-head-btn, .rail-head-icon, .sidebar-mobile-close, .live-panel-src-pop-x, .glass-toast-close, .task-rail-modal-back, .side-search-clear, .glass-list-add, .glass-seg-item, .win-ctrl, .rail-switch, .glass-mini-bot, .ch-press) {
+  transition-property: background-color, color, border-color, opacity, scale;
   transition-duration: var(--dur-1);
   transition-timing-function: var(--ease-std);
 }
-:is([data-slot="button"], .glass-ghost-btn, .rail-head-btn, .glass-list-add, .glass-seg-item, .rail-switch, .glass-mini-bot):active:not(:disabled) {
+:is([data-slot="button"], .glass-ghost-btn, .rail-head-btn, .rail-head-icon, .sidebar-mobile-close, .live-panel-src-pop-x, .glass-toast-close, .task-rail-modal-back, .side-search-clear, .glass-list-add, .glass-seg-item, .rail-switch, .glass-mini-bot, .ch-press):active:not(:disabled) {
   scale: var(--scale-press);
   transition-duration: var(--dur-0);
 }
@@ -4279,8 +4317,18 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 
 /* ---------- 减少动态效果：去掉所有位移 / 缩放，只留淡入淡出；宽度直接切换 ---------- */
 @media (prefers-reduced-motion: reduce) {
-  :root { --rise-sm: 0px; --rise-md: 0px; --scale-pop: 1; --scale-press: 1; --dur-collapse: 0ms; }
-  :is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"]) { --tw-enter-scale: 1; --tw-exit-scale: 1; --tw-enter-translate-y: 0; --tw-enter-translate-x: 0; }
+  :root { --rise-sm: 0px; --rise-md: 0px; --scale-pop: 1; --scale-exit: 1; --scale-press: 1; --dur-collapse: 0ms; }
+  :is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"]) {
+    --tw-enter-scale: 1;
+    --tw-exit-scale: 1;
+    --tw-enter-translate-y: 0;
+    --tw-enter-translate-x: 0;
+    animation: none !important;
+  }
+  :is([data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"], [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="popover-content"], [data-slot="tooltip-content"]):is([data-starting-style], [data-ending-style]) {
+    transform: none;
+    scale: 1;
+  }
   [data-slot="dialog-content"][data-starting-style], [data-slot="dialog-content"][data-ending-style] { scale: 1; transform: none; }
   .topbar-search .glass-search { transition: background var(--dur-1), border-color var(--dur-1); }
   .topbar-chip-dot { animation: none; }
@@ -4447,8 +4495,9 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
   color: var(--ink-2);
   outline: none;
   animation: rail-tab-in var(--dur-2) var(--ease-out) 120ms both;
-  transition: background var(--dur-1), color var(--dur-1), width var(--dur-1) var(--ease-out);
+  transition: background-color var(--dur-1) var(--ease-std), color var(--dur-1) var(--ease-std), width var(--dur-1) var(--ease-out), opacity var(--dur-exit) var(--ease-in), transform var(--dur-exit) var(--ease-in);
 }
+.rail-tab[data-hidden="true"] { opacity: 0; transform: translateX(10px); pointer-events: none; }
 .rail-tab:hover { background: var(--glass-3); color: var(--ink-1); width: 34px; }
 .rail-tab:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
 .rail-tab-t { display: block; width: 1em; font-size: 12px; line-height: 1.25; word-break: break-all; text-align: center; }
@@ -4789,7 +4838,7 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 
 /* ---------- 右栏「面板 | 计算机」(DESIGN.md §23) ---------- */
 .rail-tabs { position: relative; display: inline-flex; flex: none; width: max-content; padding: 3px; gap: 0; }
-.rail-tabs .rail-tabs-item { position: relative; z-index: 1; height: 28px; padding: 0 12px; gap: 5px; }
+.rail-tabs .rail-tabs-item { position: relative; z-index: 1; height: 28px; padding: 0 12px; gap: 5px; transition: color var(--dur-1) var(--ease-std), scale var(--dur-0) var(--ease-std); }
 .rail-tabs .rail-tabs-item[aria-checked] { background: transparent; box-shadow: none; }
 .rail-tabs .rail-tabs-item[aria-checked="true"] { color: var(--ink-1); }
 .rail-tabs .rail-tabs-item[aria-checked]:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus); }
@@ -5106,7 +5155,7 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 .wf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 720px) { .wf-grid { grid-template-columns: minmax(0, 1fr); } }
 .wf-grid > .sg-card { margin-top: 0; }
-.wf-card { display: flex; flex-direction: column; gap: 14px; padding: 16px 16px 14px 18px; min-height: 148px; transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2), opacity var(--dur-2); }
+.wf-card { display: flex; flex-direction: column; gap: 14px; padding: 16px 16px 14px 18px; min-height: 148px; transition: transform var(--dur-2) var(--ease-out), border-color var(--dur-1) var(--ease-std), opacity var(--dur-2) var(--ease-std); }
 .wf-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-2), var(--inset-hl); }
 .wf-card.is-busy { opacity: .7; pointer-events: none; }
 .wf-card-top { display: flex; align-items: flex-start; gap: 12px; }
@@ -5696,7 +5745,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   overflow: hidden; cursor: zoom-in; pointer-events: auto; text-align: left;
   border-radius: var(--rp-card-radius); border: 1px solid var(--stroke); background: var(--glass-bg-solid);
   box-shadow: var(--glass-highlight), 0 8px 24px rgba(18, 30, 56, 0.16);
-  transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out);
 }
 .rp-pile[data-captioned] .rp-pile-card { --rp-card-inset: var(--sp-2, 8px); }
 .rp-pile-media {
@@ -5724,7 +5773,7 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 @media (hover: none), (any-pointer: coarse) { .rp-pile-go { opacity: 0.78; transform: none; } }
 .rp-pile-card[data-focused],
 .rp-pile-item:hover .rp-pile-card { box-shadow: var(--glass-highlight), 0 14px 32px rgba(12, 22, 44, 0.24), 0 4px 10px rgba(12, 22, 44, 0.12); }
-.rp-pile-card[data-dimmed] { filter: blur(1.5px); opacity: 0.76; }
+.rp-pile-card[data-dimmed] { opacity: 0.72; transform: scale(0.96); }
 .rp-pile-card:focus-visible { outline: 2px solid var(--focus-line); outline-offset: 2px; }
 .rp-pile-more { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10, 16, 28, 0.58); color: #fff; font-size: var(--fs-20); font-weight: 600; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.45); }
 .dark .rp-pile-card { border-color: rgba(255, 255, 255, 0.14); box-shadow: var(--glass-highlight), 0 10px 28px rgba(0, 0, 0, 0.42); }
@@ -5823,7 +5872,8 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   user-select: none; cursor: default; transform-origin: center; transition: transform var(--dur-2) var(--ease-out);
   animation: rp-zoom-in var(--dur-2) var(--ease-out) both;
 }
-.rp-lightbox-stage[data-zoomed] .rp-lightbox-img { cursor: inherit; transition: none; }
+.rp-lightbox-stage[data-zoomed] .rp-lightbox-img { cursor: inherit; }
+.rp-lightbox-stage[data-dragging] .rp-lightbox-img { transition: none; }
 .rp-lightbox-failed { color: rgba(255, 255, 255, 0.8); font-size: var(--fs-14); }
 .rp-lb-nav {
   position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 42px; height: 42px; margin-top: -21px;
@@ -5844,9 +5894,9 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
   color: rgba(255, 255, 255, 0.92);
   font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums;
 }
-.rp-lightbox-dots { display: flex; gap: 6px; }
-.rp-lightbox-dots span { width: 6px; height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.35); transition: background-color var(--dur-2) var(--ease-out), width var(--dur-2) var(--ease-out); }
-.rp-lightbox-dots span[data-active] { width: 16px; background: #fff; }
+.rp-lightbox-dots { display: flex; gap: 4px; align-items: center; }
+.rp-lightbox-dots span { width: 14px; height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.35); transform: scaleX(0.45); transition: background-color var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out); }
+.rp-lightbox-dots span[data-active] { transform: scaleX(1); background: #fff; }
 @media (max-width: 640px) {
   .rp-lightbox-stage { padding: 4px 8px 52px; }
   .rp-lb-nav { display: none; }
@@ -8511,10 +8561,11 @@ body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-hand
   border-radius: var(--r-pill, 999px);
   background: var(--ink-4);
   opacity: 0.45;
-  transition: opacity var(--dur-1, 150ms), width var(--dur-1, 150ms);
+  transform: scaleX(1);
+  transition: opacity var(--dur-1, 150ms) var(--ease-std), transform var(--dur-1, 150ms) var(--ease-out), background-color var(--dur-1, 150ms) var(--ease-std);
 }
 .live-board-hbar:hover::after,
-.live-board-hbar:focus-visible::after { opacity: 1; width: 44px; background: var(--ink-3); }
+.live-board-hbar:focus-visible::after { opacity: 1; transform: scaleX(1.7); background: var(--ink-3); }
 .live-board-hbar:focus-visible { box-shadow: 0 0 0 2px var(--ink-4); }
 
 /* 拖动 / 调比例：同一条覆盖层只负责光标与「整栏在拖」的姿态（指针事件仍归握把 / 分隔条）。 */
@@ -9187,7 +9238,11 @@ body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-hand
   justify-content: center;
   padding: min(14vh, 110px) 16px 24px;
   background: rgba(10, 16, 28, 0.36);
-  animation: list-enter 140ms var(--ease-out) both;
+  animation: sky-fade-in var(--dur-2) var(--ease-out);
+}
+.chat-spotlight-backdrop:is([data-state="closed"], [data-leaving="true"]) {
+  animation: rp-fade-out var(--dur-exit) var(--ease-in) both;
+  pointer-events: none;
 }
 .chat-spotlight-panel {
   width: min(620px, 100%);
@@ -9197,6 +9252,11 @@ body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-hand
   box-shadow: 0 16px 36px rgba(10, 18, 36, 0.34), 0 4px 12px rgba(10, 18, 36, 0.16), var(--inset-hl);
   backdrop-filter: var(--glass-pop-filter);
   overflow: hidden;
+  animation: rail-lib-in var(--dur-2) var(--ease-out);
+}
+.chat-spotlight-panel:is([data-state="closed"], [data-leaving="true"]),
+.chat-spotlight-backdrop:is([data-state="closed"], [data-leaving="true"]) .chat-spotlight-panel {
+  animation: rail-lib-out var(--dur-exit) var(--ease-in) both;
 }
 .chat-spotlight-bar {
   display: flex;
@@ -11106,7 +11166,7 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
   border-radius: 12px;
   border: 1px solid var(--stroke-primary);
   background: var(--glass-1);
-  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: border-color var(--dur-1) var(--ease-std), background-color var(--dur-1) var(--ease-std);
 }
 .appearance-fam-card:hover {
   border-color: var(--stroke);
@@ -11434,7 +11494,7 @@ html.dark :is(.glass-composer, .glass-composer:focus-within) {
   background: var(--glass-1);
   text-align: left;
   cursor: pointer;
-  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: transform var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-std);
 }
 .appearance-wallpaper-card:hover {
   transform: translateY(-2px);
@@ -12139,6 +12199,193 @@ html[data-theme-family] #sky-root #skyph {
   }
 }
 
-html[data-motion-rest="1"] :is(.model-pill-shimmer, .sky-skel-bar, .sky-skel-block) {
+/* ==========================================================================================
+ * 全站统一丝滑过渡原语、弹层退场与三级降级收口（2026-11-23）
+ * 严守性能红线：零新增 backdrop-filter 规则、零大容器 has 选择器、Backdrop-Root-Safe、零永久合成层。
+ * ========================================================================================== */
+
+/* 1. 共享平滑折叠原语（<SmoothCollapse>）：纯 CSS grid-template-rows 0fr↔1fr + opacity，零 JS 测量。 */
+.ch-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--dur-collapse) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
+}
+.ch-collapse[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.ch-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 2. Backdrop-Root-Safe 叶子内容淡入原语（<ContentEnter> / .ch-view-enter）：
+ *    仅用于不含 backdrop-filter 后代的叶子元素（页头、纯文本、设置页非模糊卡、Tab 内容）；
+ *    结束回归 transform: none 且不用 forwards 锁层。 */
+@keyframes ch-content-enter {
+  from { opacity: 0; transform: translateY(var(--rise-sm)); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ch-content-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.ch-content-enter,
+.ch-view-enter {
+  animation: ch-content-enter var(--dur-2) var(--ease-out);
+}
+
+/* 3. 壁纸双图层交叉淡入（#sky-root contain: strict 内，零主线程重排，不碰 body transition）。 */
+@keyframes ch-wallpaper-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.chisabot-wallpaper-img-prev {
+  z-index: 0;
+}
+.chisabot-wallpaper-img-enter {
+  z-index: 1;
+  animation: ch-wallpaper-fade var(--dur-3) var(--ease-out);
+}
+
+/* 4. 自定义浮层 / 横幅 / 输入框形变：补全退场态与动画期 glass-hold 暂停模糊。 */
+@keyframes update-banner-out {
+  from { opacity: 1; transform: translate(-50%, 0); }
+  to { opacity: 0; transform: translate(-50%, -6px); }
+}
+.update-banner:is([data-state="closed"], [data-leaving="true"]) {
+  animation: update-banner-out var(--dur-exit) var(--ease-in) both;
+  pointer-events: none;
+}
+:is(.bm-menu, .bm-manager, .live-panel-src-pop):is([data-state="closed"], [data-leaving="true"], [data-ending-style]) {
+  animation: rail-lib-out var(--dur-exit) var(--ease-in) both;
+  pointer-events: none;
+}
+:is(.page-loader-card, .update-banner, .install-hint, .sg-savebar):is([data-starting-style], [data-ending-style], [data-closed], [data-state="closed"], [data-leaving="true"]),
+.page-loader-overlay[data-leaving="true"] .page-loader-card {
+  --lg-blur: none;
+  backdrop-filter: none;
+}
+:is(.live-panel-src-pop, .bm-menu, .bm-manager)[data-open]:not([data-ending-style]) {
+  animation: glass-hold var(--dur-2) step-end;
+}
+.glass-composer[data-morphing] {
+  animation: glass-hold var(--dur-2) step-end;
+}
+
+/* 5. 深浅色切换 1 帧全局过渡冻结（ThemeProvider 挂 data-theme-switching="1" 至双 rAF 后卸载，
+ *    消除长对话页 240+ 隐藏操作按钮并发颜色过渡风暴，不触碰 body 无条件 transition）。 */
+html[data-theme-switching="1"] *,
+html[data-theme-switching="1"] *::before,
+html[data-theme-switching="1"] *::after {
+  transition: none !important;
+}
+
+/* 6. 窗口拖拽缩放期扩展抑制（严禁修改 backdrop-filter / --lg-blur / --glass-bg-opaque）。 */
+html[data-resizing] :is(.ch-collapse, .rail-tabs-thumb) {
+  transition: none;
+}
+
+/* 7. 三级完整降级：prefers-reduced-motion / data-motion-rest="1" / data-perf="on"。 */
+@media (prefers-reduced-motion: reduce) {
+  .ch-collapse {
+    transition: opacity var(--dur-1) linear;
+  }
+  .ch-content-enter,
+  .ch-view-enter {
+    animation: ch-content-fade var(--dur-1) linear;
+  }
+  .chisabot-wallpaper-img-enter {
+    animation: none;
+  }
+  .live-panel-spin,
+  .glass-ghost-btn-ico,
+  .wf-step-out,
+  .wf-approval,
+  .rp-link-tile > img,
+  .jr-chart-tip,
+  .rail-lib-scrim,
+  .queued-read-mark,
+  .composer-reply-quote,
+  .chat-spotlight-backdrop,
+  .chat-spotlight-panel,
+  [data-message-id].is-activity-jump,
+  .glass-composer[data-morphing],
+  :is(.live-panel-src-pop, .bm-menu, .bm-manager)[data-open] {
+    animation: none;
+  }
+  .update-banner:is([data-state="closed"], [data-leaving="true"]) {
+    animation: rail-lib-fade-out var(--dur-exit) linear both;
+  }
+  button.chat-bottom-pill {
+    transition: opacity var(--dur-1) linear, background-color var(--dur-1) linear;
+  }
+  .rail-tab[data-hidden="true"] {
+    transform: none;
+  }
+}
+
+html[data-motion-rest="1"] :is(
+  .tool-line-running,
+  .model-pill-shimmer,
+  .sky-skel-bar,
+  .sky-skel-block,
+  .page-skeleton .sky-skel-glass,
+  .route-skel .sky-skel-glass,
+  .sg-savebar-pulse,
+  .device-dot.is-ok,
+  .pair-qr-skeleton,
+  .jr-skel-title,
+  .jr-skel-line,
+  .wf-caret,
+  .wf-dots i,
+  .computer-status[data-pending] .computer-status-dot,
+  .reasoning-shimmer,
+  .jr-c-dot.is-end::after,
+  .jr-dot.is-pulse::after,
+  .live-panel[data-refreshing] .live-panel-body::after,
+  .queued-msg[data-status="sending"] .queued-state svg,
+  .bot-history-skel,
+  .page-thumb:not([data-loaded])::after,
+  .cf-image-pending::before,
+  .device-job-dot.is-running,
+  .jr-product-ph.is-loading,
+  .sa[data-mood="working"] .sa-body,
+  .sa[data-mood="working"] .sa-eyes,
+  .sa[data-mood="working"] .sa-open
+) {
   animation-play-state: paused;
+}
+
+html[data-perf="on"] {
+  --dur-collapse: 0ms;
+}
+html[data-perf="on"] :is(
+  .tool-line-running,
+  .model-pill-shimmer,
+  .sky-skel-bar,
+  .sky-skel-block,
+  .page-skeleton .sky-skel-glass,
+  .route-skel .sky-skel-glass,
+  .sg-savebar-pulse,
+  .device-dot.is-ok,
+  .pair-qr-skeleton,
+  .jr-skel-title,
+  .jr-skel-line,
+  .computer-status[data-pending] .computer-status-dot,
+  .reasoning-shimmer,
+  .jr-c-dot.is-end::after,
+  .jr-dot.is-pulse::after,
+  .live-panel[data-refreshing] .live-panel-body::after,
+  .bot-history-skel,
+  .page-thumb:not([data-loaded])::after,
+  .cf-image-pending::before,
+  .device-job-dot.is-running,
+  .jr-product-ph.is-loading,
+  .chisabot-wallpaper-img-enter
+) {
+  animation: none;
 }

@@ -62,6 +62,7 @@ import {
 } from "@/lib/chat/session-client";
 import { sendLanded } from "@/lib/chat/ui-memory";
 import { bindAgentBot, useActiveBot } from "@/lib/conversations/active-bot";
+import { DURATION_MS, usePresenceMount } from "@/lib/motion";
 import { chatFileUrl } from "../../../../shared/chat-files";
 import { splitChatOrigin } from "../../../../shared/chat-origin";
 
@@ -2504,6 +2505,7 @@ export function ChannelChat({
     null,
   );
   const [voiceCallOpen, setVoiceCallOpen] = useState(false);
+  const voiceCallPresence = usePresenceMount(voiceCallOpen, DURATION_MS.exit);
   const subagentInstancesQuery = useAgentInstances();
   const enabledSubagents = useMemo(
     () => (subagentInstancesQuery.data ?? []).filter((inst) => inst.enabled),
@@ -2819,7 +2821,7 @@ export function ChannelChat({
                 setRunError(null);
               }}
             />
-            {voiceCallOpen ? (
+            {voiceCallPresence.mounted ? (
               <VoiceCallSheet
                 botId={runtimeAgentId}
                 botName={draftProfile?.name}

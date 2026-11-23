@@ -2,6 +2,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { memo, useMemo } from "react";
 import { BotAvatar } from "@/components/agents/bot-avatar";
+import { PresenceItem, PresenceList } from "@/components/ui/presence";
 import {
   assignDistinctBusyExpressions,
   BUSY_EXPRESSION_LABELS,
@@ -100,49 +101,52 @@ export const WorkingCrewStrip = memo(function WorkingCrewStrip({
   return (
     <nav
       aria-label="正在工作的机器人"
-      className={cn("working-crew-strip", className)}
+      className={cn("working-crew-strip ch-content-enter relative", className)}
       data-testid="working-crew-strip"
     >
-      {shown.map((entry) => (
-        <button
-          aria-label={`${entry.name}（${entry.expressionLabel}），点击直达对话`}
-          className="working-crew-chip"
-          data-bot-id={entry.botId}
-          data-expression={entry.expression}
-          data-testid={`working-crew-chip-${entry.botId}`}
-          key={entry.botId}
-          onClick={() => {
-            if (entry.channelId) {
-              void navigate({
-                to: "/channel/$channelId",
-                params: { channelId: entry.channelId },
-              });
-            } else {
-              void navigate({
-                to: "/channel/new",
-                search: { agent: entry.botId },
-              });
-            }
-          }}
-          title={`${entry.name} · ${entry.expressionLabel}`}
-          type="button"
-        >
-          <BotAvatar
-            agentId={entry.botId}
-            decorative
-            expression={entry.expression}
-            name={entry.name}
-            seed={entry.seed}
-            size={20}
-            working
-          />
-          <span className="working-crew-name">{entry.name}</span>
-          <span className="working-crew-mood">{entry.expressionLabel}</span>
-        </button>
-      ))}
+      <PresenceList>
+        {shown.map((entry, index) => (
+          <PresenceItem key={entry.botId} layoutKey={index}>
+            <button
+              aria-label={`${entry.name}（${entry.expressionLabel}），点击直达对话`}
+              className="working-crew-chip ch-press"
+              data-bot-id={entry.botId}
+              data-expression={entry.expression}
+              data-testid={`working-crew-chip-${entry.botId}`}
+              onClick={() => {
+                if (entry.channelId) {
+                  void navigate({
+                    to: "/channel/$channelId",
+                    params: { channelId: entry.channelId },
+                  });
+                } else {
+                  void navigate({
+                    to: "/channel/new",
+                    search: { agent: entry.botId },
+                  });
+                }
+              }}
+              title={`${entry.name} · ${entry.expressionLabel}`}
+              type="button"
+            >
+              <BotAvatar
+                agentId={entry.botId}
+                decorative
+                expression={entry.expression}
+                name={entry.name}
+                seed={entry.seed}
+                size={20}
+                working
+              />
+              <span className="working-crew-name">{entry.name}</span>
+              <span className="working-crew-mood">{entry.expressionLabel}</span>
+            </button>
+          </PresenceItem>
+        ))}
+      </PresenceList>
       {overflow.length > 0 ? (
         <span
-          className="working-crew-more"
+          className="working-crew-more ch-content-enter"
           data-testid="working-crew-more"
           title={overflow
             .map((item) => `${item.name} · ${item.expressionLabel}`)

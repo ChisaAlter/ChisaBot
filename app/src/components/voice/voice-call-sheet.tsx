@@ -18,8 +18,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  ContentEnter,
+  SmoothCollapse,
+} from "@/components/ui/motion-primitives";
 import { useExternalConnection } from "@/hooks";
 import { useVoiceCall } from "@/hooks/use-voice-call";
+import { useRetainedValue } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { voiceStatusQueryOptions } from "@/lib/voice/call-client";
 import type {
@@ -166,11 +171,12 @@ export function VoiceCallSheet({
     call.state === "listening" ||
     call.state === "thinking" ||
     call.state === "speaking";
+  const shownError = useRetainedValue(call.error || null);
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
       <DialogContent
-        className="max-w-md gap-5 border-border/70 bg-popover/95 p-6 backdrop-blur-xl"
+        className="max-w-md gap-5 border-border/70 p-6"
         data-testid="voice-call-sheet"
       >
         <DialogHeader className="gap-1">
@@ -184,7 +190,7 @@ export function VoiceCallSheet({
             <span className="inline-flex items-center gap-1 rounded-full bg-muted/70 px-2 py-0.5 font-medium text-foreground/80">
               <span
                 className={cn(
-                  "size-1.5 rounded-full",
+                  "size-1.5 rounded-full transition-colors duration-200",
                   call.state === "listening" && "bg-emerald-500",
                   call.state === "speaking" && "bg-sky-500",
                   (call.state === "thinking" || call.state === "connecting") &&
@@ -217,30 +223,40 @@ export function VoiceCallSheet({
             />
           </div>
 
-          {call.activeToolName ? (
-            <div
-              className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/60 px-3 py-1 text-xs text-foreground/85"
-              role="status"
-            >
-              <IconTool className="size-3.5 animate-pulse text-amber-500" />
-              <span>{`正在调用工具：${call.activeToolName}`}</span>
-            </div>
-          ) : call.statusDetail ? (
-            <p
-              className="text-center text-xs text-muted-foreground"
-              role="status"
-            >
-              {call.statusDetail}
-            </p>
-          ) : (
-            <p className="text-center text-xs text-muted-foreground">
-              {call.state === "speaking"
-                ? "直接开口即可随时打断播报"
-                : call.state === "listening"
-                  ? "请说话，停顿片刻自动发送"
-                  : "准备就绪"}
-            </p>
-          )}
+          <ContentEnter
+            key={
+              call.activeToolName
+                ? `tool:${call.activeToolName}`
+                : call.statusDetail
+                  ? `detail:${call.statusDetail}`
+                  : `hint:${call.state}`
+            }
+          >
+            {call.activeToolName ? (
+              <div
+                className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/60 px-3 py-1 text-xs text-foreground/85"
+                role="status"
+              >
+                <IconTool className="size-3.5 text-amber-500 motion-safe:animate-pulse" />
+                <span>{`正在调用工具：${call.activeToolName}`}</span>
+              </div>
+            ) : call.statusDetail ? (
+              <p
+                className="text-center text-xs text-muted-foreground"
+                role="status"
+              >
+                {call.statusDetail}
+              </p>
+            ) : (
+              <p className="text-center text-xs text-muted-foreground">
+                {call.state === "speaking"
+                  ? "直接开口即可随时打断播报"
+                  : call.state === "listening"
+                    ? "请说话，停顿片刻自动发送"
+                    : "准备就绪"}
+              </p>
+            )}
+          </ContentEnter>
         </div>
 
         {/* 实时字幕流 */}
@@ -257,7 +273,7 @@ export function VoiceCallSheet({
             call.subtitles.map((entry) => (
               <div
                 className={cn(
-                  "flex flex-col gap-0.5",
+                  "list-enter flex flex-col gap-0.5",
                   entry.role === "user" ? "items-end" : "items-start",
                 )}
                 key={entry.id}
@@ -286,14 +302,16 @@ export function VoiceCallSheet({
           )}
         </div>
 
-        {call.error ? (
-          <div
-            className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-            role="alert"
-          >
-            {call.error}
-          </div>
-        ) : null}
+        <SmoothCollapse open={Boolean(call.error)} unmountOnExit>
+          {shownError ? (
+            <div
+              className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              role={call.error ? "alert" : undefined}
+            >
+              {shownError}
+            </div>
+          ) : null}
+        </SmoothCollapse>
 
         {/* 底部控制栏 */}
         <div className="flex items-center justify-center gap-3 pt-1">

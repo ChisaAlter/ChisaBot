@@ -508,10 +508,21 @@ export function ToggleTip({
 type TipTriggerProps = {
   onPointerEnter?: (event: PointerEvent<HTMLElement>) => void;
   onPointerDown?: (event: PointerEvent<HTMLElement>) => void;
+  onPointerUp?: (event: PointerEvent<HTMLElement>) => void;
   onMouseEnter?: (event: MouseEvent<HTMLElement>) => void;
+  onMouseLeave?: (event: MouseEvent<HTMLElement>) => void;
+  onMouseDown?: (event: MouseEvent<HTMLElement>) => void;
+  onClick?: (event: MouseEvent<HTMLElement>) => void;
   onFocus?: (event: FocusEvent<HTMLElement>) => void;
   "data-slot"?: string;
 };
+
+/**
+ * 鼠标移入后的悬停意图确认窗口（ms）：
+ * 快速移入并点击（Playwright 1–15ms / 真人 20–70ms）时，`onPointerDown` 会同步取消待执行的 arm，
+ * 避免在 `pointerdown` 与 `mousedown` 之间卸载重挂 `<button>` 吞掉 `click`；真正悬停 ≥ 80ms 再挂载 Tooltip。
+ */
+const HOVER_ARM_DELAY_MS = 80;
 
 function matchesFocusVisible(el: Element) {
   try {
@@ -522,9 +533,9 @@ function matchesFocusVisible(el: Element) {
 }
 
 /**
- * 还没挂 Tooltip 时的按钮：原样渲染，只多接「鼠标第一次进来」和「第一次 :focus-visible 焦点」。
+ * 还没挂 Tooltip 时的按钮：原样渲染，只多接「鼠标停留悬停」和「第一次 :focus-visible 焦点」。
  * 用 mouseenter（和 Base UI 悬停 hook 同一个事件，内容在静止的指针下移过来也算），触屏的兼容
- * mouseenter 按前面 pointer 事件的 pointerType 排除。
+ * mouseenter 按前面 pointer 事件的 pointerType 排除；按下期间严禁切换节点以免吞掉 click。
  */
 function LazyTipTrigger({
   trigger,
@@ -535,6 +546,45 @@ function LazyTipTrigger({
 }) {
   const own = trigger.props as TipTriggerProps;
   const pointerType = useRef<string | undefined>(undefined);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressing = useRef(false);
+  const releaseCleanup = useRef<(() => void) | null>(null);
+
+  const clearHoverTimer = () => {
+    if (hoverTimer.current !== null) {
+      clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  };
+  const clearPressListeners = () => {
+    releaseCleanup.current?.();
+    releaseCleanup.current = null;
+  };
+  const beginPress = (ownerWindow: Window | null | undefined) => {
+    clearHoverTimer();
+    pressing.current = true;
+    clearPressListeners();
+    if (!ownerWindow) return;
+    const endPress = () => {
+      pressing.current = false;
+      clearPressListeners();
+    };
+    ownerWindow.addEventListener("pointerup", endPress, { once: true });
+    ownerWindow.addEventListener("pointercancel", endPress, { once: true });
+    ownerWindow.addEventListener("mouseup", endPress, { once: true });
+    releaseCleanup.current = () => {
+      ownerWindow.removeEventListener("pointerup", endPress);
+      ownerWindow.removeEventListener("pointercancel", endPress);
+      ownerWindow.removeEventListener("mouseup", endPress);
+    };
+  };
+
+  useExternalConnection(true, () => () => {
+    clearHoverTimer();
+    clearPressListeners();
+    pressing.current = false;
+  });
+
   return cloneElement(trigger as ReactElement<TipTriggerProps>, {
     "data-slot": own["data-slot"] ?? "tooltip-trigger",
     onPointerEnter: (event: PointerEvent<HTMLElement>) => {
@@ -544,17 +594,44 @@ function LazyTipTrigger({
     onPointerDown: (event: PointerEvent<HTMLElement>) => {
       own.onPointerDown?.(event);
       pointerType.current = event.pointerType;
+      beginPress(event.currentTarget.ownerDocument.defaultView);
+    },
+    onMouseDown: (event: MouseEvent<HTMLElement>) => {
+      own.onMouseDown?.(event);
+      beginPress(event.currentTarget.ownerDocument.defaultView);
+    },
+    onPointerUp: (event: PointerEvent<HTMLElement>) => {
+      own.onPointerUp?.(event);
+      pressing.current = false;
+      clearPressListeners();
+    },
+    onClick: (event: MouseEvent<HTMLElement>) => {
+      pressing.current = false;
+      clearPressListeners();
+      own.onClick?.(event);
     },
     onMouseEnter: (event: MouseEvent<HTMLElement>) => {
       own.onMouseEnter?.(event);
-      if (pointerType.current === "touch") return;
-      onArm(
-        event.currentTarget.ownerDocument.activeElement === event.currentTarget,
-      );
+      if (pointerType.current === "touch" || pressing.current) return;
+      const el = event.currentTarget;
+      clearHoverTimer();
+      hoverTimer.current = setTimeout(() => {
+        hoverTimer.current = null;
+        if (pressing.current || !el.isConnected) return;
+        onArm(el.ownerDocument.activeElement === el);
+      }, HOVER_ARM_DELAY_MS);
+    },
+    onMouseLeave: (event: MouseEvent<HTMLElement>) => {
+      own.onMouseLeave?.(event);
+      clearHoverTimer();
     },
     onFocus: (event: FocusEvent<HTMLElement>) => {
       own.onFocus?.(event);
-      if (matchesFocusVisible(event.currentTarget)) onArm(true);
+      if (pressing.current) return;
+      if (matchesFocusVisible(event.currentTarget)) {
+        clearHoverTimer();
+        onArm(true);
+      }
     },
   });
 }

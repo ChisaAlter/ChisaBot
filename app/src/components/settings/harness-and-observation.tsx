@@ -15,6 +15,7 @@ import {
 } from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import {
   Select,
   SelectContent,
@@ -162,7 +163,7 @@ export function UsageBreakdownCard({
             title="细分用量账本不可用"
           />
         ) : (
-          <div className="space-y-4">
+          <ContentEnter className="space-y-4" key={windowKey}>
             <div className="text-muted-foreground text-xs tabular-nums">
               {`时区：${breakdownQuery.data.timeZone} · 窗口：${activeWindow.startDay} 至 ${activeWindow.endDay}`}
             </div>
@@ -243,7 +244,7 @@ export function UsageBreakdownCard({
                 )}
               </Card>
             </div>
-          </div>
+          </ContentEnter>
         )}
       </div>
     </PageSection>

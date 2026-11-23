@@ -38,6 +38,13 @@
   const decide = (decision) => {
     if (decided) return;
     decided = true;
+    const allowBtn = $("allow");
+    const denyBtn = $("deny");
+    allowBtn.disabled = true;
+    denyBtn.disabled = true;
+    const chosen = decision === "approve" ? allowBtn : denyBtn;
+    chosen.setAttribute("aria-busy", "true");
+    chosen.textContent = decision === "approve" ? "已允许…" : "已拒绝…";
     window.chisa.invoke("approval:decide", { id: req.id, decision });
   };
   const tick = () => {

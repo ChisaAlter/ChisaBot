@@ -8,6 +8,7 @@ import {
 import { useLocation } from "@tanstack/react-router";
 import { useState } from "react";
 import { useDocumentSync, useTimeout } from "@/hooks";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { isPhone, isStandalone } from "@/lib/device";
 import {
   installHintDismissed,
@@ -137,25 +138,27 @@ export function InstallHint() {
           <IconX className="size-4" />
         </button>
       </div>
-      {ios && iosOpen ? (
-        <ol className="install-hint-ios">
-          <li>
-            <span>{"点浏览器的"}</span>
-            <span className="install-hint-key">
-              <IconShare2 aria-hidden className="size-4" />
-              {"分享"}
-            </span>
-            <span>{"按钮"}</span>
-          </li>
-          <li>
-            <span>{"选择"}</span>
-            <span className="install-hint-key">
-              <IconPlus aria-hidden className="size-4" />
-              {"添加到主屏幕"}
-            </span>
-          </li>
-          <li>{"以后从主屏幕的 ChisaBot 图标打开，全屏、像应用一样使用。"}</li>
-        </ol>
+      {ios ? (
+        <SmoothCollapse open={iosOpen} unmountOnExit>
+          <ol className="install-hint-ios">
+            <li>
+              <span>{"点浏览器的"}</span>
+              <span className="install-hint-key">
+                <IconShare2 aria-hidden className="size-4" />
+                {"分享"}
+              </span>
+              <span>{"按钮"}</span>
+            </li>
+            <li>
+              <span>{"选择"}</span>
+              <span className="install-hint-key">
+                <IconPlus aria-hidden className="size-4" />
+                {"添加到主屏幕"}
+              </span>
+            </li>
+            <li>{"以后从主屏幕的 ChisaBot 图标打开，全屏、像应用一样使用。"}</li>
+          </ol>
+        </SmoothCollapse>
       ) : null}
     </div>
   );

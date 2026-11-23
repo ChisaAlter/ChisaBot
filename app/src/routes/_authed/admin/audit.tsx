@@ -6,6 +6,7 @@ import {
   PageSection,
   PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import { RefreshButton } from "@/components/ui/refresh-button";
 import { useBotNames } from "@/lib/agents/bot-names";
 import { auditFailureLabel, computerActionLabel } from "@/lib/audit/action-label";
@@ -107,9 +108,14 @@ function AuditPage() {
             {"活动记录暂时读不到，刷新一下再试。"}
           </p>
         ) : rows.length === 0 ? (
-          <PageEmpty>{"这一类还没有记录。"}</PageEmpty>
+          <ContentEnter key={search}>
+            <PageEmpty>{"这一类还没有记录。"}</PageEmpty>
+          </ContentEnter>
         ) : (
-          <div className="mt-4 overflow-x-auto rounded-lg border border-border bg-card">
+          <ContentEnter
+            className="mt-4 overflow-x-auto rounded-lg border border-border bg-card"
+            key={search}
+          >
             <table className="audit-table w-full min-w-[1020px] table-fixed text-left text-sm">
               <thead className="text-muted-foreground text-xs uppercase">
                 <tr className="border-border border-b">
@@ -127,7 +133,7 @@ function AuditPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ContentEnter>
         )}
       </PageSection>
     </PageShell>

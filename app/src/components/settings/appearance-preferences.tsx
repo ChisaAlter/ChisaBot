@@ -23,7 +23,9 @@ import {
 } from "@/components/settings/wallpaper-crop-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ContentEnter, SmoothCollapse } from "@/components/ui/motion-primitives";
 import { useSegmentedKeys } from "@/components/ui/segmented";
+import { useRetainedValue } from "@/lib/motion";
 import { toast } from "@/components/ui/toast";
 import {
   ARTISTIC_WALLPAPER_PRESETS,
@@ -185,6 +187,7 @@ export function AppearancePreferences() {
   const families = listThemeFamilies(appearance.customFamilies);
   const resolvedFamily = resolvedThemeFamily(appearance, dark);
   const [familyDraft, setFamilyDraft] = useState<FamilyDraft | null>(null);
+  const retainedFamilyDraft = useRetainedValue(familyDraft);
 
   const openFamilyEditor = () => {
     // 草稿从两个模式当前各自选中的族复制：改完保存就成一套新族。
@@ -533,124 +536,130 @@ export function AppearancePreferences() {
           </button>
         </fieldset>
 
-        {familyDraft ? (
-          <div className="appearance-fam-editor" data-testid="fam-editor">
-            <div className="appearance-fam-editor-head">
-              <span>{"自定义主题族"}</span>
-              <Button
-                onClick={() => setFamilyDraft(null)}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                {"取消"}
-              </Button>
-            </div>
-            <Input
-              onChange={(e) =>
-                setFamilyDraft({ ...familyDraft, name: e.target.value })
-              }
-              placeholder="主题名称（如：我的晨间）"
-              value={familyDraft.name}
-            />
-            <div className="appearance-fam-ed-cols">
-              {(["light", "dark"] as const).map((mode) => {
-                const s = familyDraft[mode];
-                return (
-                  <div
-                    className="appearance-fam-ed-col"
-                    data-testid={`fam-ed-${mode}`}
-                    key={mode}
-                  >
-                    <h4>
-                      <i
-                        style={{
-                          background: mode === "light" ? "#f6c945" : "#7c8db5",
-                        }}
-                      />
-                      {mode === "light" ? "浅色 Light" : "深色 Dark"}
-                    </h4>
-                    <div className="appearance-fam-ed-colors">
-                      {(
-                        [
-                          ["ac", "强调色"],
-                          ["bg", "底色"],
-                          ["fg", "文字"],
-                        ] as const
-                      ).map(([key, label]) => (
-                        <label className="appearance-fam-ed-color" key={key}>
-                          <input
-                            onChange={(e) =>
-                              patchDraftSeed(mode, { [key]: e.target.value })
-                            }
-                            type="color"
-                            value={s[key]}
-                          />
-                          {label}
-                        </label>
-                      ))}
-                      <span
-                        aria-hidden="true"
-                        className="appearance-fam-ed-sample"
-                        style={{ background: s.bg, color: s.fg }}
-                      >
-                        <i style={{ background: s.ac }} />
-                        {"Aa"}
-                      </span>
-                    </div>
-                    <label className="appearance-fam-ed-ct">
-                      {"对比度"}
-                      <input
-                        max={70}
-                        min={30}
-                        onChange={(e) =>
-                          patchDraftSeed(mode, { c: Number(e.target.value) })
-                        }
-                        type="range"
-                        value={s.c}
-                      />
-                      <b>{s.c}</b>
-                    </label>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="appearance-fam-ed-foot">
-              <div
-                aria-label="背景材质"
-                className="appearance-fam-ed-bg"
-                role="radiogroup"
-              >
-                {(
-                  [
-                    ["theme", "主题天空"],
-                    ["hark", "动态天象"],
-                    ["wallpaper", "壁纸"],
-                  ] as const
-                ).map(([pick, label]) => (
-                  // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片（与下方天空背景组同一模式），原生 radio 换不了
-                  <button
-                    aria-checked={bgPick === pick}
-                    className={cn(
-                      "appearance-fam-ed-bg-chip",
-                      bgPick === pick && "is-on",
-                    )}
-                    data-testid={`fam-bg-${pick}`}
-                    key={pick}
-                    onClick={() => applyBgPick(pick)}
-                    role="radio"
-                    type="button"
-                  >
-                    {label}
-                  </button>
-                ))}
+        <SmoothCollapse open={Boolean(familyDraft)} unmountOnExit>
+          {retainedFamilyDraft ? (
+            <div className="appearance-fam-editor" data-testid="fam-editor">
+              <div className="appearance-fam-editor-head">
+                <span>{"自定义主题族"}</span>
+                <Button
+                  onClick={() => setFamilyDraft(null)}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  {"取消"}
+                </Button>
               </div>
-              <Button onClick={handleSaveCustomFamily} type="button">
-                {"保存主题族"}
-              </Button>
+              <Input
+                onChange={(e) =>
+                  setFamilyDraft({
+                    ...retainedFamilyDraft,
+                    name: e.target.value,
+                  })
+                }
+                placeholder="主题名称（如：我的晨间）"
+                value={retainedFamilyDraft.name}
+              />
+              <div className="appearance-fam-ed-cols">
+                {(["light", "dark"] as const).map((mode) => {
+                  const s = retainedFamilyDraft[mode];
+                  return (
+                    <div
+                      className="appearance-fam-ed-col"
+                      data-testid={`fam-ed-${mode}`}
+                      key={mode}
+                    >
+                      <h4>
+                        <i
+                          style={{
+                            background:
+                              mode === "light" ? "#f6c945" : "#7c8db5",
+                          }}
+                        />
+                        {mode === "light" ? "浅色 Light" : "深色 Dark"}
+                      </h4>
+                      <div className="appearance-fam-ed-colors">
+                        {(
+                          [
+                            ["ac", "强调色"],
+                            ["bg", "底色"],
+                            ["fg", "文字"],
+                          ] as const
+                        ).map(([key, label]) => (
+                          <label className="appearance-fam-ed-color" key={key}>
+                            <input
+                              onChange={(e) =>
+                                patchDraftSeed(mode, { [key]: e.target.value })
+                              }
+                              type="color"
+                              value={s[key]}
+                            />
+                            {label}
+                          </label>
+                        ))}
+                        <span
+                          aria-hidden="true"
+                          className="appearance-fam-ed-sample"
+                          style={{ background: s.bg, color: s.fg }}
+                        >
+                          <i style={{ background: s.ac }} />
+                          {"Aa"}
+                        </span>
+                      </div>
+                      <label className="appearance-fam-ed-ct">
+                        {"对比度"}
+                        <input
+                          max={70}
+                          min={30}
+                          onChange={(e) =>
+                            patchDraftSeed(mode, { c: Number(e.target.value) })
+                          }
+                          type="range"
+                          value={s.c}
+                        />
+                        <b>{s.c}</b>
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="appearance-fam-ed-foot">
+                <div
+                  aria-label="背景材质"
+                  className="appearance-fam-ed-bg"
+                  role="radiogroup"
+                >
+                  {(
+                    [
+                      ["theme", "主题天空"],
+                      ["hark", "动态天象"],
+                      ["wallpaper", "壁纸"],
+                    ] as const
+                  ).map(([pick, label]) => (
+                    // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 单选卡片（与下方天空背景组同一模式），原生 radio 换不了
+                    <button
+                      aria-checked={bgPick === pick}
+                      className={cn(
+                        "appearance-fam-ed-bg-chip",
+                        bgPick === pick && "is-on",
+                      )}
+                      data-testid={`fam-bg-${pick}`}
+                      key={pick}
+                      onClick={() => applyBgPick(pick)}
+                      role="radio"
+                      type="button"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <Button onClick={handleSaveCustomFamily} type="button">
+                  {"保存主题族"}
+                </Button>
+              </div>
             </div>
-          </div>
-        ) : null}
+          ) : null}
+        </SmoothCollapse>
 
         <div className="appearance-subhead">{"天空背景"}</div>
         <div
@@ -907,9 +916,10 @@ export function AppearancePreferences() {
         </div>
 
         {/* 精选艺术壁纸图库网格 */}
-        <div
+        <ContentEnter
           aria-label="艺术壁纸图库选择"
           className="appearance-wallpaper-grid"
+          key={wallpaperCategory}
           role="radiogroup"
         >
           {filteredArtWallpapers.map((item) => {
@@ -953,7 +963,7 @@ export function AppearancePreferences() {
               </button>
             );
           })}
-        </div>
+        </ContentEnter>
 
         {/* 本地图片拖拽 / 点击上传横幅 */}
         {/* biome-ignore lint/a11y/useSemanticElements: 拖放区里还嵌着按钮，外层不能是 <button>（按钮不能嵌套） */}
@@ -1096,7 +1106,7 @@ export function AppearancePreferences() {
         </div>
 
         {/* 壁纸模糊度与压暗度微调滑块 */}
-        {appearance.wallpaperId !== "none" ? (
+        <SmoothCollapse open={appearance.wallpaperId !== "none"} unmountOnExit>
           <div className="appearance-sliders">
             <label className="appearance-slider-row">
               <span className="appearance-slider-label">
@@ -1156,7 +1166,7 @@ export function AppearancePreferences() {
               />
             </label>
           </div>
-        ) : null}
+        </SmoothCollapse>
       </div>
 
       <WallpaperCropDialog

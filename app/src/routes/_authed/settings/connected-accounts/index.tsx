@@ -20,6 +20,7 @@ import { VaultSection } from "@/routes/_authed/settings/vault";
 import { PluginLogo } from "@/components/plugins/plugin-logo";
 import { pluginSummary, pluginTitle } from "@/lib/plugins/catalogue-zh";
 import { useSegmentedKeys } from "@/components/ui/segmented";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import {
   InputGroup,
   InputGroupAddon,
@@ -258,6 +259,7 @@ function RouteComponent() {
           ))}
         </div>
       </div>
+      <ContentEnter key={activeTab}>
       {showConnections ? (
         <>
           {/* GitHub（DESIGN.md §53）：自己的连接，不依赖管理员启用的连接器，所以放在最上面、总是显示。 */}
@@ -483,6 +485,7 @@ function RouteComponent() {
         </div>
       ) : null}
       {showApiKeys ? <VaultSection embedded /> : null}
+      </ContentEnter>
     </PageShell>
   );
 }

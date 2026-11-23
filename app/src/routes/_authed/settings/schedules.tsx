@@ -53,6 +53,7 @@ import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { agoText } from "@/lib/im";
 import { agentInstancesQueryOptions } from "@/lib/local-agents";
 import { scheduleZone } from "@/lib/schedule-edit";
+import { useRetainedValue } from "@/lib/motion";
 import {
   deleteSchedule,
   patchSchedule,
@@ -597,22 +598,23 @@ function ScheduleDialog({
   onEdit: (id: string) => void;
   onOpenChange: (open: boolean) => void;
 }) {
-  const ended = s?.status === "done" || s?.status === "cancelled";
+  const retained = useRetainedValue(s);
+  const ended = retained?.status === "done" || retained?.status === "cancelled";
   return (
     <Dialog onOpenChange={onOpenChange} open={Boolean(s)}>
       <DialogContent className="im-dialog max-w-lg">
-        {s ? (
+        {retained ? (
           <>
             <DialogHeader>
-              <DialogTitle>{s.title}</DialogTitle>
-              <DialogDescription>{`${s.schedule} · ${scheduleZone(s)} · ${botName}${instanceLabel ? ` · ${instanceLabel}` : ""}${s.source === "im" ? " · 来自 IM" : ""}`}</DialogDescription>
+              <DialogTitle>{retained.title}</DialogTitle>
+              <DialogDescription>{`${retained.schedule} · ${scheduleZone(retained)} · ${botName}${instanceLabel ? ` · ${instanceLabel}` : ""}${retained.source === "im" ? " · 来自 IM" : ""}`}</DialogDescription>
             </DialogHeader>
             <DialogBody className="im-form mt-2">
               {!ended ? (
                 <div>
                   <Button
                     data-testid="schedule-detail-edit"
-                    onClick={() => onEdit(s.id)}
+                    onClick={() => onEdit(retained.id)}
                     size="sm"
                     variant="outline"
                   >
@@ -623,17 +625,17 @@ function ScheduleDialog({
               ) : null}
               <div className="sch-detail">
                 <div className="sch-detail-l">{"到点时做什么"}</div>
-                <div className="sch-detail-v">{s.instruction}</div>
+                <div className="sch-detail-v">{retained.instruction}</div>
               </div>
-              {shownNextRun(s) ? (
+              {shownNextRun(retained) ? (
                 <div className="sch-detail">
                   <div className="sch-detail-l">{"下次运行"}</div>
                   <div className="sch-detail-v">
-                    {`${formatWhen(shownNextRun(s) ?? "", s.timezone)} ${scheduleZone(s)}`}
+                    {`${formatWhen(shownNextRun(retained) ?? "", retained.timezone)} ${scheduleZone(retained)}`}
                   </div>
                 </div>
               ) : null}
-              <ScheduleRuns schedule={s} />
+              <ScheduleRuns schedule={retained} />
             </DialogBody>
           </>
         ) : null}

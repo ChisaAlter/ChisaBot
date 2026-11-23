@@ -19,6 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { PresenceItem, PresenceList } from "@/components/ui/presence";
 import { useExternalConnection, useResizeObserver } from "@/hooks";
 import {
   canPairPanels,
@@ -436,20 +437,22 @@ export function PanelBoard<T extends { id: string; title: string }>({
 
   return (
     <div
-      className={dragId || resizing ? "live-board is-dragging" : "live-board"}
+      className={dragId || resizing ? "live-board relative is-dragging" : "live-board relative"}
       data-dragging={dragId ? "1" : undefined}
       ref={boardRef}
     >
-      {rows.map((row, rowIndex) => {
-        const paired = allowPair && row.ids.length > 1;
-        return (
-          <div
-            className="live-board-row"
-            data-live-board-row={rowIndex}
-            data-pair={paired ? "1" : undefined}
-            key={row.ids.join("+")}
-            style={paired ? { gridTemplateColumns: rowGridTemplate(row.ratio) } : undefined}
-          >
+      <PresenceList>
+        {rows.map((row, rowIndex) => {
+          const paired = allowPair && row.ids.length > 1;
+          const rowKey = row.ids.join("+");
+          return (
+            <PresenceItem key={rowKey} layoutKey={rowIndex}>
+              <div
+                className="live-board-row"
+                data-live-board-row={rowIndex}
+                data-pair={paired ? "1" : undefined}
+                style={paired ? { gridTemplateColumns: rowGridTemplate(row.ratio) } : undefined}
+              >
             {row.ids.map((id, index) => {
               const panel = panels.find((item) => item.id === id);
               if (!panel) return null;
@@ -527,9 +530,11 @@ export function PanelBoard<T extends { id: string; title: string }>({
                 </Fragment>
               );
             })}
-          </div>
-        );
-      })}
+              </div>
+            </PresenceItem>
+          );
+        })}
+      </PresenceList>
       {dragId || resizing ? (
         <div aria-hidden className="live-board-drag-cover is-dragging" data-mode={dragId ? "move" : "resize"} />
       ) : null}

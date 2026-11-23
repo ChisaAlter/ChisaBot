@@ -19,6 +19,7 @@ import {
 } from "@/components/layout/page-shell";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import {
   Dialog,
   DialogBody,
@@ -264,13 +265,15 @@ export function IdentityCard({
   if (editing) {
     return (
       <Card className="bp-card">
-        <BotProfileForm
-          agent={agent}
-          firstFieldRef={firstFieldRef}
-          onCancel={() => setEditing(false)}
-          onSaved={() => setEditing(false)}
-          variant="card"
-        />
+        <ContentEnter key="edit">
+          <BotProfileForm
+            agent={agent}
+            firstFieldRef={firstFieldRef}
+            onCancel={() => setEditing(false)}
+            onSaved={() => setEditing(false)}
+            variant="card"
+          />
+        </ContentEnter>
       </Card>
     );
   }
@@ -280,31 +283,43 @@ export function IdentityCard({
     agent.roleDescription.split("\n").length > 3;
   return (
     <Card className="bp-card">
-      <div className="bp-row">
-        <span className="bp-label">{"名称"}</span>
-        <span className="bp-value" data-private="">
-          {agent.name}
-        </span>
-      </div>
-      <div className="bp-row">
-        <span className="bp-label">{"职责"}</span>
-        <span className="bp-value">{agent.title}</span>
-      </div>
-      <div className="bp-row is-block">
-        <span className="bp-label">{"它做什么"}</span>
-        <p className={expanded || !long ? "bp-prompt" : "bp-prompt is-clamped"}>
-          {agent.roleDescription}
-        </p>
-        {long ? (
-          <button
-            className="bp-more"
-            onClick={() => setExpanded((v) => !v)}
-            type="button"
+      <ContentEnter key="read">
+        <div className="bp-row">
+          <span className="bp-label">{"名称"}</span>
+          <span className="bp-value" data-private="">
+            {agent.name}
+          </span>
+        </div>
+        <div className="bp-row">
+          <span className="bp-label">{"职责"}</span>
+          <span className="bp-value">{agent.title}</span>
+        </div>
+        <div className="bp-row is-block">
+          <span className="bp-label">{"它做什么"}</span>
+          <p
+            className={
+              expanded || !long
+                ? long
+                  ? "bp-prompt ch-content-enter"
+                  : "bp-prompt"
+                : "bp-prompt is-clamped ch-content-enter"
+            }
+            key={expanded ? "expanded" : "clamped"}
           >
-            {expanded ? "收起" : "展开全部"}
-          </button>
-        ) : null}
-      </div>
+            {agent.roleDescription}
+          </p>
+          {long ? (
+            <button
+              aria-expanded={expanded}
+              className="bp-more"
+              onClick={() => setExpanded((v) => !v)}
+              type="button"
+            >
+              {expanded ? "收起" : "展开全部"}
+            </button>
+          ) : null}
+        </div>
+      </ContentEnter>
     </Card>
   );
 }

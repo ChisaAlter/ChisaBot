@@ -65,7 +65,7 @@ export function PageHeader({
   className?: string;
 }) {
   return (
-    <header className={cn("ph", media ? "has-media" : null, className)} data-slot="page-header">
+    <header className={cn("ph ch-content-enter", media ? "has-media" : null, className)} data-slot="page-header">
       {media && eyebrow ? <div className="ph-eyebrow ph-eyebrow-row">{eyebrow}</div> : null}
       {media ? <div className="ph-media">{media}</div> : null}
       <div className="ph-main">
@@ -183,7 +183,7 @@ export function PageShell({
             : undefined
         }
       >
-        <PageHeader action={action} description={description} eyebrow={crumbs} media={media} title={title} />
+        <PageHeader action={action} description={description} eyebrow={crumbs} key={pathname} media={media} title={title} />
         {children}
       </div>
     </div>
@@ -219,7 +219,7 @@ export function PageSection({
   return (
     <section className={cn("page-section", className)} data-setting-item={settingItem} data-slot="page-section" id={id}>
       {title || description || action ? (
-        <div className="sh">
+        <div className="sh ch-content-enter">
           <div className="min-w-0 flex-[1_1_18rem]">
             {title ? <h2 className="sh-title page-section-title">{title}</h2> : null}
             {description ? <p className="sh-desc">{description}</p> : null}
@@ -272,7 +272,7 @@ export function PageRows({
  */
 export function PageEmpty({ children }: { children: React.ReactNode }) {
   return (
-    <p className="page-empty" data-slot="page-empty">
+    <p className="page-empty ch-content-enter" data-slot="page-empty">
       {children}
     </p>
   );

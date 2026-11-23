@@ -16,6 +16,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { useTimeout } from "@/hooks";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
+import { ContentEnter, SmoothCollapse } from "@/components/ui/motion-primitives";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
 import { formatElapsed } from "@/lib/conversations/workers";
 import {
@@ -25,6 +26,7 @@ import {
   useLocalTaskAction,
   useThreadLocalTasks,
 } from "@/lib/local-agents";
+import { smoothScrollIntoView } from "@/lib/motion";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import {
@@ -136,7 +138,6 @@ function DiffBlock({
   const [all, setAll] = useState(false);
   const diff = task.diff;
   if (!diff?.files.length) return null;
-  const shown = all ? diff.files : diff.files.slice(0, 6);
   return (
     <div className="la-diff" data-testid="local-agent-diff">
       <div className="la-diff-head">
@@ -154,7 +155,7 @@ function DiffBlock({
         </span>
       </div>
       <ul className="la-files">
-        {shown.map((file) => (
+        {diff.files.slice(0, 6).map((file) => (
           <li className="la-file" key={file.path}>
             <span className={cn("la-file-status", `is-${file.status}`)}>
               {file.status === "added"
@@ -170,13 +171,33 @@ function DiffBlock({
         ))}
       </ul>
       {diff.files.length > 6 ? (
-        <button
-          className="worker-plan-toggle"
-          onClick={() => setAll((value) => !value)}
-          type="button"
-        >
-          {all ? "收起" : `还有 ${diff.files.length - 6} 个文件`}
-        </button>
+        <>
+          <SmoothCollapse open={all} unmountOnExit>
+            <ul className="la-files">
+              {diff.files.slice(6).map((file) => (
+                <li className="la-file" key={file.path}>
+                  <span className={cn("la-file-status", `is-${file.status}`)}>
+                    {file.status === "added"
+                      ? "新"
+                      : file.status === "deleted"
+                        ? "删"
+                        : "改"}
+                  </span>
+                  <span className="la-file-path">{file.path}</span>
+                  <span className="la-plus">{`+${file.added}`}</span>
+                  <span className="la-minus">{`−${file.removed}`}</span>
+                </li>
+              ))}
+            </ul>
+          </SmoothCollapse>
+          <button
+            className="worker-plan-toggle"
+            onClick={() => setAll((value) => !value)}
+            type="button"
+          >
+            {all ? "收起" : `还有 ${diff.files.length - 6} 个文件`}
+          </button>
+        </>
       ) : null}
       {diff.pending ? (
         <div className="la-actions">
@@ -309,7 +330,7 @@ function LocalAgentCardBody({
       ? document.querySelector(`[data-message-id="${CSS.escape(id)}"]`)
       : null;
     if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      smoothScrollIntoView(target, { block: "center" });
       target.classList.add("is-flash");
       setTimeout(() => target.classList.remove("is-flash"), 1200);
     } else setExpanded(true);
@@ -370,7 +391,7 @@ function LocalAgentCardBody({
 
   const lines = fullLog && full.data ? full.data.transcript : task.lines;
   return (
-    <div
+    <ContentEnter
       className={cn(
         "worker-card la-card",
         `is-${task.status === "pending_approval" ? "waiting" : task.status}`,
@@ -486,7 +507,7 @@ function LocalAgentCardBody({
           </Button>
         </div>
       ) : null}
-    </div>
+    </ContentEnter>
   );
 }
 

@@ -130,7 +130,7 @@ export const Channel = memo(function Channel({
             params={{ channelId }}
             // M3-1：手机抽屉里点会话行（含搜索结果里的本地命中）要收起抽屉，否则抽屉盖在新会话上。
             onClick={closeDrawer}
-            className="flex flex-row py-2 px-2 gap-2 items-center w-full hover:bg-foreground/5 rounded-lg [contain-intrinsic-size:auto_3.25rem] [content-visibility:auto]"
+            className="flex flex-row py-2 px-2 gap-2 items-center w-full rounded-lg transition-colors duration-100 hover:bg-foreground/5 [contain-intrinsic-size:auto_3.25rem] [content-visibility:auto]"
             activeProps={{
               className: "bg-foreground/5",
             }}

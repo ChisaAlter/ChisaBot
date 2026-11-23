@@ -107,7 +107,6 @@ test("找得到要关的 filter: blur 规则（防止解析失效变成空跑）
   for (const k of [
     ".chisabot-wallpaper-img",
     ".rp-link",
-    ".rp-pile-card",
     ".agent-orb-glow",
     ".agent-orb::before",
   ]) {

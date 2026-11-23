@@ -50,6 +50,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { PresenceItem, PresenceList } from "@/components/ui/presence";
 import { toast } from "@/components/ui/toast";
 import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { ClientError } from "@/lib/client";
@@ -322,9 +323,9 @@ function TasksRailBody({
             className="task-rail-loading"
             role="status"
           >
-            <span />
-            <span />
-            <span />
+            <span className="sky-skel-glass" />
+            <span className="sky-skel-glass" />
+            <span className="sky-skel-glass" />
           </div>
         ) : null}
 
@@ -337,38 +338,41 @@ function TasksRailBody({
             }
             title="需要你确认"
           >
-            {sortedDecisions.map((decision) => {
-              const itemId = `decision:${decision.id}`;
-              const tasksList = Array.isArray(snapshot.data?.tasks)
-                ? snapshot.data.tasks
-                : [];
-              const matchedTask = tasksList.find((t) => t.id === decision.taskId);
-              return (
-                <RailDecisionItem
-                  decision={decision}
-                  itemId={itemId}
-                  key={decision.id}
-                  onChanged={refreshTasks}
-                  onOpenDetail={() =>
-                    onOpenDetail({
-                      kind: "task",
-                      taskId: decision.taskId,
-                      initialTask: matchedTask,
-                      decision,
-                      section: "decisions",
-                      orderItemId: itemId,
-                    })
-                  }
-                  onStale={() => dropStaleDecision(queryClient, decision.id)}
-                  orderMeta={getItemOrderMeta(
-                    orderMap.decisions,
-                    sortedDecisionIds,
-                    itemId,
-                  )}
-                  sectionIds={sortedDecisionIds}
-                />
-              );
-            })}
+            <PresenceList>
+              {sortedDecisions.map((decision, index) => {
+                const itemId = `decision:${decision.id}`;
+                const tasksList = Array.isArray(snapshot.data?.tasks)
+                  ? snapshot.data.tasks
+                  : [];
+                const matchedTask = tasksList.find((t) => t.id === decision.taskId);
+                return (
+                  <PresenceItem key={decision.id} layoutKey={index}>
+                    <RailDecisionItem
+                      decision={decision}
+                      itemId={itemId}
+                      onChanged={refreshTasks}
+                      onOpenDetail={() =>
+                        onOpenDetail({
+                          kind: "task",
+                          taskId: decision.taskId,
+                          initialTask: matchedTask,
+                          decision,
+                          section: "decisions",
+                          orderItemId: itemId,
+                        })
+                      }
+                      onStale={() => dropStaleDecision(queryClient, decision.id)}
+                      orderMeta={getItemOrderMeta(
+                        orderMap.decisions,
+                        sortedDecisionIds,
+                        itemId,
+                      )}
+                      sectionIds={sortedDecisionIds}
+                    />
+                  </PresenceItem>
+                );
+              })}
+            </PresenceList>
             {pendingCount > sortedDecisions.length ? (
               <button
                 className="task-rail-center-link"
@@ -390,54 +394,56 @@ function TasksRailBody({
             }
             title="任务与工作流"
           >
-            {sortedActiveEntries.map((entry) =>
-              entry.kind === "run" ? (
-                <RailWorkflowRunItem
-                  itemId={entry.itemId}
-                  key={entry.itemId}
-                  onChanged={refreshWorkflows}
-                  onOpenDetail={() =>
-                    onOpenDetail({
-                      kind: "workflow",
-                      runId: entry.run.id,
-                      initialRun: entry.run,
-                      section: "active",
-                      orderItemId: entry.itemId,
-                    })
-                  }
-                  orderMeta={getItemOrderMeta(
-                    orderMap.active,
-                    sortedActiveIds,
-                    entry.itemId,
+            <PresenceList>
+              {sortedActiveEntries.map((entry, index) => (
+                <PresenceItem key={entry.itemId} layoutKey={index}>
+                  {entry.kind === "run" ? (
+                    <RailWorkflowRunItem
+                      itemId={entry.itemId}
+                      onChanged={refreshWorkflows}
+                      onOpenDetail={() =>
+                        onOpenDetail({
+                          kind: "workflow",
+                          runId: entry.run.id,
+                          initialRun: entry.run,
+                          section: "active",
+                          orderItemId: entry.itemId,
+                        })
+                      }
+                      orderMeta={getItemOrderMeta(
+                        orderMap.active,
+                        sortedActiveIds,
+                        entry.itemId,
+                      )}
+                      run={entry.run}
+                      sectionIds={sortedActiveIds}
+                    />
+                  ) : (
+                    <RailTaskItem
+                      itemId={entry.itemId}
+                      onChanged={refreshTasks}
+                      onOpenDetail={() =>
+                        onOpenDetail({
+                          kind: "task",
+                          taskId: entry.task.id,
+                          initialTask: entry.task,
+                          section: "active",
+                          orderItemId: entry.itemId,
+                        })
+                      }
+                      orderMeta={getItemOrderMeta(
+                        orderMap.active,
+                        sortedActiveIds,
+                        entry.itemId,
+                      )}
+                      section="active"
+                      sectionIds={sortedActiveIds}
+                      task={entry.task}
+                    />
                   )}
-                  run={entry.run}
-                  sectionIds={sortedActiveIds}
-                />
-              ) : (
-                <RailTaskItem
-                  itemId={entry.itemId}
-                  key={entry.itemId}
-                  onChanged={refreshTasks}
-                  onOpenDetail={() =>
-                    onOpenDetail({
-                      kind: "task",
-                      taskId: entry.task.id,
-                      initialTask: entry.task,
-                      section: "active",
-                      orderItemId: entry.itemId,
-                    })
-                  }
-                  orderMeta={getItemOrderMeta(
-                    orderMap.active,
-                    sortedActiveIds,
-                    entry.itemId,
-                  )}
-                  section="active"
-                  sectionIds={sortedActiveIds}
-                  task={entry.task}
-                />
-              ),
-            )}
+                </PresenceItem>
+              ))}
+            </PresenceList>
             {taskCount > activeTasks.length ? (
               <button
                 className="task-rail-center-link"
@@ -483,34 +489,37 @@ function TasksRailBody({
 
         {recentTasks.length > 0 ? (
           <RailSection count={`${recentTasks.length} 项`} title="最近交付">
-            {recentTasks.map((task) => {
-              const itemId = `task:${task.id}`;
-              return (
-                <RailTaskItem
-                  itemId={itemId}
-                  key={task.id}
-                  onChanged={refreshTasks}
-                  onOpenDetail={() =>
-                    onOpenDetail({
-                      kind: "task",
-                      taskId: task.id,
-                      initialTask: task,
-                      section: "recent",
-                      orderItemId: itemId,
-                    })
-                  }
-                  orderMeta={getItemOrderMeta(
-                    orderMap.recent,
-                    sortedRecentIds,
-                    itemId,
-                  )}
-                  recent
-                  section="recent"
-                  sectionIds={sortedRecentIds}
-                  task={task}
-                />
-              );
-            })}
+            <PresenceList>
+              {recentTasks.map((task, index) => {
+                const itemId = `task:${task.id}`;
+                return (
+                  <PresenceItem key={task.id} layoutKey={index}>
+                    <RailTaskItem
+                      itemId={itemId}
+                      onChanged={refreshTasks}
+                      onOpenDetail={() =>
+                        onOpenDetail({
+                          kind: "task",
+                          taskId: task.id,
+                          initialTask: task,
+                          section: "recent",
+                          orderItemId: itemId,
+                        })
+                      }
+                      orderMeta={getItemOrderMeta(
+                        orderMap.recent,
+                        sortedRecentIds,
+                        itemId,
+                      )}
+                      recent
+                      section="recent"
+                      sectionIds={sortedRecentIds}
+                      task={task}
+                    />
+                  </PresenceItem>
+                );
+              })}
+            </PresenceList>
           </RailSection>
         ) : null}
       </div>
@@ -604,7 +613,7 @@ function RailSection({
         <h3>{title}</h3>
         <span>{count}</span>
       </div>
-      <div className="task-rail-cards">{children}</div>
+      <div className="task-rail-cards relative">{children}</div>
     </section>
   );
 }
@@ -1054,13 +1063,21 @@ function RailWorkflowRunItem({
           <span>{"步骤进度"}</span>
           <span>{`${doneSteps}/${totalSteps} 步`}</span>
         </div>
-        <progress
-          aria-hidden
-          className="task-rail-progress"
-          data-progress={`${doneSteps}/${totalSteps}`}
-          max={100}
-          value={percent}
-        />
+        <div aria-hidden className="task-rail-progress-track">
+          <span
+            className="task-rail-progress-fill"
+            style={{
+              transform: `scaleX(${Math.max(0, Math.min(100, percent)) / 100})`,
+            }}
+          />
+          <progress
+            aria-hidden
+            className="sr-only"
+            data-progress={`${doneSteps}/${totalSteps}`}
+            max={100}
+            value={percent}
+          />
+        </div>
         <CardMeta at={run.startedAt ?? run.createdAt} />
       </button>
       <CardMoreMenu

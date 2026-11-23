@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { agentListQueryOptions } from "@/lib/agents/queries";
@@ -11,6 +12,7 @@ import {
   dismissPersonQuestion,
 } from "@/lib/approvals";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
+import { DURATION_MS, usePresenceMount, useRetainedValue } from "@/lib/motion";
 
 /**
  * A Bot's unanswered question, drawn where it was asked.
@@ -55,11 +57,16 @@ export function PendingQuestion({
   const inbox = useQuery(approvalInboxOptions());
   const bots = useQuery(agentListQueryOptions());
   const [text, setText] = useState("");
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const question = (inbox.data?.questions ?? []).find(
     (candidate) => candidate.channelId === channelId,
   );
+  const active = Boolean(question);
+  const shown = useRetainedValue(question ?? null);
+  const presence = usePresenceMount(active, DURATION_MS.collapse);
   const settled = async () => {
     setText("");
+    setSelectedOption(null);
     await Promise.all([
       cache.invalidateQueries({ queryKey: ["approvals"] }),
       // The rail's number is its own query; without this it lags the answer by up to 15 seconds.
@@ -83,25 +90,29 @@ export function PendingQuestion({
     onSuccess: settled,
     // The usual reason this fails is that the conversation it belongs to is gone, which is what
     // 不用回答了 is for — say so rather than leaving a button that silently does nothing.
-    onError: (error) => toast.error(`回答没发出去：${error.message}`),
+    onError: (error) => {
+      setSelectedOption(null);
+      toast.error(`回答没发出去：${error.message}`);
+    },
   });
   const dismiss = useMutation({
     mutationFn: dismissPersonQuestion,
     onSuccess: settled,
     onError: (error) => toast.error(`这个问题没能关掉：${error.message}`),
   });
-  if (!question) return null;
+  if (!presence.mounted || !shown) return null;
   const name =
-    bots.data?.find((bot) => bot.id === question.botId)?.name ?? "机器人";
+    bots.data?.find((bot) => bot.id === shown.botId)?.name ?? "机器人";
   const busy = answer.isPending || dismiss.isPending;
-  const options = extractQuestionOptions(question.question);
-  const submit = (value: string) => {
+  const options = extractQuestionOptions(shown.question);
+  const submit = (value: string, option?: string) => {
     const trimmed = value.trim();
     if (!trimmed || busy) return;
+    if (option) setSelectedOption(option);
     answer.mutate({
-      id: question.id,
+      id: shown.id,
       response: trimmed,
-      initiatorKind: question.initiatorKind,
+      initiatorKind: shown.initiatorKind,
     });
   };
   const askToDismiss = async (id: string) => {
@@ -115,65 +126,68 @@ export function PendingQuestion({
     if (ok) dismiss.mutate(id);
   };
   return (
-    <section
-      aria-label={`需要你回答：${question.question}`}
-      className="chat-question"
-    >
-      <div className="chat-question-head">
-        <p className="chat-question-t">{`${name}问你：${question.question}`}</p>
-        <Button
-          disabled={busy}
-          onClick={() => void askToDismiss(question.id)}
-          size="sm"
-          variant="ghost"
-        >
-          {"不用回答了"}
-        </Button>
-      </div>
-      {question.why ? <p className="chat-question-s">{question.why}</p> : null}
-      {options.length > 0 ? (
-        // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
-        <div className="chat-question-opts" role="group" aria-label="快捷选项">
-          {options.map((opt) => (
-            <button
-              key={opt}
-              type="button"
-              disabled={busy}
-              className="chat-question-opt"
-              onClick={() => submit(opt)}
-            >
-              {opt}
-            </button>
-          ))}
+    <SmoothCollapse open={active} unmountOnExit>
+      <section
+        aria-label={active ? `需要你回答：${shown.question}` : undefined}
+        className="chat-question"
+      >
+        <div className="chat-question-head">
+          <p className="chat-question-t">{`${name}问你：${shown.question}`}</p>
+          <Button
+            disabled={busy}
+            onClick={() => void askToDismiss(shown.id)}
+            size="sm"
+            variant="ghost"
+          >
+            {"不用回答了"}
+          </Button>
         </div>
-      ) : null}
-      <div className="chat-question-row">
-        <Textarea
-          aria-label="你的回答"
-          data-unsent-watch
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-              submit(text);
-            }
-          }}
-          placeholder="输入回答（也可直接在下方输入框回复）…"
-          rows={1}
-          value={text}
-        />
-        <Button
-          disabled={busy || !text.trim()}
-          onClick={() => submit(text)}
-          size="sm"
-        >
-          {answer.isPending ? "发送中…" : "发送"}
-        </Button>
-      </div>
-    </section>
+        {shown.why ? <p className="chat-question-s">{shown.why}</p> : null}
+        {options.length > 0 ? (
+          // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
+          <div className="chat-question-opts" role="group" aria-label="快捷选项">
+            {options.map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                disabled={busy}
+                className="chat-question-opt"
+                data-selected={selectedOption === opt ? "true" : undefined}
+                onClick={() => submit(opt, opt)}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <div className="chat-question-row">
+          <Textarea
+            aria-label="你的回答"
+            data-unsent-watch
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+                submit(text);
+              }
+            }}
+            placeholder="输入回答（也可直接在下方输入框回复）…"
+            rows={1}
+            value={text}
+          />
+          <Button
+            disabled={busy || !text.trim()}
+            onClick={() => submit(text)}
+            size="sm"
+          >
+            {answer.isPending ? "发送中…" : "发送"}
+          </Button>
+        </div>
+      </section>
+    </SmoothCollapse>
   );
 }

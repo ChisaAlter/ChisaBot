@@ -2,6 +2,7 @@ import { IconRefresh, IconSparkles, IconX } from "@tabler/icons-react";
 import { confirmDialog } from "@/components/ui/confirm";
 import { useExternalConnection } from "@/hooks";
 import { refreshWouldInterrupt } from "@/lib/activity";
+import { DURATION_MS, usePresenceMount, useRetainedValue } from "@/lib/motion";
 import { usePcLocal } from "@/lib/pc-bridge";
 import { presenceRef } from "@/lib/presence-flag";
 import { useNewVersion } from "@/lib/version";
@@ -45,10 +46,14 @@ export function UpdateBanner(
     pcLocal?.update?.status === "downloading" || pcLocal?.update?.status === "downloaded";
   const doReload = reload ?? (() => window.location.reload());
 
+  const visible = Boolean(available && !pcUpdateActive);
+  const { mounted, onExited } = usePresenceMount(visible, DURATION_MS.exit);
+  const retainedAvailable = useRetainedValue(available);
+
   // 自动换到新构建：只在无损（refreshWouldInterrupt() === null）时刷新，有损就等下一轮。
   // 点 ✕ 关掉 / PC 客户端更新在进行时这条连接断开，计时器随之清掉。
   useExternalConnection(
-    available && !pcUpdateActive ? `auto-reload\0${autoReloadMs}` : false,
+    visible ? `auto-reload\0${autoReloadMs}` : false,
     () => {
       const timer = window.setInterval(() => {
         if (refreshWouldInterrupt() !== null) return;
@@ -58,7 +63,7 @@ export function UpdateBanner(
       return () => window.clearInterval(timer);
     },
   );
-  if (!available || pcUpdateActive) return null;
+  if (!mounted || !retainedAvailable) return null;
 
   async function refresh() {
     const blocker = refreshWouldInterrupt();
@@ -89,11 +94,21 @@ export function UpdateBanner(
   }
 
   return (
-    <div className="update-banner" data-update-banner ref={presenceRef("has-update-banner")} role="status" aria-live="polite">
+    <div
+      className="update-banner"
+      data-leaving={!visible ? "true" : undefined}
+      data-update-banner
+      onAnimationEnd={(event) => {
+        if (!visible && event.target === event.currentTarget) onExited();
+      }}
+      ref={presenceRef("has-update-banner")}
+      role="status"
+      aria-live="polite"
+    >
       <button className="update-banner-main" onClick={() => void refresh()} type="button">
         <IconSparkles aria-hidden className="update-banner-ic size-4 shrink-0" />
         <span className="update-banner-t">{"有新版本，点此刷新"}</span>
-        <span className="update-banner-v">{available.version}</span>
+        <span className="update-banner-v">{retainedAvailable.version}</span>
         <IconRefresh aria-hidden className="size-4 shrink-0" />
       </button>
       <button aria-label={"关闭新版本提示"} className="update-banner-x" onClick={dismiss} type="button">

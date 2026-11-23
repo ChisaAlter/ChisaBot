@@ -46,6 +46,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { toast } from "@/components/ui/toast";
 import {
   dispatchChatAsk,
@@ -60,6 +61,7 @@ import {
   useNow,
 } from "@/lib/conversations/json-render/rich-context";
 import { modelCatalogQueryOptions } from "@/lib/model-selection/queries";
+import { usePresenceMount } from "@/lib/motion";
 import {
   everyText,
   type LiveSource,
@@ -436,7 +438,7 @@ function PanelFoot({
           {more > 0 ? (
             <button
               aria-label={`还有 ${more} 个来源`}
-              className="live-panel-src-more"
+              className="live-panel-src-more transition-colors duration-100"
               onClick={() => setOpen(true)}
               type="button"
             >
@@ -444,7 +446,7 @@ function PanelFoot({
             </button>
           ) : open && items.length > 1 ? (
             <button
-              className="live-panel-src-more"
+              className="live-panel-src-more transition-colors duration-100"
               onClick={() => setOpen(false)}
               type="button"
             >
@@ -494,18 +496,23 @@ function DataSourcePanel({
   readings,
   error,
   refreshing,
+  leaving = false,
   onRefresh,
   onClose,
+  onExited,
 }: {
   panel: LivePanel;
   readings: LiveSourceReadings;
   error: string | null;
   refreshing: boolean;
+  leaving?: boolean;
   onRefresh: () => void;
   onClose: () => void;
+  onExited?: () => void;
 }) {
   const box = useRef<HTMLDivElement | null>(null);
   useDocumentEvent("pointerdown", (event) => {
+    if (leaving) return;
     const target = event.target;
     if (
       target instanceof Node &&
@@ -515,13 +522,21 @@ function DataSourcePanel({
       onClose();
   });
   useDocumentEvent("keydown", (event) => {
+    if (leaving) return;
     if (event.key === "Escape") onClose();
   });
   const sources = panel.dataSources ?? NO_LIVE_SOURCES;
   return (
     <div
+      aria-hidden={leaving || undefined}
       aria-label={`「${panel.title}」的数据来源`}
       className="live-panel-src-pop"
+      data-leaving={leaving ? "true" : undefined}
+      data-open={leaving ? undefined : ""}
+      inert={leaving || undefined}
+      onAnimationEnd={(event) => {
+        if (leaving && event.target === event.currentTarget) onExited?.();
+      }}
       ref={box}
       role="dialog"
     >
@@ -838,7 +853,9 @@ const LivePanelCard = memo(function LivePanelCard({
   const queryClient = useQueryClient();
   const [problem, setProblem] = useState<string | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const sourcesMount = usePresenceMount(sourcesOpen);
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuMount = usePresenceMount(menuOpen);
   const closeSources = useCallback(() => setSourcesOpen(false), []);
   const openSources = useCallback(() => setSourcesOpen(true), []);
   const dataSources = panel.dataSources ?? NO_LIVE_SOURCES;
@@ -930,7 +947,13 @@ const LivePanelCard = memo(function LivePanelCard({
             {`⚡ ${panel.refreshModel.split("/").pop()}`}
           </span>
         ) : null}
-        <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>
+        <DropdownMenu
+          onOpenChange={setMenuOpen}
+          onOpenChangeComplete={(next) => {
+            if (!next) menuMount.onExited();
+          }}
+          open={menuOpen}
+        >
           <DropdownMenuTrigger
             render={
               <button
@@ -942,7 +965,7 @@ const LivePanelCard = memo(function LivePanelCard({
           >
             <IconDots className="size-4" />
           </DropdownMenuTrigger>
-          {menuOpen ? (
+          {menuMount.mounted ? (
             <LivePanelMenuContent
               busy={busy}
               hasDataSources={dataSources.length > 0}
@@ -958,10 +981,12 @@ const LivePanelCard = memo(function LivePanelCard({
         </DropdownMenu>
       </header>
 
-      {sourcesOpen ? (
+      {sourcesMount.mounted ? (
         <DataSourcePanel
           error={live.error}
+          leaving={!sourcesOpen}
           onClose={closeSources}
+          onExited={sourcesMount.onExited}
           onRefresh={live.refresh}
           panel={panel}
           readings={live.readings}
@@ -969,36 +994,38 @@ const LivePanelCard = memo(function LivePanelCard({
         />
       ) : null}
 
-      {collapsed ? null : (
-        <>
-          {building ? (
-            <BuildingSkeleton />
-          ) : panel.spec ? (
-            <LiveBody
-              live={live.values}
-              onRefresh={handleRefresh}
-              spec={panel.spec}
-              title={panel.title}
-            />
-          ) : null}
+      <SmoothCollapse
+        innerClassName="flex flex-col gap-2"
+        open={!collapsed}
+        unmountOnExit
+      >
+        {building ? (
+          <BuildingSkeleton />
+        ) : panel.spec ? (
+          <LiveBody
+            live={live.values}
+            onRefresh={handleRefresh}
+            spec={panel.spec}
+            title={panel.title}
+          />
+        ) : null}
 
-          {panel.error && !building ? (
-            <p className="live-panel-error" role="alert">
-              <IconAlertTriangle className="size-3.5 shrink-0" />
-              <span>{panel.error}</span>
-            </p>
-          ) : null}
-          {problem ? (
-            <p className="live-panel-error" role="alert">
-              {problem}
-            </p>
-          ) : null}
+        {panel.error && !building ? (
+          <p className="live-panel-error" role="alert">
+            <IconAlertTriangle className="size-3.5 shrink-0" />
+            <span>{panel.error}</span>
+          </p>
+        ) : null}
+        {problem ? (
+          <p className="live-panel-error" role="alert">
+            {problem}
+          </p>
+        ) : null}
 
-          {!building ? (
-            <PanelFoot busy={busy} liveAt={live.at} panel={panel} />
-          ) : null}
-        </>
-      )}
+        {!building ? (
+          <PanelFoot busy={busy} liveAt={live.at} panel={panel} />
+        ) : null}
+      </SmoothCollapse>
     </article>
   );
 });

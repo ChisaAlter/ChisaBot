@@ -7,6 +7,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import { toast } from "@/components/ui/toast";
 import { deviceListQueryOptions, fullAccessUntilText } from "@/lib/devices";
@@ -77,7 +78,9 @@ export function AgentsRailCard() {
           {"提供方设置"}
         </Link>
       </header>
-      {collapsed ? null : <AgentsRailBody />}
+      <SmoothCollapse open={!collapsed} unmountOnExit>
+        <AgentsRailBody />
+      </SmoothCollapse>
     </article>
   );
 }

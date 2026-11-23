@@ -28,6 +28,7 @@ import { useMemo, useState } from "react";
 import { PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import {
   Dialog,
   DialogContent,
@@ -408,7 +409,7 @@ export function AgentProvidersPage() {
       ) : (
         <div className="flex flex-col gap-4">
           {/* 顶部环境选择栏（对齐 T3 Code「正在应用设置到 ... on <环境>」） */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/60 px-4 py-3 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/75 px-4 py-3">
             <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground">{"正在应用设置到"}</span>
               <Select
@@ -553,15 +554,15 @@ export function AgentProvidersPage() {
 
           {/* T3 Code 风格双栏主体卡片 */}
           <div
-            className="grid min-h-[560px] grid-cols-1 overflow-hidden rounded-2xl border border-border/80 bg-card/75 shadow-xs backdrop-blur-md md:grid-cols-[270px_minmax(0,1fr)]"
+            className="grid min-h-[560px] grid-cols-1 overflow-hidden rounded-2xl border border-border/80 bg-card/85 shadow-xs md:grid-cols-[270px_minmax(0,1fr)]"
             data-setting-item="agent-providers.agent-provider-instances"
           >
             {/* 左栏：提供方实例列表 */}
             <div className="flex flex-col justify-between border-b border-border/70 bg-muted/25 md:border-r md:border-b-0">
               <div className="flex flex-col divide-y divide-border/50">
                 {instancesQuery.isPending ? (
-                  <div className="p-4 text-xs text-muted-foreground">
-                    {"正在加载提供方列表…"}
+                  <div className="p-3">
+                    <PageSkeleton rows={3} />
                   </div>
                 ) : instances.length === 0 ? (
                   <div className="p-5 text-xs text-muted-foreground">
@@ -658,7 +659,10 @@ export function AgentProvidersPage() {
             </div>
 
             {/* 右栏：选中实例的配置详情 */}
-            <div className="flex flex-col bg-background/60">
+            <ContentEnter
+              className="flex flex-col bg-background/60"
+              key={selectedInstance?.id ?? "empty"}
+            >
               {selectedInstance ? (
                 <InstanceDetailPane
                   instance={selectedInstance}
@@ -701,7 +705,7 @@ export function AgentProvidersPage() {
                   ) : null}
                 </div>
               )}
-            </div>
+            </ContentEnter>
           </div>
         </div>
       )}

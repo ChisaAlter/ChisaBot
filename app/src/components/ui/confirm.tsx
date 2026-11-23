@@ -124,17 +124,17 @@ export function ConfirmHost() {
         showCloseButton={false}
       >
         <DialogHeader>
-          <DialogTitle>{pending?.title ?? ""}</DialogTitle>
-          {pending?.description ? (
-            <DialogDescription>{pending.description}</DialogDescription>
+          <DialogTitle>{last?.title ?? ""}</DialogTitle>
+          {last?.description ? (
+            <DialogDescription>{last.description}</DialogDescription>
           ) : null}
         </DialogHeader>
-        {pending?.items?.length ? (
+        {last?.items?.length ? (
           <ul
             className="max-h-56 list-disc space-y-1 overflow-y-auto pl-5 text-sm"
             data-testid="confirm-items"
           >
-            {pending.items.map((item, index) => (
+            {last.items.map((item, index) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: 待确认条目是纯文本、可重复，顺序就是身份
               <li key={index}>{item}</li>
             ))}
@@ -142,14 +142,14 @@ export function ConfirmHost() {
         ) : null}
         <DialogFooter>
           <Button onClick={() => settle(false)} variant="outline">
-            {pending?.cancelLabel ?? "取消"}
+            {last?.cancelLabel ?? "取消"}
           </Button>
           <Button
             autoFocus
             onClick={() => settle(true)}
-            variant={pending?.destructive ? "destructive" : "default"}
+            variant={last?.destructive ? "destructive" : "default"}
           >
-            {pending?.confirmLabel ?? "确定"}
+            {last?.confirmLabel ?? "确定"}
           </Button>
         </DialogFooter>
       </DialogContent>

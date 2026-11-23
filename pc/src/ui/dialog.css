@@ -3,8 +3,18 @@
    （那样窗口边 + 卡片边是两圈）。 */
 body.dialog-page { padding: 0; display: flex; }
 .dialog-page .dialog.auth-card { border: 0; border-radius: 0; box-shadow: none; }
-/* 对话框铺满窗口：不做整块上移进场（会露出一条天空），窗口出现本身就是进场。 */
+/* 对话框铺满窗口：不做整块上移进场（会露出一条天空），窗口出现本身就是进场；内部区块柔和微淡入。 */
 .dialog-page .dialog.enter { animation: none; }
+.dialog-page:not(.is-measuring) .dialog > * {
+  animation: dialog-item-in var(--dur-2) var(--ease-out) both;
+}
+.dialog-page:not(.is-measuring) .dialog > :nth-child(2) { animation-delay: 25ms; }
+.dialog-page:not(.is-measuring) .dialog > :nth-child(3) { animation-delay: 45ms; }
+.dialog-page:not(.is-measuring) .dialog > :nth-child(4) { animation-delay: 65ms; }
+@keyframes dialog-item-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
 .dialog { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 18px 20px 16px; }
 .dialog-h { display: flex; align-items: center; gap: 12px; }
 .drag { -webkit-app-region: drag; }

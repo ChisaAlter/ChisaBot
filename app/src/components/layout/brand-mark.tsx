@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useTimeout } from "@/hooks";
+import { usePresenceMount } from "@/lib/motion";
 import {
   saveUserPreferencesMutationOptions,
   useUserPreferences,
@@ -101,14 +102,23 @@ export function BrandDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const formMount = usePresenceMount(open);
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={(next) => {
+        if (!next) formMount.onExited();
+      }}
+      open={open}
+    >
       <DialogContent className="glass-modal brand-dialog max-w-[400px]">
         <DialogTitle className="font-semibold text-lg">{"修改名称"}</DialogTitle>
         <DialogDescription className="text-xs">
           {"左上角显示的名字。前一段是品牌红粗体，后一段是细体。只对你自己生效。"}
         </DialogDescription>
-        {open ? <BrandForm onSaved={() => onOpenChange(false)} /> : null}
+        {formMount.mounted ? (
+          <BrandForm onSaved={() => onOpenChange(false)} />
+        ) : null}
       </DialogContent>
     </Dialog>
   );

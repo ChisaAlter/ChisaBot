@@ -35,6 +35,7 @@ import { Card, ErrorCard } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
+import { useRetainedValue } from "@/lib/motion";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { agoText } from "@/lib/im";
 import { cn } from "@/lib/utils";
@@ -93,6 +94,7 @@ function OneTimeSecretDialog({
   onClose: () => void;
 }) {
   const [revealed, setRevealed] = useState(false);
+  const retainedPayload = useRetainedValue(payload);
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
@@ -104,12 +106,12 @@ function OneTimeSecretDialog({
   return (
     <Dialog onOpenChange={handleOpenChange} open={Boolean(payload)}>
       <DialogContent className="max-w-lg" data-testid="webhook-secret-dialog">
-        {payload ? (
+        {retainedPayload ? (
           <>
             <DialogHeader>
               <DialogTitle>{"保存一次性 Webhook 签名密钥"}</DialogTitle>
               <DialogDescription>
-                {`规则「${payload.title}」的签名密钥仅在此刻展示一次，关闭弹窗后将无法再次查看。`}
+                {`规则「${retainedPayload.title}」的签名密钥仅在此刻展示一次，关闭弹窗后将无法再次查看。`}
               </DialogDescription>
             </DialogHeader>
             <DialogBody className="mt-3 space-y-3">
@@ -119,11 +121,11 @@ function OneTimeSecretDialog({
                 </div>
                 <div className="flex items-center gap-2">
                   <code className="min-w-0 flex-1 truncate rounded-md border bg-muted/40 px-2.5 py-1.5 font-mono text-xs">
-                    {fullIngressUrl(payload.ingressPath)}
+                    {fullIngressUrl(retainedPayload.ingressPath)}
                   </code>
                   <CopyButton
                     size="sm"
-                    value={fullIngressUrl(payload.ingressPath)}
+                    value={fullIngressUrl(retainedPayload.ingressPath)}
                     variant="outline"
                   >
                     {"复制地址"}
@@ -142,8 +144,8 @@ function OneTimeSecretDialog({
                     data-testid="webhook-one-time-secret"
                   >
                     {revealed
-                      ? payload.secret
-                      : "•".repeat(Math.min(payload.secret.length, 32))}
+                      ? retainedPayload.secret
+                      : "•".repeat(Math.min(retainedPayload.secret.length, 32))}
                   </code>
                   <Button
                     aria-label={revealed ? "隐藏密钥" : "显示密钥"}
@@ -162,7 +164,7 @@ function OneTimeSecretDialog({
                   </Button>
                   <CopyButton
                     size="sm"
-                    value={payload.secret}
+                    value={retainedPayload.secret}
                     variant="outline"
                   >
                     {"复制密钥"}
@@ -424,6 +426,7 @@ function PasteVendorSecretDialog({
   onSaved: () => void;
 }) {
   const [pasted, setPasted] = useState("");
+  const retainedRule = useRetainedValue(rule);
   const saveAction = useAsyncAction(
     async () => {
       if (!rule || !pasted.trim()) throw new Error("请粘贴厂商签名密钥。");
@@ -446,12 +449,12 @@ function PasteVendorSecretDialog({
       open={Boolean(rule)}
     >
       <DialogContent className="max-w-md">
-        {rule ? (
+        {retainedRule ? (
           <>
             <DialogHeader>
-              <DialogTitle>{`更新「${rule.title}」的厂商密钥`}</DialogTitle>
+              <DialogTitle>{`更新「${retainedRule.title}」的厂商密钥`}</DialogTitle>
               <DialogDescription>
-                {`粘贴 ${WEBHOOK_VENDOR_META[rule.kind].label} 提供的最新签名密钥，旧密钥会立即失效。`}
+                {`粘贴 ${WEBHOOK_VENDOR_META[retainedRule.kind].label} 提供的最新签名密钥，旧密钥会立即失效。`}
               </DialogDescription>
             </DialogHeader>
             <DialogBody className="mt-3">

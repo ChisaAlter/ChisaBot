@@ -44,11 +44,16 @@ afterAll(async () => {
   GlobalRegistrator.unregister();
 });
 
-function renderTip() {
+function renderTip(onClick?: () => void) {
   const view = render(
     <TooltipProvider>
       <ToggleTip keys="Ctrl+." label="关闭面板" side="bottom">
-        <button aria-label="关闭面板" className="rail-head-icon" type="button">
+        <button
+          aria-label="关闭面板"
+          className="rail-head-icon"
+          onClick={onClick}
+          type="button"
+        >
           x
         </button>
       </ToggleTip>
@@ -57,6 +62,13 @@ function renderTip() {
   const button = () => view.getByRole("button", { name: "关闭面板" });
   const tip = () => document.querySelector('[data-slot="tooltip-content"]');
   return { ...view, button, tip };
+}
+
+async function waitHoverArm() {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 100));
+  });
+  await settleReactWork();
 }
 
 test("没悬停、没聚焦时不挂 Tooltip：按钮原样渲染，没有 Base UI trigger 标记和弹层", () => {
@@ -74,7 +86,7 @@ test("第一次悬停就挂上并当场出现，位置参数不变；离开后�
     fireEvent.pointerEnter(button(), { pointerType: "mouse" });
     fireEvent.mouseEnter(button());
   });
-  await settleReactWork();
+  await waitHoverArm();
   expect(button().hasAttribute("data-base-ui-tooltip-trigger")).toBe(true);
   const popup = tip();
   expect(popup?.textContent).toBe("关闭面板Ctrl+.");
@@ -88,6 +100,58 @@ test("第一次悬停就挂上并当场出现，位置参数不变；离开后�
   await new Promise((r) => setTimeout(r, 50));
   await settleReactWork();
   expect(tip()?.getAttribute("data-open") ?? null).toBeNull();
+});
+
+test("快速移入并点击（mouseenter 紧跟 pointerdown → mousedown → mouseup → click）100% 触发 onClick 且不卸载按钮", async () => {
+  let clicks = 0;
+  const { button, tip } = renderTip(() => {
+    clicks += 1;
+  });
+  const before = button();
+  await act(async () => {
+    fireEvent.pointerEnter(before, { pointerType: "mouse" });
+    fireEvent.mouseEnter(before);
+    fireEvent.pointerDown(before, { pointerType: "mouse" });
+    fireEvent.mouseDown(before);
+    fireEvent.pointerUp(before, { pointerType: "mouse" });
+    fireEvent.mouseUp(before);
+    fireEvent.click(before);
+  });
+  await settleReactWork();
+  expect(clicks).toBe(1);
+  expect(before.isConnected).toBe(true);
+  expect(button()).toBe(before);
+  expect(before.hasAttribute("data-base-ui-tooltip-trigger")).toBe(false);
+  expect(tip()).toBeNull();
+
+  // 已取消的悬停计时器不会在点击结束后延迟卸载重挂按钮。
+  await waitHoverArm();
+  expect(before.isConnected).toBe(true);
+  expect(button()).toBe(before);
+
+  // 点击结束后再次稳定悬停，仍可正常挂上并弹出 Tooltip。
+  await act(async () => {
+    fireEvent.pointerEnter(before, { pointerType: "mouse" });
+    fireEvent.mouseEnter(before);
+  });
+  await waitHoverArm();
+  expect(button().hasAttribute("data-base-ui-tooltip-trigger")).toBe(true);
+  expect(tip()?.textContent).toBe("关闭面板Ctrl+.");
+});
+
+test("短暂划过按钮未满悬停阈值即移走，不挂载 Tooltip 也不换节点", async () => {
+  const { button, tip } = renderTip();
+  const before = button();
+  await act(async () => {
+    fireEvent.pointerEnter(before, { pointerType: "mouse" });
+    fireEvent.mouseEnter(before);
+    fireEvent.mouseLeave(before);
+  });
+  await waitHoverArm();
+  expect(before.isConnected).toBe(true);
+  expect(button()).toBe(before);
+  expect(before.hasAttribute("data-base-ui-tooltip-trigger")).toBe(false);
+  expect(tip()).toBeNull();
 });
 
 test("触屏进入不挂、不弹", async () => {
@@ -142,7 +206,7 @@ test("拿着焦点的懒按钮被悬停换成真 Trigger 时焦点不丢", async
     fireEvent.pointerEnter(button(), { pointerType: "mouse" });
     fireEvent.mouseEnter(button());
   });
-  await settleReactWork();
+  await waitHoverArm();
   expect(button().hasAttribute("data-base-ui-tooltip-trigger")).toBe(true);
   expect(document.activeElement).toBe(button());
 });

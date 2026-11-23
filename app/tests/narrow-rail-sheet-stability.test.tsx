@@ -169,20 +169,29 @@ describe("窄窗面板抽屉与右栏轮询门控", () => {
     const opener = view?.container.querySelector(".rail-tab.is-narrow");
     expect(opener).not.toBeNull();
 
-    // 2. 点击把手打开抽屉：把手卸载，但 body[data-has-narrow-rail] 必须保持 true
+    // 2. 点击把手打开抽屉：把手通过 data-hidden 平滑退场，body[data-has-narrow-rail] 必须保持 true
     await act(async () => {
       if (opener) fireEvent.click(opener);
     });
     await settleReactWork();
-    expect(view?.container.querySelector(".rail-tab.is-narrow")).toBeNull();
+    const openerWhileOpen = view?.container.querySelector(
+      ".rail-tab.is-narrow",
+    );
+    expect(openerWhileOpen?.getAttribute("data-hidden")).toBe("true");
+    expect(openerWhileOpen?.getAttribute("aria-hidden")).toBe("true");
     expect(document.body.hasAttribute("data-has-narrow-rail")).toBe(true);
 
-    // 3. 关闭抽屉：把手重新挂载，body[data-has-narrow-rail] 依然保持 true
+    // 3. 关闭抽屉：把手恢复可见，body[data-has-narrow-rail] 依然保持 true
     await act(async () => {
       setPanelSheetOpen(false);
     });
     await settleReactWork();
-    expect(view?.container.querySelector(".rail-tab.is-narrow")).not.toBeNull();
+    const openerAfterClose = view?.container.querySelector(
+      ".rail-tab.is-narrow",
+    );
+    expect(openerAfterClose).not.toBeNull();
+    expect(openerAfterClose?.getAttribute("data-hidden")).toBeNull();
+    expect(openerAfterClose?.getAttribute("aria-hidden")).toBeNull();
     expect(document.body.hasAttribute("data-has-narrow-rail")).toBe(true);
 
     // 4. 窗口拉宽至 >= 1280px：进入常驻栏模式，此时才移除 body[data-has-narrow-rail]

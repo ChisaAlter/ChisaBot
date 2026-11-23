@@ -1,6 +1,7 @@
 import { IconArrowDown, IconArrowUp, IconX } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { PageSkeleton } from "@/components/layout/page-shell";
 import { useMutationFeedback } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import {
@@ -77,12 +78,7 @@ export function FallbackModelsCard({ mainModel }: { mainModel: string }) {
     });
   };
 
-  if (saved.isPending)
-    return (
-      <p className="mt-4 text-muted-foreground text-sm" role="status">
-        {"正在加载…"}
-      </p>
-    );
+  if (saved.isPending) return <PageSkeleton rows={2} />;
   if (saved.error)
     return (
       <p className="mt-4 text-destructive text-sm" role="alert">

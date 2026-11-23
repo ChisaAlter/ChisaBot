@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { useExternalConnection } from "@/hooks";
 import type { ConversationSession } from "@/lib/chat/session-client";
 import { client } from "@/lib/client";
+import { DURATION_MS, usePresenceMount, useRetainedValue } from "@/lib/motion";
 import type {
   ToolOutcomeResolution,
   UnknownToolOperation,
@@ -62,10 +64,13 @@ export function ToolOutcomeNotice({
     },
   );
   const operation = query.data?.[0];
+  const hasOperation = Boolean(operation);
+  const retainedOperation = useRetainedValue(operation ?? null);
+  const presence = usePresenceMount(hasOperation, DURATION_MS.collapse);
   if (query.isError && !operation)
     return (
       <div
-        className="to-card mb-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--line-strong)] p-3 text-sm"
+        className="to-card ch-content-enter mb-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--line-strong)] p-3 text-sm"
         role="alert"
       >
         <span>无法读取待核对操作。</span>
@@ -79,25 +84,31 @@ export function ToolOutcomeNotice({
         </Button>
       </div>
     );
-  if (!operation) return null;
+  const shown = operation ?? retainedOperation;
+  if (!presence.mounted || !shown) return null;
   return (
-    <OutcomeForm
-      key={operation.id}
-      operation={operation}
-      endpoint={endpoint}
-      onResolved={(continued) => {
-        void cache.invalidateQueries({ queryKey: key });
-        onResolved(continued);
-      }}
-    />
+    <SmoothCollapse open={hasOperation} unmountOnExit>
+      <OutcomeForm
+        active={hasOperation}
+        key={shown.id}
+        operation={shown}
+        endpoint={endpoint}
+        onResolved={(continued) => {
+          void cache.invalidateQueries({ queryKey: key });
+          onResolved(continued);
+        }}
+      />
+    </SmoothCollapse>
   );
 }
 
 function OutcomeForm({
+  active,
   operation,
   endpoint,
   onResolved,
 }: {
+  active: boolean;
   operation: UnknownToolOperation;
   endpoint: string;
   onResolved: (continued: boolean) => void;
@@ -106,6 +117,7 @@ function OutcomeForm({
     "",
   );
   const [note, setNote] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const resolve = useMutation({
     mutationFn: async (resolution: ToolOutcomeResolution) => {
       const response = await client(
@@ -129,30 +141,35 @@ function OutcomeForm({
   return (
     <section
       className="to-card mb-3 rounded-xl border border-[var(--line-strong)] p-3 text-sm"
-      aria-label="核对操作结果"
+      aria-label={active ? "核对操作结果" : undefined}
     >
       <h3 className="font-medium">这一步的结果需要你核对</h3>
       <p className="mt-1 text-muted-foreground">
         查看目标服务或文件的实际状态，再记录结果。
       </p>
-      <details className="mt-2">
+      <details
+        className="mt-2"
+        onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
+      >
         <summary className="cursor-pointer py-1">查看操作内容</summary>
-        <p className="mt-1 break-all">{operation.toolName}</p>
-        <dl className="mt-2 space-y-2">
-          {operation.details.map((detail) => (
-            <div key={detail.label}>
-              <dt className="text-muted-foreground">{detail.label}</dt>
-              <dd className="whitespace-pre-wrap break-words">
-                {detail.value}
-              </dd>
-            </div>
-          ))}
-        </dl>
-        {operation.error ? (
-          <p className="mt-2 break-words text-muted-foreground">
-            {operation.error}
-          </p>
-        ) : null}
+        <SmoothCollapse open={detailsOpen}>
+          <p className="mt-1 break-all">{operation.toolName}</p>
+          <dl className="mt-2 space-y-2">
+            {operation.details.map((detail) => (
+              <div key={detail.label}>
+                <dt className="text-muted-foreground">{detail.label}</dt>
+                <dd className="whitespace-pre-wrap break-words">
+                  {detail.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          {operation.error ? (
+            <p className="mt-2 break-words text-muted-foreground">
+              {operation.error}
+            </p>
+          ) : null}
+        </SmoothCollapse>
       </details>
       <form
         className="mt-3 flex flex-col gap-3"

@@ -717,14 +717,17 @@ describe("Composer mount & resize zero forced reflow", () => {
       expect(formOffsetHeightReads).toBe(0);
       expect(formComputedStyleReads).toBe(0);
 
-      // 仅在点击切换展开时采样并触发 FLIP 动画（旧高度复用 borderBoxSize 缓存 68，仅新表单读 1 次 offsetHeight）
+      // 切换展开时共用同一棵 <form> 与 <PromptArea>，仅挂 data-morphing（CSS glass-hold）
+      // 与工具栏 Collapse，不再触发旧表单卸载重挂或同步 offsetHeight / getComputedStyle / WAAPI FLIP
       const expandBtn = view.getByRole("button", { name: "展开输入框选项" });
       formOffsetHeightReads = 0;
       formComputedStyleReads = 0;
       fireEvent.click(expandBtn);
-      expect(formOffsetHeightReads).toBe(1);
-      expect(formComputedStyleReads).toBe(2);
-      expect(animateCalls.length).toBe(1);
+      expect(view.container.querySelector("form")).toBe(form);
+      expect(form?.hasAttribute("data-morphing")).toBe(true);
+      expect(formOffsetHeightReads).toBe(0);
+      expect(formComputedStyleReads).toBe(0);
+      expect(animateCalls.length).toBe(0);
     } finally {
       if (origOffsetHeight) {
         Object.defineProperty(

@@ -1,13 +1,13 @@
 import {
   IconBug,
   IconChevronDown,
-  IconChevronUp,
   IconDownload,
   IconTrash,
 } from "@tabler/icons-react";
 import { useState, useSyncExternalStore } from "react";
 import { PageRows, PageSection } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import {
   Item,
   ItemActions,
@@ -130,16 +130,16 @@ export function DiagnosticsExportSection() {
             <div className="flex flex-wrap items-center gap-2">
               {entries.length > 0 ? (
                 <Button
+                  aria-expanded={expanded}
                   onClick={() => setExpanded((prev) => !prev)}
                   size="sm"
                   type="button"
                   variant="ghost"
                 >
-                  {expanded ? (
-                    <IconChevronUp className="size-3.5" />
-                  ) : (
-                    <IconChevronDown className="size-3.5" />
-                  )}
+                  <IconChevronDown
+                    aria-hidden
+                    className={`size-3.5 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+                  />
                   {expanded ? "收起" : "预览"}
                 </Button>
               ) : null}
@@ -167,40 +167,38 @@ export function DiagnosticsExportSection() {
           </ItemActions>
         </Item>
 
-        {expanded && entries.length > 0 ? (
-          <>
-            <Separator />
-            <div
-              className="max-h-60 space-y-1.5 overflow-y-auto px-4 py-3 font-mono text-xs"
-              data-testid="diagnostics-preview-list"
-            >
-              {entries
-                .slice(-20)
-                .reverse()
-                .map((entry) => (
-                  <div
-                    className="flex flex-wrap items-baseline justify-between gap-2 rounded-md border px-2.5 py-1.5"
-                    key={entry.id}
-                  >
-                    <div className="min-w-0 flex-1 truncate">
-                      <span className="mr-1.5 text-muted-foreground">
-                        {`[${CATEGORY_LABELS[entry.category]}]`}
-                      </span>
-                      <span className="font-medium">{entry.event}</span>
-                      {entry.message ? (
-                        <span className="ml-1.5 text-muted-foreground">
-                          {entry.message}
-                        </span>
-                      ) : null}
-                    </div>
-                    <span className="shrink-0 text-muted-foreground tabular-nums">
-                      {formatTime(entry.at)}
+        <SmoothCollapse open={expanded && entries.length > 0} unmountOnExit>
+          <Separator />
+          <div
+            className="max-h-60 space-y-1.5 overflow-y-auto px-4 py-3 font-mono text-xs"
+            data-testid="diagnostics-preview-list"
+          >
+            {entries
+              .slice(-20)
+              .reverse()
+              .map((entry) => (
+                <div
+                  className="flex flex-wrap items-baseline justify-between gap-2 rounded-md border px-2.5 py-1.5"
+                  key={entry.id}
+                >
+                  <div className="min-w-0 flex-1 truncate">
+                    <span className="mr-1.5 text-muted-foreground">
+                      {`[${CATEGORY_LABELS[entry.category]}]`}
                     </span>
+                    <span className="font-medium">{entry.event}</span>
+                    {entry.message ? (
+                      <span className="ml-1.5 text-muted-foreground">
+                        {entry.message}
+                      </span>
+                    ) : null}
                   </div>
-                ))}
-            </div>
-          </>
-        ) : null}
+                  <span className="shrink-0 text-muted-foreground tabular-nums">
+                    {formatTime(entry.at)}
+                  </span>
+                </div>
+              ))}
+          </div>
+        </SmoothCollapse>
       </PageRows>
     </PageSection>
   );

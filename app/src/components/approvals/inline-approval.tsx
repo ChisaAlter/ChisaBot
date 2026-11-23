@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { ConfirmCardView } from "@/components/chat/confirm-card";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import {
   type ApprovalDecision,
   approvalInboxOptions,
   decideApproval,
 } from "@/lib/approvals";
+import { DURATION_MS, usePresenceMount, useRetainedValue } from "@/lib/motion";
 
 /**
  * A pending approval, drawn in the conversation where the action it holds would have been.
@@ -23,39 +25,62 @@ export function InlineApproval({
 }) {
   const cache = useQueryClient();
   const inbox = useQuery(approvalInboxOptions());
-  const decision = useMutation({
-    mutationFn: (choice: ApprovalDecision) =>
-      decideApproval(request?.id ?? "", choice),
-    onSuccess: () => cache.invalidateQueries({ queryKey: ["approvals"] }),
-  });
+  const [decidedStatus, setDecidedStatus] = useState<
+    "approved" | "denied" | null
+  >(null);
   const request = toolCallId
     ? inbox.data?.requests.find(
         (candidate) => candidate.action.toolCallId === toolCallId,
       )
     : undefined;
-  if (request?.status !== "pending") return <>{fallback}</>;
-  const handOff = request.action.policy?.behaviour === "hand_off";
-  const decide = (choice: ApprovalDecision) => decision.mutateAsync(choice);
+  const pending = request?.status === "pending";
+  const retainedRequest = useRetainedValue(pending ? request : null);
+  const cardPresence = usePresenceMount(pending, DURATION_MS.collapse);
+  const decision = useMutation({
+    mutationFn: (choice: ApprovalDecision) =>
+      decideApproval(request?.id ?? "", choice),
+    onSuccess: () => cache.invalidateQueries({ queryKey: ["approvals"] }),
+  });
+
+  const shownRequest = pending ? request : retainedRequest;
+  const showingCard = Boolean(
+    shownRequest && (pending || (cardPresence.mounted && decidedStatus)),
+  );
+  if (!showingCard || !shownRequest) return <>{fallback}</>;
+  const handOff = shownRequest.action.policy?.behaviour === "hand_off";
+  const decide = async (choice: ApprovalDecision) => {
+    setDecidedStatus(choice === "deny" ? "denied" : "approved");
+    await decision.mutateAsync(choice);
+  };
   // 上游审批（云端浏览器的安全规则、规则「先问」等）也用 ChisaBot 的确认卡片外观（DESIGN.md §58）。
-  const what = request.action.toolRef.replace(/^computer_|^host\//, "").replaceAll("_", " ");
-  const payment = /pay|checkout|purchase|付款|支付|下单/i.test(`${request.action.policy?.reason ?? ""} ${request.action.scope}`);
-  const reason = zhReason(request.action.policy?.reason);
+  const what = shownRequest.action.toolRef
+    .replace(/^computer_|^host\//, "")
+    .replaceAll("_", " ");
+  const payment = /pay|checkout|purchase|付款|支付|下单/i.test(
+    `${shownRequest.action.policy?.reason ?? ""} ${shownRequest.action.scope}`,
+  );
+  const reason = zhReason(shownRequest.action.policy?.reason);
   return (
-    <ConfirmCardView
-      approveLabel={handOff ? "我已自己完成" : "确认"}
-      denyLabel={handOff ? "不要执行" : "取消"}
-      model={{
-        category: payment ? "purchase" : "device",
-        eyebrow: handOff ? "这一步要你亲自完成" : undefined,
-        title: handOff ? (reason ?? `${what}：${request.action.scope}`) : `云端浏览器：${what}`,
-        target: request.action.scope,
-        details: reason && !handOff ? [{ label: "原因", value: reason }] : [],
-        status: "pending",
-      }}
-      onApprove={() => decide(handOff ? "handled" : "allow_once")}
-      onDeny={() => decide("deny")}
-      testId="upstream-approval-card"
-    />
+    <SmoothCollapse open={pending} unmountOnExit>
+      <ConfirmCardView
+        approveLabel={handOff ? "我已自己完成" : "确认"}
+        denyLabel={handOff ? "不要执行" : "取消"}
+        model={{
+          category: payment ? "purchase" : "device",
+          eyebrow: handOff ? "这一步要你亲自完成" : undefined,
+          title: handOff
+            ? (reason ?? `${what}：${shownRequest.action.scope}`)
+            : `云端浏览器：${what}`,
+          target: shownRequest.action.scope,
+          details:
+            reason && !handOff ? [{ label: "原因", value: reason }] : [],
+          status: pending ? "pending" : (decidedStatus ?? "approved"),
+        }}
+        onApprove={() => decide(handOff ? "handled" : "allow_once")}
+        onDeny={() => decide("deny")}
+        testId={pending ? "upstream-approval-card" : undefined}
+      />
+    </SmoothCollapse>
   );
 }
 
@@ -91,10 +116,17 @@ export function PendingApprovals({
       ),
   );
   const ids = toolCallIds.filter((id) => waiting.has(id));
-  if (ids.length === 0) return null;
+  const hasWaiting = ids.length > 0;
+  const lastIds = useRef<string[]>([]);
+  if (hasWaiting) {
+    lastIds.current = ids;
+  }
+  const presence = usePresenceMount(hasWaiting, DURATION_MS.collapse);
+  const shownIds = hasWaiting ? ids : lastIds.current;
+  if (!presence.mounted || shownIds.length === 0) return null;
   return (
     <div className="mt-2 space-y-2">
-      {ids.map((id) => (
+      {shownIds.map((id) => (
         <InlineApproval key={id} toolCallId={id} fallback={null} />
       ))}
     </div>

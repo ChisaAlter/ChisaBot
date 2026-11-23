@@ -1,6 +1,7 @@
 import {
   IconAlertTriangle,
   IconBolt,
+  IconChevronDown,
   IconCode,
   IconPlayerStopFilled,
   IconServer,
@@ -12,6 +13,7 @@ import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
 import { CopyButton } from "@/components/ui/copy-button";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import { Card, SettingRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
@@ -291,6 +293,7 @@ function EditRow({ entry }: { entry: DeviceAuditEntry }) {
   return (
     <div className="device-edit">
       <button
+        aria-expanded={hasDiff ? open : undefined}
         className="device-edit-head"
         disabled={!hasDiff}
         onClick={() => setOpen((v) => !v)}
@@ -310,23 +313,34 @@ function EditRow({ entry }: { entry: DeviceAuditEntry }) {
             .filter(Boolean)
             .join(" · ")}
         </span>
+        {hasDiff ? (
+          <IconChevronDown
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+              open && "rotate-180",
+            )}
+          />
+        ) : null}
       </button>
-      {open && hasDiff ? (
-        <pre className="device-diff">
-          {diff.map((line, index) => (
-            <span
-              className={cn(
-                line.startsWith("+") && !line.startsWith("+++") && "is-add",
-                line.startsWith("-") && !line.startsWith("---") && "is-del",
-                line.startsWith("@@") && "is-hunk",
-              )}
-              // biome-ignore lint/suspicious/noArrayIndexKey: diff 文本按行渲染：只读、不重排、行没有稳定 id
-              key={index}
-            >
-              {`${line}\n`}
-            </span>
-          ))}
-        </pre>
+      {hasDiff ? (
+        <SmoothCollapse open={open} unmountOnExit>
+          <pre className="device-diff">
+            {diff.map((line, index) => (
+              <span
+                className={cn(
+                  line.startsWith("+") && !line.startsWith("+++") && "is-add",
+                  line.startsWith("-") && !line.startsWith("---") && "is-del",
+                  line.startsWith("@@") && "is-hunk",
+                )}
+                // biome-ignore lint/suspicious/noArrayIndexKey: diff 文本按行渲染：只读、不重排、行没有稳定 id
+                key={index}
+              >
+                {`${line}\n`}
+              </span>
+            ))}
+          </pre>
+        </SmoothCollapse>
       ) : null}
     </div>
   );

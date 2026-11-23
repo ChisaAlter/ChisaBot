@@ -13,6 +13,7 @@ import { BotAvatar } from "@/components/agents/bot-avatar";
 import { ShapeAvatar, type ShapeMood } from "@/components/agents/shape-avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import {
   Dialog,
@@ -443,7 +444,7 @@ function AvatarDialogBody({
           ))}
         </div>
 
-        <div className="bot-ava-stage">
+        <ContentEnter className="bot-ava-stage" key={tab}>
           {tab === "shape" ? (
             <ShapePicker
               color={shapeColor}
@@ -585,7 +586,7 @@ function AvatarDialogBody({
               </div>
             </div>
           )}
-        </div>
+        </ContentEnter>
         <input
           accept={ACCEPTED_AVATAR_TYPES}
           className="sr-only"

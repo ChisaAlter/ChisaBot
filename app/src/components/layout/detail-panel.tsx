@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useTimeout } from "@/hooks";
-import { EASE_OUT } from "@/lib/motion";
+import { EASE_OUT, useRetainedValue } from "@/lib/motion";
 
 /**
  * A main pane with details beside it when there is room, or in a sheet on narrow windows.
@@ -34,7 +34,7 @@ const MIN_MAIN_WIDTH = 400;
  */
 const CONTENT_ENTRANCE_SECONDS = 0.18;
 const CONTENT_ENTRANCE_DELAY_SECONDS = 0.12;
-const CONTENT_ENTRANCE_OFFSET = "translateY(8px)";
+const CONTENT_ENTRANCE_OFFSET_PX = 8;
 
 function DetailPanelPane({
   overlay,
@@ -57,6 +57,7 @@ function DetailPanelPane({
 }) {
   // Reduced motion keeps the fade, which explains the change, and drops the movement.
   const shouldReduceMotion = useReducedMotion();
+  const retainedDetail = useRetainedValue(open ? detail : null);
   const openRef = useRef(open);
   openRef.current = open;
 
@@ -86,7 +87,7 @@ function DetailPanelPane({
             {title ?? "详情"}
           </SheetTitle>
           <div className="flex-1 min-h-0 overflow-y-auto">
-            {open ? detail : null}
+            {retainedDetail}
           </div>
         </SheetContent>
       </Sheet>
@@ -128,17 +129,16 @@ function DetailPanelPane({
           </div>
         </div>
         {/*
-         * Unmount while closed so dismissed form state and detail queries do not remain active.
+         * 退场期间保留内容直到 onExited 整块卸载，避免关闭第 0 帧空壳收缩；
+         * 使用数值 y: 0 确保动画结束自动归零 transform: none，不留永久合成层。
          */}
-        {open ? (
+        {retainedDetail ? (
           <motion.div
-            animate={{ opacity: 1, transform: "translateY(0px)" }}
+            animate={{ opacity: 1, y: 0 }}
             className="flex-1 min-h-0 overflow-y-auto"
             initial={{
               opacity: 0,
-              transform: shouldReduceMotion
-                ? "none"
-                : CONTENT_ENTRANCE_OFFSET,
+              y: shouldReduceMotion ? 0 : CONTENT_ENTRANCE_OFFSET_PX,
             }}
             transition={{
               delay: shouldReduceMotion
@@ -148,7 +148,7 @@ function DetailPanelPane({
               ease: EASE_OUT,
             }}
           >
-            {detail}
+            {retainedDetail}
           </motion.div>
         ) : null}
       </div>
