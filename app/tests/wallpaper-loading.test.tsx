@@ -12,9 +12,8 @@ import { act, cleanup, render } from "@testing-library/react";
 import { settleReactWork } from "./settle-react-work";
 
 /**
- * 刷新时「壁纸读取中」：localStorage 只有占位标记、选的是自定义壁纸时，先只铺主题纯色、不挂天空；
+ * 刷新时「壁纸读取中」：V2 配置里选的是自定义壁纸时，先只铺主题纯色、不挂天空；
  * IndexedDB 读回成功直接显示壁纸；读取失败、没有记录或超过约 1.5 秒才退回天空。
- * 「天空露出来」= 挂着天空占位（#skyph）却没有壁纸层盖住（有壁纸时天空节点照常在壁纸下面，看不到）。
  * DOM 每次变化（MutationObserver）和外观状态每次变化（subscribeAppearance）都检查一遍：先闪一帧也算失败。
  */
 type Appearance = typeof import("../src/lib/appearance");
@@ -34,6 +33,7 @@ beforeAll(async () => {
   ({ SkyBackground } = await import("../src/components/sky-background"));
   ({ ThemeProvider } = await import("../src/components/theme-provider"));
 });
+
 afterAll(async () => {
   await settleReactWork();
   await GlobalRegistrator.unregister();
@@ -46,7 +46,6 @@ let skyShown: string[];
 let observer: MutationObserver;
 let unsubscribe: () => void;
 
-/** get() 由测试决定什么时候、以什么结果返回。 */
 function controlledBackend() {
   let settle: (value: string | null) => void = () => {};
   let fail: (error: Error) => void = () => {};
@@ -64,7 +63,6 @@ function controlledBackend() {
 
 beforeEach(() => {
   window.localStorage.clear();
-  // 退回天空时组件会去取 /wallpaper_core.html：测试里不发真请求，直接 404（引擎不启动）。
   originalFetch = window.fetch;
   window.fetch = (async () =>
     new Response(null, { status: 404 })) as unknown as typeof window.fetch;
@@ -74,17 +72,22 @@ beforeEach(() => {
     if (
       root?.querySelector("#skyph") &&
       !root.querySelector(".chisabot-wallpaper")
-    )
+    ) {
       skyShown.push("dom");
+    }
   });
   observer.observe(document.body, { childList: true, subtree: true });
   unsubscribe = appearance.subscribeAppearance(() => {
-    const state = appearance.getAppearanceState();
+    const config = appearance.getAppearanceConfig();
     if (
       !appearance.isWallpaperLoading() &&
-      appearance.resolveActiveWallpaperCss(state) === null
-    )
+      appearance.resolveWallpaperCssFromConfig(
+        config,
+        appearance.getCustomWallpaperUrl(),
+      ) === null
+    ) {
       skyShown.push("state");
+    }
   });
 });
 
@@ -92,7 +95,7 @@ afterEach(async () => {
   observer.disconnect();
   unsubscribe();
   cleanup();
-  appearance.resetAppearanceDefaults();
+  appearance.resetAppearance();
   appearance.flushAppearanceWrites();
   if (restoreBackend) store.setWallpaperBackend(restoreBackend);
   window.fetch = originalFetch;
@@ -100,12 +103,18 @@ afterEach(async () => {
   await settleReactWork();
 });
 
-/** 模拟刷新：localStorage 里是自定义壁纸 + 占位标记，然后重新读取外观、挂上背景。 */
 function refreshWithStoredWallpaper() {
-  window.localStorage.setItem(appearance.WALLPAPER_ID_STORAGE_KEY, "custom");
   window.localStorage.setItem(
-    appearance.WALLPAPER_CUSTOM_URL_STORAGE_KEY,
-    store.WALLPAPER_IDB_MARKER,
+    appearance.APPEARANCE_STORAGE_KEY,
+    JSON.stringify({
+      ...appearance.DEFAULT_APPEARANCE_CONFIG,
+      canvas: {
+        kind: "wallpaper",
+        source: "custom",
+        blur: 0,
+        scrim: 35,
+      },
+    }),
   );
   const loaded = appearance.reloadAppearanceFromStorage();
   render(
@@ -149,11 +158,13 @@ describe("刷新时自定义壁纸不先闪天空", () => {
     });
 
     expect(appearance.isWallpaperLoading()).toBe(false);
-    expect(appearance.getAppearanceState().customWallpaperUrl).toBe(DATA_URL);
+    expect(appearance.getCustomWallpaperUrl()).toBe(DATA_URL);
     const root = skyRoot();
     expect(root?.hasAttribute("data-wallpaper-loading")).toBe(false);
     expect(root?.querySelector(".chisabot-wallpaper")).not.toBeNull();
-    expect(document.documentElement.getAttribute("data-wallpaper")).toBe("on");
+    expect(document.documentElement.getAttribute("data-canvas")).toBe(
+      "wallpaper",
+    );
     expect(document.documentElement.hasAttribute("data-sky-off")).toBe(true);
     expect(skyShown).toEqual([]);
   });
@@ -169,7 +180,7 @@ describe("刷新时自定义壁纸不先闪天空", () => {
     });
 
     expectSkyBack();
-    expect(appearance.getAppearanceState().customWallpaperUrl).toBe("");
+    expect(appearance.getCustomWallpaperUrl()).toBe("");
   });
 
   test("IndexedDB 里没有记录：退回天空", async () => {
@@ -186,7 +197,7 @@ describe("刷新时自定义壁纸不先闪天空", () => {
   });
 
   test("超过约 1.5 秒还没读回：退回天空，之前一直是纯色", async () => {
-    controlledBackend(); // 永远不返回
+    controlledBackend();
     const started = performance.now();
     const loaded = refreshWithStoredWallpaper();
     expectLoadingShell();
@@ -221,17 +232,21 @@ describe("壁纸读取中的边界", () => {
       db.settle(DATA_URL);
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(appearance.getAppearanceState().customWallpaperUrl).toBe(DATA_URL);
+    expect(appearance.getCustomWallpaperUrl()).toBe(DATA_URL);
     expect(skyRoot()?.querySelector(".chisabot-wallpaper")).not.toBeNull();
   });
 
-  test("读取中改选别的壁纸：立即结束读取中，迟到的读取结果不覆盖用户的选择", async () => {
+  test("读取中改选动态天空：立即结束读取中，迟到的读取结果不覆盖用户的选择", async () => {
     const db = controlledBackend();
     const loaded = refreshWithStoredWallpaper();
     expectLoadingShell();
 
     act(() => {
-      appearance.updateAppearance({ wallpaperId: "none" });
+      appearance.setCanvas({
+        kind: "sky",
+        scene: "auto",
+        weather: { enabled: false, city: null },
+      });
     });
     expect(appearance.isWallpaperLoading()).toBe(false);
     expect(skyRoot()?.hasAttribute("data-wallpaper-loading")).toBe(false);
@@ -240,8 +255,8 @@ describe("壁纸读取中的边界", () => {
     await act(async () => {
       await loaded;
     });
-    expect(appearance.getAppearanceState().wallpaperId).toBe("none");
-    expect(appearance.getAppearanceState().customWallpaperUrl).toBe("");
+    expect(appearance.getAppearanceConfig().canvas.kind).toBe("sky");
+    expect(appearance.getCustomWallpaperUrl()).toBe("");
     expect(appearance.isWallpaperLoading()).toBe(false);
   });
 });

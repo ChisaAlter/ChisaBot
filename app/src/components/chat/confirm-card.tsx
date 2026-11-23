@@ -114,6 +114,7 @@ export function ConfirmCardView({
     <section
       aria-label={`${pending ? "需要你确认" : DECIDED_TEXT[model.status as Exclude<ConfirmStatus, "pending">]}：${model.title}`}
       className="cf-card"
+      data-surface="bubble"
       data-category={model.category}
       data-state={model.status}
       data-testid={testId}

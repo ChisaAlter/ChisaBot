@@ -258,6 +258,7 @@ export function PageRows({
         "[&_[data-slot=item]]:rounded-none",
         className,
       )}
+      data-surface="control"
     >
       {children}
     </div>

@@ -50,7 +50,11 @@ export const PageCard = memo(function PageCard({ pageId, pendingTitle, failed }:
   const url = page ? pageUrl(page) : "";
   const title = page?.title ?? pendingTitle ?? "页面";
   return (
-    <div className="page-card" data-state={building ? "building" : gone ? "gone" : page?.published ? "live" : "off"}>
+    <div
+      className="page-card"
+      data-state={building ? "building" : gone ? "gone" : page?.published ? "live" : "off"}
+      data-surface="bubble"
+    >
       {page?.published ? (
         <a aria-label={`打开页面「${title}」`} className="page-card-media" href={url} rel="noopener noreferrer" target="_blank">
           <PageThumb page={page} scale={0.3} />

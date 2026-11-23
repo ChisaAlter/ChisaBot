@@ -1,0 +1,191 @@
+/* ==========================================================================================
+ * ChisaBot 唯一背景画布层（Wave A · canvas.css）
+ *
+ * 严格三选一互斥：
+ *   html[data-canvas="pure"]      — 极简主题微渐变，零 GPU 动画，零 WebGL
+ *   html[data-canvas="sky"]       — WebGL #gl / #skyph 占位 + 单层轻薄天空护读幕
+ *   html[data-canvas="wallpaper"] — .chisabot-wallpaper-img（--canvas-blur）+ 全站唯一单层护眼薄幕（--canvas-scrim）
+ *
+ * 性能与门禁红线：
+ * - 彻底移除旧 body 6 层渐变、body::before 星空、.chisabot-ambient-orbs、.chisabot-wallpaper-dim
+ *   与双层叠幕，全站仅保留一层统一护眼薄幕；
+ * - 严禁给 body / body::before 写无条件 transition；仅在 html[data-sky-ease] 等短时态下过渡；
+ * - #sky-root 保持 contain: strict，--canvas-blur / --canvas-scrim 仅挂在 #sky-root 并仅在子树内继承；
+ * - 置为未分层顶层规则，确保不被 Tailwind @layer base 覆盖。
+ * ========================================================================================== */
+
+body {
+  margin: 0;
+  position: relative;
+  min-width: 20rem;
+  min-height: 100vh;
+  background: var(--canvas-pure-bg);
+  background-color: var(--canvas-pure-base);
+  color: var(--foreground);
+  font-family: var(--font);
+  font-size: var(--fs-14);
+  line-height: var(--lh);
+  -webkit-font-smoothing: antialiased;
+}
+
+#sky-root {
+  --canvas-blur: 0px;
+  --canvas-scrim: 0.35;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  contain: strict;
+  background: var(--canvas-pure-bg);
+}
+
+#sky-root #gl {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#sky-root #skyfreeze {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#sky-root #skyfreeze.on {
+  opacity: 1;
+}
+
+#sky-root #skyph {
+  position: absolute;
+  inset: 0;
+  background: var(--canvas-pure-bg);
+  transition: opacity 0.22s ease;
+}
+
+html[data-sky-painted] #sky-root #skyph {
+  opacity: 0;
+}
+
+#sky-root #glfail {
+  display: none;
+}
+
+/* ── 1. 净色画布（pure）：纯主题微渐变，隐藏 WebGL 与壁纸节点，零额外薄幕 ── */
+html[data-canvas="pure"] #sky-root #gl,
+html[data-canvas="pure"] #sky-root #skyfreeze,
+html[data-canvas="pure"] #sky-root .chisabot-wallpaper {
+  display: none;
+}
+html[data-canvas="pure"] #sky-root #skyph {
+  opacity: 1;
+}
+html[data-canvas="pure"] #sky-root::after {
+  content: none;
+}
+
+/* ── 2. 动态天空画布（sky）：WebGL 天空 + 单层轻薄护读幕 ── */
+html[data-canvas="sky"] #sky-root .chisabot-wallpaper {
+  display: none;
+}
+html[data-canvas="sky"] #sky-root::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--sky-veil-bg);
+}
+/* 静止动态背景 / 天空停用：停画 WebGL，露出主题静态渐变占位 */
+html:is([data-static-bg="on"], [data-sky-off]) #sky-root #gl {
+  visibility: hidden;
+}
+html:is([data-static-bg="on"], [data-sky-off]) #sky-root #skyph {
+  opacity: 1;
+}
+
+/* ── 3. 壁纸画布（wallpaper）：单图（读 #sky-root 的 --canvas-blur）+ 全站唯一护眼薄幕（--canvas-scrim） ── */
+html[data-canvas="wallpaper"] #sky-root #gl,
+html[data-canvas="wallpaper"] #sky-root #skyfreeze,
+html[data-canvas="wallpaper"] #sky-root #skyph {
+  display: none;
+}
+
+.chisabot-wallpaper {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.chisabot-wallpaper-img {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  filter: blur(var(--canvas-blur, 0px));
+  transition: transform 0.25s ease;
+}
+
+/* 当启用壁纸模糊时轻微放大防边缘露白（仅依赖 --canvas-blur > 0 场景由组件/属性标记） */
+.chisabot-wallpaper-img[data-blur="on"],
+.chisabot-wallpaper-img[data-blur] {
+  inset: -24px;
+}
+
+/* 全站唯一壁纸护眼薄幕：只画这唯一一层，严禁卡片/气泡或 .chisabot-wallpaper::after 再叠第二层 */
+html[data-canvas="wallpaper"] #sky-root::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: rgb(var(--canvas-scrim-rgb) / var(--canvas-scrim, 0.35));
+}
+
+/* 仅在显式短时态 html[data-sky-ease] 下对画布占位做柔和过渡，绝不触碰 body 无条件 transition */
+html[data-sky-ease] #sky-root #skyph {
+  transition: opacity 0.6s ease;
+}
+
+/* 壁纸双图层交叉淡入（在 #sky-root contain: strict 内，零主线程重排） */
+@keyframes ch-wallpaper-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.chisabot-wallpaper-img-prev {
+  z-index: 0;
+}
+.chisabot-wallpaper-img-enter {
+  z-index: 1;
+  animation: ch-wallpaper-fade var(--dur-3) var(--ease-out);
+}
+
+/* 主工作台、登录与引导舞台浮于 #sky-root 之上，并消除祖先动画导致的 Backdrop Root 截断 */
+.glass-shell,
+.sign-stage,
+.onb-stage {
+  position: relative;
+  z-index: 1;
+}
+.glass-shell,
+[data-slot="sidebar-wrapper"],
+.glass-side-full,
+.glass-mini,
+.page,
+.jr-el,
+.live-panel {
+  animation: none;
+}

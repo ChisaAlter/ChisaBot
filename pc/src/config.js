@@ -30,8 +30,8 @@ const DEFAULTS = {
   autoUpdate: true,
   /** 上次刷新快捷方式 / 图标缓存时的外壳指纹（src/shell-refresh.js）；和当前版本不同就再刷新一次。 */
   shellHash: "",
-  /** 主窗口里网页的外观（深色 / 时间天空），本机窗口跟着它走；dark 为 null 时跟随系统。 */
-  appearance: { dark: null, sky: true },
+  /** 主窗口里网页的外观（深浅色 / 主题 / 材质 / 画布 / 时间天空），本机窗口跟着它走；dark 为 null 时跟随系统。 */
+  appearance: { dark: null, theme: "sky", material: "glass", canvas: "sky", sky: true },
   /** 硬件加速开关（重启客户端后生效）；遇到显卡兼容黑屏/花屏时可关闭。 */
   hardwareAcceleration: true,
   /** 渲染进程拼写检查开关（配合原生右键菜单拼写建议）。 */

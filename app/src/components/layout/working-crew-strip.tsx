@@ -102,6 +102,7 @@ export const WorkingCrewStrip = memo(function WorkingCrewStrip({
     <nav
       aria-label="正在工作的机器人"
       className={cn("working-crew-strip ch-content-enter relative", className)}
+      data-surface="control"
       data-testid="working-crew-strip"
     >
       <PresenceList>

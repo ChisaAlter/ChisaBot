@@ -48,7 +48,7 @@ export function SidebarSearchField() {
     return onSidebarSearchFocusRequest(focus);
   });
   return (
-    <label className={c.root}>
+    <label className={c.root} data-surface="inset">
       <IconSearch aria-hidden className={c.ico} />
       <input
         aria-activedescendant={search && activeId ? activeId : undefined}

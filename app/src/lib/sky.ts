@@ -168,13 +168,7 @@ export function currentMinuteOfDay(now = new Date()): number {
   return now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
 }
 
-/** Same key the boot script in index.html reads. "off" = fixed blue sky. */
-export const SKY_STORAGE_KEY = "chisabot-sky";
-
 /**
- * The inline boot script (vite plugin injects it as the first thing in <body>). It runs before the
- * skeleton paints, so first paint already has the right sky.
+ * 旧版幽灵存储键（V2 迁移后清退，保留常量仅供测试与清理引用）。
  */
-export function skyBootScript(): string {
-  return `(function(){try{if(window.localStorage.getItem(${JSON.stringify(SKY_STORAGE_KEY)})==="off")return;var computeSky=${computeSky.toString()};var n=new Date();var s=computeSky(n.getHours()*60+n.getMinutes()+n.getSeconds()/60,document.documentElement.classList.contains("dark"));var k;for(k in s.body)document.body.style.setProperty(k,s.body[k]);for(k in s.root)document.documentElement.style.setProperty(k,s.root[k]);document.documentElement.setAttribute("data-sky","time")}catch(e){}})();`;
-}
+export const SKY_STORAGE_KEY = "chisabot-sky";

@@ -77,6 +77,7 @@ const ScheduleCard = memo(function ScheduleCard({
   return (
     <div
       className="schedule-card"
+      data-surface="bubble"
       data-state={pending ? "pending" : "done"}
       data-testid="schedule-card"
     >

@@ -8,85 +8,146 @@ import {
   test,
 } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
 import { AppearancePreferences } from "@/components/settings/appearance-preferences";
 import { ThemeProvider } from "@/components/theme-provider";
 import {
+  APPEARANCE_STORAGE_KEY,
+  DEFAULT_APPEARANCE_CONFIG,
   flushAppearanceWrites,
-  GLASS_OPACITY_MAX,
-  GLASS_OPACITY_MIN,
-  GLASS_OPACITY_STORAGE_KEY,
-  getAppearanceState,
+  getAppearanceConfig,
   HARK_ENGINE_STORAGE_KEYS,
-  HARK_SCENE_STORAGE_KEY,
   HARK_WEATHER_SNAPSHOT_STORAGE_KEY,
+  isDefaultAppearance,
   reloadAppearanceFromStorage,
-  resetAppearanceDefaults,
-  setGlassOpacity,
-  setHarkSkyScene,
+  resetAppearance,
+  setSkyScene,
+  setWallpaperAdjustments,
+  setWallpaperSource,
+  WALLPAPER_BLUR_MAX,
+  WALLPAPER_BLUR_MIN,
+  WALLPAPER_SCRIM_MAX,
+  WALLPAPER_SCRIM_MIN,
 } from "@/lib/appearance";
 import { settleReactWork } from "./settle-react-work";
 
 /**
- * 模块 11 第 10、13 条。
- *
- * 10：「面板雾度」滑块以前是 min 5 / max 45，存储层却允许 5–55——存过 46–55 的人一打开设置页，
- *     滑块就被浏览器夹到 45，拖一下就把自己存的值改掉了。现在滑块和存储共用 GLASS_OPACITY_MIN / MAX。
- * 13：「恢复默认」以前只重置 AppearanceState，天空引擎自己存的地点 / 天气快照（hark-wallpaper-v1）留着，
- *     下次加载还是之前搜过的城市。
+ * V2 壁纸滑块范围契约与恢复默认清理守卫：
+ *  1. 壁纸「背景模糊 (0–24px)」与「护眼薄幕 (0–100%)」UI 滑块范围与存储常量 1:1 严格对齐；
+ *  2. `resetAppearance()` 彻底重置全部 V2 字段、清掉 `hark-wallpaper-v1` 引擎天气快照且不误删无关存储键；
+ *  3. `wallpaper_core.html` 仅使用 `hark-wallpaper-v1` 作为其唯一 `SAVE_KEY`。
  */
 
 beforeAll(() => GlobalRegistrator.register({ url: "http://localhost/" }));
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+});
 afterAll(async () => {
   await settleReactWork();
   await GlobalRegistrator.unregister();
 });
 
-beforeEach(() => {
-  resetAppearanceDefaults();
+beforeEach(async () => {
+  window.localStorage.clear();
+  resetAppearance();
   flushAppearanceWrites();
   window.localStorage.clear();
+  await reloadAppearanceFromStorage();
 });
 
-describe("10) haze slider range matches storage", () => {
-  test("the range constants are the stored 5–55", () => {
-    expect([GLASS_OPACITY_MIN, GLASS_OPACITY_MAX]).toEqual([5, 55]);
-    setGlassOpacity(55);
-    expect(getAppearanceState().glassOpacity).toBe(55);
-    setGlassOpacity(80);
-    expect(getAppearanceState().glassOpacity).toBe(55);
-    setGlassOpacity(1);
-    expect(getAppearanceState().glassOpacity).toBe(5);
+describe("1) 壁纸模糊与护眼薄幕滑块范围与存储常量严格一致", () => {
+  test("存储常量为 blur 0–24、scrim 0–100，并按边界裁剪", () => {
+    expect([WALLPAPER_BLUR_MIN, WALLPAPER_BLUR_MAX]).toEqual([0, 24]);
+    expect([WALLPAPER_SCRIM_MIN, WALLPAPER_SCRIM_MAX]).toEqual([0, 100]);
+
+    setWallpaperSource("waterlily-pond");
+    setWallpaperAdjustments({ blur: 99, scrim: 180 });
+    let cfg = getAppearanceConfig();
+    expect(cfg.canvas.kind).toBe("wallpaper");
+    if (cfg.canvas.kind === "wallpaper") {
+      expect(cfg.canvas.blur).toBe(24);
+      expect(cfg.canvas.scrim).toBe(100);
+    }
+
+    setWallpaperAdjustments({ blur: -10, scrim: -5 });
+    cfg = getAppearanceConfig();
+    if (cfg.canvas.kind === "wallpaper") {
+      expect(cfg.canvas.blur).toBe(0);
+      expect(cfg.canvas.scrim).toBe(0);
+    }
   });
 
-  test("the settings slider is 5–55 and shows a stored 50 as 50", async () => {
-    window.localStorage.setItem(GLASS_OPACITY_STORAGE_KEY, "50");
-    reloadAppearanceFromStorage();
-    expect(getAppearanceState().glassOpacity).toBe(50);
+  test("设置页仅渲染背景模糊与护眼薄幕 2 条滑块且准确回显已存值", async () => {
+    window.localStorage.setItem(
+      APPEARANCE_STORAGE_KEY,
+      JSON.stringify({
+        ...DEFAULT_APPEARANCE_CONFIG,
+        canvas: {
+          kind: "wallpaper",
+          source: "waterlily-pond",
+          blur: 14,
+          scrim: 62,
+        },
+      }),
+    );
+    await reloadAppearanceFromStorage();
 
     const view = render(
       <ThemeProvider>
         <AppearancePreferences />
       </ThemeProvider>,
     );
-    const slider = view.getByLabelText("玻璃面板不透明度") as HTMLInputElement;
-    expect(slider.type).toBe("range");
-    expect(slider.min).toBe(String(GLASS_OPACITY_MIN));
-    expect(slider.max).toBe(String(GLASS_OPACITY_MAX));
-    expect(slider.value).toBe("50");
-    expect(view.container.textContent).toContain("50%（透光率 50%）");
+
+    const blurSlider = view.getByTestId(
+      "wallpaper-blur-slider",
+    ) as HTMLInputElement;
+    const scrimSlider = view.getByTestId(
+      "wallpaper-scrim-slider",
+    ) as HTMLInputElement;
+
+    expect(blurSlider.type).toBe("range");
+    expect(blurSlider.min).toBe(String(WALLPAPER_BLUR_MIN));
+    expect(blurSlider.max).toBe(String(WALLPAPER_BLUR_MAX));
+    expect(blurSlider.value).toBe("14");
+    expect(view.container.textContent).toContain("14 px");
+
+    expect(scrimSlider.type).toBe("range");
+    expect(scrimSlider.min).toBe(String(WALLPAPER_SCRIM_MIN));
+    expect(scrimSlider.max).toBe(String(WALLPAPER_SCRIM_MAX));
+    expect(scrimSlider.value).toBe("62");
+    expect(view.container.textContent).toContain("62%");
+
+    const setSlider = (el: HTMLInputElement, val: string) => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      act(() => {
+        el.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+        setter?.call(el, val);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
+      });
+    };
+    setSlider(blurSlider, "18");
+    setSlider(scrimSlider, "48");
+    const updated = getAppearanceConfig();
+    if (updated.canvas.kind === "wallpaper") {
+      expect(updated.canvas.blur).toBe(18);
+      expect(updated.canvas.scrim).toBe(48);
+    }
   });
 });
 
-describe("13) reset clears the sky engine's keys", () => {
-  test("hark-wallpaper-v1 is one of the engine keys", () => {
+describe("2) 恢复默认彻底清理天气快照与旧键", () => {
+  test("hark-wallpaper-v1 属于天空引擎存储键清单", () => {
     expect(HARK_WEATHER_SNAPSHOT_STORAGE_KEY).toBe("hark-wallpaper-v1");
     expect(HARK_ENGINE_STORAGE_KEYS).toContain("hark-wallpaper-v1");
   });
 
-  test("resetAppearanceDefaults removes the weather / place snapshot and the scene", () => {
-    setHarkSkyScene("2");
+  test("resetAppearance 清掉 hark-wallpaper-v1 与自定义设置，保留无关存储键", () => {
+    setSkyScene("dusk");
     flushAppearanceWrites();
     window.localStorage.setItem(
       HARK_WEATHER_SNAPSHOT_STORAGE_KEY,
@@ -97,32 +158,30 @@ describe("13) reset clears the sky engine's keys", () => {
     );
     window.localStorage.setItem("unrelated-key", "keep");
 
-    resetAppearanceDefaults();
+    resetAppearance();
     flushAppearanceWrites();
 
     for (const key of HARK_ENGINE_STORAGE_KEYS) {
       expect(window.localStorage.getItem(key)).toBeNull();
     }
-    expect(getAppearanceState().harkScene).toBe("auto");
-    const scene = window.localStorage.getItem(HARK_SCENE_STORAGE_KEY);
-    expect(scene === null || scene === "auto").toBe(true);
+    expect(isDefaultAppearance(getAppearanceConfig())).toBe(true);
     expect(window.localStorage.getItem("unrelated-key")).toBe("keep");
   });
 
-  test("reset still works when localStorage throws", () => {
+  test("localStorage.removeItem 抛异常时 resetAppearance 仍不崩溃", () => {
     const original = Storage.prototype.removeItem;
     Storage.prototype.removeItem = () => {
       throw new Error("SecurityError");
     };
     try {
-      expect(() => resetAppearanceDefaults()).not.toThrow();
+      expect(() => resetAppearance()).not.toThrow();
     } finally {
       Storage.prototype.removeItem = original;
     }
   });
 });
 
-test("the sky engine still uses hark-wallpaper-v1 as its only localStorage key", async () => {
+test("天空引擎仅使用 hark-wallpaper-v1 作为唯一 localStorage 键", async () => {
   const { readFileSync } = await import("node:fs");
   const html = readFileSync(
     new URL("../public/wallpaper_core.html", import.meta.url),
@@ -134,7 +193,7 @@ test("the sky engine still uses hark-wallpaper-v1 as its only localStorage key",
       ...html.matchAll(
         /localStorage\.(?:setItem|getItem|removeItem)\(\s*([^,)]+)/g,
       ),
-    ].map((m) => m[1].trim()),
+    ].map((m) => (m[1] ?? "").trim()),
   );
   expect([...keys]).toEqual(["SAVE_KEY"]);
 });

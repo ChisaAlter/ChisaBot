@@ -2861,7 +2861,7 @@ function HistoryNotice({
     { errorToast: false },
   );
   return (
-    <div className="chat-history-notice" role="status">
+    <div className="chat-history-notice" data-surface="bubble" role="status">
       <span>{text}</span>
       {onRetry ? (
         <Button

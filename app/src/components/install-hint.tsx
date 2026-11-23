@@ -105,6 +105,7 @@ export function InstallHint() {
   return (
     <div
       className="install-hint"
+      data-surface="elevated"
       data-state={closing ? "closed" : "open"}
       role="status"
       aria-live="polite"

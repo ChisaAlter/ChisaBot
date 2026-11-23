@@ -7,13 +7,17 @@
  */
 const Appearance = (() => {
   const media = window.matchMedia("(prefers-color-scheme: dark)");
-  let current = { dark: null, sky: true };
+  let current = { dark: null, theme: "sky", material: "glass", canvas: "sky", sky: true };
   function apply() {
     const dark = current.dark === null || current.dark === undefined ? media.matches : !!current.dark;
-    document.documentElement.classList.toggle("dark", dark);
-    document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    const rootEl = document.documentElement;
+    rootEl.classList.toggle("dark", dark);
+    rootEl.style.colorScheme = dark ? "dark" : "light";
+    if (typeof current.theme === "string" && current.theme) rootEl.setAttribute("data-theme", current.theme);
+    if (typeof current.material === "string" && current.material) rootEl.setAttribute("data-material", current.material);
+    if (typeof current.canvas === "string" && current.canvas) rootEl.setAttribute("data-canvas", current.canvas);
     const body = document.body.style;
-    const root = document.documentElement.style;
+    const root = rootEl.style;
     if (current.sky === false || typeof computeSky !== "function") {
       for (const k of ["--sky-1", "--sky-2", "--sky-3", "--sky-4", "--sky-cloud", "--sky-glow", "--sky-glow-x", "--sky-glow-y", "--sky-stars"]) body.removeProperty(k);
       root.removeProperty("--sky-lift");

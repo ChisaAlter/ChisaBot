@@ -323,7 +323,10 @@ export function ModelPicker({
           side="top"
           sideOffset={8}
         >
-          <ComboboxPrimitive.Popup className="model-popover">
+          <ComboboxPrimitive.Popup
+            className="model-popover"
+            data-surface="elevated"
+          >
             <div className="model-popover-search">
               <IconSearch className="size-4 shrink-0 opacity-50" />
               <ComboboxPrimitive.Input

@@ -1,43 +1,41 @@
-/*
- * 性能模式（html[data-perf="on"]，lib/perf-mode.ts）和系统「减少透明度」（prefers-reduced-transparency: reduce）：
- * 全局关掉 backdrop-filter，原来带模糊的元素换成不透明的底色。DESIGN.md §10.3.1。
+/* ==========================================================================================
+ * 全站零模糊与实色降级层（Wave A · perf-noblur.css）
  *
- * 为什么单独一个文件、为什么是 :not(#chisabot-no-blur)：
- * - 一条 `*, *::before, *::after { backdrop-filter: none }` 要压过所有写了模糊的地方：styles.css 里的类选择器
- *   （最多三四个类）、Tailwind 的 backdrop-blur-* 工具类（在 @layer 里，本来就比不分层的样式弱）、第三方组件
- *   （streamdown 代码块 / 图表的操作条用的是 Tailwind 的 supports-[backdrop-filter]:backdrop-blur）、组件里内嵌的
- *   <style>（agent-orb 的 ::after）。
- * - 不用 !important：给 html 加一个永远成立的 :not(#id)，选择器带上一个 id 的优先级，就压过所有只用类和属性的规则，
- *   顺序也不再要紧。页面上没有元素用这个 id。
- * - styles.css 里旧的「三档玻璃」层是 `backdrop-filter: var(--lg-blur) !important`。这里不跟它比 !important，
- *   而是把 --lg-blur 本身设成 none，那条规则读到的就是 none。
- * - 唯一压不过的是元素自己的 style="backdrop-filter: …"（内联样式）和新的 !important；app/tests/no-backdrop.test.ts
- *   不许出现这两种写法。
- */
+ * 生效条件（三者统一走同一套无模糊 + 不透明实色表面契约）：
+ *   1. 材质切换为「实色」（html[data-material="solid"]）
+ *   2. 性能模式（html[data-perf="on"]）
+ *   3. 系统无障碍偏好：prefers-reduced-transparency: reduce / prefers-contrast: more / forced-colors: active
+ *
+ * 设计守则：
+ * - 使用 :not(#chisabot-no-blur) 借 ID 特异度压过所有类 / 属性 / Tailwind 工具类，整文件 0 个 !important；
+ * - 全站 *, *::before, *::after 统一 --surface-blur: none; backdrop-filter: none; 确保 0 个模糊层；
+ * - 所有原玻璃面（[data-surface] 与过渡期兼容类）全部落到清晰不透明 --surface-bg-solid / --glass-bg-opaque，
+ *   绝不出现「无模糊又无底」的透明块；bare 表面保持 transparent。
+ * ========================================================================================== */
 
-/* 不透明的玻璃底色：只在性能模式 / 减少透明度 / 增加对比度 / 强制颜色时用。浅色、深色各一份。 */
-html {
-  --glass-bg-opaque: rgb(246, 247, 250);
-}
-html.dark {
-  --glass-bg-opaque: rgb(29, 31, 36);
-}
-
-/*
- * 同一套规则也用于系统「增加对比度」（prefers-contrast: more）和强制颜色（forced-colors: active，Windows 对比度主题）：
- * 半透明玻璃和模糊会降低文字对比度，在这两种模式下一律换成不透明底色、关掉模糊（模块 11 第 7 条）。
- * 边框、焦点环和文字颜色的加强在 a11y-modes.css。
- */
+/* ── 1. 系统减少透明度 / 增加对比度 / 强制颜色 ──────────────────────────────────────────── */
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more),
   (forced-colors: active) {
+  html:not(#chisabot-no-blur) {
+    --glass-filter: none;
+    --glass-pop-filter: none;
+  }
+
   html:not(#chisabot-no-blur) *,
   html:not(#chisabot-no-blur) *::before,
   html:not(#chisabot-no-blur) *::after {
-    --lg-blur: none;
+    --surface-blur: none;
     backdrop-filter: none;
   }
+
+  /* 全部原玻璃面（[data-surface] + 兼容选择器）落到清晰不透明 --surface-bg-solid */
   html:not(#chisabot-no-blur)
     :is(
+      [data-surface="panel"],
+      [data-surface="elevated"],
+      [data-surface="bubble"],
+      [data-surface="inset"],
+      [data-surface="control"],
       .glass-side-card,
       .acct-card,
       .acct-mini-card,
@@ -51,7 +49,7 @@ html.dark {
       [data-slot="select-content"],
       [data-slot="popover-content"],
       [data-slot="combobox-content"],
-      [data-slot="dialog-content"],
+      [data-slot="dialog-content"]:not(.bg-transparent),
       [data-slot="sheet-content"],
       .model-popover,
       .perm-popover,
@@ -70,6 +68,13 @@ html.dark {
       .glass-seg,
       .glass-search,
       .glass-composer,
+      .glass-pill,
+      .glass-newchat,
+      .glass-icon-btn,
+      .glass-mini-new,
+      .rail-tab,
+      .page-rows,
+      .sg-card,
       [data-slot="bubble-content"],
       .jr-card,
       .cf-card,
@@ -88,54 +93,46 @@ html.dark {
       .rs-capsule,
       .chat-thinking
     ) {
-    --lg-surface: var(--glass-bg-opaque);
-    --lg-surface-strong: var(--glass-bg-opaque);
-    --bubble-user-bg: var(--glass-bg-opaque);
+    --surface-bg: var(--surface-bg-solid);
+    --surface-border: var(--line-strong);
+    --surface-highlight: none;
+    background: var(--surface-bg-solid);
   }
-  html:not(#chisabot-no-blur) .chat-bubble-bare > [data-slot="bubble-content"] {
-    --lg-surface-strong: transparent;
-  }
+
+  /* bare 表面与透明灯箱保持无底透明 */
   html:not(#chisabot-no-blur)
     :is(
-      .glass:not(.is-flat):not(.hk-drawer),
-      .glass-card:not(.rail-card .glass-card):not(.rail-sheet),
-      [data-slot="sidebar"][data-mobile="true"]:not(.hk-drawer),
+      [data-surface="bare"],
+      .chat-bubble-bare > [data-slot="bubble-content"],
+      [data-slot="dialog-content"].bg-transparent,
+      .chat-work-card.chat-work-done
+    ) {
+    --surface-bg: transparent;
+    --surface-border: transparent;
+    background: transparent;
+  }
+
+  /* 抽屉内嵌子卡与嵌套 .jr-card 保持透明无重底 */
+  html:not(#chisabot-no-blur)
+    [data-slot="sidebar"].hk-drawer
+    :is(.glass-side-card, .acct-card, .acct-mini-card),
+  html:not(#chisabot-no-blur) :is(.jr-card, .live-panel-body) .jr-card {
+    --surface-bg: transparent;
+    background: transparent;
+  }
+
+  /* 其余零星带模糊的容器（移动端滚动顶栏、Streamdown 代码操作条、Tailwind backdrop 类） */
+  html:not(#chisabot-no-blur)
+    :is(
       body[data-page-scrolled] .glass-topbar,
       [data-streamdown$="-block-actions"],
-      .appearance-wallpaper-glass-demo > i,
       [class*="supports-[backdrop-filter]:bg-"]
     ) {
     background: var(--glass-bg-opaque);
   }
-  /* 液态玻璃采样出的「深釉浅墨」档（data-lg-ink="dark"）：不透明底色上墨要翻回浅色档，
-     否则白字会印在白色实底上。行内标量（--lg-density-k 等）对实色底无害，不用清。 */
-  html:not(#chisabot-no-blur) [data-lg-ink="dark"] {
-    --lg-ink: rgba(0, 0, 0, 0.86);
-    --lg-ink-2: rgba(60, 60, 67, 0.7);
-    --lg-blend: multiply;
-    --lg-tint-rgb: 255 255 255;
-    --lg-tint-lo: 0.06;
-    --lg-tint-mul: 1;
-    --lg-bright: 1.06;
-    --lg-hl: 0.3;
-    --lg-edge-cur: var(--lg-edge-light);
-    --text: rgb(29, 29, 31);
-    --text-primary: rgb(29, 29, 31);
-    --fill-primary: rgb(29, 29, 31);
-    --ink-1: #111a2b;
-    --ink-2: #3b4659;
-    --ink-3: var(--sky-muted, #5f6673);
-    --ink-4: rgba(17, 26, 43, 0.36);
-    --glass-ink: var(--ink-1);
-    --glass-ink-2: var(--ink-2);
-    --glass-ink-3: var(--ink-3);
-    --glass-ink-4: var(--ink-4);
-    --muted-foreground: var(--sky-muted, #5f6673);
-  }
-  /* 普通 filter: blur 也关：链接卡片堆里没聚焦的卡（styles.css .rp-link / .rp-pile-card 的
-     [data-dimmed]）改成只靠更低的透明度区分；agent-orb 的光晕和 ::before 色团去掉模糊，保留对比度/饱和度。 */
-  html:not(#chisabot-no-blur)
-  :is(.rp-link, .rp-pile-card)[data-dimmed] {
+
+  /* 关掉普通 filter: blur(...) */
+  html:not(#chisabot-no-blur) :is(.rp-link, .rp-pile-card)[data-dimmed] {
     filter: none;
     opacity: 0.36;
   }
@@ -145,139 +142,130 @@ html.dark {
   html:not(#chisabot-no-blur) .agent-orb::before {
     filter: contrast(var(--contrast-amount)) saturate(1.4);
   }
-  /* 外观设置里色板的勾：原来是 0.68 的深色底加模糊，这里给实心深色。 */
-  html:not(#chisabot-no-blur) .appearance-swatch-check {
-    background: rgb(15, 23, 42);
-  }
-  /* 壁纸模糊（用户在外观里调的 0–40px）：关掉模糊，换一层主题色的半透明实色遮罩，模糊越大遮罩越浓（最多 0.55），
-     保留「背景退后」的观感；用户保存的设置不变。 */
-  html:not(#chisabot-no-blur) .chisabot-wallpaper-img[data-blur] {
+  html:not(#chisabot-no-blur) .chisabot-wallpaper-img {
     filter: none;
-  }
-  html:not(#chisabot-no-blur) .chisabot-wallpaper-img[data-blur]::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: var(--glass-bg-opaque);
-    opacity: var(--wallpaper-veil, 0);
   }
 }
 
-/* 性能模式：和上面「减少透明度」同一套规则（放在后面，选择器多一个属性，优先级不比上面低）。 */
-html[data-perf="on"]:not(#chisabot-no-blur) *,
-html[data-perf="on"]:not(#chisabot-no-blur) *::before,
-html[data-perf="on"]:not(#chisabot-no-blur) *::after {
-  --lg-blur: none;
+/* ── 2. 实色材质（html[data-material="solid"]）与性能模式（html[data-perf="on"]） ───────── */
+html:is([data-material="solid"], [data-perf="on"]):not(#chisabot-no-blur) {
+  --glass-filter: none;
+  --glass-pop-filter: none;
+}
+
+html:is([data-material="solid"], [data-perf="on"]):not(#chisabot-no-blur) *,
+html:is([data-material="solid"], [data-perf="on"]):not(#chisabot-no-blur)
+  *::before,
+html:is([data-material="solid"], [data-perf="on"]):not(#chisabot-no-blur)
+  *::after {
+  --surface-blur: none;
   backdrop-filter: none;
 }
 
-/*
- * 原来会模糊的元素：底色换成不透明的令牌，不能变成「没有模糊也没有底」的透明块。
- * 名单和 app/tests/render-budget.test.ts 里「会模糊的规则」一致；嵌在面板里的卡片本来就不模糊，不在名单里。
- * 旧的三档玻璃层用 !important 写 background: var(--lg-surface)，所以那几类改的是 --lg-surface 变量。
- */
-html[data-perf="on"]:not(#chisabot-no-blur)
-:is(
-  .glass-side-card,
-  .acct-card,
-  .acct-mini-card,
-  .glass-mini-card,
-  .rail-card,
-  .hk-drawer,
-  [data-slot="dropdown-menu-content"],
-  [data-slot="dropdown-menu-sub-content"],
-  [data-slot="context-menu-content"],
-  [data-slot="context-menu-sub-content"],
-  [data-slot="select-content"],
-  [data-slot="popover-content"],
-  [data-slot="combobox-content"],
-  [data-slot="dialog-content"],
-  [data-slot="sheet-content"],
-  .model-popover,
-  .perm-popover,
-  .context-popover,
-  .chat-spotlight-panel,
-  .live-panel-src-pop,
-  .rail-lib,
-  .bm-menu,
-  .bm-manager,
-  .glass-toast,
-  .page-loader-card,
-  .sg-savebar,
-  .auth-card,
-  .update-banner,
-  .install-hint,
-  .glass-seg,
-  .glass-search,
-  .glass-composer,
-  [data-slot="bubble-content"],
-  .jr-card,
-  .cf-card,
-  .gh-card,
-  .page-card,
-  .schedule-card,
-  .bot-exchange-card,
-  .chat-question,
-  .chat-work-steps,
-  .chat-draft-card,
-  .chat-history-notice,
-  .chat-history-more,
-  .to-card,
-  .hr-card,
-  .win-ctrls,
-  .rs-capsule,
-  .chat-thinking
-) {
-  --lg-surface: var(--glass-bg-opaque);
-  --lg-surface-strong: var(--glass-bg-opaque);
-  --bubble-user-bg: var(--glass-bg-opaque);
-}
-html[data-perf="on"]:not(#chisabot-no-blur) .chat-bubble-bare > [data-slot="bubble-content"] {
-  --lg-surface-strong: transparent;
-}
-html[data-perf="on"]:not(#chisabot-no-blur)
+html:is([data-material="solid"], [data-perf="on"]):not(#chisabot-no-blur)
   :is(
-    .glass:not(.is-flat):not(.hk-drawer),
-    .glass-card:not(.rail-card .glass-card):not(.rail-sheet),
-    [data-slot="sidebar"][data-mobile="true"]:not(.hk-drawer),
+    [data-surface="panel"],
+    [data-surface="elevated"],
+    [data-surface="bubble"],
+    [data-surface="inset"],
+    [data-surface="control"],
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"]:not(.bg-transparent),
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint,
+    .glass-seg,
+    .glass-search,
+    .glass-composer,
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .rail-tab,
+    .page-rows,
+    .sg-card,
+    [data-slot="bubble-content"],
+    .jr-card,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
+  ) {
+  --surface-bg: var(--surface-bg-solid);
+  --surface-border: var(--line-strong);
+  --surface-highlight: none;
+  background: var(--surface-bg-solid);
+}
+
+html:is([data-material="solid"], [data-perf="on"]):not(#chisabot-no-blur)
+  :is(
+    [data-surface="bare"],
+    .chat-bubble-bare > [data-slot="bubble-content"],
+    [data-slot="dialog-content"].bg-transparent,
+    .chat-work-card.chat-work-done
+  ) {
+  --surface-bg: transparent;
+  --surface-border: transparent;
+  background: transparent;
+}
+
+html:is([data-material="solid"], [data-perf="on"]):not(#chisabot-no-blur)
+  [data-slot="sidebar"].hk-drawer
+  :is(.glass-side-card, .acct-card, .acct-mini-card),
+html:is([data-material="solid"], [data-perf="on"]):not(#chisabot-no-blur)
+  :is(.jr-card, .live-panel-body)
+  .jr-card {
+  --surface-bg: transparent;
+  background: transparent;
+}
+
+html:is([data-material="solid"], [data-perf="on"]):not(#chisabot-no-blur)
+  :is(
     body[data-page-scrolled] .glass-topbar,
     [data-streamdown$="-block-actions"],
-    .appearance-wallpaper-glass-demo > i,
     [class*="supports-[backdrop-filter]:bg-"]
   ) {
   background: var(--glass-bg-opaque);
 }
-html[data-perf="on"]:not(#chisabot-no-blur) .appearance-swatch-check {
-  background: rgb(15, 23, 42);
-}
-/* 与上面媒体查询里同一批还原：深釉浅墨档换不透明底色时，墨翻回浅色档。 */
-html[data-perf="on"]:not(#chisabot-no-blur) [data-lg-ink="dark"] {
-  --lg-ink: rgba(0, 0, 0, 0.86);
-  --lg-ink-2: rgba(60, 60, 67, 0.7);
-  --lg-blend: multiply;
-  --lg-tint-rgb: 255 255 255;
-  --lg-tint-lo: 0.06;
-  --lg-tint-mul: 1;
-  --lg-bright: 1.06;
-  --lg-hl: 0.3;
-  --lg-edge-cur: var(--lg-edge-light);
-  --text: rgb(29, 29, 31);
-  --text-primary: rgb(29, 29, 31);
-  --fill-primary: rgb(29, 29, 31);
-  --ink-1: #111a2b;
-  --ink-2: #3b4659;
-  --ink-3: var(--sky-muted, #5f6673);
-  --ink-4: rgba(17, 26, 43, 0.36);
-  --glass-ink: var(--ink-1);
-  --glass-ink-2: var(--ink-2);
-  --glass-ink-3: var(--ink-3);
-  --glass-ink-4: var(--ink-4);
-  --muted-foreground: var(--sky-muted, #5f6673);
-}
-/* 普通 filter: blur 也关：链接卡片堆里没聚焦的卡（styles.css .rp-link / .rp-pile-card 的
-   [data-dimmed]）改成只靠更低的透明度区分；agent-orb 的光晕和 ::before 色团去掉模糊，保留对比度/饱和度。 */
+
+/* 性能模式下额外停用普通 filter: blur(...)，释放光栅开销（实色材质下允许壁纸保持用户自选模糊） */
 html[data-perf="on"]:not(#chisabot-no-blur)
-:is(.rp-link, .rp-pile-card)[data-dimmed] {
+  :is(.rp-link, .rp-pile-card)[data-dimmed] {
   filter: none;
   opacity: 0.36;
 }
@@ -287,16 +275,6 @@ html[data-perf="on"]:not(#chisabot-no-blur) .agent-orb-glow {
 html[data-perf="on"]:not(#chisabot-no-blur) .agent-orb::before {
   filter: contrast(var(--contrast-amount)) saturate(1.4);
 }
-/* 壁纸模糊（用户在外观里调的 0–40px）：关掉模糊，换一层主题色的半透明实色遮罩，模糊越大遮罩越浓（最多 0.55），
-   保留「背景退后」的观感；用户保存的设置不变。 */
-html[data-perf="on"]:not(#chisabot-no-blur) .chisabot-wallpaper-img[data-blur] {
+html[data-perf="on"]:not(#chisabot-no-blur) .chisabot-wallpaper-img {
   filter: none;
-}
-html[data-perf="on"]:not(#chisabot-no-blur)
-  .chisabot-wallpaper-img[data-blur]::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: var(--glass-bg-opaque);
-  opacity: var(--wallpaper-veil, 0);
 }

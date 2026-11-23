@@ -153,6 +153,7 @@ const GithubActionCard = memo(function GithubActionCard({
   return (
     <div
       className="gh-card"
+      data-surface="bubble"
       data-state={done ? "done" : bad ? "failed" : stopped ? "stopped" : "open"}
       data-testid="github-action-card"
     >

@@ -244,6 +244,7 @@ export function FactoryCard({
   return (
     <div
       className="bot-exchange-card"
+      data-surface="bubble"
       data-state={state}
       data-testid="bot-factory-card"
     >

@@ -1949,9 +1949,28 @@ function registerIpc() {
     return next;
   });
   handleWeb("pc:appearance", (value) => {
-    const next = { dark: typeof value?.dark === "boolean" ? value.dark : null, sky: value?.sky !== false };
+    const VALID_THEMES = new Set(["sky", "mist", "celadon", "sakura", "amber", "violet", "mono"]);
+    const VALID_MATERIALS = new Set(["glass", "clear", "solid"]);
+    const VALID_CANVASES = new Set(["pure", "sky", "wallpaper"]);
     const prev = config.get().appearance || {};
-    if (prev.dark !== next.dark || prev.sky !== next.sky) {
+    const next = {
+      dark: typeof value?.dark === "boolean" ? value.dark : null,
+      theme: typeof value?.theme === "string" && VALID_THEMES.has(value.theme) ? value.theme : prev.theme || "sky",
+      material:
+        typeof value?.material === "string" && VALID_MATERIALS.has(value.material)
+          ? value.material
+          : prev.material || "glass",
+      canvas:
+        typeof value?.canvas === "string" && VALID_CANVASES.has(value.canvas) ? value.canvas : prev.canvas || "sky",
+      sky: value?.sky !== false,
+    };
+    if (
+      prev.dark !== next.dark ||
+      prev.theme !== next.theme ||
+      prev.material !== next.material ||
+      prev.canvas !== next.canvas ||
+      prev.sky !== next.sky
+    ) {
       config.set({ appearance: next });
       nativeTheme.themeSource = next.dark === null ? "system" : next.dark ? "dark" : "light";
       broadcast("appearance");

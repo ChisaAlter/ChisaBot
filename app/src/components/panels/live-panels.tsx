@@ -531,6 +531,7 @@ function DataSourcePanel({
       aria-hidden={leaving || undefined}
       aria-label={`「${panel.title}」的数据来源`}
       className="live-panel-src-pop"
+      data-surface="elevated"
       data-leaving={leaving ? "true" : undefined}
       data-open={leaving ? undefined : ""}
       inert={leaving || undefined}
@@ -908,6 +909,7 @@ const LivePanelCard = memo(function LivePanelCard({
     <article
       aria-busy={building || busy || undefined}
       className="glass-card live-panel"
+      data-surface="inset"
       data-collapsed={collapsed || undefined}
       data-has-live={dataSources.length > 0 || undefined}
       data-live-panel={panel.id}

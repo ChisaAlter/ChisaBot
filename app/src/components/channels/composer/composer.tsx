@@ -2934,6 +2934,7 @@ function ComposerImpl({
           aria-busy={isBusy}
           data-drag-over={canAttach && dragOver ? "true" : undefined}
           data-morphing={morphing ? "" : undefined}
+          data-surface="panel"
           onKeyDown={handleEscapeStop}
           onKeyDownCapture={handleBusyModeKeyCapture}
           className={cn(
@@ -3056,6 +3057,7 @@ function ComposerImpl({
         onKeyDown={handleEscapeStop}
         onKeyDownCapture={handleBusyModeKeyCapture}
         className="glass-composer glass-composer-hero"
+        data-surface="panel"
         ref={presenceRef("has-composer")}
         onSubmit={handleFormSubmit}
       >

@@ -338,6 +338,14 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                         if (next != vm.themeMode) vm.setTheme(next)
                                     }
                                 }
+                                @JavascriptInterface
+                                fun setThemeMode(mode: String?) {
+                                    post {
+                                        if (originKey(this@apply.url) != originKey(origin)) return@post
+                                        val next = normalizeWebThemeMode(mode) ?: return@post
+                                        if (next != vm.themeMode) vm.setTheme(next)
+                                    }
+                                }
                             },
                             "ChisaAndroid",
                         )
@@ -545,19 +553,30 @@ internal fun normalizeWebTheme(raw: String?): String? = when (raw?.trim()?.lower
     else -> null
 }
 
+/** 接受完整的外观模式（跟随系统 / 浅色 / 深色）。 */
+internal fun normalizeWebThemeMode(raw: String?): String? = when (raw?.trim()?.lowercase()) {
+    "system" -> "system"
+    "dark" -> "dark"
+    "light" -> "light"
+    else -> null
+}
+
 /** 键盘弹出时底部已由 Box.imePadding() 顶起，网页安全区底边距归零避免重复留白。 */
 internal fun effectiveBottomInsetPx(navBottom: Int, imeBottom: Int): Int =
     if (imeBottom > 0) 0 else navBottom.coerceAtLeast(0)
 
-/** 首次使用沿用系统主题；之后由同一网页的设置控制，不能每次导航重写用户选择，并同步回原生状态栏。 */
+/** 首次使用沿用系统主题，不再硬写 chisabot-theme 破坏跟随系统；仅同步明确选择并通知原生状态栏。 */
 private fun syncTheme(view: WebView, theme: String) {
     view.evaluateJavascript(
-        "(function(t){try{var stored=localStorage.getItem('chisabot-theme');if(stored==='dark'||stored==='light'){t=stored;}else{localStorage.setItem('chisabot-theme',t);}" +
-            "var r=document.documentElement;if(r){r.classList.toggle('dark',t==='dark');r.style.colorScheme=t;}" +
-            "var notify=function(m){if(window.ChisaAndroid&&window.ChisaAndroid.setTheme){window.ChisaAndroid.setTheme(m);}};" +
-            "notify(t);" +
+        "(function(t){try{" +
+            "var readMode=function(){try{var raw=localStorage.getItem('chisabot-appearance');if(raw){var p=JSON.parse(raw);if(p&&p.v===2&&(p.mode==='system'||p.mode==='dark'||p.mode==='light'))return p.mode;}}catch(e){}var legacy=localStorage.getItem('chisabot-theme');if(legacy==='dark'||legacy==='light')return legacy;return 'system';};" +
+            "var mode=readMode();" +
+            "var resolved=mode==='dark'?'dark':mode==='light'?'light':t;" +
+            "var r=document.documentElement;if(r){r.classList.toggle('dark',resolved==='dark');r.style.colorScheme=resolved;}" +
+            "var notify=function(){var m=readMode();if(m==='system'&&window.ChisaAndroid&&window.ChisaAndroid.setThemeMode){window.ChisaAndroid.setThemeMode('system');return;}if(window.ChisaAndroid&&window.ChisaAndroid.setTheme){window.ChisaAndroid.setTheme(r&&r.classList.contains('dark')?'dark':'light');}};" +
+            "notify();" +
             "if(r&&!window.__chisaThemeObs&&typeof MutationObserver==='function'){" +
-            "window.__chisaThemeObs=new MutationObserver(function(){notify(r.classList.contains('dark')?'dark':'light');});" +
+            "window.__chisaThemeObs=new MutationObserver(function(){notify();});" +
             "window.__chisaThemeObs.observe(r,{attributes:true,attributeFilter:['class']});" +
             "}}catch(e){}})('$theme')",
         null,

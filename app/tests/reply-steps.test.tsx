@@ -580,9 +580,14 @@ describe("胶囊样式守规矩", () => {
     }
   });
   test("减少动态效果、减少透明度、性能模式都有对应", () => {
+    const noblur = readFileSync(
+      join(import.meta.dir, "../src/perf-noblur.css"),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(css).toContain("@media (prefers-reduced-transparency: reduce)");
-    expect(css).toContain('html[data-perf="on"] .rs-capsule');
+    expect(noblur).toContain("@media (prefers-reduced-transparency: reduce)");
+    expect(noblur).toContain('html:is([data-material="solid"], [data-perf="on"])');
+    expect(noblur).toContain(".rs-capsule");
   });
   test("不透明底色用 token，不写死颜色（深色也是）", () => {
     for (const m of css.matchAll(/--rs-solid\s*:\s*([^;]+);/g))

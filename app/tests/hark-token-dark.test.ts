@@ -1,53 +1,99 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { VALID_THEME_IDS } from "../src/lib/appearance";
+import { blocks } from "./contrast-model";
 
 /**
- * DESIGN.md §10.5：Hark 令牌写在 `html:root`（0,1,1），会压过旧层 `.dark`（0,1,0）里的同名令牌。
- * 所以一个 Hark 令牌只要和旧的深色层同名，就必须在 `html.dark` 里给深色值；
- * 由别的令牌算出来的（值里有 var(--…)）跟着基色走，不用重复写。
+ * V2 单通道深浅色令牌守卫（取代旧 Hark html:root vs .dark 平行层补丁）：
+ *   1. 全站深浅色基底唯一收敛在 `tokens.css` 的 `:root` 与 `html.dark`，彻底消灭 `[data-theme="dark|light"]` 与 `html:root` 平行层；
+ *   2. 每一套核心色标（墨色、强调色、语义色、画布基色、实面底色、描边、玻璃别名）均在 `html.dark` 有明确深色值；
+ *   3. 7 套色彩主题在 `tokens.css` 均成对声明浅/深版（`html[data-theme="<id>"]` + `html.dark[data-theme="<id>"]`）。
  */
-const css = readFileSync(
-  path.join(import.meta.dir, "../src/styles.css"),
-  "utf8",
-).replace(/\/\*[\s\S]*?\*\//g, "");
+const strip = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "");
+const tokensCss = strip(
+  readFileSync(path.join(import.meta.dir, "../src/styles/tokens.css"), "utf8"),
+);
+const stylesCss = strip(
+  readFileSync(path.join(import.meta.dir, "../src/styles.css"), "utf8"),
+);
 
-const block = (selector: string) => {
-  const m = css.match(
-    new RegExp(
-      `(?:^|\\})\\s*${selector.replace(/[.[\]]/g, "\\$&")}\\s*\\{([^{}]*)\\}`,
+const decls = (bodies: string[]) =>
+  new Map(
+    bodies.flatMap((body) =>
+      [...body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map(
+        (m) => [m[1] ?? "", (m[2] ?? "").trim()] as const,
+      ),
     ),
   );
-  return m ? m[1] : "";
-};
-const decls = (body: string) =>
-  new Map(
-    [...body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2]]),
-  );
 
-const hark = decls(block("html:root"));
-const harkDark = decls(block("html.dark"));
+const lightRoot = decls(blocks(tokensCss, ":root"));
+const darkRoot = decls(blocks(tokensCss, "html.dark"));
 
-/** 旧层里所有深色规则（`.dark`、`[data-theme="dark"]` 开头的选择器，不含 `html.dark`）声明过的令牌。 */
-const oldDark = new Set<string>();
-for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-  const selectors = m[1].split(",").map((s) => s.trim());
-  if (!selectors.some((s) => /^(\.dark|\[data-theme="dark"\])$/.test(s)))
-    continue;
-  for (const name of decls(m[2]).keys()) oldDark.add(name);
-}
-
-test("the Hark token blocks are found", () => {
-  expect(hark.size).toBeGreaterThan(40);
-  expect(harkDark.size).toBeGreaterThan(10);
+test("tokens.css 拥有完整的浅色 :root 与深色 html.dark 基底块", () => {
+  expect(lightRoot.size).toBeGreaterThan(80);
+  expect(darkRoot.size).toBeGreaterThan(40);
 });
 
-test("every Hark token that shares a name with an old dark token has a dark value", () => {
-  const missing = [...hark.entries()]
-    .filter(
-      ([name, value]) =>
-        oldDark.has(name) && !harkDark.has(name) && !value.includes("var(--"),
-    )
-    .map(([name]) => name);
+test("不再存在历史 [data-theme=\"dark|light\"] 或 html:root 平行深浅色令牌块", () => {
+  const combined = `${tokensCss}\n${stylesCss}`;
+  expect(combined).not.toContain('[data-theme="dark"]');
+  expect(combined).not.toContain('[data-theme="light"]');
+  expect(combined).not.toMatch(/html:root\s*\{/);
+  expect(stylesCss).not.toContain("data-theme-family");
+});
+
+test("所有核心颜色令牌在 html.dark 中均有深色值，7 套主题均成对提供浅/深覆盖", () => {
+  const mustHaveDark = [
+    "--ink-1",
+    "--ink-2",
+    "--ink-3",
+    "--ink-4",
+    "--ink-on-accent",
+    "--ink-primary",
+    "--on-primary",
+    "--side-sec-main-ink",
+    "--side-sub-ink",
+    "--accent",
+    "--accent-ink",
+    "--accent-soft",
+    "--accent-ring",
+    "--task-info",
+    "--sem-success",
+    "--sem-warn",
+    "--sem-danger",
+    "--canvas-pure-bg",
+    "--canvas-pure-base",
+    "--canvas-scrim-rgb",
+    "--sky-veil-bg",
+    "--surface-tint-rgb",
+    "--surface-solid-panel",
+    "--surface-solid-elevated",
+    "--surface-solid-bubble",
+    "--surface-solid-inset",
+    "--surface-solid-control",
+    "--surface-edge-rgb",
+    "--line",
+    "--line-strong",
+    "--stroke",
+    "--hover-wash",
+    "--glass-1",
+    "--glass-2",
+    "--glass-3",
+    "--bubble-user-bg",
+    "--bubble-agent-bg",
+  ];
+  const missing = mustHaveDark.filter(
+    (name) => !lightRoot.has(name) || !darkRoot.has(name),
+  );
   expect(missing).toEqual([]);
+
+  for (const id of VALID_THEME_IDS) {
+    expect(blocks(tokensCss, `html[data-theme="${id}"]`).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      blocks(tokensCss, `html.dark[data-theme="${id}"]`).length,
+    ).toBeGreaterThan(0);
+  }
 });

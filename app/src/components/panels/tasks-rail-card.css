@@ -131,15 +131,7 @@
   gap: 10px;
 }
 
-/* 信息蓝固定用默认 --accent-blue-ink，不跟配色把 accent 改成琥珀 / 绿 / 红，
-   避免 sunset、gold 的 running 和 attention、emerald 的 running 和 success、
-   ruby 的 running 和 danger 撞色（状态字 CIEDE2000 要回到 ≥ 3.7）。 */
-:root {
-  --task-info: #1f5fd6;
-}
-.dark {
-  --task-info: #8ab4ff;
-}
+/* 独立语义信息蓝 --task-info 由 styles/tokens.css 统一声明且永不随主题改写（DESIGN.md §127）。 */
 
 .task-rail-item {
   --task-tone: var(--task-info);

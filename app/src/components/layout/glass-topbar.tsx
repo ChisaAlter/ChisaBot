@@ -233,6 +233,7 @@ export function WindowControls({
       aria-label={"窗口"}
       className="win-ctrls"
       data-count={isMac ? 1 : canCompact(bridge) ? 4 : 3}
+      data-surface="bubble"
       role="group"
     >
       {canCompact(bridge) ? (

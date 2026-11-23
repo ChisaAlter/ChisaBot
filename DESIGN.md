@@ -159,6 +159,7 @@
 | [151](#151-聊天思考胶囊玻璃质感统一底部锚定不漂移快照顺序保护与工具只读失败收敛2026-11-22)                 | 状态/思考胶囊恢复四档磨砂模糊、固定底部槽与忙碌态留白收回、叶子流式结束零回缩、快照顺序修复与只读/前置失败收敛   | 2026-11-22                                                                 |
 | [152](#152-pc-独立更新进度窗口极简改版2026-11-22)                                                             | PC 独立更新窗口改为极简纯白/深炭全窗居中进度布局，支持 —/□/×、实时进度、原位重启与手动下载链接                     | 2026-11-22                                                                 |
 | [153](#153-桌面端全面流畅度治理windows-小窗原子落位与竖屏面板零回跳2026-11-22)                               | 桌面端全面流畅度治理、Windows 小窗单步原子落位、竖屏面板开关零回跳、滚动区轻磨砂与防复发性能红线                     | 2026-11-22                                                                 |
+| [154](#154-主题背景画布与纯-css-材质四轴重设计2026-11-23)                                                    | 主题、背景画布与纯 CSS 材质四轴正交重设计、下线重型液态玻璃透镜、单通道 5 层 Token 与 `[data-surface]`、跨端同步与无损迁移 | 2026-11-23                                                                 |
 
 ## 0. 总原则
 
@@ -3138,6 +3139,29 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 - **实测结果与自动门禁**：
   - 实机 Chrome/Edge 复测：Windows 小窗进出总耗时 **`5,371 → 547ms (-90%)`** / **`3,746 → 631ms (-83%)`**；`420×860` 开关面板 **`Δsh 1,980px → 0px`、`maxGap 0px`、`smoothCalls = 0`**；`liquid` 流式 **`2.2 → 49 fps (+2127%)`**、`p95 -96%`；`mist` 滚动 **`3.6 → 7.3 fps (+103%)`**（复测最优 `10.6`）、`p95 -55%`；桌面 `1280×840` 1x CPU 弹窗+侧栏 **`maxInpMs 240 → 184ms`**、`paint -71%`；双视口截图抽检确认磨砂质感自然且背景气泡零位移。
   - 门禁覆盖：`app/tests/narrow-rail-sheet-stability.test.tsx`、`app/tests/settle-reflow-instant.test.tsx`、`app/tests/runtime-render-stability.test.tsx`、`app/tests/liquid-glass-screen-ink.test.ts`、`app/tests/no-container-has.test.ts`、`app/tests/desktop-window-edge-clip.test.tsx`、`pc/test/compact.check.js`、`pc/test/local-web.check.js` 及真浏览器脚本 `tests/chat-scroll/portrait-panel-jump.mjs`、`tests/chat-scroll/work-card-jump.mjs`。
+
+---
+
+## 154. 主题、背景画布与纯 CSS 材质四轴重设计（2026-11-23）
+
+- **现状病灶收口**：经全仓状态模型、交互入口与 12K 行样式表系统审计，历史多期补丁叠加导致五类根因混乱：（1）同一背景画布由主题渐变 / Hark 动态天象 / 壁纸三套互斥系统抢绘却散落三处 UI，底层叠加 6 层画布与双层薄幕，且 `theme-family.ts` 场景下标与 Hark `SCENES[0..11]` 错位；（2）选固定天象时仍偷发 Open-Meteo 请求并静默昼夜调包（所点非所见），实时天象则缺少城市入口；（3）4 档近似玻璃 × 浅/深雾度滑块 × 对比度 × 动态加厚四股力量互扯，双槽劈半卡反直觉，壁纸冗余 3 条滑块，外观区块混装「忙碌发送模式」与「隐私遮罩」；（4）`styles.css` 并存 6 套变量通道与 186 处 `!important`，58 项硬编码玻璃类名被复制 13+ 次引发连续六次材质回归；（5）16 个分散 `localStorage` 键、前后互盖的双首屏脚本与三端明暗策略撕裂。
+- **四条正交轴模型（`AppearanceConfigV2` 单一真相源 `localStorage["chisabot-appearance"]`）**：
+  1. **外观模式（`mode`）**：三端统一支持 `跟随系统（system）| 浅色（light）| 深色（dark）`，补齐 Web 跟随系统（`matchMedia("(prefers-color-scheme: dark)")` + `useSyncExternalStore`），仅管明暗极性，不改主题色相、画布与材质。
+  2. **色彩主题（`theme` + 可选 `customAccent`）**：收敛为 **7 套精选静态主题**（晴空 `sky` / 晨雾 `mist` / 青瓷 `celadon` / 落樱 `sakura` / 琥珀 `amber` / 暮紫 `violet` / 素墨 `mono`，每套内置精调浅/深双版），取代劈半双槽与 4 参种子编辑器；折叠提供单一「自定义强调色」取色器，由 `deriveCustomAccentVars(hex, dark)` 自动保证浅/深模式 WCAG AA ≥ 4.5:1。主题绝不切换背景画布，独立语义色（`--task-info`、`--sem-success/warn/danger`）永不随主题改写。
+  3. **背景画布（`canvas`，严格互斥三选一）**：收口于唯一 `#sky-root`（`contain: strict`），彻底移除旧 `body` 6 层渐变、星空、流光球与 `.chisabot-wallpaper-dim` 双层叠幕：
+     - `净色（pure）`：极简主题微渐变，不挂 WebGL 与壁纸，零动画开销；
+     - `动态天空（sky）`：支持「随时间流动（`auto`）」与 4 个固定时刻精确映射（晨霞 `dawn→11` / 晴空 `day→0` / 暖暮 `dusk→6` / 静夜 `night→4`），零静默昼夜调包；「叠加实时天气」默认关闭，提供城市设置（空城市按时区回退），**在非天空画布、固定时刻或关闭天气时，引擎与宿主 `createHarkFetch` 双重拦截确保 0 Open-Meteo 外网请求且不写 `hark-wallpaper-v1`**；开启「静止动态背景（省电）」时仅绘静帧停循环；
+     - `壁纸（wallpaper）`：4 分类艺术画廊（全部 / 印象油画 / 东方意境 / 现代光影）+ 本地上传/裁剪/更换/移除，收敛为仅 **2 条滑块**：`背景模糊（0–24px，--canvas-blur）` 与全站唯一单层 `护眼薄幕（0–100%，--canvas-scrim）`（移除冗余「氛围压暗」滑块）。
+  4. **界面材质（`material`）**：**彻底下线重型液态玻璃 SVG 位移透镜与 JS 光栅采样**（删除 `app/src/lib/liquid-glass.ts`、`app/src/lib/sky-snapshot.ts` 与 `#chisabot-glass-alpha` 注入，清除全树 `MutationObserver` / 捕获 `scroll` / `data-lg-lens` / `data-lg-ink`），全面改为**纯 CSS 三档材质**：`磨砂（glass，默认）| 通透（clear）| 实色（solid，零模糊）`，叠加 `prefers-reduced-transparency: reduce` 自动落实色与行内提示，并收编原独立性能模式为「实色 + 静止动态背景」（`perf-mode.ts` 保留薄代理）。
+- **单通道 5 层 CSS Token 与 `[data-surface]` 6 档语义体系**：
+  - 按显式 `@layer reset, tokens, canvas, surfaces, components, overrides;` 拆分 `app/src/styles/tokens.css`（5 层单通道令牌与薄别名桥接）、`app/src/styles/canvas.css`（唯一画布与单层薄幕）与 `app/src/styles/materials.css`（3 档材质 × 6 档表面矩阵），导入顺序为 `tokens.css → canvas.css → materials.css → styles.css → perf-noblur.css → a11y-modes.css`。`styles.css` 净删 2,566 行，全仓 CSS `!important` 由 188 降至 81（-56.9%，新建与重写样式均 0 `!important`）。
+  - 全站核心组件标注统一 `[data-surface]` 语义属性（取代 58 项复制粘贴硬编码名单）：`panel`（主面板/输入框，`glass` `blur(20px)` / `clear` `blur(16px)` / `solid` `none`）、`elevated`（弹窗/菜单/抽屉/浮层，`blur(12px)` + `glass-hold` 入退场剥离）、`bubble`（气泡/顶层对话卡/状态胶囊/PC `.win-ctrls`，`glass` `blur(8px)` / `clear` `blur(6px)`，`.win-ctrls` 保留 `1.25px` 描边）、`inset`（内嵌槽/侧栏行衬底，无模糊）、`control`（小按钮/药丸/设置卡，无模糊）、`bare`（裸代码块/透明灯箱，透明无底）。8 个 `--surface-*` `@property` 严格 `inherits: false`、`--canvas-blur`/`--canvas-scrim` 仅挂 `#sky-root`（严禁写 `<html>`），全矩阵 7 主题 × 浅/深 × 3 材质 × 极值壁纸满足 WCAG AA ≥ 4.5:1（`prefers-contrast: more` 实底 AAA ≥ 7:1），保留 `html[data-resizing]` 严禁关模糊或切黑底红线。
+- **16 键无损迁移、单一首屏脚本与跨端同步**：
+  - `migrateLegacyAppearance` 一次性无损读取旧 16 键与幽灵废弃键（含旧 4 档材质、双槽主题族、天象/壁纸/性能模式键）并收敛至 `chisabot-appearance`，保留 `isDefaultAppearance` 全字段精确判脏驱动「恢复默认」。
+  - `appearanceBootScript()`（`app/src/lib/palette.ts`）作为 `app/index.html` `<head>` 唯一首屏同步脚本，取代旧双启动脚本与硬编码 `chisabot-theme`，首帧挂齐 `.dark`、`data-theme`、`data-material`、`data-canvas`、`data-static-bg`、`data-sky` 与 `<meta name="theme-color">`。
+  - PC（`pc/src/web-preload.js`、`main.js`、`config.js`、`ui/ui.js`、`sync-skyglass.mjs`）同步 `{ dark, theme, material, canvas, sky }` 并由 `tokens.css`/`canvas.css` 生成 `skyglass-tokens.css`；Android（`WebScreen.kt`）不再硬写 `chisabot-theme` 破坏系统跟随，并新增 `@JavascriptInterface setThemeMode`。
+- **设置页信息架构重组**：`appearance-preferences.tsx` 按四轴自上而下清晰重组，全缩略图卡片零模糊；`settings/index.tsx` 移除重复暗色开关与已删除的 `perf-mode-preference.tsx`，将「忙碌发送模式」与「隐私遮罩」迁回独立「对话与隐私」区块；`account-menu.tsx` 快捷外观升级为三态 `系统 / 浅色 / 深色` 并与设置页同源，`registry.ts` 同步更新搜索词条。
+
 
 
 

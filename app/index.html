@@ -65,15 +65,8 @@
       html[data-phone] .boot-cols { top: calc(76px + env(safe-area-inset-top)); left: calc(16px + env(safe-area-inset-left)); right: calc(16px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); }
       @media (prefers-reduced-motion: reduce) { .boot .sh, .boot-spin { animation: none; } .boot-loading { animation: none; opacity: 1; } }
     </style>
-    <!-- Sets the theme before the first paint. Must stay inline and classic: `defer` or `type="module"` runs too late. -->
-    <script>
-      // localStorage throws in some privacy modes; a theme is not worth taking the app down for.
-      try {
-        const dark = window.localStorage.getItem("chisabot-theme") === "dark";
-        document.documentElement.classList.toggle("dark", dark);
-        document.documentElement.style.colorScheme = dark ? "dark" : "light";
-      } catch {}
-    </script>
+    <!-- Sets .dark, data-theme, data-material, data-canvas and meta[name=theme-color] before first paint (vite.config.ts → src/lib/palette.ts). -->
+    <!-- chisabot-appearance-boot -->
     <!-- 设备形态，第一帧之前写到 <html> 上（DESIGN.md §40，app/src/lib/device.ts 有完整说明）：
          手机 = 主要指针是触屏且屏幕短边 < 600，或浏览器明确说是手机（UA-CH）；横屏手机也是手机，平板按宽度。 -->
     <script>
@@ -99,7 +92,6 @@
     </script>
   </head>
   <body>
-    <!-- chisabot-sky-boot: replaced by the time-of-day sky + theme-family boot scripts (vite.config.ts → src/lib/sky.ts, src/lib/palette.ts). -->
     <!-- Present before the gateway's workspace.js runs its DOMContentLoaded mount, which tells it the
          app draws its own account control (sign-out lives in the avatar menu), so it adds no
          floating "退出登录" button of its own. -->

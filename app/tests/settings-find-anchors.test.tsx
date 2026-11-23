@@ -24,9 +24,11 @@ import { settleReactWork } from "./settle-react-work";
 
 const SRC = join(import.meta.dir, "../src");
 const APPEARANCE = new Set([
+  "general.theme",
   "general.palette",
-  "general.glass",
+  "general.sky",
   "general.wallpaper",
+  "general.material",
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

@@ -920,6 +920,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <section
           aria-label={searching ? "搜索结果" : "机器人"}
           className="glass-card glass-side-card min-h-0 flex-1"
+          data-surface="panel"
         >
           {/* 卡片顶部：搜索会话 + 新建，左栏开关在右上角（手机抽屉里没有开关）。Ctrl K 聚焦搜索。 */}
           <div className="side-search-row">
@@ -930,6 +931,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   <button
                     aria-label={"新建机器人"}
                     className="glass-list-add"
+                    data-surface="inset"
                     onClick={openCreateBot}
                     type="button"
                   />
@@ -1147,7 +1149,7 @@ function BotMiniRail({
 }) {
   return (
     <nav aria-label={"机器人"} className="glass-mini" id="chisabot-bot-list">
-      <div className="glass-card glass-mini-card">
+      <div className="glass-card glass-mini-card" data-surface="panel">
         <div className="glass-mini-head">
           <RosterToggle className="glass-mini-toggle" scope="app" />
           <MiniSearchButton />
