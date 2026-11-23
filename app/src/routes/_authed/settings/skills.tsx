@@ -23,6 +23,7 @@ import { SearchBox } from "@/components/memory/memory-notes";
 import { SkillVersionsPanel } from "@/components/skills/skill-versions-panel";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import { confirmDialog } from "@/components/ui/confirm";
 import {
   Dialog,
@@ -825,7 +826,10 @@ function SkillDialog({
           </div>
         </DialogHeader>
         {skill && tab === "governance" ? (
-          <div className="flex min-h-0 flex-1 flex-col">
+          <ContentEnter
+            className="flex min-h-0 flex-1 flex-col"
+            key="governance"
+          >
             <DialogBody className="mt-2">
               <SkillVersionsPanel
                 onRestored={(restored) => {
@@ -856,10 +860,11 @@ function SkillDialog({
                 {"关闭"}
               </Button>
             </DialogFooter>
-          </div>
+          </ContentEnter>
         ) : (
           <form
-            className="flex min-h-0 flex-1 flex-col"
+            className="ch-content-enter flex min-h-0 flex-1 flex-col"
+            key="editor"
             onSubmit={(event) => {
               event.preventDefault();
               if (valid && !readOnly && save.state !== "pending")

@@ -1,4 +1,5 @@
 import { type ReactNode, useState } from "react";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { useToolActivityVisible } from "@/lib/chat/tool-activity";
 
 /**
@@ -101,13 +102,13 @@ export function ToolLine({
        * Headings are cut down to the size of the surrounding text. A tool result is markdown a
        * server wrote for a model, so its `#` is a section marker rather than a page title.
        */}
-      {open ? (
+      <SmoothCollapse open={open} unmountOnExit>
         <div className="mt-2 max-h-80 overflow-auto border-l pl-3 text-xs [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_h4]:text-xs [&_h1]:font-medium [&_h2]:font-medium [&_h3]:font-medium">
           {clipped ? (
             <>
               <pre
                 className="whitespace-pre-wrap break-words font-mono"
-                data-testid="tool-output"
+                data-testid={open ? "tool-output" : undefined}
               >
                 {clipped.text}
               </pre>
@@ -121,7 +122,7 @@ export function ToolLine({
             children
           )}
         </div>
-      ) : null}
+      </SmoothCollapse>
     </details>
   );
 }

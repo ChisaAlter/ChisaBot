@@ -63,18 +63,25 @@
   position: relative;
 }
 .tc-service-note {
-  position: absolute;
-  z-index: 2;
-  top: calc(100% + 8px);
-  left: 0;
   width: min(320px, calc(100vw - 3rem));
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--glass-bg-solid);
+  padding: 12px 14px;
+  border-radius: 14px;
   color: var(--text);
-  box-shadow: var(--shadow-2);
+  font-size: 13px;
   line-height: 1.6;
+}
+.tc-disclosure-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--tc-muted);
+  padding: 9px 0;
+  transition: color 150ms var(--ease-out, ease);
+}
+.tc-disclosure-btn:hover {
+  color: var(--text);
 }
 .tc-service-state > span {
   width: 7px;
@@ -573,7 +580,7 @@
   border-top: 1px solid var(--line);
   padding-top: 12px;
 }
-.tc-decision-history > button {
+.tc-decision-history .tc-decision-history-item {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -583,7 +590,7 @@
   font-size: 14px;
   cursor: pointer;
 }
-.tc-decision-history > button > span + span {
+.tc-decision-history .tc-decision-history-item > span + span {
   font-size: 12px;
   color: var(--tc-muted);
 }
@@ -1051,10 +1058,9 @@
     inset 0 1px 0 color-mix(in srgb, #ffffff 55%, transparent),
     0 2px 8px -4px rgba(15, 23, 42, 0.08);
   transition:
-    transform 150ms ease,
-    border-color 150ms ease,
-    opacity 150ms ease,
-    box-shadow 150ms ease;
+    transform 150ms var(--ease-out, ease),
+    border-color 150ms var(--ease-out, ease),
+    opacity 150ms var(--ease-out, ease);
 }
 
 .dark .tc-board-card {
@@ -1410,5 +1416,21 @@
 
 .tc-md-tok-fence {
   color: var(--tc-muted);
+}
+
+@media (max-width: 639px) {
+  .tc-board-col[data-mobile-active="true"] {
+    animation: ch-content-enter var(--dur-2, 200ms) var(--ease-out, ease) both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-board *,
+  .tc-board-col[data-mobile-active="true"],
+  .tc-disclosure-btn,
+  .tc-service-note {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 

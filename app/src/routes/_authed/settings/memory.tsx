@@ -23,6 +23,7 @@ import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, ErrorCard, Toolbar } from "@/components/ui/skyglass";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import { useSegmentedKeys } from "@/components/ui/segmented";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
@@ -256,38 +257,40 @@ function MemoryPage() {
               </div>
             ) : null}
             {groups.length ? (
-              groups.map((group) => {
-                const visible = visibleNotes(group.notes, expanded.has(group.kind) || query.trim() !== "");
-                return (
-                  <PageSection key={group.kind} title={`${MEMORY_KIND_LABELS[group.kind]} · ${group.notes.length}`}>
-                    <Card className="mem-card">
-                      {visible.map((note) => (
-                        <NoteRow
-                          botName={note.agentId ? (botName.get(note.agentId) ?? null) : null}
-                          isAdmin={isAdmin}
-                          key={note.id}
-                          note={note}
-                          onDelete={async () => {
-                            if (await confirmNoteDelete(note)) deleteWithUndo([note], refresh);
-                          }}
-                          onEdit={() => setDialog({ open: true, note })}
-                        />
-                      ))}
-                    </Card>
-                    {visible.length < group.notes.length ? (
-                      <Button
-                        className="mt-2"
-                        data-testid={`memory-show-more-${group.kind}`}
-                        onClick={() => setExpanded((current) => new Set(current).add(group.kind))}
-                        size="sm"
-                        variant="ghost"
-                      >
-                        {`显示其余 ${group.notes.length - visible.length} 条`}
-                      </Button>
-                    ) : null}
-                  </PageSection>
-                );
-              })
+              <ContentEnter key={filter}>
+                {groups.map((group) => {
+                  const visible = visibleNotes(group.notes, expanded.has(group.kind) || query.trim() !== "");
+                  return (
+                    <PageSection key={group.kind} title={`${MEMORY_KIND_LABELS[group.kind]} · ${group.notes.length}`}>
+                      <Card className="mem-card">
+                        {visible.map((note) => (
+                          <NoteRow
+                            botName={note.agentId ? (botName.get(note.agentId) ?? null) : null}
+                            isAdmin={isAdmin}
+                            key={note.id}
+                            note={note}
+                            onDelete={async () => {
+                              if (await confirmNoteDelete(note)) deleteWithUndo([note], refresh);
+                            }}
+                            onEdit={() => setDialog({ open: true, note })}
+                          />
+                        ))}
+                      </Card>
+                      {visible.length < group.notes.length ? (
+                        <Button
+                          className="mt-2"
+                          data-testid={`memory-show-more-${group.kind}`}
+                          onClick={() => setExpanded((current) => new Set(current).add(group.kind))}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          {`显示其余 ${group.notes.length - visible.length} 条`}
+                        </Button>
+                      ) : null}
+                    </PageSection>
+                  );
+                })}
+              </ContentEnter>
             ) : (
               <PageEmpty>
                 {notes.length

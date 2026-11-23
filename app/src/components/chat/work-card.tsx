@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { useExternalConnection } from "@/hooks";
 import { CapsuleSpinner } from "@/components/chat/status-capsule";
 import { ActivityJumpButton } from "@/components/computer/activity-jump-button";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { setWorkUi, workUi } from "@/lib/chat/ui-memory";
 import {
   currentWorkStep,
@@ -208,13 +209,18 @@ export function WorkRow({
     : done
       ? done.label
       : null;
+  // 在跑时没返回的步骤是「进行中」（审查模块 7：以前标成「（失败）」）。
+  const steps = open && text !== null ? workTimeline(calls, notes, live) : [];
+  const lastSteps = useRef(steps);
+  if (open && text !== null) {
+    lastSteps.current = steps;
+  }
+  const retainedSteps = open ? steps : lastSteps.current;
   if (text === null) return null;
   const started = startedAt.get(turnKey) ?? now;
   const seconds = live
     ? Math.max(0, Math.floor((now - started) / 1000))
     : doneSeconds;
-  // 在跑时没返回的步骤是「进行中」（审查模块 7：以前标成「（失败）」）。
-  const steps = open ? workTimeline(calls, notes, live) : [];
   // 读屏：按钮名字里先说当前动作 / 做了什么（以前只有「展开步骤」，把动作盖掉了），再说点了会怎样。
   // 网页类的摘要自己已经写了「N 步失败」（审查模块 7：4xx/5xx 算失败），后面不再重复一遍。
   const metaFailed =
@@ -297,10 +303,13 @@ export function WorkRow({
           data-open={open || undefined}
         />
       </button>
-      {open ? (
-        <ol className="chat-work-steps" data-testid="chat-work-steps">
-          {steps.length === 0 ? <li>{"正在准备"}</li> : null}
-          {steps.map((step, index) => (
+      <SmoothCollapse open={open} unmountOnExit>
+        <ol
+          className="chat-work-steps"
+          data-testid={open ? "chat-work-steps" : undefined}
+        >
+          {retainedSteps.length === 0 ? <li>{"正在准备"}</li> : null}
+          {retainedSteps.map((step, index) => (
             <li
               className={
                 step.kind === "note"
@@ -322,7 +331,7 @@ export function WorkRow({
             </li>
           ))}
         </ol>
-      ) : null}
+      </SmoothCollapse>
     </div>
   );
 }

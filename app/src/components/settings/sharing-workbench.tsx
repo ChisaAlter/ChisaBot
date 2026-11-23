@@ -17,6 +17,7 @@ import { PageSection } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardBody, CardHeader, ListRow } from "@/components/ui/skyglass";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import { toast } from "@/components/ui/toast";
 import { agentKeys, agentListQueryOptions } from "@/lib/agents/queries";
 import { chisaSkillKeys } from "@/lib/chisa-skills";
@@ -313,6 +314,7 @@ export function SharingWorkbench() {
         />
 
         <CardBody className="flex flex-col gap-4">
+          <ContentEnter className="flex flex-col gap-4" key={mode}>
           {mode === "export" ? (
             <>
               <div className="flex flex-wrap items-end gap-3">
@@ -856,6 +858,7 @@ export function SharingWorkbench() {
               ) : null}
             </>
           )}
+          </ContentEnter>
         </CardBody>
       </Card>
     </PageSection>

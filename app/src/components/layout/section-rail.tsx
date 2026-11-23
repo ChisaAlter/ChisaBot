@@ -4,6 +4,7 @@ import type * as React from "react";
 import { useRef, useState } from "react";
 import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
 import { RosterToggle } from "@/components/layout/roster-toggle";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import {
   Sidebar,
   SidebarContent,
@@ -162,24 +163,27 @@ export function SectionRail({
           </div>
           {header}
           <div className="glass-side-scroll rail-scroll" ref={scrollRef}>
-            {body ?? groups.map((group, gi) =>
-              group.collapsible && !(group.collapsible.desktopOnly && sidebar?.isMobile) ? (
-                <CollapsibleGroup anyHere={anyHere} first={gi === 0} group={group} key={group.label ?? gi} />
-              ) : (
-                <div className={cn("rail-group", gi > 0 && "mt-2")} key={group.label ?? gi}>
-                  {group.label ? (
-                    <div className="glass-sec">
-                      <span>{group.label}</span>
+            <div className="ch-view-enter" key={body ? "search" : "groups"}>
+              {body ??
+                groups.map((group, gi) =>
+                  group.collapsible && !(group.collapsible.desktopOnly && sidebar?.isMobile) ? (
+                    <CollapsibleGroup anyHere={anyHere} first={gi === 0} group={group} key={group.label ?? gi} />
+                  ) : (
+                    <div className={cn("rail-group", gi > 0 && "mt-2")} key={group.label ?? gi}>
+                      {group.label ? (
+                        <div className="glass-sec">
+                          <span>{group.label}</span>
+                        </div>
+                      ) : null}
+                      <div className="rail-list">
+                        {group.items.map((item) => (
+                          <NavRow item={item} key={item.title} />
+                        ))}
+                      </div>
                     </div>
-                  ) : null}
-                  <div className="rail-list">
-                    {group.items.map((item) => (
-                      <NavRow item={item} key={item.title} />
-                    ))}
-                  </div>
-                </div>
-              ),
-            )}
+                  ),
+                )}
+            </div>
           </div>
           <RailFooter link={footerLink} />
         </nav>
@@ -228,13 +232,13 @@ function CollapsibleGroup({ group, anyHere, first }: { group: RailGroup; anyHere
         <span>{group.label}</span>
         <IconChevronRight aria-hidden className="rail-sec-chev size-3.5" data-open={open || undefined} />
       </button>
-      {open ? (
+      <SmoothCollapse open={open}>
         <div className="rail-list">
           {group.items.map((item) => (
             <NavRow item={item} key={item.title} />
           ))}
         </div>
-      ) : null}
+      </SmoothCollapse>
     </div>
   );
 }

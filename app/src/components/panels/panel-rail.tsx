@@ -369,21 +369,23 @@ export function PanelRail({ className }: { className?: string }) {
     // 窄窗口（< 1280px）：没有右侧栏的位置，面板改成右边缘把手 + 滑出的抽屉，入口一直在。
     return (
       <>
-        {sheetOpen ? null : (
-          <ToggleTip label={"打开面板"} side="left">
-            <button
-              aria-controls={"chisabot-panel-sheet"}
-              aria-expanded={false}
-              aria-label={"打开面板"}
-              className="rail-tab is-narrow"
-              onClick={() => openPanelSheet("user")}
-              type="button"
-            >
-              <IconLayoutSidebarRightExpand className="size-4" />
-              <span className="rail-tab-t">{"面板"}</span>
-            </button>
-          </ToggleTip>
-        )}
+        <ToggleTip label={"打开面板"} side="left">
+          <button
+            aria-controls={"chisabot-panel-sheet"}
+            aria-expanded={sheetOpen}
+            aria-hidden={sheetOpen || undefined}
+            aria-label={"打开面板"}
+            className="rail-tab is-narrow"
+            data-hidden={sheetOpen ? "true" : undefined}
+            inert={sheetOpen || undefined}
+            onClick={() => openPanelSheet("user")}
+            tabIndex={sheetOpen ? -1 : undefined}
+            type="button"
+          >
+            <IconLayoutSidebarRightExpand className="size-4" />
+            <span className="rail-tab-t">{"面板"}</span>
+          </button>
+        </ToggleTip>
         <Sheet
           onOpenChange={(next) =>
             next ? openPanelSheet("user") : closeSheet("user")
@@ -481,18 +483,21 @@ export function PanelRail({ className }: { className?: string }) {
 
 /**
  * 面板卡收起后留在右边缘的小把手（竖排「面板」）：收起的东西在它原来的位置留下痕迹，点它展开。
- * 面板卡展开时不渲染。
+ * 常驻挂载并通过 data-hidden 驱动进退场滑移，避免开关瞬切。
  */
 function PanelRailHandle({ open }: { open: boolean }) {
-  if (open) return null;
   return (
     <ToggleTip keys={PANEL_RAIL_HOTKEY_LABEL} label={"展开面板"} side="left">
       <button
         aria-controls={"chisabot-panel-rail"}
-        aria-expanded={false}
+        aria-expanded={open}
+        aria-hidden={open || undefined}
         aria-label={"展开面板"}
         className="rail-tab hidden xl:flex"
+        data-hidden={open ? "true" : undefined}
+        inert={open || undefined}
         onClick={() => setPanelRailOpen(true)}
+        tabIndex={open ? -1 : undefined}
         type="button"
       >
         <IconLayoutSidebarRightExpand className="size-4" />
@@ -687,7 +692,7 @@ function PanelRailBody({
                   <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
                     {panelPresetBatch(0).map((preset) => (
                       <button
-                        className="rounded-full border border-border/60 bg-background/60 px-2.5 py-1 text-[11.5px] font-medium text-foreground/85 transition-colors hover:bg-muted hover:text-foreground"
+                        className="ch-press rounded-full border border-border/60 bg-background/60 px-2.5 py-1 text-[11.5px] font-medium text-foreground/85 transition-colors duration-150 hover:bg-muted hover:text-foreground"
                         data-testid={`rail-empty-preset-${preset.label.slice(0, 2)}`}
                         key={preset.label}
                         onClick={() => {
@@ -945,7 +950,7 @@ function RailAddPanelMenu({
           render={
             <button
               aria-label={"新建面板"}
-              className="rail-head-icon"
+              className="rail-head-icon ch-content-enter"
               data-testid="rail-add-panel-btn"
               type="button"
             />
@@ -959,7 +964,7 @@ function RailAddPanelMenu({
           <span>{"新建右侧面板（填入输入框）"}</span>
           <button
             aria-label={"换一批预设"}
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-foreground/80 hover:bg-muted"
+            className="ch-press inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-foreground/80 transition-colors duration-100 hover:bg-muted"
             data-testid="rail-preset-shuffle"
             onClick={(event) => {
               event.preventDefault();
@@ -973,16 +978,18 @@ function RailAddPanelMenu({
           </button>
         </div>
         <DropdownMenuSeparator className="glass-sep" />
-        {presets.map((preset) => (
-          <DropdownMenuItem
-            className="glass-mi"
-            data-testid={`rail-add-preset-${preset.label.slice(0, 2)}`}
-            key={preset.label}
-            onClick={() => prefill(preset.prompt)}
-          >
-            <span className="min-w-0 flex-1 truncate">{preset.label}</span>
-          </DropdownMenuItem>
-        ))}
+        <div className="ch-view-enter" key={batch}>
+          {presets.map((preset) => (
+            <DropdownMenuItem
+              className="glass-mi"
+              data-testid={`rail-add-preset-${preset.label.slice(0, 2)}`}
+              key={preset.label}
+              onClick={() => prefill(preset.prompt)}
+            >
+              <span className="min-w-0 flex-1 truncate">{preset.label}</span>
+            </DropdownMenuItem>
+          ))}
+        </div>
         <DropdownMenuSeparator className="glass-sep" />
         <DropdownMenuItem
           className="glass-mi text-muted-foreground"

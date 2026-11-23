@@ -13,9 +13,11 @@ import { Link } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { agentListQueryOptions } from "@/lib/agents/queries";
+import { useRetainedValue } from "@/lib/motion";
 import {
   taskCenterApi,
   taskCenterCapabilityOptions,
@@ -124,6 +126,7 @@ export function SourceSettings({
   onChanged: () => void;
 }) {
   const [editor, setEditor] = useState<TaskCenterSource | "new" | null>(null);
+  const retainedEditor = useRetainedValue(editor);
   return (
     <>
       <section className="space-y-5" aria-label="信息来源">
@@ -150,17 +153,19 @@ export function SourceSettings({
             添加来源
           </Button>
         </div>
-        {editor ? (
-          <SourceEditor
-            key={editor === "new" ? "new" : editor.id}
-            onCancel={() => setEditor(null)}
-            onSaved={() => {
-              setEditor(null);
-              onChanged();
-            }}
-            source={editor === "new" ? undefined : editor}
-          />
-        ) : null}
+        <SmoothCollapse open={Boolean(editor)} unmountOnExit>
+          {retainedEditor ? (
+            <SourceEditor
+              key={retainedEditor === "new" ? "new" : retainedEditor.id}
+              onCancel={() => setEditor(null)}
+              onSaved={() => {
+                setEditor(null);
+                onChanged();
+              }}
+              source={retainedEditor === "new" ? undefined : retainedEditor}
+            />
+          ) : null}
+        </SmoothCollapse>
         {!sources.length && !editor ? (
           <div className="rounded-2xl border border-border px-5 py-9">
             <p className="font-medium">还没有巡检来源</p>

@@ -10,6 +10,7 @@ import {
 } from "@tabler/icons-react";
 import { useId, useRef, useState } from "react";
 import { useAutoFocus, useTimeout } from "@/hooks";
+import { ContentEnter, SmoothCollapse } from "@/components/ui/motion-primitives";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
   ACTIVE_WORKER,
@@ -21,6 +22,7 @@ import {
   type WorkerView,
 } from "@/lib/conversations/workers";
 import { useKeptVisible } from "@/lib/kept-visible";
+import { smoothScrollIntoView, useRetainedValue } from "@/lib/motion";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 
@@ -246,11 +248,12 @@ export function WorkerCardBody({
       ? document.querySelector(`[data-message-id="${CSS.escape(id)}"]`)
       : null;
     if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      smoothScrollIntoView(target, { block: "center" });
       target.classList.add("is-flash");
       setTimeout(() => target.classList.remove("is-flash"), 1200);
     } else setExpanded((value) => !value);
   };
+  const retainedError = useRetainedValue(error || null);
 
   // 不止一个在跑：一行（图标 · 标题 · 当前步骤 · 用时 · 展开）。
   if (active && !(runningOpen ?? !compact) && !steering) {
@@ -464,89 +467,98 @@ export function WorkerCardBody({
       ) : null}
       {active ? (
         <div className="worker-actions">
-          {steering ? (
-            <form
-              className="worker-steer"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (note.trim() && !busy) void run("steer");
-              }}
-            >
-              <input
-                aria-label={"给这个后台任务补充说明"}
-                className="worker-steer-input"
-                maxLength={2000}
-                onChange={(event) => setNote(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setSteering(false);
+          <ContentEnter
+            className="flex w-full items-center gap-2"
+            key={steering ? "steer" : "idle"}
+          >
+            {steering ? (
+              <form
+                className="worker-steer"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (note.trim() && !busy) void run("steer");
                 }}
-                placeholder={"补充说明，例如：只看 2026 年的"}
-                ref={input}
-                value={note}
-              />
-              <button
-                className="worker-btn is-primary"
-                disabled={!note.trim() || busy === "steer"}
-                title={"发送"}
-                type="submit"
               >
-                {busy === "steer" ? (
-                  <IconLoader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <IconSend2 className="size-3.5" />
-                )}
-                <span className="worker-btn-label">{"发送"}</span>
-              </button>
-              <button
-                aria-label={"取消"}
-                className="worker-btn"
-                onClick={() => setSteering(false)}
-                title={"取消"}
-                type="button"
-              >
-                <IconX className="size-3.5" />
-              </button>
-            </form>
-          ) : (
-            <>
-              <button
-                className="worker-btn"
-                data-testid="worker-steer"
-                onClick={() => setSteering(true)}
-                title={"补充说明"}
-                type="button"
-              >
-                {sent ? (
-                  <IconCheck className="size-3.5" />
-                ) : (
-                  <IconMessagePlus className="size-3.5" />
-                )}
-                <span className="worker-btn-label">
-                  {sent ? "已发送" : "补充说明"}
-                </span>
-              </button>
-              <button
-                className="worker-btn is-danger"
-                data-testid="worker-cancel"
-                disabled={busy === "cancel"}
-                onClick={() => void run("cancel")}
-                title={"停止这个后台任务"}
-                type="button"
-              >
-                {busy === "cancel" ? (
-                  <IconLoader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <IconPlayerStopFilled className="size-3" />
-                )}
-                <span className="worker-btn-label">
-                  {busy === "cancel" ? "停止中…" : "停止"}
-                </span>
-              </button>
-            </>
-          )}
+                <input
+                  aria-label={"给这个后台任务补充说明"}
+                  className="worker-steer-input"
+                  maxLength={2000}
+                  onChange={(event) => setNote(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setSteering(false);
+                  }}
+                  placeholder={"补充说明，例如：只看 2026 年的"}
+                  ref={input}
+                  value={note}
+                />
+                <button
+                  className="worker-btn is-primary"
+                  disabled={!note.trim() || busy === "steer"}
+                  title={"发送"}
+                  type="submit"
+                >
+                  {busy === "steer" ? (
+                    <IconLoader2 className="size-3.5 motion-safe:animate-spin" />
+                  ) : (
+                    <IconSend2 className="size-3.5" />
+                  )}
+                  <span className="worker-btn-label">{"发送"}</span>
+                </button>
+                <button
+                  aria-label={"取消"}
+                  className="worker-btn"
+                  onClick={() => setSteering(false)}
+                  title={"取消"}
+                  type="button"
+                >
+                  <IconX className="size-3.5" />
+                </button>
+              </form>
+            ) : (
+              <>
+                <button
+                  className="worker-btn"
+                  data-testid="worker-steer"
+                  onClick={() => setSteering(true)}
+                  title={"补充说明"}
+                  type="button"
+                >
+                  {sent ? (
+                    <IconCheck className="size-3.5" />
+                  ) : (
+                    <IconMessagePlus className="size-3.5" />
+                  )}
+                  <span className="worker-btn-label">
+                    {sent ? "已发送" : "补充说明"}
+                  </span>
+                </button>
+                <button
+                  className="worker-btn is-danger"
+                  data-testid="worker-cancel"
+                  disabled={busy === "cancel"}
+                  onClick={() => void run("cancel")}
+                  title={"停止这个后台任务"}
+                  type="button"
+                >
+                  {busy === "cancel" ? (
+                    <IconLoader2 className="size-3.5 motion-safe:animate-spin" />
+                  ) : (
+                    <IconPlayerStopFilled className="size-3" />
+                  )}
+                  <span className="worker-btn-label">
+                    {busy === "cancel" ? "停止中…" : "停止"}
+                  </span>
+                </button>
+              </>
+            )}
+          </ContentEnter>
         </div>
       ) : null}
-      {error ? <div className="worker-error">{error}</div> : null}
+      <SmoothCollapse open={Boolean(error)} unmountOnExit>
+        {retainedError ? (
+          <div className="worker-error">{retainedError}</div>
+        ) : null}
+      </SmoothCollapse>
     </div>
   );
 }

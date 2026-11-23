@@ -332,8 +332,8 @@ export function NotificationSettingsSection() {
                 <div
                   className={
                     selected
-                      ? "flex items-center justify-between gap-2 rounded-xl border border-primary/40 bg-primary/8 px-3 py-2"
-                      : "flex items-center justify-between gap-2 rounded-xl border border-border/60 bg-background/40 px-3 py-2"
+                      ? "flex items-center justify-between gap-2 rounded-xl border border-primary/40 bg-primary/8 px-3 py-2 transition-[background-color,border-color] duration-150 ease-out"
+                      : "flex items-center justify-between gap-2 rounded-xl border border-border/60 bg-background/40 px-3 py-2 transition-[background-color,border-color] duration-150 ease-out hover:border-border hover:bg-background/60"
                   }
                   key={option.id}
                 >

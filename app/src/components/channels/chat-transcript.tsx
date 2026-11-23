@@ -101,6 +101,7 @@ import {
   MessageScrollerViewport,
   useMessageScroller,
 } from "@/components/ui/message-scroller";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useElementEvent,
@@ -184,7 +185,14 @@ import { WORKER_RESULT_MARKER } from "@/lib/conversations/workers";
 import { useKeptVisibility } from "@/lib/kept-visible";
 import { markdownComponents } from "@/lib/markdown";
 import { forgetMemoryNote } from "@/lib/memory-notes";
-import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
+import {
+  DURATION_MS,
+  EASE_OUT,
+  ENTRANCE_SECONDS,
+  smoothScrollIntoView,
+  usePresenceMount,
+  useRetainedValue,
+} from "@/lib/motion";
 import { readToolName } from "@/lib/plugins/tool-name";
 import {
   asText,
@@ -479,6 +487,31 @@ function Thinking({ since, label }: { since: number; label: string }) {
   );
 }
 
+/** 固定 38px 状态槽的轻量退场淡出替身：胶囊消失时原地 150ms 淡出，零高度变化与零滚动跳动。 */
+function StatusSlotExitGhost({
+  active,
+  snapshot,
+}: {
+  active: boolean;
+  snapshot: { label: string; since: number; variant?: "pause" } | null;
+}) {
+  const lastSnapshot = useRef(snapshot);
+  if (snapshot) {
+    lastSnapshot.current = snapshot;
+  }
+  const retained = snapshot ?? lastSnapshot.current;
+  const { mounted } = usePresenceMount(active, DURATION_MS.exit);
+  if (active || !mounted || !retained) return null;
+  return (
+    <StatusCapsule
+      label={retained.label}
+      leaving
+      since={retained.since}
+      {...(retained.variant ? { variant: retained.variant } : {})}
+    />
+  );
+}
+
 /**
  * The turn ended and no answer came.
  *
@@ -537,9 +570,9 @@ function Stopped({
             >
               {open ? "收起详情" : "查看详情"}
             </button>
-            {open ? (
+            <SmoothCollapse open={open} unmountOnExit>
               <pre className="chat-error-detail">{friendly.detail}</pre>
-            ) : null}
+            </SmoothCollapse>
           </>
         ) : null}
       </div>
@@ -2302,6 +2335,7 @@ const KIND_LABELS: Record<string, string> = {
 
 function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
   const [active, setActive] = useState<MemoryPillItem | null>(null);
+  const shownActive = useRetainedValue(active);
   const [undoneIds, setUndoneIds] = useState<Record<string, boolean>>({});
   const [undoBusy, setUndoBusy] = useState(false);
   const [undoError, setUndoError] = useState<string | null>(null);
@@ -2363,7 +2397,7 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
         }}
         open={active !== null}
       >
-        {active ? (
+        {shownActive ? (
           <DialogContent className="max-w-md" data-testid="memory-pill-dialog">
             <div className="flex items-center gap-2 pb-2">
               <IconSparkles
@@ -2375,16 +2409,16 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
             <div className="space-y-3 text-sm">
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span className="rounded-md bg-muted px-2 py-0.5 font-medium text-foreground">
-                  {KIND_LABELS[active.kind ?? "fact"] ?? "记忆"}
+                  {KIND_LABELS[shownActive.kind ?? "fact"] ?? "记忆"}
                 </span>
-                {active.subject ? (
+                {shownActive.subject ? (
                   <span className="rounded-md bg-muted/60 px-2 py-0.5">
-                    {`对象：${active.subject}`}
+                    {`对象：${shownActive.subject}`}
                   </span>
                 ) : null}
               </div>
               <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5 leading-relaxed text-foreground">
-                {active.summary}
+                {shownActive.summary}
               </div>
               <div className="flex items-center justify-between pt-2">
                 {/*
@@ -2399,7 +2433,7 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                 >
                   {"管理全部长期记忆 →"}
                 </Link>
-                {undoneIds[active.id] ? (
+                {undoneIds[shownActive.id] ? (
                   <span
                     className="text-xs font-medium text-emerald-400"
                     data-testid="memory-undone-status"
@@ -2411,7 +2445,7 @@ function MemoryPills({ items }: { items: readonly MemoryPillItem[] }) {
                     className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition hover:bg-destructive/20 disabled:opacity-50"
                     data-testid="memory-undo-btn"
                     disabled={undoBusy}
-                    onClick={() => void handleUndo(active)}
+                    onClick={() => void handleUndo(shownActive)}
                     type="button"
                   >
                     <IconTrash className="size-3.5" />
@@ -4560,7 +4594,7 @@ function ChatTranscriptImpl({
         `[data-message-id="${CSS.escape(owner.id)}"]`,
       );
       if (!row) return false;
-      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      smoothScrollIntoView(row, { block: "center" });
       row.classList.add("is-activity-jump");
       setTimeout(() => row.classList.remove("is-activity-jump"), 1600);
       return true;
@@ -4746,6 +4780,31 @@ function ChatTranscriptImpl({
                       since={liveSince}
                       watch={pausedAfterText}
                       label={connectionLabel}
+                    />
+                  ) : null}
+                  {!tailStop ? (
+                    <StatusSlotExitGhost
+                      active={Boolean(
+                        (liveWorkInTail && liveWork) ||
+                          waitingOnFirstToken ||
+                          pausedAfterText !== null,
+                      )}
+                      snapshot={
+                        liveWorkInTail && liveWork
+                          ? {
+                              label:
+                                workStatusLabel ??
+                                summarizeWork(liveWork.calls)?.current ??
+                                "处理中",
+                              since: liveSince,
+                            }
+                          : waitingOnFirstToken
+                            ? {
+                                label: connectionLabel ?? "思考中",
+                                since: liveSince,
+                              }
+                            : null
+                      }
                     />
                   ) : null}
                 </div>

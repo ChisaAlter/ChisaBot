@@ -33,11 +33,13 @@
         <div class="update-progress-fill" id="progress-fill"></div>
       </div>
       <p class="update-percent" id="percent" aria-live="polite">0%</p>
-      <div class="update-actions hidden" id="actions">
-        <button id="later" class="btn outline hidden" type="button">稍后</button>
-        <button id="restart" class="btn hidden" type="button">立即重启</button>
-        <button id="retry" class="btn hidden" type="button">重新检查</button>
-        <button id="close-ok" class="btn hidden" type="button">知道了</button>
+      <div class="update-actions-wrap" id="actions-wrap" data-open="false" aria-hidden="true">
+        <div class="update-actions" id="actions">
+          <button id="later" class="btn outline hidden" type="button">稍后</button>
+          <button id="restart" class="btn hidden" type="button">立即重启</button>
+          <button id="retry" class="btn hidden" type="button">重新检查</button>
+          <button id="close-ok" class="btn hidden" type="button">知道了</button>
+        </div>
       </div>
       <button id="download-latest" class="update-download-link" type="button">下载最新版本</button>
     </div>

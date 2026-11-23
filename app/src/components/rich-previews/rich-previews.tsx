@@ -31,6 +31,7 @@ import {
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import { readImageDims } from "@/lib/image-dims";
 import { markdownComponents } from "@/lib/markdown";
+import { DURATION_MS, usePresenceMount } from "@/lib/motion";
 import {
   type ExtractedImage,
   extensionOf,
@@ -719,6 +720,7 @@ function FileCardInner({
     ? `${url}?download=1`
     : url;
   const [viewing, setViewing] = useState(false);
+  const viewPresence = usePresenceMount(viewing, DURATION_MS.exit);
   const [thumbBroken, setThumbBroken] = useState(false);
   const textQuery = useQuery(
     {
@@ -833,7 +835,7 @@ function FileCardInner({
             <DialogHeader>
               <DialogTitle className="truncate">{label}</DialogTitle>
             </DialogHeader>
-            {viewing ? (
+            {viewPresence.mounted ? (
               <iframe className="rp-pdf-frame" src={url} title={label} />
             ) : null}
           </DialogContent>
@@ -878,7 +880,9 @@ function FileCardInner({
                 </a>
               </div>
             </DialogHeader>
-            {viewing ? <DocxPreviewBody knownBytes={bytes} url={url} /> : null}
+            {viewPresence.mounted ? (
+              <DocxPreviewBody knownBytes={bytes} url={url} />
+            ) : null}
           </DialogContent>
         </Dialog>
       ) : null}

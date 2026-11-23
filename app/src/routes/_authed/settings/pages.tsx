@@ -30,6 +30,7 @@ import { Card, ErrorCard } from "@/components/ui/skyglass";
 import { toast } from "@/components/ui/toast";
 import { writeClipboard } from "@/components/ui/copy-button";
 import { agoText } from "@/lib/im";
+import { useRetainedValue } from "@/lib/motion";
 import {
   deletePage,
   deletePageAsset,
@@ -355,7 +356,8 @@ function RenameDialog({ page, onOpenChange }: { page: PageView | null; onOpenCha
 
 function VersionsDialog({ page, onOpenChange }: { page: PageView | null; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
-  const versions = useQuery({ ...pageVersionsQueryOptions(page?.id ?? ""), enabled: Boolean(page) });
+  const retainedPage = useRetainedValue(page);
+  const versions = useQuery({ ...pageVersionsQueryOptions(retainedPage?.id ?? ""), enabled: Boolean(page) });
   const [restoring, setRestoring] = useState<number | null>(null);
   async function restore(version: number) {
     if (!page) return;
@@ -374,7 +376,7 @@ function VersionsDialog({ page, onOpenChange }: { page: PageView | null; onOpenC
     <Dialog onOpenChange={onOpenChange} open={Boolean(page)}>
       <DialogContent className="im-dialog max-w-lg">
         <DialogHeader>
-          <DialogTitle>{`版本历史 · ${page?.title ?? ""}`}</DialogTitle>
+          <DialogTitle>{`版本历史 · ${retainedPage?.title ?? ""}`}</DialogTitle>
           <DialogDescription>{"每次改动一版，保留最近 50 版。恢复旧版不会删掉后来的版本，而是把旧版复制成最新的一版。"}</DialogDescription>
         </DialogHeader>
         <DialogBody className="mt-2">
@@ -416,7 +418,8 @@ function VersionsDialog({ page, onOpenChange }: { page: PageView | null; onOpenC
 
 function AssetsDialog({ page, onOpenChange }: { page: PageView | null; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
-  const assets = useQuery({ ...pageAssetsQueryOptions(page?.id ?? ""), enabled: Boolean(page) });
+  const retainedPage = useRetainedValue(page);
+  const assets = useQuery({ ...pageAssetsQueryOptions(retainedPage?.id ?? ""), enabled: Boolean(page) });
   const input = useRef<HTMLInputElement>(null);
   const upload = useAsyncAction(
     async (files: File[]) => {
@@ -443,7 +446,7 @@ function AssetsDialog({ page, onOpenChange }: { page: PageView | null; onOpenCha
     <Dialog onOpenChange={onOpenChange} open={Boolean(page)}>
       <DialogContent className="im-dialog max-w-lg">
         <DialogHeader>
-          <DialogTitle>{`素材 · ${page?.title ?? ""}`}</DialogTitle>
+          <DialogTitle>{`素材 · ${retainedPage?.title ?? ""}`}</DialogTitle>
           <DialogDescription>{"页面里用 assets/名字 引用的图片等文件（每个 ≤ 8MB）。上传后告诉机器人用在哪里。"}</DialogDescription>
         </DialogHeader>
         <DialogBody className="mt-2">

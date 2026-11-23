@@ -13,6 +13,7 @@ import { Card, ErrorCard, ListRow } from "@/components/ui/skyglass";
 import { toast } from "@/components/ui/toast";
 import { checkGithub, connectGithub, disconnectGithub, githubKeys, githubQueryOptions } from "@/lib/github";
 import { agoText } from "@/lib/im";
+import { DURATION_MS, usePresenceMount } from "@/lib/motion";
 
 const KIND_TEXT: Record<GithubConnectionView["tokenKind"], string> = {
   "fine-grained": "Fine-grained 令牌",
@@ -163,14 +164,21 @@ export function GithubConnectionSection() {
 }
 
 export function GithubTokenDialog({ open, replacing, onOpenChange }: { open: boolean; replacing: boolean; onOpenChange: (open: boolean) => void }) {
+  const { mounted, onExited } = usePresenceMount(open, DURATION_MS.exit);
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={(nextOpen) => {
+        if (!nextOpen) onExited();
+      }}
+      open={open}
+    >
       <DialogContent className="im-dialog max-w-lg">
         <DialogHeader>
           <DialogTitle>{replacing ? "更换 GitHub 令牌" : "连接 GitHub"}</DialogTitle>
           <DialogDescription>{"令牌只发往 api.github.com，加密保存；保存后谁也看不到，包括你自己。"}</DialogDescription>
         </DialogHeader>
-        {open ? <GithubTokenForm onClose={() => onOpenChange(false)} replacing={replacing} /> : null}
+        {mounted ? <GithubTokenForm onClose={() => onOpenChange(false)} replacing={replacing} /> : null}
       </DialogContent>
     </Dialog>
   );

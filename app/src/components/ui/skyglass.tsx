@@ -1,6 +1,8 @@
-import { IconAlertTriangle, IconInbox } from "@tabler/icons-react";
+import { IconAlertTriangle, IconChevronRight, IconInbox } from "@tabler/icons-react";
 import type * as React from "react";
+import { useState } from "react";
 import { createPortal } from "react-dom";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { cn } from "@/lib/utils";
 
 /**
@@ -176,6 +178,7 @@ export function ErrorCard({
   action?: React.ReactNode;
   className?: string;
 }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   return (
     <div className={cn("sg-errcard", className)} role="alert">
       <IconAlertTriangle className="sg-errcard-ic size-[18px]" />
@@ -184,10 +187,26 @@ export function ErrorCard({
         {description ? <p>{description}</p> : null}
         {action}
         {detail ? (
-          <details>
-            <summary>{"查看详情"}</summary>
-            <pre>{detail}</pre>
-          </details>
+          <div className="mt-1.5 text-xs text-[var(--ink-3)]">
+            <button
+              aria-expanded={detailOpen}
+              className="inline-flex cursor-pointer items-center gap-1 transition-colors duration-150 hover:text-[var(--ink-1)]"
+              onClick={() => setDetailOpen((prev) => !prev)}
+              type="button"
+            >
+              <IconChevronRight
+                aria-hidden
+                className={cn(
+                  "size-3.5 transition-transform duration-150 ease-out motion-reduce:transition-none",
+                  detailOpen && "rotate-90",
+                )}
+              />
+              {"查看详情"}
+            </button>
+            <SmoothCollapse open={detailOpen}>
+              <pre>{detail}</pre>
+            </SmoothCollapse>
+          </div>
         ) : null}
       </div>
     </div>

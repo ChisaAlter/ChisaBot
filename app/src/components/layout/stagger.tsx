@@ -45,16 +45,15 @@ export function StaggerItem({
 
   return (
     <motion.div
-      animate={{ opacity: 1, transform: "translateY(0px)" }}
+      animate={{ opacity: 1, y: 0 }}
       className={className}
       /*
-       * The full transform string rather than motion's `y` shorthand: the shorthand is not
-       * hardware accelerated and drops frames exactly when the main thread is busy, which on these
-       * screens is while the list it belongs to is still being fetched.
+       * 使用数值 `y` 而非字符串 `transform: "translateY(0px)"`：
+       * 动画结束后 motion 自动清除内联 transform（归为 `none`），避免永久持有合成层或形成 Chromium Backdrop Root（GUARDRAIL §3.7）。
        */
       initial={{
         opacity: 0,
-        transform: shouldReduceMotion ? "none" : "translateY(6px)",
+        y: shouldReduceMotion ? 0 : 6,
       }}
       transition={{
         delay: shouldReduceMotion ? 0 : delay,

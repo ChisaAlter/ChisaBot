@@ -299,8 +299,11 @@ function Staged({
       animate={{ opacity: 1, scale: 1 }}
       className={className ? `relative ${className}` : "relative"}
       initial={{ opacity: 0, scale: shouldReduceMotion ? 1 : 0.85 }}
-      layout
-      transition={{ duration: ENTRANCE_SECONDS, ease: EASE_OUT }}
+      layout={!shouldReduceMotion}
+      transition={{
+        duration: shouldReduceMotion ? 0 : ENTRANCE_SECONDS,
+        ease: EASE_OUT,
+      }}
     >
       {children}
     </motion.li>

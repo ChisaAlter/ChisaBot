@@ -2,7 +2,6 @@ import {
   IconArrowUp,
   IconBolt,
   IconChevronDown,
-  IconChevronUp,
   IconMessageReply,
   IconPlus,
   IconSparkles,
@@ -12,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type KeyboardEvent, useId, useState } from "react";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import {
   Message,
   MessageContent,
@@ -280,10 +280,7 @@ export function SideChatDrawer({
   return (
     <Sheet onOpenChange={handleOpenChange} open={isOpen}>
       <SheetContent
-        className={cn(
-          "w-full gap-0 bg-[var(--glass-bg-opaque)] p-0 sm:max-w-[440px]",
-          className,
-        )}
+        className={cn("w-full gap-0 p-0 sm:max-w-[440px]", className)}
         data-testid="side-chat-drawer"
         side="right"
       >
@@ -374,18 +371,21 @@ export function SideChatDrawer({
                   : "主对话只读上下文摘要"}
               </span>
               {digestText ? (
-                digestExpanded ? (
-                  <IconChevronUp className="size-3.5 shrink-0" />
-                ) : (
-                  <IconChevronDown className="size-3.5 shrink-0" />
-                )
+                <IconChevronDown
+                  className={cn(
+                    "size-3.5 shrink-0 transition-transform duration-200",
+                    digestExpanded && "rotate-180",
+                  )}
+                />
               ) : null}
             </button>
-            {digestExpanded && digestText ? (
-              <pre className="mt-2 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border/60 bg-background/70 p-2 font-sans text-[11px] leading-relaxed text-muted-foreground">
-                {digestText}
-              </pre>
-            ) : null}
+            <SmoothCollapse open={Boolean(digestExpanded && digestText)}>
+              {digestText ? (
+                <pre className="mt-2 max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border/60 bg-background/70 p-2 font-sans text-[11px] leading-relaxed text-muted-foreground">
+                  {digestText}
+                </pre>
+              ) : null}
+            </SmoothCollapse>
           </div>
         )}
 
@@ -440,10 +440,10 @@ export function SideChatDrawer({
         </div>
 
         <div className="flex shrink-0 flex-col gap-3 border-t border-border bg-background/50 p-4">
-          {isMainRunning ? (
+          <SmoothCollapse open={isMainRunning} unmountOnExit>
             <form
               className="flex flex-col gap-2 rounded-xl border border-primary/35 bg-primary/5 p-3"
-              data-testid="live-steer-panel"
+              data-testid={isMainRunning ? "live-steer-panel" : undefined}
               onSubmit={handleSteerFormSubmit}
             >
               <div className="flex items-center justify-between gap-2">
@@ -490,7 +490,7 @@ export function SideChatDrawer({
                 </p>
               ) : null}
             </form>
-          ) : null}
+          </SmoothCollapse>
 
           <form className="flex flex-col gap-2" onSubmit={handleSideFormSubmit}>
             <label

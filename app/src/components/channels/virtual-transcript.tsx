@@ -30,6 +30,8 @@ import {
   TranscriptSizeCache,
   VIRTUAL_BUFFER_PX,
 } from "@/lib/chat/virtual-transcript";
+import { DURATION_MS, usePresenceMount } from "@/lib/motion";
+import { cn } from "@/lib/utils";
 
 const refIds = new WeakMap<object, number>();
 let nextRefId = 1;
@@ -210,11 +212,13 @@ export function TranscriptFindBar<Row extends { id: string }>({
   textOf,
   viewportRef,
   onClose,
+  leaving = false,
 }: {
   dataLayer: TranscriptDataLayer<Row>;
   textOf: (row: Row) => string | null;
   viewportRef: RefObject<HTMLElement | null>;
   onClose: () => void;
+  leaving?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const hits = useMemo(
@@ -282,9 +286,14 @@ export function TranscriptFindBar<Row extends { id: string }>({
 
   return (
     <search
+      aria-hidden={leaving || undefined}
       aria-label="在对话中查找"
-      className="absolute top-2 right-4 z-20 flex items-center gap-1 rounded-md border border-border bg-background p-1 shadow-sm"
-      data-testid="transcript-find"
+      className={cn(
+        "absolute top-2 right-4 z-20 flex items-center gap-1 rounded-md border border-border bg-background/95 p-1 shadow-sm transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none",
+        leaving ? "pointer-events-none -translate-y-1 opacity-0" : "ch-content-enter",
+      )}
+      data-testid={leaving ? undefined : "transcript-find"}
+      inert={leaving}
     >
       <Input
         aria-label="查找"
@@ -396,11 +405,13 @@ export function VirtualTranscriptControls<Row extends { id: string }>({
       layer.scrollToMessage(id, { align: "center" });
   });
   const [findOpen, setFindOpen] = useState(false);
+  const findPresence = usePresenceMount(findOpen, DURATION_MS.exit);
   const openFind = useCallback(() => setFindOpen(true), []);
   useFindShortcut(true, viewportRef, openFind);
-  return findOpen ? (
+  return findPresence.mounted ? (
     <TranscriptFindBar
       dataLayer={dataLayer}
+      leaving={!findOpen}
       onClose={() => setFindOpen(false)}
       textOf={textOf}
       viewportRef={viewportRef}

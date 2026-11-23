@@ -1,6 +1,12 @@
-import { type CSSProperties, useRef, useSyncExternalStore } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useTheme } from "@/components/theme-provider";
-import { useDocumentSync, useExternalConnection } from "@/hooks";
+import { useDocumentSync, useExternalConnection, useTimeout } from "@/hooks";
 import {
   applyAppearanceToDocument,
   getAppearanceState,
@@ -10,27 +16,28 @@ import {
   resolveEffectiveHarkScene,
   resolveSkyReadability,
   useAppearance,
-  useWallpaperLoading,
   usesThemeGradientSky,
+  useWallpaperLoading,
 } from "@/lib/appearance";
+import { DURATION_MS } from "@/lib/motion";
 import { usePerfMode } from "@/lib/perf-mode";
+import {
+  isResizing,
+  resizeInProgress,
+  subscribeResizing,
+} from "@/lib/resize-state";
 import { noteSkyFrame, skyFadeHolding, wakeSkyOnWeather } from "@/lib/sky-fade";
+import {
+  noteSkyFrameCost,
+  skyFrameDelay,
+  skyInputHolding,
+} from "@/lib/sky-pace";
 import {
   captureSkySnapshot,
   invalidateSkySnapshot,
   setSkySnapshotRedraw,
   skySnapshotWanted,
 } from "@/lib/sky-snapshot";
-import {
-  isResizing,
-  resizeInProgress,
-  subscribeResizing,
-} from "@/lib/resize-state";
-import {
-  noteSkyFrameCost,
-  skyFrameDelay,
-  skyInputHolding,
-} from "@/lib/sky-pace";
 import { createSkyWindow } from "@/lib/sky-window";
 
 /*
@@ -817,6 +824,49 @@ export function SkyBackground() {
     };
   });
 
+  // 壁纸切换交叉淡入状态：仅在「壁纸 A → 壁纸 B」切换且未开启减少动效 / 性能模式时，
+  // 保留旧图作底、新图以纯 opacity 淡入（contain: strict 内零布局重排），淡入结束后卸载旧图。
+  const [wallpaperSwap, setWallpaperSwap] = useState<{
+    current: string | null;
+    previous: string | null;
+    seq: number;
+  }>(() => ({
+    current: wallpaperCss,
+    previous: null,
+    seq: 0,
+  }));
+
+  if (wallpaperSwap.current !== wallpaperCss) {
+    const canCrossfade =
+      Boolean(wallpaperSwap.current) &&
+      Boolean(wallpaperCss) &&
+      !reducedMotion &&
+      !perf;
+    setWallpaperSwap({
+      current: wallpaperCss,
+      previous: canCrossfade ? wallpaperSwap.current : null,
+      seq: wallpaperSwap.seq + 1,
+    });
+  } else if (wallpaperSwap.previous && (reducedMotion || perf)) {
+    setWallpaperSwap({
+      current: wallpaperSwap.current,
+      previous: null,
+      seq: wallpaperSwap.seq,
+    });
+  }
+
+  const clearPreviousWallpaper = useCallback(() => {
+    setWallpaperSwap((prev) =>
+      prev.previous === null ? prev : { ...prev, previous: null },
+    );
+  }, []);
+
+  useTimeout(
+    clearPreviousWallpaper,
+    wallpaperSwap.previous ? DURATION_MS.slow + 40 : null,
+    wallpaperSwap.seq,
+  );
+
   // 壁纸读取中：连静态天空占位也不画，只铺主题纯色（body 的底色 --sky-2）；读回后直接换成壁纸。
   if (wallpaperLoading && !wallpaperCss) {
     return (
@@ -829,6 +879,16 @@ export function SkyBackground() {
     );
   }
 
+  const wallpaperSharedStyle = {
+    // 模糊本身写在 styles.css 的 [data-blur] 上（读这个变量），性能模式 / 减少透明度
+    // 由 perf-noblur.css 关掉并换成半透明遮罩，内联 style 压不过所以不在这里写 filter。
+    "--wallpaper-blur": `${appearance.wallpaperBlur}px`,
+    "--wallpaper-veil": String(
+      (Math.min(40, appearance.wallpaperBlur) / 40) * 0.55,
+    ),
+    transform: appearance.wallpaperBlur > 0 ? "scale(1.06)" : undefined,
+  } as CSSProperties;
+
   return (
     <div aria-hidden="true" id="sky-root">
       <div id="skyph" />
@@ -838,22 +898,28 @@ export function SkyBackground() {
       <div className="chisabot-ambient-orbs" />
       {wallpaperCss ? (
         <div className="chisabot-wallpaper" data-testid="chisabot-wallpaper">
+          {wallpaperSwap.previous ? (
+            <div
+              className="chisabot-wallpaper-img chisabot-wallpaper-img-prev"
+              data-blur={appearance.wallpaperBlur > 0 ? "" : undefined}
+              style={{
+                ...wallpaperSharedStyle,
+                backgroundImage: wallpaperSwap.previous,
+              }}
+            />
+          ) : null}
           <div
-            className="chisabot-wallpaper-img"
-            data-blur={appearance.wallpaperBlur > 0 ? "" : undefined}
-            style={
-              {
-                backgroundImage: wallpaperCss,
-                // 模糊本身写在 styles.css 的 [data-blur] 上（读这个变量），性能模式 / 减少透明度
-                // 由 perf-noblur.css 关掉并换成半透明遮罩，内联 style 压不过所以不在这里写 filter。
-                "--wallpaper-blur": `${appearance.wallpaperBlur}px`,
-                "--wallpaper-veil": String(
-                  (Math.min(40, appearance.wallpaperBlur) / 40) * 0.55,
-                ),
-                transform:
-                  appearance.wallpaperBlur > 0 ? "scale(1.06)" : undefined,
-              } as CSSProperties
+            className={
+              wallpaperSwap.previous
+                ? "chisabot-wallpaper-img chisabot-wallpaper-img-enter"
+                : "chisabot-wallpaper-img"
             }
+            data-blur={appearance.wallpaperBlur > 0 ? "" : undefined}
+            key={wallpaperSwap.previous ? wallpaperSwap.seq : "steady"}
+            style={{
+              ...wallpaperSharedStyle,
+              backgroundImage: wallpaperCss,
+            }}
           />
           <div
             className="chisabot-wallpaper-dim"

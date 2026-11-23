@@ -141,6 +141,12 @@ describe("自动刷新（CB-135）", () => {
       );
     });
     await settle();
+    expect(
+      view.container
+        .querySelector("[data-update-banner]")
+        ?.getAttribute("data-leaving"),
+    ).toBe("true");
+    await advance(250);
     expect(view.queryByText("有新版本，点此刷新")).toBeNull();
 
     await advance(UPDATE_AUTO_RELOAD_MS * 5);

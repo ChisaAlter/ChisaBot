@@ -147,9 +147,25 @@ function deriveUpdateView(info) {
 if (typeof document !== "undefined") {
   (async () => {
     const $ = (id) => document.getElementById(id);
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     let restartRunner = null;
     let boundFullInstall = null;
     let focusedReadyOnce = false;
+    let lastStatus = null;
+
+    function pulseCopy() {
+      if (reducedMotion.matches) return;
+      for (const el of [$("title"), $("subtitle")]) {
+        if (!el || typeof el.animate !== "function") continue;
+        el.animate(
+          [
+            { opacity: 0.45, transform: "translateY(3px)" },
+            { opacity: 1, transform: "none" },
+          ],
+          { duration: 200, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+        );
+      }
+    }
 
     function ensureRestartRunner(fullInstall) {
       const btn = $("restart");
@@ -169,11 +185,14 @@ if (typeof document !== "undefined") {
     function render(info) {
       if (!info) return;
       const view = deriveUpdateView(info);
+      const statusChanged = lastStatus !== null && lastStatus !== view.status;
+      lastStatus = view.status;
       $("title-action").textContent = view.action;
       const brandEl = $("title-brand");
       brandEl.textContent = view.brand;
       brandEl.classList.toggle("hidden", !view.brand);
       $("subtitle").textContent = view.subtitle;
+      if (statusChanged) pulseCopy();
 
       const progressEl = $("progress");
       const fillEl = $("progress-fill");
@@ -186,25 +205,30 @@ if (typeof document !== "undefined") {
         progressEl.dataset.mode = view.progressMode;
         if (view.progressMode === "indeterminate") {
           progressEl.removeAttribute("aria-valuenow");
-          fillEl.style.width = "";
+          fillEl.style.transform = "";
         } else {
           progressEl.setAttribute("aria-valuenow", String(Math.round(view.percent)));
-          fillEl.style.width = `${view.percent}%`;
+          fillEl.style.transform = `scaleX(${(view.percent / 100).toFixed(4)})`;
         }
         percentEl.classList.toggle("hidden", !view.percentText);
         percentEl.textContent = view.percentText;
       }
 
-      const actionsEl = $("actions");
+      const actionsWrapEl = $("actions-wrap");
       const laterEl = $("later");
       const restartEl = $("restart");
       const retryEl = $("retry");
       const closeOkEl = $("close-ok");
 
+      const showActions = view.actionKind !== "none";
       const showReady = view.actionKind === "ready";
       const showError = view.actionKind === "error";
       const showIdle = view.actionKind === "idle";
-      actionsEl.classList.toggle("hidden", view.actionKind === "none");
+      if (actionsWrapEl) {
+        actionsWrapEl.dataset.open = showActions ? "true" : "false";
+        actionsWrapEl.inert = !showActions;
+        actionsWrapEl.setAttribute("aria-hidden", String(!showActions));
+      }
       laterEl.classList.toggle("hidden", !showReady);
       restartEl.classList.toggle("hidden", !showReady);
       retryEl.classList.toggle("hidden", !showError);

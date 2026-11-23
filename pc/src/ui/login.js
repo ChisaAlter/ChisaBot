@@ -205,19 +205,45 @@
       history.append(li);
     }
   }
+  let historyCloseTimer = 0;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  function isHistoryOpen() {
+    return !history.hidden && !history.classList.contains("is-leaving");
+  }
   function openHistory() {
     if (!recent.length) return;
+    if (historyCloseTimer) {
+      clearTimeout(historyCloseTimer);
+      historyCloseTimer = 0;
+    }
+    history.classList.remove("is-leaving");
     renderHistory();
     history.hidden = false;
     historyBtn.setAttribute("aria-expanded", "true");
   }
   function closeHistory() {
-    history.hidden = true;
+    if (!isHistoryOpen()) return;
     historyBtn.setAttribute("aria-expanded", "false");
+    if (reducedMotion.matches) {
+      history.classList.remove("is-leaving");
+      history.hidden = true;
+      return;
+    }
+    history.classList.add("is-leaving");
+    const finish = () => {
+      if (historyCloseTimer) {
+        clearTimeout(historyCloseTimer);
+        historyCloseTimer = 0;
+      }
+      history.classList.remove("is-leaving");
+      history.hidden = true;
+    };
+    history.addEventListener("animationend", finish, { once: true });
+    historyCloseTimer = setTimeout(finish, 180);
   }
-  historyBtn.addEventListener("click", () => (history.hidden ? openHistory() : closeHistory()));
+  historyBtn.addEventListener("click", () => (isHistoryOpen() ? closeHistory() : openHistory()));
   server.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowDown" && history.hidden) {
+    if (event.key === "ArrowDown" && !isHistoryOpen()) {
       event.preventDefault();
       openHistory();
       history.querySelector(".pick")?.focus();
@@ -232,13 +258,13 @@
     event.preventDefault();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !history.hidden) {
+    if (event.key === "Escape" && isHistoryOpen()) {
       closeHistory();
       server.focus();
     }
   });
   document.addEventListener("pointerdown", (event) => {
-    if (!history.hidden && !$("combo").contains(event.target)) closeHistory();
+    if (isHistoryOpen() && !$("combo").contains(event.target)) closeHistory();
   });
 
   // ---------- 初始状态 ----------

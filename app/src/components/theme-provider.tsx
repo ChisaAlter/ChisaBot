@@ -3,6 +3,7 @@ import {
   type ReactNode,
   useContext,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useDocumentSync, useWindowEvent } from "@/hooks";
@@ -27,14 +28,25 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [dark, setDark] = useState(() =>
     parseStoredDarkTheme(readStoredPreference(THEME_STORAGE_KEY)),
   );
+  const committedDarkRef = useRef(dark);
 
   useDocumentSync(dark, (doc, isDark) => {
+    const isThemeSwitch = committedDarkRef.current !== isDark;
+    committedDarkRef.current = isDark;
+    const root = doc.documentElement;
+    let raf1 = 0;
+    let raf2 = 0;
+
+    // 切深浅色时冻结 1 帧全站 CSS transition，防止长对话 240+ 个隐藏操作按钮并发颜色过渡拖垮 INP。
+    if (isThemeSwitch) {
+      root.setAttribute("data-theme-switching", "1");
+    }
+
     applyDarkTheme(isDark, {
       setStoredValue: writeStoredPreference,
-      toggleRootClass: (name, force) =>
-        doc.documentElement.classList.toggle(name, force),
+      toggleRootClass: (name, force) => root.classList.toggle(name, force),
       setRootColorScheme: (scheme) => {
-        doc.documentElement.style.colorScheme = scheme;
+        root.style.colorScheme = scheme;
       },
     });
     const bridge = (
@@ -43,6 +55,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       }
     ).ChisaAndroid;
     bridge?.setTheme?.(isDark ? "dark" : "light");
+
+    if (!isThemeSwitch) return;
+    if (typeof window.requestAnimationFrame === "function") {
+      raf1 = window.requestAnimationFrame(() => {
+        raf2 = window.requestAnimationFrame(() => {
+          root.removeAttribute("data-theme-switching");
+        });
+      });
+      return () => {
+        window.cancelAnimationFrame(raf1);
+        window.cancelAnimationFrame(raf2);
+        root.removeAttribute("data-theme-switching");
+      };
+    }
+    root.removeAttribute("data-theme-switching");
+    return undefined;
   });
 
   // 多标签页同步：别的标签页切了浅色 / 深色，这边跟着切（storage 事件只在别的标签页写入时触发）。

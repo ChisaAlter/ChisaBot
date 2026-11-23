@@ -2,7 +2,11 @@ import { requireExtra } from "@/lib/deployment/extras";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { PageSection, PageShell } from "@/components/layout/page-shell";
+import {
+  PageSection,
+  PageShell,
+  PageSkeleton,
+} from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { isComposing } from "@/lib/composing";
@@ -100,7 +104,11 @@ function BoundariesPage() {
 
   /* Nothing until the policy is known: a rule list that guesses is worse than a blank. */
   if (!policy) {
-    return <PageShell title={"权限规则"}>{null}</PageShell>;
+    return (
+      <PageShell title={"权限规则"}>
+        <PageSkeleton rows={3} />
+      </PageShell>
+    );
   }
 
   const addRule = (rule: string) => {

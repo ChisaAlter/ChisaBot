@@ -81,7 +81,7 @@ export function ComputerViewPanel({
       {status || (casting && tab === "activity") ? (
         <div
           aria-live="polite"
-          className="computer-status"
+          className="computer-status ch-content-enter"
           data-pending={status?.pending || undefined}
           data-casting={casting || undefined}
           data-visible={true}

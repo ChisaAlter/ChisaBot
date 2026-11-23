@@ -10,7 +10,13 @@ import { type ReactNode, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { LiveWaveform } from "@/components/ui/live-waveform";
 import { useAutoFocus } from "@/hooks";
-import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
+import {
+  DURATION_MS,
+  EASE_OUT,
+  ENTRANCE_SECONDS,
+  EXIT_SECONDS,
+  usePresenceMount,
+} from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { useDictation } from "./use-dictation";
 
@@ -56,6 +62,7 @@ export function DictationSurface({
   children: ReactNode;
   className?: string;
 }) {
+  const controlsPresence = usePresenceMount(dictation.busy, DURATION_MS.exit);
   return (
     <div className={cn("min-w-0", className)}>
       <div className="relative min-w-0">
@@ -66,13 +73,17 @@ export function DictationSurface({
             "min-w-0 transition-[opacity,transform] duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none",
             dictation.busy
               ? "pointer-events-none -translate-y-1 opacity-0"
-              : "translate-y-0 opacity-100",
+              : "opacity-100",
           )}
         >
           {children}
         </div>
-        {dictation.busy && (
-          <RecordingControls dictation={dictation} canSend={canSend} />
+        {controlsPresence.mounted && (
+          <RecordingControls
+            canSend={canSend}
+            dictation={dictation}
+            leaving={!dictation.busy}
+          />
         )}
       </div>
     </div>
@@ -82,14 +93,16 @@ export function DictationSurface({
 function RecordingControls({
   dictation,
   canSend,
+  leaving = false,
 }: {
   dictation: Dictation;
   canSend: boolean;
+  leaving?: boolean;
 }) {
   const { state, session } = dictation;
   const reduceMotion = useReducedMotion();
   const cancel = useRef<HTMLButtonElement>(null);
-  useAutoFocus(cancel, true);
+  useAutoFocus(cancel, !leaving);
   const recording = state.phase === "recording";
   const transcribing = state.phase === "transcribing";
   const transition = {
@@ -100,10 +113,26 @@ function RecordingControls({
   const time = `${Math.floor(state.seconds / 60)}:${String(state.seconds % 60).padStart(2, "0")}`;
   return (
     <motion.div
+      aria-hidden={leaving || undefined}
+      inert={leaving}
       initial={{ opacity: reduceMotion ? 1 : 0, y: reduceMotion ? 0 : 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={transition}
-      className="absolute inset-0 flex min-w-0 items-center gap-3"
+      animate={
+        leaving
+          ? { opacity: 0, y: reduceMotion ? 0 : 4 }
+          : { opacity: 1, y: 0 }
+      }
+      transition={{
+        duration: reduceMotion
+          ? 0
+          : leaving
+            ? EXIT_SECONDS
+            : ENTRANCE_SECONDS,
+        ease: EASE_OUT,
+      }}
+      className={cn(
+        "absolute inset-0 flex min-w-0 items-center gap-3",
+        leaving && "pointer-events-none",
+      )}
     >
       <Button
         ref={cancel}

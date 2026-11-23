@@ -8,12 +8,20 @@ import {
   IconWorld,
   IconX,
 } from "@tabler/icons-react";
+import { motion } from "motion/react";
 import { type CSSProperties, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { useExternalConnection, useTimeout, useWindowEvent } from "@/hooks";
 import { syncStartLinks } from "@/lib/browser-bookmarks";
 import { dispatchComposerPrefill } from "@/lib/chat/quote-event";
+import {
+  DURATION_MS,
+  EASE_IN,
+  EASE_OUT,
+  prefersReducedMotion,
+  usePresenceMount,
+} from "@/lib/motion";
 import {
   browserPresenceCardLabel,
   browserPresenceFootLabel,
@@ -654,7 +662,9 @@ export function ComputerView({
    * window watched (2026-10-22, the multi-window pass). One cast, many viewers: the second window
    * should join it, and the stream is the only source that knows how.
    */
-  const showLiveScreen = !settled && (expanded || showScreen || driving);
+  const takeoverPresence = usePresenceMount(expanded, DURATION_MS.exit);
+  const showLiveScreen =
+    !settled && (takeoverPresence.mounted || showScreen || driving);
   /**
    * Whether the wheel in somebody's hands is the wheel THIS tile is showing.
    *
@@ -859,7 +869,7 @@ export function ComputerView({
       </div>
     ) : null;
 
-  const takeoverRef = useTakeoverFit(expanded);
+  const takeoverRef = useTakeoverFit(takeoverPresence.mounted);
   const closeButton = (
     <button
       type="button"
@@ -946,7 +956,7 @@ export function ComputerView({
           {name || wheelHere ? (
             <span className="absolute right-2 bottom-2 flex items-center gap-1.5">
               {name ? (
-                <span className="flex items-center gap-1.5 rounded-full bg-black/60 py-1 pr-2.5 pl-1.5 font-medium text-white text-xs backdrop-blur-sm">
+                <span className="flex items-center gap-1.5 rounded-full bg-black/72 py-1 pr-2.5 pl-1.5 font-medium text-white text-xs">
                   <ChannelAvatar participantIds={[computerId]} size={16} />
                   {name}
                 </span>
@@ -1081,15 +1091,26 @@ export function ComputerView({
       {/*
         Portal to body so fixed positioning is measured against the viewport, not containing panes.
       */}
-      {expanded && typeof document !== "undefined"
+      {takeoverPresence.mounted && typeof document !== "undefined"
         ? createPortal(
-            <div
+            <motion.div
+              animate={{ opacity: expanded ? 1 : 0 }}
               role="dialog"
               aria-modal="true"
               aria-label={"助手的屏幕"}
               // 高于抽屉（窄窗口时右栏是 z-50 的抽屉），接管的大屏永远在最上层、可以点。
-              className="computer-takeover fixed inset-0 z-[110] flex items-center justify-center"
+              className={`computer-takeover fixed inset-0 z-[110] flex items-center justify-center${expanded ? "" : " pointer-events-none"}`}
+              initial={{ opacity: 0 }}
+              onAnimationComplete={() => {
+                if (!expanded) takeoverPresence.onExited();
+              }}
               ref={presenceRef("has-takeover")}
+              transition={{
+                duration: prefersReducedMotion()
+                  ? 0
+                  : (expanded ? DURATION_MS.normal : DURATION_MS.exit) / 1000,
+                ease: expanded ? EASE_OUT : EASE_IN,
+              }}
             >
               {/*
                 Backdrop closes only while read-only; during driving, Escape remains the exit. A
@@ -1115,10 +1136,26 @@ export function ComputerView({
                 中间是按剩余高度等比缩放的屏幕，底部一行「谁 · 状态 · 交还」始终在卡片里面。可用高度由
                 useTakeoverFit 量出来写进 --ctk-avail。
               */}
-              <div
+              <motion.div
+                animate={
+                  expanded
+                    ? {
+                        opacity: 1,
+                        scale: 1,
+                        transitionEnd: { transform: "none" },
+                      }
+                    : { opacity: 0, scale: 0.985 }
+                }
+                initial={{ opacity: 0, scale: 0.985 }}
                 ref={takeoverRef}
                 className={`computer-takeover-card${settled ? " is-record" : ""}`}
                 style={{ "--ctk-ar": String(aspectRatio) } as CSSProperties}
+                transition={{
+                  duration: prefersReducedMotion()
+                    ? 0
+                    : (expanded ? DURATION_MS.normal : DURATION_MS.exit) / 1000,
+                  ease: expanded ? EASE_OUT : EASE_IN,
+                }}
               >
                 {settled && drawn ? (
                   /*
@@ -1302,8 +1339,8 @@ export function ComputerView({
                     </div>
                   </>
                 )}
-              </div>
-            </div>,
+              </motion.div>
+            </motion.div>,
             document.body,
           )
         : null}

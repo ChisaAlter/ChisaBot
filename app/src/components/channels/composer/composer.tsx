@@ -1,13 +1,13 @@
 import {
   IconArrowUp,
   IconBolt,
-  IconChevronDown,
   IconChevronUp,
   IconPlayerStopFilled,
   IconPlus,
   IconSparkles,
   IconX,
 } from "@tabler/icons-react";
+import { useReducedMotion } from "motion/react";
 import { PromptArea, type PromptAreaHandle } from "prompt-area";
 import {
   isSegmentsEmpty,
@@ -27,15 +27,15 @@ import {
   useRef,
   useState,
 } from "react";
-import { useReducedMotion } from "motion/react";
 import { attachmentModality } from "@/components/channels/chat-messages";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { toast } from "@/components/ui/toast";
 import {
   useDocumentEvent,
   useElementEvent,
   useElementSync,
   useExternalConnection,
-  useResizeObserver,
+  useTimeout,
 } from "@/hooks";
 import { useReportPendingAttachments } from "@/lib/activity";
 import {
@@ -97,6 +97,7 @@ import { SendDeliveryUnknownError } from "@/lib/conversations/connection-drop";
 import { shouldStopOnEscape } from "@/lib/conversations/held-supplements";
 import { inboxState } from "@/lib/conversations/thread-inbox";
 import { useKeptVisibility } from "@/lib/kept-visible";
+import { DURATION_MS, useRetainedValue } from "@/lib/motion";
 import { newId } from "@/lib/new-id";
 import { presenceRef } from "@/lib/presence-flag";
 import { useCoarsePointer } from "@/lib/use-coarse-pointer";
@@ -111,6 +112,7 @@ import {
   FILE_PICKER_ACCEPT_WITH_DOCUMENTS,
   stagedRowId,
 } from "./attachments";
+import { Collapse } from "./collapse";
 import { DictationButton, DictationSurface } from "./dictation-controls";
 import { appendDictation } from "./dictation-draft";
 import {
@@ -591,89 +593,26 @@ function ComposerImpl({
   const expandedRef = useRef(expanded);
   expandedRef.current = expanded;
   /**
-   * 收起横条 ⇄ 展开卡片是两棵 DOM 分支，React 换形本身没有过渡。这里做 FLIP：
-   * ResizeObserver 仅从 ResizeObserverEntry.borderBoxSize 缓存高度（零强制回流）；
-   * 仅在用户切换 expanded 前采样一次旧高度与圆角，新表单 commit 时再用 WAAPI 反向补间。
-   * 首次挂载、打字换行与 prefers-reduced-motion 时零 offsetHeight / getComputedStyle 回流。
+   * 收起横条 ⇄ 展开卡片共用同一棵 `<form>` 与 `<PromptArea>`，仅在形态切换期间短暂挂
+   * `data-morphing` 暂停液态玻璃重算（`glass-hold`），不再卸载编辑器或触发闪暗补间。
    */
-  const formEl = useRef<HTMLFormElement | null>(null);
-  const cachedFormHeight = useRef<number | null>(null);
-  const pendingFlipFrom = useRef<{ h: number; r: string } | null>(null);
+  const [morphing, setMorphing] = useState(false);
   const reduceMotion = useReducedMotion();
-  const reduceMotionRef = useRef(reduceMotion);
-  reduceMotionRef.current = reduceMotion;
-  const setExpanded = useCallback((next: boolean) => {
-    if (next === expandedRef.current) return;
-    const el = formEl.current;
-    if (el && !reduceMotionRef.current && typeof el.animate === "function") {
-      pendingFlipFrom.current = {
-        h: cachedFormHeight.current ?? el.offsetHeight,
-        r: getComputedStyle(el).borderRadius,
-      };
-    } else {
-      pendingFlipFrom.current = null;
-    }
-    setExpandedState(next);
-    try {
-      window.localStorage.setItem(COMPOSER_EXPANDED_KEY, next ? "1" : "0");
-    } catch {
-      /* 存储不可用时只影响本次挂载，不挡切换。 */
-    }
-  }, []);
-  const composerFormRef = useCallback((el: HTMLFormElement | null) => {
-    formEl.current = el;
-    if (!el) {
-      cachedFormHeight.current = null;
-    } else if (pendingFlipFrom.current) {
-      const prev = pendingFlipFrom.current;
-      pendingFlipFrom.current = null;
-      if (!reduceMotionRef.current && typeof el.animate === "function") {
-        const next = {
-          h: el.offsetHeight,
-          r: getComputedStyle(el).borderRadius,
-        };
-        cachedFormHeight.current = next.h;
-        if (Math.abs(prev.h - next.h) >= 1 || prev.r !== next.r) {
-          el.animate(
-            [
-              {
-                height: `${prev.h}px`,
-                borderRadius: prev.r,
-                opacity: 0.4,
-                overflow: "hidden",
-              },
-              {
-                height: `${next.h}px`,
-                borderRadius: next.r,
-                opacity: 1,
-                overflow: "hidden",
-              },
-            ],
-            { duration: 220, easing: "cubic-bezier(0.23, 1, 0.32, 1)" },
-          );
-        }
-      }
-    }
-    return presenceRef("has-composer")(el) as (() => void) | undefined;
-  }, []);
-  useResizeObserver(
-    formEl,
-    (entry) => {
-      const borderBox = entry.borderBoxSize;
-      const blockSize =
-        borderBox && borderBox.length > 0 ? borderBox[0]?.blockSize : undefined;
-      if (typeof blockSize === "number" && blockSize > 0) {
-        cachedFormHeight.current = blockSize;
-        return;
-      }
-      const rectHeight = entry.contentRect?.height;
-      if (typeof rectHeight === "number" && rectHeight > 0) {
-        cachedFormHeight.current = rectHeight;
+  useTimeout(() => setMorphing(false), morphing ? DURATION_MS.normal : null);
+  const setExpanded = useCallback(
+    (next: boolean) => {
+      if (next === expandedRef.current) return;
+      if (!reduceMotion) setMorphing(true);
+      setExpandedState(next);
+      try {
+        window.localStorage.setItem(COMPOSER_EXPANDED_KEY, next ? "1" : "0");
+      } catch {
+        /* 存储不可用时只影响本次挂载，不挡切换。 */
       }
     },
-    true,
-    expanded,
+    [reduceMotion],
   );
+  const composerFormRef = useMemo(() => presenceRef("has-composer"), []);
   const promptAreaRef = useRef<PromptAreaHandle>(null);
   const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(
     () => {
@@ -2721,7 +2660,12 @@ function ComposerImpl({
         size="icon"
         type="button"
       >
-        {STOP_ICON}
+        <span
+          key="stop"
+          className="ch-content-enter inline-flex items-center justify-center"
+        >
+          {STOP_ICON}
+        </span>
       </Button>
     ) : (
       <Button
@@ -2732,7 +2676,12 @@ function ComposerImpl({
         size="icon"
         type="submit"
       >
-        {SEND_ICON}
+        <span
+          key="send"
+          className="ch-content-enter inline-flex items-center justify-center"
+        >
+          {SEND_ICON}
+        </span>
       </Button>
     );
 
@@ -2837,47 +2786,64 @@ function ComposerImpl({
    * something refusable — and interrupting a screen reader mid-sentence to describe a button's
    * state is not what an alert is for.
    */
-  const tooManyStagedNotice = tooManyStaged ? (
-    <p className="pb-2 text-sm text-muted-foreground" role="status">
-      {tooManyStagedReason(draft.attachments.length)}
-    </p>
-  ) : null;
-
-  const replyQuoteBar = replyQuote ? (
-    <div className="composer-reply-quote" data-testid="composer-reply-quote">
-      <svg
-        aria-hidden="true"
-        className="composer-reply-elbow"
-        fill="none"
-        viewBox="0 0 22 18"
-      >
-        <path
-          d="M5 17V9.5C5 6.462 7.462 4 10.5 4H20"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeWidth="1.75"
-        />
-      </svg>
-      {replyQuote.source ? (
-        <span className="composer-reply-source">{replyQuote.source}</span>
+  const tooManyStagedNotice = (
+    <Collapse open={tooManyStaged}>
+      {tooManyStaged ? (
+        <p className="pb-2 text-sm text-muted-foreground" role="status">
+          {tooManyStagedReason(draft.attachments.length)}
+        </p>
       ) : null}
-      <span className="composer-reply-text truncate">{replyQuote.text}</span>
-      <button
-        aria-label="取消引用"
-        className="composer-reply-clear"
-        data-testid="composer-reply-quote-clear"
-        onClick={() => {
-          quoteRevision.current++;
-          replyQuoteRef.current = null;
-          setReplyQuote(null);
-        }}
-        title="取消引用"
-        type="button"
-      >
-        <IconX className="size-3.5" />
-      </button>
-    </div>
-  ) : null;
+    </Collapse>
+  );
+
+  const replyQuoteOpen = Boolean(replyQuote);
+  const retainedReplyQuote = useRetainedValue(replyQuote);
+  const replyQuoteBar = (
+    <SmoothCollapse open={replyQuoteOpen} unmountOnExit>
+      {retainedReplyQuote ? (
+        <div
+          className="composer-reply-quote"
+          data-testid={replyQuoteOpen ? "composer-reply-quote" : undefined}
+        >
+          <svg
+            aria-hidden="true"
+            className="composer-reply-elbow"
+            fill="none"
+            viewBox="0 0 22 18"
+          >
+            <path
+              d="M5 17V9.5C5 6.462 7.462 4 10.5 4H20"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="1.75"
+            />
+          </svg>
+          {retainedReplyQuote.source ? (
+            <span className="composer-reply-source">
+              {retainedReplyQuote.source}
+            </span>
+          ) : null}
+          <span className="composer-reply-text truncate">
+            {retainedReplyQuote.text}
+          </span>
+          <button
+            aria-label="取消引用"
+            className="composer-reply-clear"
+            data-testid="composer-reply-quote-clear"
+            onClick={() => {
+              quoteRevision.current++;
+              replyQuoteRef.current = null;
+              setReplyQuote(null);
+            }}
+            title="取消引用"
+            type="button"
+          >
+            <IconX className="size-3.5" />
+          </button>
+        </div>
+      ) : null}
+    </SmoothCollapse>
+  );
 
   if (compact) {
     /*
@@ -2911,8 +2877,8 @@ function ComposerImpl({
         </Button>
       );
     /**
-     * 发送键左边那颗切换横条 ⇄ 工具栏的箭头：收起时是上箭头（向上展开工具栏），
-     * 展开时原位变下箭头（收回横条）。对话死掉也只收发送，不收这颗开关。
+     * 发送键左边那颗切换横条 ⇄ 工具栏的箭头：单图标 180° 平滑旋转。
+     * 对话死掉也只收发送，不收这颗开关。
      */
     const expandToggle = (
       <Button
@@ -2925,11 +2891,12 @@ function ComposerImpl({
         type="button"
         variant="ghost"
       >
-        {expanded ? (
-          <IconChevronDown className="size-[18px]" />
-        ) : (
-          <IconChevronUp className="size-[18px]" />
-        )}
+        <IconChevronUp
+          className={cn(
+            "size-[18px] transition-transform duration-200 ease-out motion-reduce:transition-none",
+            expanded && "rotate-180",
+          )}
+        />
       </Button>
     );
 
@@ -2940,98 +2907,11 @@ function ComposerImpl({
      * dead entirely rather than merely unstyled: every paste into it reads as somebody else's.
      * The ref is typed for a `div`, which is why it cannot simply go on the form.
      *
-     * IT IS ALSO A COLUMN NOW, so the refusals can sit ABOVE the composer. Below, they pushed the
-     * box the person is reading down the screen as each one arrived, and on the compact composer
-     * that box is already pinned to the bottom of the pane — so the reasons appeared in the gap
-     * under it, furthest from the drop that caused them.
+     * 收起横条 ⇄ 展开工具栏共用同一棵 `<form>` 与 `<PromptArea>`：
+     * 1. `<AttachmentStrip>` 固定在框上方同级，避免展开/收起搬家闪动与 999px 胶囊边缘裁切；
+     * 2. `<PromptArea>` 在主编辑行保持固定槽位，切换形态时绝不卸载重挂，完整保留焦点与选区；
+     * 3. 底部工具栏包进 `<Collapse open={expanded}>`，收起时同步卸载控件并平滑合拢高度。
      */
-    if (!expanded) {
-      return (
-        <div
-          className="composer-frame flex flex-col"
-          ref={containerRef}
-          {...dropZone}
-        >
-          <RejectedFiles onDismiss={dismissRejections} rejected={rejected} />
-          {tooManyStagedNotice}
-          {/*
-           * 附件在框的上方而不是框里面：80px 的缩略图塞进 999px 圆角的横条，会把它撑成一块
-           * 带图的高圆角块，图还被胶囊边缘裁掉。挪出来（与 RejectedFiles 同级的同一列）横条
-           * 才永远是一行高的胶囊；条自己的 pb-3 在 Collapse 里撑起与框的间距。
-           */}
-          <AttachmentStrip
-            failed={failedTiles}
-            files={files}
-            images={images}
-            onDismissFailed={dismissFailedUpload}
-            onRemove={discardAttachment}
-            onRetry={retryUpload}
-            progress={progressStore}
-          />
-          <form
-            aria-busy={isBusy}
-            data-drag-over={canAttach && dragOver ? "true" : undefined}
-            onKeyDown={handleEscapeStop}
-            onKeyDownCapture={handleBusyModeKeyCapture}
-            /*
-             * `glass-composer-pill` 把框收成两头半圆的横条（styles.css）：附件列已挪到框外，
-             * 引用条仍在编辑区上方，日常只剩「+ · 输入区 · 上箭头 · 发送」一行。
-             */
-            className={cn(
-              "glass-composer glass-composer-pill flex flex-col",
-              className,
-            )}
-            ref={composerFormRef}
-            onSubmit={handleFormSubmit}
-          >
-            <DictationSurface dictation={dictation} canSend={canSendRecording}>
-              {filePicker}
-              {replyQuoteBar}
-              {/*
-               * 横条里唯一的一行：编辑器 flex-1 把「+」和右边的箭头、发送键顶到两头；内容多了
-               * 照样长高（maxHeight 同展开态），长出圆角胶囊形。
-               */}
-              <div className="glass-composer-bar">
-                {attachButton}
-                <PromptArea
-                  aria-label={"消息"}
-                  /* autoGrow 关闭的原因同展开态（见下方展开的 PromptArea 上的长注）。 */
-                  autoGrow={false}
-                  className={cn(
-                    "glass-composer-editor min-w-0 flex-1 border-0 bg-transparent p-0 text-sm shadow-none",
-                    editorClassName,
-                  )}
-                  disabled={disabled}
-                  maxHeight={COMPACT_MAX_HEIGHT_PX}
-                  minHeight={PILL_MIN_HEIGHT_PX}
-                  onChange={handleChange}
-                  onImagePaste={
-                    canAttach
-                      ? stagePastedImage
-                      : handsOff
-                        ? handOffPastedImage
-                        : undefined
-                  }
-                  onRawPaste={handleRawPaste}
-                  onSubmit={submitDraft}
-                  submitOnEnter={!coarsePointer}
-                  placeholder={composing ? "" : "输入消息…"}
-                  ref={promptAreaRef}
-                  triggers={triggers}
-                  value={value}
-                />
-                {/* 上传中发送键变灰的那句解释（M4-2），收起态一样要有——它不是按钮。 */}
-                {uploadHint}
-                {busySendPill}
-                {expandToggle}
-                {primaryAction}
-              </div>
-            </DictationSurface>
-          </form>
-        </div>
-      );
-    }
-
     return (
       <div
         className="composer-frame flex flex-col"
@@ -3040,17 +2920,24 @@ function ComposerImpl({
       >
         <RejectedFiles onDismiss={dismissRejections} rejected={rejected} />
         {tooManyStagedNotice}
+        <AttachmentStrip
+          failed={failedTiles}
+          files={files}
+          images={images}
+          onDismissFailed={dismissFailedUpload}
+          onRemove={discardAttachment}
+          onRetry={retryUpload}
+          progress={progressStore}
+        />
         <form
           aria-busy={isBusy}
           data-drag-over={canAttach && dragOver ? "true" : undefined}
+          data-morphing={morphing ? "" : undefined}
           onKeyDown={handleEscapeStop}
           onKeyDownCapture={handleBusyModeKeyCapture}
           className={cn(
-            /*
-             * A COLUMN: attachment strip, editor, then the toolbar. The frame's padding lives on the
-             * form (see `.glass-composer`) so a scrolled editor never puts text against the edge.
-             */
             "glass-composer flex flex-col",
+            !expanded && "glass-composer-pill",
             className,
           )}
           ref={composerFormRef}
@@ -3058,88 +2945,94 @@ function ComposerImpl({
         >
           <DictationSurface dictation={dictation} canSend={canSendRecording}>
             {filePicker}
-            <AttachmentStrip
-              failed={failedTiles}
-              files={files}
-              images={images}
-              onDismissFailed={dismissFailedUpload}
-              onRemove={discardAttachment}
-              onRetry={retryUpload}
-              progress={progressStore}
-            />
             {replyQuoteBar}
-            {/*
-             * The editor takes the full width and grows to COMPACT_MAX_HEIGHT_PX before it scrolls;
-             * the controls live in their own toolbar row underneath, so they never float mid-text.
-             */}
-            <PromptArea
-              aria-label={"消息"}
-              /*
-               * 不用 prompt-area 的 autoGrow（4x 降速下 Shift+Enter 换行 190–230ms 的主因，审查 04）。
-               * 它每个字都排一帧：把高度设成 auto、读 scrollHeight（强制整页布局）、再写回像素高度并 setState
-               * 让 PromptArea 再渲染一次；而 styles.css 的 `.glass-composer .prompt-area-editor` 早就用
-               * `height: auto !important` 把那个高度盖掉了（2026-10-22 去掉失焦塌缩和高度动画），量出来的值
-               * 一个像素都没用上。不开 autoGrow 时编辑器靠内容自然长高，min/max-height 与 overflow 一样，画面不变。
-               */
-              autoGrow={false}
-              className={cn(
-                "glass-composer-editor min-w-0 w-full border-0 bg-transparent p-0 text-sm shadow-none",
-                editorClassName,
-              )}
-              disabled={disabled}
-              maxHeight={COMPACT_MAX_HEIGHT_PX}
-              minHeight={COMPACT_MIN_HEIGHT_PX * 2}
-              onChange={handleChange}
-              onImagePaste={
-                canAttach
-                  ? stagePastedImage
-                  : handsOff
-                    ? handOffPastedImage
-                    : undefined
-              }
-              onRawPaste={handleRawPaste}
-              onSubmit={submitDraft}
-              submitOnEnter={!coarsePointer}
-              placeholder={composing ? "" : "输入消息…"}
-              ref={promptAreaRef}
-              triggers={triggers}
-              value={value}
-            />
-            {/* One toolbar inside the frame: only attach on the left; model pill, context ring and send on the right (DESIGN.md §25). */}
-            <div className="glass-composer-toolbar">
-              <div className="glass-composer-toolbar-start flex items-center gap-1.5">
-                {attachButton}
-                {leadingControl}
-                <Button
-                  aria-label={"助理快捷指令与随手问 (Alt+Space)"}
-                  className="glass-composer-icon"
-                  data-testid="composer-spotlight-btn"
-                  disabled={disabled}
-                  onClick={() =>
-                    window.dispatchEvent(new CustomEvent("chisabot-spotlight"))
-                  }
-                  size="icon"
-                  title={"助理快捷指令与随手问 (Alt+Space)"}
-                  type="button"
-                  variant="ghost"
-                >
-                  <IconSparkles className="size-[16px]" />
-                </Button>
-              </div>
-              <div className="glass-composer-toolbar-end flex items-center gap-1.5">
-                {modelControl ? (
-                  <div className="flex shrink-0 items-center">
-                    {modelControl}
-                  </div>
-                ) : null}
-                {contextControl}
-                <DictationButton dictation={dictation} disabled={disabled} />
-                {uploadHint}
-                {busySendPill}
-                {expandToggle}
-                {primaryAction}
-              </div>
+            <div className={expanded ? "min-w-0" : "glass-composer-bar"}>
+              {!expanded ? attachButton : null}
+              <PromptArea
+                aria-label={"消息"}
+                /*
+                 * 不用 prompt-area 的 autoGrow（4x 降速下 Shift+Enter 换行 190–230ms 的主因，审查 04）。
+                 * 它每个字都排一帧：把高度设成 auto、读 scrollHeight（强制整页布局）、再写回像素高度并 setState
+                 * 让 PromptArea 再渲染一次；而 styles.css 的 `.glass-composer .prompt-area-editor` 早就用
+                 * `height: auto !important` 把那个高度盖掉了（2026-10-22 去掉失焦塌缩和高度动画），量出来的值
+                 * 一个像素都没用上。不开 autoGrow 时编辑器靠内容自然长高，min/max-height 与 overflow 一样，画面不变。
+                 */
+                autoGrow={false}
+                className={cn(
+                  "glass-composer-editor min-w-0 border-0 bg-transparent p-0 text-sm shadow-none",
+                  expanded ? "w-full" : "flex-1",
+                  editorClassName,
+                )}
+                disabled={disabled}
+                maxHeight={COMPACT_MAX_HEIGHT_PX}
+                minHeight={
+                  expanded ? COMPACT_MIN_HEIGHT_PX * 2 : PILL_MIN_HEIGHT_PX
+                }
+                onChange={handleChange}
+                onImagePaste={
+                  canAttach
+                    ? stagePastedImage
+                    : handsOff
+                      ? handOffPastedImage
+                      : undefined
+                }
+                onRawPaste={handleRawPaste}
+                onSubmit={submitDraft}
+                submitOnEnter={!coarsePointer}
+                placeholder={composing ? "" : "输入消息…"}
+                ref={promptAreaRef}
+                triggers={triggers}
+                value={value}
+              />
+              {!expanded ? uploadHint : null}
+              {!expanded ? busySendPill : null}
+              {!expanded ? expandToggle : null}
+              {!expanded ? primaryAction : null}
             </div>
+            {/* One toolbar inside the frame: only attach on the left; model pill, context ring and send on the right (DESIGN.md §25). */}
+            <Collapse open={expanded}>
+              {expanded ? (
+                <div className="glass-composer-toolbar">
+                  <div className="glass-composer-toolbar-start flex items-center gap-1.5">
+                    {attachButton}
+                    {leadingControl}
+                    <Button
+                      aria-label={"助理快捷指令与随手问 (Alt+Space)"}
+                      className="glass-composer-icon"
+                      data-testid="composer-spotlight-btn"
+                      disabled={disabled}
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent("chisabot-spotlight"),
+                        )
+                      }
+                      size="icon"
+                      title={"助理快捷指令与随手问 (Alt+Space)"}
+                      type="button"
+                      variant="ghost"
+                    >
+                      <IconSparkles className="size-[16px]" />
+                    </Button>
+                  </div>
+                  <div className="glass-composer-toolbar-end flex shrink-0 items-center gap-1.5">
+                    {modelControl ? (
+                      <div className="flex shrink-0 items-center">
+                        {modelControl}
+                      </div>
+                    ) : null}
+                    {contextControl}
+                    <DictationButton
+                      dictation={dictation}
+                      disabled={disabled}
+                    />
+                    {uploadHint}
+                    {busySendPill}
+                    {expandToggle}
+                    {primaryAction}
+                  </div>
+                </div>
+              ) : null}
+            </Collapse>
           </DictationSurface>
         </form>
       </div>
@@ -3335,7 +3228,7 @@ const BusySendModePill = memo(function BusySendModePill() {
           : "当前回复中模式：排到下一轮，点击改为立即插话引导"
       }
       className={cn(
-        "busy-send-pill inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium transition-colors",
+        "busy-send-pill ch-content-enter inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium transition-colors",
         isSteer
           ? "border-primary/35 bg-primary/10 text-primary hover:bg-primary/15"
           : "border-border/60 bg-muted/60 text-muted-foreground hover:text-foreground",

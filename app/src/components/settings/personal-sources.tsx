@@ -50,6 +50,7 @@ import { Input } from "@/components/ui/input";
 import { Card, ListRow } from "@/components/ui/skyglass";
 import { toast } from "@/components/ui/toast";
 import { agoText } from "@/lib/im";
+import { useRetainedValue } from "@/lib/motion";
 import {
   bindNotifyWebhookMutationOptions,
   connectCalendarMutationOptions,
@@ -80,6 +81,7 @@ export function PersonalSourcesSection() {
   const [mailOpen, setMailOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
   const [briefMarkdown, setBriefMarkdown] = useState<string | null>(null);
+  const retainedBriefMarkdown = useRetainedValue(briefMarkdown);
   const [briefModalTitle, setBriefModalTitle] = useState("每日晨报卡片预览");
   const [cityInput, setCityInput] = useState("");
   const serverCity = status.data?.weatherCity;
@@ -276,15 +278,15 @@ export function PersonalSourcesSection() {
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="mt-2">
-            {briefMarkdown ? (
+            {retainedBriefMarkdown ? (
               <Suspense
                 fallback={
                   <div className="text-sm text-muted-foreground">
-                    {briefMarkdown}
+                    {retainedBriefMarkdown}
                   </div>
                 }
               >
-                <LazyBotBubbles text={briefMarkdown} />
+                <LazyBotBubbles text={retainedBriefMarkdown} />
               </Suspense>
             ) : null}
           </DialogBody>

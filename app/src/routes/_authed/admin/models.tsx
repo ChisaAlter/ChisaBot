@@ -102,9 +102,7 @@ function ModelSettingsPage() {
       title="模型"
     >
       {settings.isPending ? (
-        <p className="mt-8 text-muted-foreground text-sm" role="status">
-          正在加载模型设置…
-        </p>
+        <PageSkeleton rows={4} />
       ) : settings.error || !settings.data ? (
         <div className="mt-8 space-y-3">
           <p className="text-destructive text-sm" role="alert">

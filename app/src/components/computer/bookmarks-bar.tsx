@@ -31,6 +31,11 @@ import {
   reorderBookmarks,
   updateBookmark,
 } from "@/lib/browser-bookmarks";
+import {
+  DURATION_MS,
+  usePresenceMount,
+  useRetainedValue,
+} from "@/lib/motion";
 import { TabFavicon } from "./browser-tabs";
 
 /**
@@ -128,6 +133,13 @@ export function BookmarksBar({
   const [dragging, setDragging] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
 
+  const dropdownOpen = narrow && dropdown;
+  const dropdownPresence = usePresenceMount(dropdownOpen, DURATION_MS.exit);
+  const menuOpen = !narrow && menu !== null;
+  const menuPresence = usePresenceMount(menuOpen, DURATION_MS.exit);
+  const retainedMenu = useRetainedValue(menu);
+  const managerPresence = usePresenceMount(managing, DURATION_MS.exit);
+
   useResizeObserver(box, (entry) =>
     setNarrow(entry.contentRect.width < 520),
   );
@@ -173,8 +185,19 @@ export function BookmarksBar({
     );
   };
 
-  const menuFor = (bookmark: Bookmark) => (
-    <div className="bm-pop bm-menu" role="menu">
+  const menuFor = (
+    bookmark: Bookmark,
+    leaving: boolean,
+    onExited: () => void,
+  ) => (
+    <div
+      className="bm-pop bm-menu"
+      data-leaving={leaving ? "true" : undefined}
+      onAnimationEnd={(event) => {
+        if (leaving && event.target === event.currentTarget) onExited();
+      }}
+      role="menu"
+    >
       <button className="bm-menu-i" onClick={() => open(bookmark)} role="menuitem" type="button">
         <IconExternalLink size={15} />
         {"打开"}
@@ -223,10 +246,22 @@ export function BookmarksBar({
           >
             <IconBookmarks size={15} />
             <span>{"收藏夹"}</span>
-            <IconChevronDown size={14} />
+            <IconChevronDown
+              className={`transition-transform duration-150${dropdown ? " rotate-180" : ""}`}
+              size={14}
+            />
           </button>
-          {dropdown ? (
-            <div className="bm-pop bm-menu bm-drop-list" role="menu">
+          {dropdownPresence.mounted ? (
+            <div
+              className="bm-pop bm-menu bm-drop-list"
+              data-leaving={!dropdownOpen ? "true" : undefined}
+              onAnimationEnd={(event) => {
+                if (!dropdownOpen && event.target === event.currentTarget) {
+                  dropdownPresence.onExited();
+                }
+              }}
+              role="menu"
+            >
               {list.length === 0 ? <p className="bm-empty">{"还没有收藏。点地址栏里的星标收藏当前页。"}</p> : null}
               {list.map((bookmark) => (
                 <button
@@ -294,7 +329,13 @@ export function BookmarksBar({
                 <TabFavicon size={14} tab={{ title: bookmark.title, url: bookmark.url }} />
                 <span className="bm-chip-t">{bookmark.title}</span>
               </button>
-              {menu?.id === bookmark.id ? menuFor(bookmark) : null}
+              {menuPresence.mounted && retainedMenu?.id === bookmark.id
+                ? menuFor(
+                    bookmark,
+                    !menuOpen || menu?.id !== bookmark.id,
+                    menuPresence.onExited,
+                  )
+                : null}
             </div>
           ))}
         </div>
@@ -315,7 +356,14 @@ export function BookmarksBar({
           {hint}
         </p>
       ) : null}
-      {managing ? <BookmarkManager botId={botId} onClose={() => setManaging(false)} /> : null}
+      {managerPresence.mounted ? (
+        <BookmarkManager
+          botId={botId}
+          leaving={!managing}
+          onClose={() => setManaging(false)}
+          onExited={managerPresence.onExited}
+        />
+      ) : null}
     </div>
   );
 }
@@ -332,7 +380,17 @@ async function removeWithUndo(queryClient: ReturnType<typeof useQueryClient>, bo
 }
 
 /** 管理面板：添加、改名 / 改网址、上移下移、删除。 */
-function BookmarkManager({ botId, onClose }: { botId: string; onClose: () => void }) {
+function BookmarkManager({
+  botId,
+  leaving,
+  onClose,
+  onExited,
+}: {
+  botId: string;
+  leaving: boolean;
+  onClose: () => void;
+  onExited: () => void;
+}) {
   const queryClient = useQueryClient();
   const { data: bookmarks } = useQuery(bookmarksQueryOptions());
   const [editing, setEditing] = useState<{ id: string; title: string; url: string } | null>(null);
@@ -344,13 +402,15 @@ function BookmarkManager({ botId, onClose }: { botId: string; onClose: () => voi
   // Esc 只关这个面板，不关大屏、不交还控制权：窗口捕获阶段最先拿到，标记 defaultPrevented 并截住。
   useWindowEvent(
     "keydown",
-    (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        onClose();
-      }
-    },
+    leaving
+      ? null
+      : (event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            onClose();
+          }
+        },
     true,
   );
 
@@ -395,7 +455,16 @@ function BookmarkManager({ botId, onClose }: { botId: string; onClose: () => voi
   };
 
   return (
-    <div aria-label={"管理收藏夹"} aria-modal="false" className="bm-pop bm-manager" role="dialog">
+    <div
+      aria-label={"管理收藏夹"}
+      aria-modal="false"
+      className="bm-pop bm-manager"
+      data-leaving={leaving ? "true" : undefined}
+      onAnimationEnd={(event) => {
+        if (leaving && event.target === event.currentTarget) onExited();
+      }}
+      role="dialog"
+    >
       <div className="bm-manager-h">
         <IconBookmarks size={16} />
         <span>{"收藏夹"}</span>

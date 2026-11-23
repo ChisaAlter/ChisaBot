@@ -1,5 +1,6 @@
 import {
   IconArrowLeft,
+  IconChevronDown,
   IconDownload,
   IconExternalLink,
   IconPlayerPause,
@@ -8,9 +9,10 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { useExternalConnection } from "@/hooks";
 import {
   type TaskControl,
@@ -322,8 +324,7 @@ export function TaskDetail({
                   </div>
                 </section>
               ) : null}
-              <details className="tc-run-details">
-                <summary>运行信息</summary>
+              <DetailDisclosure className="tc-run-details" summary="运行信息">
                 <dl>
                   <dt>开始时间</dt>
                   <dd>{taskDate(task.startedAt)}</dd>
@@ -353,7 +354,7 @@ export function TaskDetail({
                   <dt>任务 ID</dt>
                   <dd className="tc-identifier">{task.id}</dd>
                 </dl>
-              </details>
+              </DetailDisclosure>
             </div>
           ) : (
             <div
@@ -376,10 +377,9 @@ export function TaskDetail({
                     </div>
                     <p>{event.message}</p>
                     {Object.keys(event.data).length ? (
-                      <details>
-                        <summary>查看记录内容</summary>
+                      <DetailDisclosure summary="查看记录内容">
                         <pre>{JSON.stringify(event.data, null, 2)}</pre>
-                      </details>
+                      </DetailDisclosure>
                     ) : null}
                   </article>
                 ))
@@ -389,6 +389,36 @@ export function TaskDetail({
         </>
       ) : null}
     </section>
+  );
+}
+function DetailDisclosure({
+  summary,
+  className,
+  children,
+}: {
+  summary: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={className}>
+      <button
+        aria-expanded={open}
+        className="tc-disclosure-btn"
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
+        <IconChevronDown
+          aria-hidden
+          className={`size-3.5 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        />
+        <span>{summary}</span>
+      </button>
+      <SmoothCollapse open={open} unmountOnExit>
+        {children}
+      </SmoothCollapse>
+    </div>
   );
 }
 function Artifact({ artifact }: { artifact: TaskArtifact }) {
@@ -426,10 +456,9 @@ function Artifact({ artifact }: { artifact: TaskArtifact }) {
         <p className="tc-identifier">{artifact.uri}</p>
       ) : null}
       {artifact.content ? (
-        <details>
-          <summary>预览内容</summary>
+        <DetailDisclosure summary="预览内容">
           <pre>{artifact.content}</pre>
-        </details>
+        </DetailDisclosure>
       ) : null}
     </article>
   );

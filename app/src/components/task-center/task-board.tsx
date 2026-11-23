@@ -1,5 +1,4 @@
 import {
-  IconChevronDown,
   IconChevronRight,
   IconFileText,
   IconFolderPlus,
@@ -17,8 +16,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ContentEnter, SmoothCollapse } from "@/components/ui/motion-primitives";
 import { toast } from "@/components/ui/toast";
 import { sendPromptToChat } from "@/lib/chat/quote-event";
 import {
@@ -496,45 +497,48 @@ export function TaskBoard({
       )}
 
       {activeBoardId && !board && boardViewQuery.isPending ? (
-        <div className="tc-empty">{"正在加载本地 Markdown 看板…"}</div>
+        <PageSkeleton rows={3} />
       ) : null}
 
       {activeBoardId && board && activeDocRelFile ? (
-        <TaskBoardDocPanel
-          activeDocRelFile={activeDocRelFile}
-          activeDraft={activeDraft}
-          boardId={board.boardId}
-          docPayload={docPayload}
-          isLoading={docQuery.isPending}
-          isSaving={saveDoc.isPending}
-          onChangeDraft={(baseRevision, content) => {
-            if (!docCacheKey) return;
-            setDocDrafts((prev) => ({
-              ...prev,
-              [docCacheKey]: {
-                baseRevision: prev[docCacheKey]?.baseRevision ?? baseRevision,
+        <ContentEnter key={`doc:${board.boardId}:${activeDocRelFile}`}>
+          <TaskBoardDocPanel
+            activeDocRelFile={activeDocRelFile}
+            activeDraft={activeDraft}
+            boardId={board.boardId}
+            docPayload={docPayload}
+            isLoading={docQuery.isPending}
+            isSaving={saveDoc.isPending}
+            onChangeDraft={(baseRevision, content) => {
+              if (!docCacheKey) return;
+              setDocDrafts((prev) => ({
+                ...prev,
+                [docCacheKey]: {
+                  baseRevision: prev[docCacheKey]?.baseRevision ?? baseRevision,
+                  content,
+                },
+              }));
+            }}
+            onDiscardDraft={() => {
+              if (docCacheKey) clearDraft(docCacheKey);
+            }}
+            onSaveWithRevision={(baseRevision, content) => {
+              if (!docPayload) return;
+              saveDoc.mutate({
+                boardId: board.boardId,
+                baseRevision,
+                relFile: docPayload.relFile,
                 content,
-              },
-            }));
-          }}
-          onDiscardDraft={() => {
-            if (docCacheKey) clearDraft(docCacheKey);
-          }}
-          onSaveWithRevision={(baseRevision, content) => {
-            if (!docPayload) return;
-            saveDoc.mutate({
-              boardId: board.boardId,
-              baseRevision,
-              relFile: docPayload.relFile,
-              content,
-            });
-          }}
-        />
+              });
+            }}
+          />
+        </ContentEnter>
       ) : null}
 
       {activeBoardId && board && activeDocRelFile === "" && board.pinned ? (
         <section className="tc-board-pinned">
           <button
+            aria-expanded={pinnedOpen}
             className="tc-board-pinned-toggle"
             onClick={() => setPinnedOpen((v) => !v)}
             type="button"
@@ -543,22 +547,23 @@ export function TaskBoard({
               <IconPin aria-hidden className="size-3.5" />
               {normalizeMarkdownDeshout(board.pinned.title)}
             </span>
-            {pinnedOpen ? (
-              <IconChevronDown aria-hidden className="size-4" />
-            ) : (
-              <IconChevronRight aria-hidden className="size-4" />
-            )}
+            <IconChevronRight
+              aria-hidden
+              className={`size-4 shrink-0 transition-transform duration-200 ${pinnedOpen ? "rotate-90" : ""}`}
+            />
           </button>
-          {pinnedOpen && board.pinned.body ? (
-            <p className="tc-board-pinned-body">
-              {normalizeMarkdownDeshout(board.pinned.body)}
-            </p>
+          {board.pinned.body ? (
+            <SmoothCollapse open={pinnedOpen}>
+              <p className="tc-board-pinned-body">
+                {normalizeMarkdownDeshout(board.pinned.body)}
+              </p>
+            </SmoothCollapse>
           ) : null}
         </section>
       ) : null}
 
       {!activeBoardId || (board && activeDocRelFile === "") ? (
-        <>
+        <ContentEnter key={`board:${activeBoardId || "personal"}`}>
           <div className="tc-board-mobile-cols" role="tablist" aria-label="看板列切换">
             {TASK_BOARD_COLUMNS.map((col) => (
               <button
@@ -709,7 +714,7 @@ export function TaskBoard({
               );
             })}
           </div>
-        </>
+        </ContentEnter>
       ) : null}
 
       {board ? (

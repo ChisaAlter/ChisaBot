@@ -75,6 +75,10 @@
   outline: 2px solid color-mix(in srgb, var(--accent-blue) 55%, transparent);
   outline-offset: 2px;
 }
+.rs-capsule[data-leaving="true"] {
+  animation: rs-capsule-out var(--dur-exit, 150ms) var(--ease-in, ease-in) both;
+  pointer-events: none;
+}
 @keyframes rs-spin {
   to {
     transform: rotate(360deg);
@@ -90,8 +94,19 @@
     transform: none;
   }
 }
+@keyframes rs-capsule-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .rs-capsule,
+  .rs-capsule[data-leaving="true"],
   .chat-work-card.rs-capsule {
     animation: none;
     transition: none;

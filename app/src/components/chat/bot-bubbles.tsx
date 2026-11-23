@@ -35,13 +35,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import { dispatchComposerQuote } from "@/lib/chat/quote-event";
 import {
   foldLongMessage,
   LONG_MESSAGE_FOLD_THRESHOLD,
 } from "@/lib/chat/fold-long-message";
 import { githubQueryOptions } from "@/lib/github";
-import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
+import { EASE_OUT, ENTRANCE_SECONDS, smoothScrollIntoView } from "@/lib/motion";
 import {
   type BubbleSegment,
   splitBubbles,
@@ -788,7 +789,7 @@ function flashMessageElement(el: HTMLElement) {
     el.querySelector<HTMLElement>(
       '[data-slot="bubble"], .chat-doc-card, .chat-brief-card, .chat-artifact-card',
     ) ?? el;
-  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  smoothScrollIntoView(el, { block: "center" });
   bubble.classList.remove("message-flash");
   void bubble.offsetWidth;
   bubble.classList.add("message-flash");
@@ -1513,15 +1514,17 @@ export function ArtifactCard({
           </div>
         </header>
         <div className="chat-doc-inset chat-artifact-inset">
-          {tab === "preview" ? (
-            renderPreview(false)
-          ) : (
-            <div className="chat-doc-inner p-3">
-              <SmoothStreamdown components={components as never}>
-                {codeMarkdown}
-              </SmoothStreamdown>
-            </div>
-          )}
+          <ContentEnter key={tab}>
+            {tab === "preview" ? (
+              renderPreview(false)
+            ) : (
+              <div className="chat-doc-inner p-3">
+                <SmoothStreamdown components={components as never}>
+                  {codeMarkdown}
+                </SmoothStreamdown>
+              </div>
+            )}
+          </ContentEnter>
         </div>
       </section>
       <Dialog onOpenChange={setOpen} open={open}>

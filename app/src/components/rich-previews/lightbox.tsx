@@ -12,8 +12,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { useWindowEvent } from "@/hooks";
 import { createPortal } from "react-dom";
+import { useWindowEvent } from "@/hooks";
+import { DURATION_MS, prefersReducedMotion } from "@/lib/motion";
 
 /**
  * 看大图（2026-10-13，聊天富预览；DESIGN.md §31）。
@@ -65,12 +66,17 @@ export function Lightbox({
   const [closing, setClosing] = useState(false);
   const [failed, setFailed] = useState<Record<number, boolean>>({});
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
   const opener = useRef<Element | null>(null);
+  const hasSwitched = useRef(false);
   const drag = useRef<{
     x: number;
     y: number;
     px: number;
     py: number;
+    curX: number;
+    curY: number;
     moved: boolean;
     id: number;
   } | null>(null);
@@ -81,15 +87,13 @@ export function Lightbox({
 
   const close = useCallback(() => {
     setClosing(true);
-    const reduce = window.matchMedia?.(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-    window.setTimeout(onClose, reduce ? 0 : 150);
+    window.setTimeout(onClose, prefersReducedMotion() ? 0 : DURATION_MS.exit);
   }, [onClose]);
 
   const go = useCallback(
     (delta: number) => {
       if (count < 2) return;
+      hasSwitched.current = true;
       setIndex((i) => (i + delta + count) % count);
       setZoom(1);
       setPan({ x: 0, y: 0 });
@@ -156,12 +160,16 @@ export function Lightbox({
       y: event.clientY,
       px: pan.x,
       py: pan.y,
+      curX: pan.x,
+      curY: pan.y,
       moved: false,
       id: event.pointerId,
     };
-    // 只在放大后拖动平移时抓住指针；不放大时抓住会让点图片也变成「点空白关闭」。
-    if (zoom > 1)
+    // 只在放大后拖动平移时抓住指针并暂停 transition，松手后恢复平滑缩放。
+    if (zoom > 1) {
+      stageRef.current?.setAttribute("data-dragging", "");
       (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+    }
   };
   const onPointerMove = (event: React.PointerEvent) => {
     const d = drag.current;
@@ -169,11 +177,25 @@ export function Lightbox({
     const dx = event.clientX - d.x;
     const dy = event.clientY - d.y;
     if (Math.abs(dx) + Math.abs(dy) > 6) d.moved = true;
-    if (zoom > 1) setPan({ x: d.px + dx, y: d.py + dy });
+    if (zoom > 1) {
+      d.curX = d.px + dx;
+      d.curY = d.py + dy;
+      if (imgRef.current) {
+        imgRef.current.style.transform = `translate(${d.curX}px, ${d.curY}px) scale(${zoom})`;
+      }
+    }
   };
-  const onPointerUp = (event: React.PointerEvent) => {
+  const finishDrag = () => {
     const d = drag.current;
     drag.current = null;
+    stageRef.current?.removeAttribute("data-dragging");
+    if (d && zoom > 1 && d.moved) {
+      setPan({ x: d.curX, y: d.curY });
+    }
+    return d;
+  };
+  const onPointerUp = (event: React.PointerEvent) => {
+    const d = finishDrag();
     if (!d) return;
     justDragged.current = d.moved;
     const dx = event.clientX - d.x;
@@ -269,7 +291,7 @@ export function Lightbox({
           if (event.target === event.currentTarget && zoom === 1) close();
         }}
         onPointerCancel={() => {
-          drag.current = null;
+          finishDrag();
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -278,6 +300,7 @@ export function Lightbox({
           if (Math.abs(event.deltaY) < 2) return;
           zoomTo(zoom * (event.deltaY < 0 ? 1.15 : 1 / 1.15));
         }}
+        ref={stageRef}
       >
         {failed[index] ? (
           <p className="rp-lightbox-failed" role="note">
@@ -286,11 +309,16 @@ export function Lightbox({
         ) : (
           <img
             alt={image.alt || image.name || "图片"}
-            className="rp-lightbox-img"
+            className={
+              hasSwitched.current
+                ? "rp-lightbox-img ch-content-enter"
+                : "rp-lightbox-img"
+            }
             decoding="async"
             draggable={false}
             key={image.src}
             onError={() => setFailed((f) => ({ ...f, [index]: true }))}
+            ref={imgRef}
             src={image.src}
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,

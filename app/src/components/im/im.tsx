@@ -33,6 +33,8 @@ import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
 import { CopyButton } from "@/components/ui/copy-button";
+import { SmoothCollapse } from "@/components/ui/motion-primitives";
+import { useRetainedValue } from "@/lib/motion";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -400,6 +402,38 @@ function initialForm(info: ImPlatformInfo, connection?: ImConnectionView, defaul
 }
 
 /** 添加 / 编辑连接的弹窗。 */
+function ImDisclosure({
+  summary,
+  children,
+}: {
+  summary: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="im-adv" data-open={open || undefined}>
+      <button
+        aria-expanded={open}
+        className="flex w-full cursor-pointer items-center justify-between gap-2 py-3 text-left font-medium text-[13px] text-[var(--ink-2)]"
+        onClick={() => setOpen((prev) => !prev)}
+        type="button"
+      >
+        <span>{summary}</span>
+        <IconChevronDown
+          aria-hidden
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      <SmoothCollapse open={open}>
+        <div className="flex flex-col gap-3 pb-3">{children}</div>
+      </SmoothCollapse>
+    </div>
+  );
+}
+
 export function ConnectionDialog({
   open,
   onOpenChange,
@@ -605,8 +639,7 @@ export function ConnectionDialog({
                 />
               ) : null}
               {manualFields.length > 0 ? (
-                <details className="im-adv">
-                  <summary>{"手动填写凭据（已有应用时可选）"}</summary>
+                <ImDisclosure summary={"手动填写凭据（已有应用时可选）"}>
                   <div className="im-grid">
                     {manualFields.map((field) => (
                       <FieldInput
@@ -622,7 +655,7 @@ export function ConnectionDialog({
                       />
                     ))}
                   </div>
-                </details>
+                </ImDisclosure>
               ) : null}
               {reverse?.reversePath ? (
                 <div className="im-reverse">
@@ -639,8 +672,7 @@ export function ConnectionDialog({
                   </div>
                 </div>
               ) : null}
-              <details className="im-adv">
-                <summary>{"谁能用 · 权限"}</summary>
+              <ImDisclosure summary={"谁能用 · 权限"}>
                 <label className="im-field" htmlFor="im-owner">
                   <span className="im-field-l">{"主人的平台用户 id（一行一个）"}</span>
                   <Textarea id="im-owner" onChange={(event) => setForm({ ...form, ownerUsers: event.target.value })} placeholder={"在平台里给机器人发 /id 可以看到自己的 id"} rows={2} value={form.ownerUsers} />
@@ -671,7 +703,7 @@ export function ConnectionDialog({
                     <Switch aria-label="允许内网地址" checked={form.allowPrivate} onCheckedChange={(next) => setForm({ ...form, allowPrivate: next, allowPrivateTouched: true })} />
                   </div>
                 ) : null}
-              </details>
+              </ImDisclosure>
               <p className="im-field-h">{`群聊：${info.groupNote} 在平台里发 /new 开始新话题，/id 查看自己的 id。`}</p>
               {testResult ? (
                 <div className={cn("im-test", testResult.ok ? "is-ok" : "is-bad")} role="status">
@@ -707,12 +739,13 @@ export function ConnectionDialog({
 }
 
 export function LogsDialog({ connection, open, onOpenChange }: { connection: ImConnectionView | null; open: boolean; onOpenChange: (open: boolean) => void }) {
-  const logs = useQuery({ ...imLogsQueryOptions(connection?.id ?? ""), enabled: open && Boolean(connection) });
+  const retainedConnection = useRetainedValue(connection);
+  const logs = useQuery({ ...imLogsQueryOptions(retainedConnection?.id ?? ""), enabled: open && Boolean(connection) });
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{connection ? `「${connection.name}」的日志` : "日志"}</DialogTitle>
+          <DialogTitle>{retainedConnection ? `「${retainedConnection.name}」的日志` : "日志"}</DialogTitle>
           <DialogDescription>{"最近 100 条：连接、收发消息和出错原因。消息只记前 80 个字。"}</DialogDescription>
         </DialogHeader>
         <DialogBody className="mt-2">

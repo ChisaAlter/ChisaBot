@@ -75,7 +75,7 @@ import {
   markPendingBot,
   usePendingBot,
 } from "@/lib/chat/pending-switch";
-import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
+import { EASE_OUT, ENTRANCE_SECONDS, usePresenceMount } from "@/lib/motion";
 import { usePanelBot } from "@/lib/panels/active-bot";
 import { showPanels } from "@/lib/panels/rail-open";
 import { relativeTime, useRelativeNow } from "@/lib/relative-time";
@@ -228,10 +228,10 @@ function ChannelRow({
   });
   return (
     <motion.div
-      animate={{ opacity: 1, transform: "translateY(0px)" }}
+      animate={{ opacity: 1, y: 0 }}
       initial={{
         opacity: 0,
-        transform: shouldReduceMotion ? "none" : "translateY(-8px)",
+        y: shouldReduceMotion ? 0 : -8,
       }}
       exit={{ opacity: 0 }}
       layout={animateOrder && !shouldReduceMotion ? "position" : false}
@@ -281,7 +281,7 @@ function SearchHitRow({
   const closeDrawer = useCloseMobileDrawer();
   return (
     <Link
-      className="flex flex-row py-2 px-2 gap-2 items-center w-full hover:bg-foreground/5 rounded-lg"
+      className="flex flex-row py-2 px-2 gap-2 items-center w-full rounded-lg transition-colors duration-100 hover:bg-foreground/5"
       onClick={closeDrawer}
       params={{ channelId: hit.channelId }}
       search={message ? { message } : {}}
@@ -356,6 +356,7 @@ const BotRow = memo(function BotRow({
   canReplaceMain?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuMount = usePresenceMount(menuOpen);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -482,7 +483,13 @@ const BotRow = memo(function BotRow({
         </Link>
       )}
       <BotRowComputerChip chat={chat} />
-      <DropdownMenu onOpenChange={handleMenuOpenChange} open={menuOpen}>
+      <DropdownMenu
+        onOpenChange={handleMenuOpenChange}
+        onOpenChangeComplete={(next) => {
+          if (!next) menuMount.onExited();
+        }}
+        open={menuOpen}
+      >
         <DropdownMenuTrigger
           render={
             <button
@@ -495,7 +502,7 @@ const BotRow = memo(function BotRow({
         >
           <IconDots className="size-4" />
         </DropdownMenuTrigger>
-        {menuOpen ? (
+        {menuMount.mounted ? (
           <BotMenuContent
             bot={bot}
             chat={chat}
@@ -732,6 +739,7 @@ function HiddenBotRow({
   chat: NonNullable<ReturnType<typeof useBotChat>>;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuMount = usePresenceMount(menuOpen);
   return (
     <div className={cn("glass-bot-row is-on", menuOpen && "menu-open")}>
       <span className="glass-bot-link">
@@ -750,7 +758,13 @@ function HiddenBotRow({
         </span>
       </span>
       <BotRowComputerChip chat={chat} />
-      <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>
+      <DropdownMenu
+        onOpenChange={setMenuOpen}
+        onOpenChangeComplete={(next) => {
+          if (!next) menuMount.onExited();
+        }}
+        open={menuOpen}
+      >
         <DropdownMenuTrigger
           render={
             <button
@@ -763,7 +777,7 @@ function HiddenBotRow({
         >
           <IconDots className="size-4" />
         </DropdownMenuTrigger>
-        {menuOpen ? (
+        {menuMount.mounted ? (
           <BotMenuContent
             bot={bot}
             chat={chat}
@@ -930,7 +944,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <RosterToggle scope="app" />
           </div>
           {searching ? (
-            <>
+            <div
+              className="ch-view-enter flex min-h-0 flex-1 flex-col"
+              key="search"
+            >
               <div className="glass-sec">
                 <span>{`搜索“${search.trim()}”`}</span>
               </div>
@@ -1045,9 +1062,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   </SidebarGroup>
                 </SidebarMenu>
               </div>
-            </>
+            </div>
           ) : (
-            <div className="glass-side-scroll glass-bot-scroll">
+            <div
+              className="glass-side-scroll glass-bot-scroll ch-view-enter"
+              key="roster"
+            >
               <HiddenChatBotRow known={knownIds} />
               {/* §139：不再有「主机器人 / 其他」分组标签——主机器人置顶、头像带星，中间一条细分隔线。 */}
               <div className="glass-bot-list relative">
@@ -1190,6 +1210,7 @@ const MiniBot = memo(function MiniBot({
   canReplaceMain?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuMount = usePresenceMount(menuOpen);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -1295,7 +1316,13 @@ const MiniBot = memo(function MiniBot({
           title={computer === "needs" ? "计算机需要你" : "计算机已打开"}
         />
       ) : null}
-      <DropdownMenu onOpenChange={handleMenuOpenChange} open={menuOpen}>
+      <DropdownMenu
+        onOpenChange={handleMenuOpenChange}
+        onOpenChangeComplete={(next) => {
+          if (!next) menuMount.onExited();
+        }}
+        open={menuOpen}
+      >
         <DropdownMenuTrigger
           render={
             <button
@@ -1308,7 +1335,7 @@ const MiniBot = memo(function MiniBot({
         >
           <IconDots className="size-3" />
         </DropdownMenuTrigger>
-        {menuOpen ? (
+        {menuMount.mounted ? (
           <BotMenuContent
             bot={bot}
             chat={chat}
@@ -1362,6 +1389,7 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
   const current = useCurrentBotChat();
   const agents = useQuery(agentListQueryOptions());
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuMount = usePresenceMount(menuOpen);
   if (!current || known.has(current.agentId)) return null;
   const profile = agents.data?.find((a) => a.id === current.agentId);
   const bot: RosterBot = {
@@ -1408,7 +1436,13 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
             title={computer === "needs" ? "计算机需要你" : "计算机已打开"}
           />
         ) : null}
-        <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>
+        <DropdownMenu
+          onOpenChange={setMenuOpen}
+          onOpenChangeComplete={(next) => {
+            if (!next) menuMount.onExited();
+          }}
+          open={menuOpen}
+        >
           <DropdownMenuTrigger
             render={
               <button
@@ -1421,7 +1455,7 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
           >
             <IconDots className="size-3" />
           </DropdownMenuTrigger>
-          {menuOpen ? (
+          {menuMount.mounted ? (
             <BotMenuContent
               bot={bot}
               chat={current}

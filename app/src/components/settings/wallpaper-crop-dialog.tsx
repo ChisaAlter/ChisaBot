@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useSegmentedKeys } from "@/components/ui/segmented";
+import { useRetainedValue } from "@/lib/motion";
 import {
   applyCropZoom,
   type CropHandle,
@@ -629,6 +630,7 @@ export function WallpaperCropDialog({
   onReplaceFile,
   onApply,
 }: WallpaperCropDialogProps) {
+  const retainedSource = useRetainedValue(source);
   return (
     <Dialog
       onOpenChange={(nextOpen) => {
@@ -646,14 +648,14 @@ export function WallpaperCropDialog({
             {"按屏幕比例或自由框选壁纸显示区域，保留高清晰度细节"}
           </DialogDescription>
         </DialogHeader>
-        {source ? (
+        {retainedSource ? (
           <WallpaperCropEditor
-            key={source.previewUrl}
+            key={retainedSource.previewUrl}
             onApply={onApply}
             onCancel={onCancel}
             onReplaceFile={onReplaceFile}
             saving={saving}
-            source={source}
+            source={retainedSource}
           />
         ) : null}
       </DialogContent>

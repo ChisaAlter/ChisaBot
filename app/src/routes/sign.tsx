@@ -26,11 +26,11 @@ import {
   currentUserQueryOptions,
 } from "../lib/auth/queries";
 
-const EASE_OUT = [0.23, 1, 0.32, 1] as const;
+import { EASE_OUT } from "@/lib/motion";
 
 const ENTRANCE_SECONDS = 0.4;
 const ENTRANCE_STAGGER_SECONDS = 0.08;
-const ENTRANCE_OFFSET = "translateY(12px)";
+const ENTRANCE_OFFSET_Y = 12;
 
 export const Route = createFileRoute("/sign")({
   beforeLoad: async ({ context }) => {
@@ -236,11 +236,11 @@ function SignScreen() {
   const prefersReducedMotion = useReducedMotion();
   const hidden = {
     opacity: 0,
-    ...(prefersReducedMotion ? {} : { transform: ENTRANCE_OFFSET }),
+    ...(prefersReducedMotion ? {} : { y: ENTRANCE_OFFSET_Y }),
   };
   const shown = {
     opacity: 1,
-    ...(prefersReducedMotion ? {} : { transform: "translateY(0px)" }),
+    ...(prefersReducedMotion ? {} : { y: 0 }),
   };
 
   return (

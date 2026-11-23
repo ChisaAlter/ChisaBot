@@ -94,6 +94,18 @@ html[data-maximized="true"] .update-page .win-ctrl .ico-restore {
   flex-direction: column;
   align-items: center;
   text-align: center;
+  animation: update-stack-in var(--dur-3) var(--ease-out) both;
+}
+
+@keyframes update-stack-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .update-mark {
@@ -175,10 +187,12 @@ html[data-maximized="true"] .update-page .win-ctrl .ico-restore {
 
 .update-progress-fill {
   height: 100%;
-  width: 0%;
+  width: 100%;
   border-radius: 9999px;
   background: #1680fa;
-  transition: width 220ms var(--ease-out);
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 220ms var(--ease-out);
 }
 
 .dark .update-progress-fill {
@@ -187,6 +201,8 @@ html[data-maximized="true"] .update-page .win-ctrl .ico-restore {
 
 .update-progress[data-mode="indeterminate"] .update-progress-fill {
   width: 38%;
+  transform: none;
+  transition: none;
   position: relative;
   animation: update-indeterminate 1.4s ease-in-out infinite;
 }
@@ -213,14 +229,40 @@ html[data-maximized="true"] .update-page .win-ctrl .ico-restore {
   color: #d1d5db;
 }
 
-/* 原位操作按钮区：下载中隐藏，100% 校验通过后原位出现。 */
+/* 原位操作按钮区：下载中收起，100% 校验通过后平滑展开原位出现。 */
+.update-actions-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition:
+    grid-template-rows var(--dur-3) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+
+.update-actions-wrap[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
 .update-actions {
-  margin-top: 20px;
+  overflow: hidden;
+  min-height: 0;
+  padding-top: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 10px;
+  transition: padding-top var(--dur-3) var(--ease-out);
+}
+
+.update-actions-wrap[data-open="true"] .update-actions {
+  padding-top: 20px;
 }
 
 .update-actions .btn {
@@ -325,8 +367,8 @@ html[data-maximized="true"] .update-page .win-ctrl .ico-restore {
   .update-progress {
     margin-top: 16px;
   }
-  .update-actions {
-    margin-top: 14px;
+  .update-actions-wrap[data-open="true"] .update-actions {
+    padding-top: 14px;
   }
   .update-download-link {
     margin-top: 12px;
@@ -334,12 +376,17 @@ html[data-maximized="true"] .update-page .win-ctrl .ico-restore {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .update-stack {
+    animation: none;
+  }
+  .update-actions-wrap,
+  .update-actions,
   .update-progress-fill {
     transition: none;
   }
   .update-progress[data-mode="indeterminate"] .update-progress-fill {
     animation: none;
-    transform: translateX(0);
-    width: 50%;
+    transform: scaleX(0.5);
+    width: 100%;
   }
 }

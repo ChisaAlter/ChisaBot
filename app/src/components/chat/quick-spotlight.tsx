@@ -17,6 +17,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { useTimeout, useWindowEvent } from "@/hooks";
 import { BotBubbles } from "@/components/chat/bot-bubbles";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import { toast } from "@/components/ui/toast";
 import { botsTarget, isBotsChatPath } from "@/lib/bots-location";
 import {
@@ -25,6 +26,7 @@ import {
   openQuickSpotlight,
   sendPromptToChat,
 } from "@/lib/chat/quote-event";
+import { DURATION_MS, usePresenceMount } from "@/lib/motion";
 import { generateMorningBrief } from "@/lib/personal-sources/mutations";
 
 export { CHISABOT_SPOTLIGHT_EVENT, openQuickSpotlight, sendPromptToChat };
@@ -61,7 +63,8 @@ export function QuickSpotlight() {
       void navigate(botsTarget() as never);
   });
 
-  if (!open && briefMarkdown !== null) {
+  const presence = usePresenceMount(open, DURATION_MS.exit);
+  if (!open && !presence.mounted && briefMarkdown !== null) {
     setBriefMarkdown(null);
   }
   useTimeout(
@@ -72,7 +75,8 @@ export function QuickSpotlight() {
     open ? 20 : null,
   );
 
-  if (!open) return null;
+  if (!presence.mounted) return null;
+  const leaving = !open;
 
   const submitToComposer = (text: string, sourceLabel?: string) => {
     const trimmed = text.trim();
@@ -100,13 +104,18 @@ export function QuickSpotlight() {
       aria-label="快捷指令与随手问浮窗"
       aria-modal="true"
       className="chat-spotlight-backdrop"
-      data-testid="quick-spotlight"
+      data-leaving={leaving ? "true" : undefined}
+      data-testid={leaving ? undefined : "quick-spotlight"}
+      inert={leaving}
       onClick={(e) => {
         if (e.target === e.currentTarget) setOpen(false);
       }}
       role="dialog"
     >
-      <div className="chat-spotlight-panel">
+      <div
+        className="chat-spotlight-panel"
+        data-leaving={leaving ? "true" : undefined}
+      >
         <form
           className="chat-spotlight-bar"
           onSubmit={(e) => {
@@ -139,7 +148,8 @@ export function QuickSpotlight() {
         </form>
 
         {briefMarkdown ? (
-          <div
+          <ContentEnter
+            key="brief"
             className="chat-spotlight-brief"
             data-testid="quick-spotlight-brief"
           >
@@ -169,9 +179,9 @@ export function QuickSpotlight() {
               </button>
             </div>
             <BotBubbles text={briefMarkdown} />
-          </div>
+          </ContentEnter>
         ) : (
-          <div className="chat-spotlight-actions">
+          <ContentEnter key="actions" className="chat-spotlight-actions">
             <button
               className="chat-spotlight-action"
               data-testid="spotlight-action-brief"
@@ -380,7 +390,7 @@ export function QuickSpotlight() {
               </span>
               <IconArrowRight className="size-3.5 opacity-55" />
             </button>
-          </div>
+          </ContentEnter>
         )}
       </div>
     </div>

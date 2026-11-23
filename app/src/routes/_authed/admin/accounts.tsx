@@ -65,6 +65,7 @@ import {
   setInvitesEnabled,
 } from "@/lib/accounts";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
+import { useRetainedValue } from "@/lib/motion";
 
 export const Route = createFileRoute("/_authed/admin/accounts")({
   // CB-096：多用户与管理员账号管理默认开启；仅当显式配置 CHISABOT_ACCOUNTS_UI=0 时隐藏。
@@ -664,6 +665,7 @@ function PasswordDialog({
   onSaved: (account: GatewayAccount) => void;
 }) {
   const [password, setPassword] = useState("");
+  const retainedAccount = useRetainedValue(account);
   const save = useAsyncAction(
     async () => {
       if (!account) return;
@@ -687,7 +689,9 @@ function PasswordDialog({
       <DialogContent className="im-dialog max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {account ? `修改「${account.displayName}」的密码` : "修改密码"}
+            {retainedAccount
+              ? `修改「${retainedAccount.displayName}」的密码`
+              : "修改密码"}
           </DialogTitle>
           <DialogDescription>
             {
@@ -876,12 +880,13 @@ function LinkDialog({
   link: { title: string; url: string; expiresAt: number } | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  const retainedLink = useRetainedValue(link);
   return (
     <Dialog onOpenChange={onOpenChange} open={Boolean(link)}>
       <DialogContent className="im-dialog max-w-lg">
         <DialogHeader>
-          <DialogTitle>{link?.title ?? ""}</DialogTitle>
-          <DialogDescription>{`复制下面的链接发给他（微信、QQ 都行）。只能用一次，${link ? expiresText(link.expiresAt) : ""}。关掉这个窗口后就看不到完整链接了。`}</DialogDescription>
+          <DialogTitle>{retainedLink?.title ?? ""}</DialogTitle>
+          <DialogDescription>{`复制下面的链接发给他（微信、QQ 都行）。只能用一次，${retainedLink ? expiresText(retainedLink.expiresAt) : ""}。关掉这个窗口后就看不到完整链接了。`}</DialogDescription>
         </DialogHeader>
         <DialogBody className="im-form mt-2">
           <Input
@@ -889,7 +894,7 @@ function LinkDialog({
             className="font-mono"
             onFocus={(event) => event.currentTarget.select()}
             readOnly
-            value={link?.url ?? ""}
+            value={retainedLink?.url ?? ""}
           />
         </DialogBody>
         <DialogFooter className="mt-4">
@@ -900,7 +905,7 @@ function LinkDialog({
           >
             {"完成"}
           </Button>
-          <CopyButton value={link?.url ?? ""}>{"复制链接"}</CopyButton>
+          <CopyButton value={retainedLink?.url ?? ""}>{"复制链接"}</CopyButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

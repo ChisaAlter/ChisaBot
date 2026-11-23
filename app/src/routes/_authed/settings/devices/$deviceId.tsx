@@ -20,6 +20,7 @@ import { PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { DeviceAgentsPanel, DeviceProfileBadge } from "@/components/local-agents/device-agents-panel";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button, T } from "@/components/ui/button";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import { confirmDialog } from "@/components/ui/confirm";
 import { Card, SettingRow } from "@/components/ui/skyglass";
 import { toast } from "@/components/ui/toast";
@@ -208,75 +209,77 @@ function DevicePage() {
         ))}
       </div>
 
-      {activeTab === "permissions" ? <DevicePermissions device={d} isThisPc={isThisPc} /> : null}
-      {activeTab === "activity" ? <DeviceActivityPanel device={d} /> : null}
-      {activeTab === "agents" ? <DeviceAgentsPanel device={d} isThisPc={isThisPc} /> : null}
-      {activeTab === "local" && local ? <ThisPcPanel local={local} onLocal={setLocal} /> : null}
-      {activeTab === "audit" ? (
-        <Card className="device-audit-card">
-          {audit.isPending ? <PageSkeleton rows={4} /> : <AuditList entries={audit.data ?? []} />}
-        </Card>
-      ) : null}
-      {activeTab === "settings" ? (
-        <>
-          <Card>
-            <SettingRow description="登记时生成，用来区分同名电脑。" title="设备 ID">
-              <code className="device-code">{d.id}</code>
-            </SettingRow>
-            <SettingRow description={new Date(d.createdAt).toLocaleString("zh-CN")} title="关联时间" />
-            <SettingRow description={d.clientVersion ?? "未知"} title="客户端版本" />
-            <SettingRow
-              description={d.lastUsedBy ? `${lastUsedText(d.lastUsedBy)}（${new Date(d.lastUsedBy.at).toLocaleString("zh-CN")}）` : "还没有机器人使用过这台设备。"}
-              title="最近使用的机器人"
-            />
+      <ContentEnter key={activeTab}>
+        {activeTab === "permissions" ? <DevicePermissions device={d} isThisPc={isThisPc} /> : null}
+        {activeTab === "activity" ? <DeviceActivityPanel device={d} /> : null}
+        {activeTab === "agents" ? <DeviceAgentsPanel device={d} isThisPc={isThisPc} /> : null}
+        {activeTab === "local" && local ? <ThisPcPanel local={local} onLocal={setLocal} /> : null}
+        {activeTab === "audit" ? (
+          <Card className="device-audit-card">
+            {audit.isPending ? <PageSkeleton rows={4} /> : <AuditList entries={audit.data ?? []} />}
           </Card>
-          <section className="device-section">
-            <h2 className="device-section-t is-danger">{"危险区"}</h2>
-            <Card className="device-danger">
-              {!d.revoked ? (
-                <SettingRow description="立即作废这台设备的令牌并断开连接，所有机器人都不能再使用它。之后它需要重新登录才能再次关联。" title="撤销关联">
+        ) : null}
+        {activeTab === "settings" ? (
+          <>
+            <Card>
+              <SettingRow description="登记时生成，用来区分同名电脑。" title="设备 ID">
+                <code className="device-code">{d.id}</code>
+              </SettingRow>
+              <SettingRow description={new Date(d.createdAt).toLocaleString("zh-CN")} title="关联时间" />
+              <SettingRow description={d.clientVersion ?? "未知"} title="客户端版本" />
+              <SettingRow
+                description={d.lastUsedBy ? `${lastUsedText(d.lastUsedBy)}（${new Date(d.lastUsedBy.at).toLocaleString("zh-CN")}）` : "还没有机器人使用过这台设备。"}
+                title="最近使用的机器人"
+              />
+            </Card>
+            <section className="device-section">
+              <h2 className="device-section-t is-danger">{"危险区"}</h2>
+              <Card className="device-danger">
+                {!d.revoked ? (
+                  <SettingRow description="立即作废这台设备的令牌并断开连接，所有机器人都不能再使用它。之后它需要重新登录才能再次关联。" title="撤销关联">
+                    <Button
+                      feedback="revoke"
+                      onClick={async () => {
+                        const ok = await confirmDialog({
+                          title: `撤销「${d.name}」？`,
+                          description: "这台设备会立即断开，所有机器人都不能再使用它。客户端需要重新登录才能再次关联。",
+                          confirmLabel: "撤销",
+                          destructive: true,
+                        });
+                        if (ok) void revoke.run();
+                      }}
+                      size="sm"
+                      state={revoke.state}
+                      variant="destructive"
+                    >
+                      {"撤销"}
+                    </Button>
+                  </SettingRow>
+                ) : null}
+                <SettingRow description="删除这台设备和它的全部操作记录（不可恢复）。" title="删除设备">
                   <Button
-                    feedback="revoke"
+                    feedback="delete"
                     onClick={async () => {
                       const ok = await confirmDialog({
-                        title: `撤销「${d.name}」？`,
-                        description: "这台设备会立即断开，所有机器人都不能再使用它。客户端需要重新登录才能再次关联。",
-                        confirmLabel: "撤销",
+                        title: `删除「${d.name}」？`,
+                        description: "会同时删除这台设备的权限设置和全部操作记录，无法恢复。",
+                        confirmLabel: "删除",
                         destructive: true,
                       });
-                      if (ok) void revoke.run();
+                      if (ok) void remove.run();
                     }}
                     size="sm"
-                    state={revoke.state}
+                    state={remove.state}
                     variant="destructive"
                   >
-                    {"撤销"}
+                    {"删除"}
                   </Button>
                 </SettingRow>
-              ) : null}
-              <SettingRow description="删除这台设备和它的全部操作记录（不可恢复）。" title="删除设备">
-                <Button
-                  feedback="delete"
-                  onClick={async () => {
-                    const ok = await confirmDialog({
-                      title: `删除「${d.name}」？`,
-                      description: "会同时删除这台设备的权限设置和全部操作记录，无法恢复。",
-                      confirmLabel: "删除",
-                      destructive: true,
-                    });
-                    if (ok) void remove.run();
-                  }}
-                  size="sm"
-                  state={remove.state}
-                  variant="destructive"
-                >
-                  {"删除"}
-                </Button>
-              </SettingRow>
-            </Card>
-          </section>
-        </>
-      ) : null}
+              </Card>
+            </section>
+          </>
+        ) : null}
+      </ContentEnter>
     </PageShell>
   );
 }

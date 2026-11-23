@@ -137,7 +137,7 @@ export function SpeakAction({
   const isLoading = playback.status === "loading";
   const isPlaying = playback.status === "playing";
   const isActive = isLoading || isPlaying;
-  const label = isLoading ? "合成中…" : isPlaying ? "停止" : "朗读";
+  const visualState = isLoading ? "loading" : isPlaying ? "playing" : "idle";
   const ariaLabel = isLoading
     ? "取消语音合成"
     : isPlaying
@@ -162,14 +162,29 @@ export function SpeakAction({
       title={playback.error ?? ariaLabel}
       type="button"
     >
-      {isLoading ? (
-        <IconLoader2 className="size-3.5 animate-spin" />
-      ) : isPlaying ? (
-        <IconPlayerStop className="size-3.5" />
-      ) : (
-        <IconVolume className="size-3.5" />
-      )}
-      <span>{label}</span>
+      <span className="btn-stack" data-state={isActive ? "pending" : "idle"}>
+        <span className="btn-face" data-face="idle">
+          <IconVolume className="size-3.5" />
+        </span>
+        <span className="btn-face" data-face="status">
+          {isLoading ? (
+            <IconLoader2 className="size-3.5 motion-safe:animate-spin" />
+          ) : (
+            <IconPlayerStop className="size-3.5" />
+          )}
+        </span>
+      </span>
+      <span aria-hidden="true" className="btn-labels">
+        {(["idle", "loading", "playing"] as const).map((key) => (
+          <span
+            data-for={key}
+            key={key}
+            style={{ opacity: visualState === key ? 1 : 0 }}
+          >
+            {{ idle: "朗读", loading: "合成中…", playing: "停止" }[key]}
+          </span>
+        ))}
+      </span>
     </button>
   );
 }

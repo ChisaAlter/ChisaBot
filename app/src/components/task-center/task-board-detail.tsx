@@ -11,6 +11,7 @@ import {
   IconRobot,
 } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
+import { useRetainedValue } from "@/lib/motion";
 import {
   Dialog,
   DialogBody,
@@ -83,6 +84,7 @@ export function BoardCardDetailDialog({
   onOpenTask: (taskId: string) => void;
   onSendToChat: (card: MarkdownBoardCard) => void;
 }) {
+  const retainedCard = useRetainedValue(card);
   return (
     <Dialog
       onOpenChange={(open) => {
@@ -90,11 +92,11 @@ export function BoardCardDetailDialog({
       }}
       open={Boolean(card)}
     >
-      {card ? (
+      {retainedCard ? (
         <BoardCardDetailContent
           board={board}
-          card={card}
-          key={`${board.boardId}:${card.id}`}
+          card={retainedCard}
+          key={`${board.boardId}:${retainedCard.id}`}
           onClose={onClose}
           onOpenTask={onOpenTask}
           onSendToChat={onSendToChat}
@@ -216,7 +218,7 @@ function BoardCardDetailContent({
   return (
     <DialogContent
       className="max-h-[85svh] w-[calc(100%-2rem)] max-w-2xl"
-      overlayClassName="bg-black/45"
+      overlayClassName="bg-black/22"
     >
       <DialogHeader className="shrink-0 pr-8">
         <div className="tc-board-detail-badges">
