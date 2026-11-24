@@ -19,7 +19,8 @@
       "!pc/release",
       "!pc/src/shell-fingerprint.json",
       "!pc/src/web-bundle",
-      "!android/app/build"
+      "!android/app/build",
+      "!runtime/dsh/.runtime"
     ]
   },
   "formatter": {

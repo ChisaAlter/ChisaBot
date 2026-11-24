@@ -183,6 +183,41 @@ jobs:
       - name: Computer egress floor and screencast
         working-directory: agent-computer
         run: bun test tests/egress-auth.test.ts tests/egress-policy.test.ts tests/egress.test.ts tests/screencast.test.ts tests/webrtc-proxy.test.ts
+      # 补齐 agent-computer 无浏览器依赖的单元与隔离防线测试（27 个文件）：
+      # 含 23 个跨平台纯单测与 4 个 Linux/POSIX 隔离单测（identity Unix socket、shell /bin/bash、workspace* symlink）。
+      # action-barrier.test.ts 与 with-deadline.test.ts 暂不纳入：其源码对唯一定时器调用 timer.unref()，
+      # 在 Bun 1.3.14 测试进程无其他 ref 句柄时会永久挂死。
+      - name: Computer unit and confinement checks
+        working-directory: agent-computer
+        run: >-
+          bun test
+          tests/authorisation.test.ts
+          tests/bot-id.test.ts
+          tests/browser-eviction.test.ts
+          tests/browser-mode.test.ts
+          tests/browser-runtime.test.ts
+          tests/capture-gate.test.ts
+          tests/challenge.test.ts
+          tests/control.test.ts
+          tests/control-store.test.ts
+          tests/demonstration.test.ts
+          tests/identity.test.ts
+          tests/live-page.test.ts
+          tests/local-chrome-startup.test.ts
+          tests/navigation-recovery.test.ts
+          tests/number-from-env.test.ts
+          tests/profile-listing.test.ts
+          tests/request-validation.test.ts
+          tests/runtime-hardening.test.ts
+          tests/sessions.test.ts
+          tests/shell.test.ts
+          tests/site-block.test.ts
+          tests/stream-keepalive.test.ts
+          tests/viewer.test.ts
+          tests/virtual-display.test.ts
+          tests/workspace.test.ts
+          tests/workspace-download.test.ts
+          tests/workspace-origin.test.ts
       - name: SSRF red-line (PRD-P1-06)
         run: bun test server/tests/ssrf-redline.test.ts server/tests/guarded-fetch-ssrf.test.ts server/tests/personal-imap-egress.test.ts shared/ops-counters.test.ts shared/ops-codes.test.ts
       - name: Trust-boundary network isolation red-line
@@ -196,12 +231,26 @@ jobs:
         run: bun test shared/connect-snapshot.test.ts server/tests/connect-snapshot.test.ts
       - name: Schedule honesty / partition (non-tram re-verify)
         run: bun test shared/schedules.test.ts shared/activity-labels.test.ts
-      - name: Login gateway checks
-        run: bun test deploy/public/auth/server.test.ts deploy/public/auth/accounts.test.ts deploy/public/auth/startup-report.test.ts
-      - name: Updater shell script checks (CB-100b)
+      - name: Login gateway and nginx render checks
+        run: >-
+          bun test
+          deploy/public/auth/server.test.ts
+          deploy/public/auth/accounts.test.ts
+          deploy/public/auth/startup-report.test.ts
+          deploy/public/render-nginx.test.ts
+      - name: Updater, backup and resource pinning checks (CB-100b)
         run: |
           for f in deploy/updater/*.sh; do bash -n "$f"; done
           bash deploy/updater/test-shell.sh
+          bash deploy/updater/test-dsh-release.sh
+          bash deploy/updater/test-complete-backup.sh
+          (
+            mkdir -p work
+            trap 'rmdir work 2>/dev/null || true' EXIT
+            bash deploy/updater/test-host-monitor.sh
+            bash deploy/updater/test-host-monitor.sh --signals
+          )
+          node --test deploy/pin-resources.test.mjs deploy/updater/accounts-release.test.mjs deploy/updater/backup-config.test.mjs deploy/updater/backup-state.test.mjs
           python3 -m unittest discover -s deploy/updater -p "test_*.py"
       # Everything the hand-picked lists miss: the whole server/shared suite minus the
       # measured defect quarantine (scripts/test-quarantine.ts) and the dsh-* suites,
@@ -303,6 +352,9 @@ jobs:
         run: bun install --frozen-lockfile --omit=peer --linker hoisted
       - run: npm ci --no-audit --no-fund
       - run: npm test
+      - name: DSH long-history compaction and source durability checks
+        working-directory: .
+        run: bun test runtime/dsh/tests/long-history.test.ts runtime/dsh/tests/source-durability.test.ts
       - name: Durable commands, approval gaps and process recovery
         working-directory: .
         env:
@@ -387,3 +439,66 @@ jobs:
       - run: cd app && bun --bun ../node_modules/vite/bin/vite.js build
       - run: cd app && NODE_ENV=test bun --bun ../node_modules/vite/bin/vite.js build
       - run: cd app && bun test tests/chunk-graph.test.ts
+
+  # Android 单元测试（NativeLogicTest / ShapeAvatarTest）：
+  # 平时仅做秒级路径检测，只有改动 android/** 或 ShapeAvatarTest 交叉校验的前端色板/样式文件
+  # （或手动 workflow_dispatch）时才安装 JDK 17 / Gradle 8.9 并运行 testDebugUnitTest，
+  # 避免拖慢无关 PR，同时避免把 Android 单测回归留到发版标签（release.yml）才暴露。
+  android-test:
+    name: Android unit tests (on android/** changes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Detect Android-relevant changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch: running Android unit tests."
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$BASE_SHA" ]; then
+            if ! changed="$(git diff --name-only "$BASE_SHA...HEAD" 2>/dev/null)"; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          elif [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            if ! changed="$(git diff --name-only "$BEFORE_SHA..HEAD" 2>/dev/null)"; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "No base commit available: running Android unit tests."
+            exit 0
+          fi
+          if printf '%s\n' "$changed" | grep -Eq '^(android/|app/src/lib/agents/avatar-shapes\.ts$|app/src/styles\.css$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Android-relevant changes detected:"
+            printf '%s\n' "$changed" | grep -E '^(android/|app/src/lib/agents/avatar-shapes\.ts$|app/src/styles\.css$)'
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No Android-relevant changes; skipping Gradle unit tests."
+          fi
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        if: steps.changes.outputs.run == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        if: steps.changes.outputs.run == 'true'
+        with:
+          gradle-version: "8.9"
+          cache-disabled: true
+      - name: Run Android unit tests
+        if: steps.changes.outputs.run == 'true'
+        working-directory: android
+        run: gradle --no-daemon testDebugUnitTest
