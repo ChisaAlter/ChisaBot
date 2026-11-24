@@ -31,18 +31,55 @@ export type RouteAccessEntry = {
 export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "ALL /*": { access: "middleware" },
   "ALL /api/*": { access: "middleware" },
-  "ALL /api/admin/context-policies/*": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /api/admin/execution-nodes/*": { access: "middleware", reason: "use() mount only sets the no-store header; every endpoint verifies requireAdmin" },
-  "ALL /api/admin/harness/*": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /api/admin/health/*": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /api/admin/history-summary-model/*": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /api/admin/model-fallbacks/*": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /api/admin/observation/*": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /api/admin/prompts/*": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /api/admin/routing/*": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /api/admin/runtime-kernel/*": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /api/admin/smoke/*": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /api/admin/system-update/*": { access: "admin", reason: "use() mount enforces administrator" },
+  "ALL /api/admin/context-policies/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /api/admin/execution-nodes/*": {
+    access: "middleware",
+    reason:
+      "use() mount only sets the no-store header; every endpoint verifies requireAdmin",
+  },
+  "ALL /api/admin/harness/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /api/admin/health/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /api/admin/history-summary-model/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /api/admin/model-fallbacks/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /api/admin/observation/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /api/admin/prompts/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /api/admin/routing/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /api/admin/runtime-kernel/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /api/admin/smoke/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /api/admin/system-update/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
   "ALL /api/agents/*": { access: "middleware" },
   "ALL /api/approvals/*": { access: "middleware" },
   "ALL /api/apps/*": { access: "middleware" },
@@ -72,11 +109,17 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "ALL /api/groups/*": { access: "middleware" },
   "ALL /api/im/*": { access: "middleware" },
   "ALL /api/intents/*": { access: "middleware" },
-  "ALL /api/internal/*": { access: "admin", reason: "use() mount enforces administrator" },
+  "ALL /api/internal/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
   "ALL /api/link-preview/*": { access: "middleware" },
   "ALL /api/live-panels/*": { access: "middleware" },
   "ALL /api/local-agents/*": { access: "middleware" },
-  "ALL /api/mcp-enhancements/*": { access: "admin", reason: "use() mount enforces administrator" },
+  "ALL /api/mcp-enhancements/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
   "ALL /api/media-models/*": { access: "middleware" },
   "ALL /api/media-pool/*": { access: "middleware" },
   "ALL /api/memory-notes/*": { access: "middleware" },
@@ -105,8 +148,14 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "ALL /api/web-search/*": { access: "middleware" },
   "ALL /api/webhooks/*": { access: "middleware" },
   "ALL /api/workflows/*": { access: "middleware" },
-  "ALL /magpie-admin": { access: "admin", reason: "use() mount enforces administrator" },
-  "ALL /magpie-admin/*": { access: "admin", reason: "use() mount enforces administrator" },
+  "ALL /magpie-admin": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
+  "ALL /magpie-admin/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
   "ALL /p/*": { access: "middleware" },
   "DELETE /api/admin/context-policies": { access: "admin" },
   "DELETE /api/admin/context-policies/:modelId": { access: "admin" },
@@ -135,7 +184,11 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "DELETE /api/groups/:channelId/members/:userId": { access: "user" },
   "DELETE /api/im/connections/:id": { access: "user" },
   "DELETE /api/live-panels/:id": { access: "user" },
-  "DELETE /api/local-agents/instances/:id": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
+  "DELETE /api/local-agents/instances/:id": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
   "DELETE /api/media-pool/:id": { access: "admin" },
   "DELETE /api/memory-notes/:id": { access: "user" },
   "DELETE /api/notifications/foreground/:deviceId": { access: "user" },
@@ -143,7 +196,9 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "DELETE /api/pages/:id/assets/:name": { access: "user" },
   "DELETE /api/panels/:botId/authoring/:sessionId": { access: "user" },
   "DELETE /api/panels/:botId/instances/:instanceId": { access: "user" },
-  "DELETE /api/panels/:botId/instances/:instanceId/grants/:capabilityId": { access: "user" },
+  "DELETE /api/panels/:botId/instances/:instanceId/grants/:capabilityId": {
+    access: "user",
+  },
   "DELETE /api/panels/:botId/library/:libraryId": { access: "user" },
   "DELETE /api/passwords/:id": { access: "user" },
   "DELETE /api/personal-sources/calendar": { access: "user" },
@@ -194,12 +249,30 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/agents/capabilities": { access: "user" },
   "GET /api/approvals": { access: "user" },
   "GET /api/apps": { access: "user" },
-  "GET /api/apps/:id": { access: "user", reason: "admin-or-owner: member 403 is an ownership refusal, not an admin gate" },
-  "GET /api/apps/:id/export": { access: "user", reason: "admin-or-owner: member 403 is an ownership refusal, not an admin gate" },
-  "GET /api/apps/:id/revisions": { access: "user", reason: "admin-or-owner: member 403 is an ownership refusal, not an admin gate" },
-  "GET /api/apps/oauth/callback": { access: "public", reason: "OAuth provider callback" },
+  "GET /api/apps/:id": {
+    access: "user",
+    reason:
+      "admin-or-owner: member 403 is an ownership refusal, not an admin gate",
+  },
+  "GET /api/apps/:id/export": {
+    access: "user",
+    reason:
+      "admin-or-owner: member 403 is an ownership refusal, not an admin gate",
+  },
+  "GET /api/apps/:id/revisions": {
+    access: "user",
+    reason:
+      "admin-or-owner: member 403 is an ownership refusal, not an admin gate",
+  },
+  "GET /api/apps/oauth/callback": {
+    access: "public",
+    reason: "OAuth provider callback",
+  },
   "GET /api/attachments/:id": { access: "user" },
-  "GET /api/auth/*": { access: "public", reason: "Better Auth sign-in / session / OAuth endpoints" },
+  "GET /api/auth/*": {
+    access: "public",
+    reason: "Better Auth sign-in / session / OAuth endpoints",
+  },
   "GET /api/bot-avatars": { access: "user" },
   "GET /api/bot-avatars/:agentId/image": { access: "user" },
   "GET /api/bot-threads/:agentId": { access: "user" },
@@ -212,7 +285,10 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/bots/attention": { access: "user" },
   "GET /api/bots/routing": { access: "user" },
   "GET /api/browser-bookmarks": { access: "user" },
-  "GET /api/capabilities": { access: "public", reason: "projected capability flags only, reachable pre-sign-in" },
+  "GET /api/capabilities": {
+    access: "public",
+    reason: "projected capability flags only, reachable pre-sign-in",
+  },
   "GET /api/channels": { access: "user" },
   "GET /api/channels/:channelId": { access: "user" },
   "GET /api/channels/events": { access: "user" },
@@ -252,21 +328,47 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/conversations/:threadId/operations": { access: "user" },
   "GET /api/conversations/info": { access: "user" },
   "GET /api/desktop-browser/cookie-approvals": { access: "user" },
-  "GET /api/desktop-browser/cookie-approvals/pending": { access: "machine", reason: "X-Device-Token device credential, not a session" },
+  "GET /api/desktop-browser/cookie-approvals/pending": {
+    access: "machine",
+    reason: "X-Device-Token device credential, not a session",
+  },
   "GET /api/desktop-browser/scopes/:deviceId": { access: "user" },
-  "GET /api/desktop-browser/webauthn/pending": { access: "machine", reason: "X-Device-Token device credential, not a session" },
+  "GET /api/desktop-browser/webauthn/pending": {
+    access: "machine",
+    reason: "X-Device-Token device credential, not a session",
+  },
   "GET /api/desktop-browser/webauthn/requests": { access: "user" },
-  "GET /api/desktop/connection-failure": { access: "machine", reason: "desktop host bearer token, not a session" },
+  "GET /api/desktop/connection-failure": {
+    access: "machine",
+    reason: "desktop host bearer token, not a session",
+  },
   "GET /api/devices": { access: "user" },
   "GET /api/devices/:id": { access: "user" },
   "GET /api/devices/:id/activity": { access: "user" },
   "GET /api/devices/:id/audit": { access: "user" },
   "GET /api/devices/:id/screenshots/:shotId": { access: "user" },
-  "GET /api/devices/agent/node/chisabot-node.cjs": { access: "public", reason: "public node-agent bundle (documented no-secret)" },
-  "GET /api/devices/agent/node/install.sh": { access: "public", reason: "public node-agent install script (documented no-secret)" },
-  "GET /api/devices/agent/self": { access: "machine", reason: "device token, not a session" },
-  "GET /api/devices/agent/state/:id": { access: "machine", verify: false, reason: "local-caller secret gate is configuration-dependent; anonymous 404 is a data miss, not an auth verdict" },
-  "GET /api/devices/agent/ws": { access: "machine", reason: "device token upgrade endpoint, not a session" },
+  "GET /api/devices/agent/node/chisabot-node.cjs": {
+    access: "public",
+    reason: "public node-agent bundle (documented no-secret)",
+  },
+  "GET /api/devices/agent/node/install.sh": {
+    access: "public",
+    reason: "public node-agent install script (documented no-secret)",
+  },
+  "GET /api/devices/agent/self": {
+    access: "machine",
+    reason: "device token, not a session",
+  },
+  "GET /api/devices/agent/state/:id": {
+    access: "machine",
+    verify: false,
+    reason:
+      "local-caller secret gate is configuration-dependent; anonymous 404 is a data miss, not an auth verdict",
+  },
+  "GET /api/devices/agent/ws": {
+    access: "machine",
+    reason: "device token upgrade endpoint, not a session",
+  },
   "GET /api/devices/approvals": { access: "user" },
   "GET /api/devices/bot-tools/:botId": { access: "user" },
   "GET /api/devices/pairing/:pairingId": { access: "user" },
@@ -279,7 +381,10 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/im/connections": { access: "user" },
   "GET /api/im/connections/:id/deliveries": { access: "user" },
   "GET /api/im/connections/:id/logs": { access: "user" },
-  "GET /api/im/onebot/:id": { access: "machine", reason: "onebot reverse-websocket token, not a session" },
+  "GET /api/im/onebot/:id": {
+    access: "machine",
+    reason: "onebot reverse-websocket token, not a session",
+  },
   "GET /api/im/platforms": { access: "user" },
   "GET /api/im/qr/status": { access: "user" },
   "GET /api/im/weixin/qr/status": { access: "user" },
@@ -290,16 +395,56 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/link-preview/asset/:id": { access: "user" },
   "GET /api/live-panels": { access: "user" },
   "GET /api/live-panels/:id/live": { access: "user" },
-  "GET /api/local-agents/acp-registry": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "GET /api/local-agents/bots/:botId/grants": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "GET /api/local-agents/devices/:id": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "GET /api/local-agents/environments": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "GET /api/local-agents/environments/:id/settings": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "GET /api/local-agents/instances": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "GET /api/local-agents/instances/:id": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "GET /api/local-agents/presets": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "GET /api/local-agents/tasks/:id": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "GET /api/local-agents/threads/:threadId/tasks": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
+  "GET /api/local-agents/acp-registry": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "GET /api/local-agents/bots/:botId/grants": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "GET /api/local-agents/devices/:id": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "GET /api/local-agents/environments": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "GET /api/local-agents/environments/:id/settings": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "GET /api/local-agents/instances": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "GET /api/local-agents/instances/:id": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "GET /api/local-agents/presets": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "GET /api/local-agents/tasks/:id": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "GET /api/local-agents/threads/:threadId/tasks": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
   "GET /api/mcp-enhancements": { access: "admin" },
   "GET /api/mcp-enhancements/:serverId": { access: "admin" },
   "GET /api/me": { access: "user" },
@@ -334,7 +479,10 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/plugins/connections": { access: "user" },
   "GET /api/plugins/directory": { access: "user" },
   "GET /api/plugins/for/:agentId": { access: "user" },
-  "GET /api/plugins/oauth/callback": { access: "public", reason: "OAuth provider callback" },
+  "GET /api/plugins/oauth/callback": {
+    access: "public",
+    reason: "OAuth provider callback",
+  },
   "GET /api/push/devices": { access: "user" },
   "GET /api/responsibilities": { access: "user" },
   "GET /api/responsibilities/:id": { access: "user" },
@@ -374,7 +522,11 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/vault": { access: "user" },
   "GET /api/vault/requests": { access: "user" },
   "GET /api/vault/requests/:id": { access: "user" },
-  "GET /api/version": { access: "public", reason: "running build info, explicitly documented as reachable pre-sign-in" },
+  "GET /api/version": {
+    access: "public",
+    reason:
+      "running build info, explicitly documented as reachable pre-sign-in",
+  },
   "GET /api/voice/status": { access: "user" },
   "GET /api/web-search/settings": { access: "user" },
   "GET /api/webhooks": { access: "user" },
@@ -385,12 +537,30 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/workflows/runs": { access: "user" },
   "GET /api/workflows/runs/:runId": { access: "user" },
   "GET /health": { access: "public" },
-  "GET /p/:slug{[a-z0-9]{16}}": { access: "public", reason: "public shared page, unguessable slug" },
-  "GET /p/:slug{[a-z0-9]{16}}/": { access: "public", reason: "public shared page, unguessable slug" },
-  "GET /p/:slug{[a-z0-9]{16}}/assets/:name": { access: "public", reason: "public shared page asset" },
-  "HEAD /p/:slug{[a-z0-9]{16}}": { access: "public", reason: "public shared page, unguessable slug" },
-  "HEAD /p/:slug{[a-z0-9]{16}}/": { access: "public", reason: "public shared page, unguessable slug" },
-  "HEAD /p/:slug{[a-z0-9]{16}}/assets/:name": { access: "public", reason: "public shared page asset" },
+  "GET /p/:slug{[a-z0-9]{16}}": {
+    access: "public",
+    reason: "public shared page, unguessable slug",
+  },
+  "GET /p/:slug{[a-z0-9]{16}}/": {
+    access: "public",
+    reason: "public shared page, unguessable slug",
+  },
+  "GET /p/:slug{[a-z0-9]{16}}/assets/:name": {
+    access: "public",
+    reason: "public shared page asset",
+  },
+  "HEAD /p/:slug{[a-z0-9]{16}}": {
+    access: "public",
+    reason: "public shared page, unguessable slug",
+  },
+  "HEAD /p/:slug{[a-z0-9]{16}}/": {
+    access: "public",
+    reason: "public shared page, unguessable slug",
+  },
+  "HEAD /p/:slug{[a-z0-9]{16}}/assets/:name": {
+    access: "public",
+    reason: "public shared page asset",
+  },
   "PATCH /api/agents/:agentId": { access: "user" },
   "PATCH /api/approvals/preferences": { access: "user" },
   "PATCH /api/approvals/rules/:id": { access: "user" },
@@ -400,7 +570,11 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "PATCH /api/devices/:id": { access: "user" },
   "PATCH /api/im/connections/:id": { access: "user" },
   "PATCH /api/live-panels/:id": { access: "user" },
-  "PATCH /api/local-agents/instances/:id": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
+  "PATCH /api/local-agents/instances/:id": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
   "PATCH /api/me/profile": { access: "user" },
   "PATCH /api/memory-notes/:id": { access: "user" },
   "PATCH /api/pages/:id": { access: "user" },
@@ -426,7 +600,10 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/admin/system-update/magpie": { access: "admin" },
   "POST /api/admin/system-update/rollback": { access: "admin" },
   "POST /api/admin/system-update/update": { access: "admin" },
-  "POST /api/agent-tools/call": { access: "machine", reason: "agent token + signed run assertion, not a session" },
+  "POST /api/agent-tools/call": {
+    access: "machine",
+    reason: "agent token + signed run assertion, not a session",
+  },
   "POST /api/agents": { access: "user" },
   "POST /api/agents/:agentId/callback-token": { access: "user" },
   "POST /api/agents/:agentId/declined": { access: "user" },
@@ -450,7 +627,10 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/apps/import": { access: "admin" },
   "POST /api/apps/validate": { access: "user" },
   "POST /api/audio/transcriptions": { access: "user" },
-  "POST /api/auth/*": { access: "public", reason: "Better Auth sign-in / session / OAuth endpoints" },
+  "POST /api/auth/*": {
+    access: "public",
+    reason: "Better Auth sign-in / session / OAuth endpoints",
+  },
   "POST /api/bots/:agentId/activity/handoffs/stop": { access: "user" },
   "POST /api/bots/:agentId/avatar/generate": { access: "user" },
   "POST /api/bots/:agentId/follow-ups/cancel": { access: "user" },
@@ -485,7 +665,9 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/computers/:botId/control/request": { access: "user" },
   "POST /api/computers/:botId/control/secret": { access: "user" },
   "POST /api/computers/:botId/control/take": { access: "user" },
-  "POST /api/computers/:botId/demonstrations/:recordingId/stop": { access: "user" },
+  "POST /api/computers/:botId/demonstrations/:recordingId/stop": {
+    access: "user",
+  },
   "POST /api/computers/:botId/demonstrations/start": { access: "user" },
   "POST /api/computers/:botId/exec": { access: "user" },
   "POST /api/computers/:botId/files/list": { access: "user" },
@@ -509,36 +691,78 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/conversation-interactions/:callId/retry": { access: "user" },
   "POST /api/conversations/:threadId/commands": { access: "user" },
   "POST /api/conversations/:threadId/events": { access: "user" },
-  "POST /api/conversations/:threadId/operations/:operationId/resolve": { access: "user" },
+  "POST /api/conversations/:threadId/operations/:operationId/resolve": {
+    access: "user",
+  },
   "POST /api/conversations/agent/:agentId/connect": { access: "user" },
   "POST /api/conversations/agent/:agentId/run": { access: "user" },
   "POST /api/conversations/agent/:agentId/stop/:threadId": { access: "user" },
   "POST /api/desktop-browser/cookie-approvals": { access: "user" },
-  "POST /api/desktop-browser/cookie-approvals/:requestId/cancel": { access: "user" },
-  "POST /api/desktop-browser/cookie-approvals/:requestId/respond": { access: "user" },
+  "POST /api/desktop-browser/cookie-approvals/:requestId/cancel": {
+    access: "user",
+  },
+  "POST /api/desktop-browser/cookie-approvals/:requestId/respond": {
+    access: "user",
+  },
   "POST /api/desktop-browser/webauthn/:requestId/cancel": { access: "user" },
   "POST /api/desktop-browser/webauthn/:requestId/respond": { access: "user" },
   "POST /api/desktop-browser/webauthn/requests": { access: "user" },
   "POST /api/devices/:id/jobs/:jobId/kill": { access: "user" },
   "POST /api/devices/:id/revoke": { access: "user" },
   "POST /api/devices/:id/test": { access: "user" },
-  "POST /api/devices/agent/pair": { access: "machine", reason: "one-time pairing code, not a session", verify: false, verifyReason: "pairing code is checked against the store, which the inventory stubs; anonymous fails the stub before reaching the check" },
-  "POST /api/devices/agent/session": { access: "machine", reason: "device token, not a session" },
-  "POST /api/devices/agent/unenroll": { access: "machine", reason: "device token, not a session" },
+  "POST /api/devices/agent/pair": {
+    access: "machine",
+    reason: "one-time pairing code, not a session",
+    verify: false,
+    verifyReason:
+      "pairing code is checked against the store, which the inventory stubs; anonymous fails the stub before reaching the check",
+  },
+  "POST /api/devices/agent/session": {
+    access: "machine",
+    reason: "device token, not a session",
+  },
+  "POST /api/devices/agent/unenroll": {
+    access: "machine",
+    reason: "device token, not a session",
+  },
   "POST /api/devices/approvals/:approvalId": { access: "user" },
   "POST /api/devices/bot-tools/:botId/probe": { access: "admin" },
   "POST /api/devices/enroll": { access: "user" },
   "POST /api/devices/pairing": { access: "user" },
   "POST /api/devices/push-update": { access: "admin" },
-  "POST /api/events/email/sns": { access: "machine", reason: "SNS-verified webhook ingress, not a session" },
-  "POST /api/events/github/:bindingId": { access: "machine", reason: "GitHub signature-verified webhook ingress, not a session" },
-  "POST /api/events/triggers/:triggerId": { access: "machine", reason: "trigger secret signature-verified webhook ingress, not a session", verify: false, verifyReason: "signing secret is read from the store, which the inventory stubs; classification verified in responsibilities/trigger-routes.ts" },
+  "POST /api/events/email/sns": {
+    access: "machine",
+    reason: "SNS-verified webhook ingress, not a session",
+  },
+  "POST /api/events/github/:bindingId": {
+    access: "machine",
+    reason: "GitHub signature-verified webhook ingress, not a session",
+  },
+  "POST /api/events/triggers/:triggerId": {
+    access: "machine",
+    reason: "trigger secret signature-verified webhook ingress, not a session",
+    verify: false,
+    verifyReason:
+      "signing secret is read from the store, which the inventory stubs; classification verified in responsibilities/trigger-routes.ts",
+  },
   "POST /api/federation/invitations": { access: "admin" },
   "POST /api/federation/peers/:peerId/revoke": { access: "admin" },
-  "POST /api/federation/v1/control": { access: "machine", reason: "federation-signed ingress, not a session" },
-  "POST /api/federation/v1/pair": { access: "machine", reason: "federation-signed ingress, not a session" },
-  "POST /api/federation/v1/revoke": { access: "machine", reason: "federation-signed ingress, not a session" },
-  "POST /api/federation/v1/sync": { access: "machine", reason: "federation-signed ingress, not a session" },
+  "POST /api/federation/v1/control": {
+    access: "machine",
+    reason: "federation-signed ingress, not a session",
+  },
+  "POST /api/federation/v1/pair": {
+    access: "machine",
+    reason: "federation-signed ingress, not a session",
+  },
+  "POST /api/federation/v1/revoke": {
+    access: "machine",
+    reason: "federation-signed ingress, not a session",
+  },
+  "POST /api/federation/v1/sync": {
+    access: "machine",
+    reason: "federation-signed ingress, not a session",
+  },
   "POST /api/github/actions/:id/approve": { access: "user" },
   "POST /api/github/actions/:id/reject": { access: "user" },
   "POST /api/github/check": { access: "user" },
@@ -552,11 +776,26 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/im/test": { access: "user" },
   "POST /api/im/weixin/qr": { access: "user" },
   "POST /api/intents/send": { access: "user" },
-  "POST /api/internal/dsh-tools/execute": { access: "machine", reason: "DSH runtime capability token, not a session" },
-  "POST /api/internal/dsh-tools/model/v1/chat/completions": { access: "machine", reason: "DSH model capability token, not a session" },
-  "POST /api/internal/dsh-tools/model/v1/messages": { access: "machine", reason: "DSH model capability token, not a session" },
-  "POST /api/internal/dsh-tools/steer": { access: "machine", reason: "DSH runtime capability token, not a session" },
-  "POST /api/internal/dsh-tools/steer-signal": { access: "machine", reason: "DSH runtime capability token, not a session" },
+  "POST /api/internal/dsh-tools/execute": {
+    access: "machine",
+    reason: "DSH runtime capability token, not a session",
+  },
+  "POST /api/internal/dsh-tools/model/v1/chat/completions": {
+    access: "machine",
+    reason: "DSH model capability token, not a session",
+  },
+  "POST /api/internal/dsh-tools/model/v1/messages": {
+    access: "machine",
+    reason: "DSH model capability token, not a session",
+  },
+  "POST /api/internal/dsh-tools/steer": {
+    access: "machine",
+    reason: "DSH runtime capability token, not a session",
+  },
+  "POST /api/internal/dsh-tools/steer-signal": {
+    access: "machine",
+    reason: "DSH runtime capability token, not a session",
+  },
   "POST /api/internal/quiesce": { access: "admin" },
   "POST /api/internal/quiesce/resume": { access: "admin" },
   "POST /api/live-panels/:id/live/refresh": { access: "user" },
@@ -564,15 +803,51 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/live-panels/:id/restore": { access: "user" },
   "POST /api/live-panels/:id/undo-edit": { access: "user" },
   "POST /api/live-panels/order": { access: "user" },
-  "POST /api/local-agents/devices/:id/detect": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "POST /api/local-agents/environments/:id/probe-all": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "POST /api/local-agents/instances": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "POST /api/local-agents/instances/:id/probe": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "POST /api/local-agents/tasks/:id/answer": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "POST /api/local-agents/tasks/:id/apply": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "POST /api/local-agents/tasks/:id/continue": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "POST /api/local-agents/tasks/:id/discard": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "POST /api/local-agents/tasks/:id/stop": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
+  "POST /api/local-agents/devices/:id/detect": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/environments/:id/probe-all": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/instances": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/instances/:id/probe": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/tasks/:id/answer": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/tasks/:id/apply": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/tasks/:id/continue": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/tasks/:id/discard": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/tasks/:id/stop": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
   "POST /api/me/onboarding": { access: "user" },
   "POST /api/media-models/test/image": { access: "user" },
   "POST /api/media-models/test/vision": { access: "user" },
@@ -581,7 +856,13 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/memory-notes/dream": { access: "user" },
   "POST /api/memory-notes/dream/undo": { access: "user" },
   "POST /api/memory-notes/forget": { access: "user" },
-  "POST /api/model-provider/v1/chat/completions": { access: "machine", reason: "local bearer proxy, not a session", verify: false, verifyReason: "stub proxy cannot produce a real status; classification verified in provider-oauth.ts (local bearer)" },
+  "POST /api/model-provider/v1/chat/completions": {
+    access: "machine",
+    reason: "local bearer proxy, not a session",
+    verify: false,
+    verifyReason:
+      "stub proxy cannot produce a real status; classification verified in provider-oauth.ts (local bearer)",
+  },
   "POST /api/notifications/foreground": { access: "user" },
   "POST /api/ops/budget": { access: "user" },
   "POST /api/pages/:id/restore": { access: "user" },
@@ -590,10 +871,16 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/panels/:botId/commit": { access: "user" },
   "POST /api/panels/:botId/drafts": { access: "user" },
   "POST /api/panels/:botId/install": { access: "user" },
-  "POST /api/panels/:botId/instances/:instanceId/data/:capabilityId": { access: "user" },
-  "POST /api/panels/:botId/instances/:instanceId/grants/:capabilityId": { access: "user" },
+  "POST /api/panels/:botId/instances/:instanceId/data/:capabilityId": {
+    access: "user",
+  },
+  "POST /api/panels/:botId/instances/:instanceId/grants/:capabilityId": {
+    access: "user",
+  },
   "POST /api/panels/:botId/instances/:instanceId/rollback": { access: "user" },
-  "POST /api/panels/:botId/instances/:instanceId/tasks/:capabilityId": { access: "user" },
+  "POST /api/panels/:botId/instances/:instanceId/tasks/:capabilityId": {
+    access: "user",
+  },
   "POST /api/panels/:botId/reorder": { access: "user" },
   "POST /api/panels/:botId/tasks/:taskId/cancel": { access: "user" },
   "POST /api/panels/:botId/tasks/:taskId/confirm": { access: "user" },
@@ -606,7 +893,10 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/personal-sources/morning-brief": { access: "user" },
   "POST /api/personal-sources/notify-test": { access: "user" },
   "POST /api/personal-sources/notify-webhook": { access: "user" },
-  "POST /api/personal-sources/webhook/:token": { access: "machine", reason: "per-source webhook token in path, not a session" },
+  "POST /api/personal-sources/webhook/:token": {
+    access: "machine",
+    reason: "per-source webhook token in path, not a session",
+  },
   "POST /api/plugins/call": { access: "user" },
   "POST /api/plugins/composio/apps": { access: "admin" },
   "POST /api/plugins/grants": { access: "user" },
@@ -714,15 +1004,34 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "PUT /api/chisa-skills/:skillId/files": { access: "admin" },
   "PUT /api/chisa-skills/:slug": { access: "user" },
   "PUT /api/components/:name/draft": { access: "admin" },
-  "PUT /api/components/catalogue": { access: "admin", reason: "global component catalogue write; review requires admin" },
+  "PUT /api/components/catalogue": {
+    access: "admin",
+    reason: "global component catalogue write; review requires admin",
+  },
   "PUT /api/computers/policy": { access: "admin" },
   "PUT /api/confirmations/bots/:agentId/permission": { access: "user" },
   "PUT /api/confirmations/prefs/:category": { access: "user" },
   "PUT /api/desktop-browser/scopes/:deviceId": { access: "user" },
-  "PUT /api/local-agents/bots/:botId/grants": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "PUT /api/local-agents/devices/:id": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "PUT /api/local-agents/environments/:id/settings": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
-  "PUT /api/local-agents/instances/:id": { access: "admin", reason: "server-local agent surface; multi-account review requires admin or explicit admin release" },
+  "PUT /api/local-agents/bots/:botId/grants": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "PUT /api/local-agents/devices/:id": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "PUT /api/local-agents/environments/:id/settings": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "PUT /api/local-agents/instances/:id": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
   "PUT /api/mcp-enhancements/:serverId": { access: "admin" },
   "PUT /api/media-models/default/image": { access: "admin" },
   "PUT /api/media-models/default/vision": { access: "admin" },
@@ -757,34 +1066,4 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
  */
 export const KNOWN_GAPS: Readonly<
   Record<string, { issue: string; statusCheck: boolean }>
-> = {
-  "DELETE /api/live-panels/:id": { issue: "CB multi-account review: ownership is checked after the delete path starts, so a non-owner can delete another user's panel. Other agents are fixing.", statusCheck: false },
-  "DELETE /api/local-agents/instances/:id": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "GET /api/local-agents/acp-registry": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "GET /api/local-agents/bots/:botId/grants": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "GET /api/local-agents/devices/:id": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "GET /api/local-agents/environments": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "GET /api/local-agents/environments/:id/settings": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "GET /api/local-agents/instances": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "GET /api/local-agents/instances/:id": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "GET /api/local-agents/presets": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "GET /api/local-agents/tasks/:id": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "GET /api/local-agents/threads/:threadId/tasks": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "PATCH /api/local-agents/instances/:id": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "POST /api/browser-bookmarks/sync/:botId": { issue: "CB multi-account review: bot ownership is checked after the sync writes, so a non-owner can sync into another user's bot. Other agents are fixing.", statusCheck: false },
-  "POST /api/components/:name/call": { issue: "CB multi-account review: audit-class data functions reachable without per-actor data scoping. Status probes cannot see the scope bug; verify in code review. Remove when the fixer confirms.", statusCheck: false },
-  "POST /api/local-agents/devices/:id/detect": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "POST /api/local-agents/environments/:id/probe-all": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "POST /api/local-agents/instances": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "POST /api/local-agents/instances/:id/probe": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "POST /api/local-agents/tasks/:id/answer": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "POST /api/local-agents/tasks/:id/apply": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "POST /api/local-agents/tasks/:id/continue": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "POST /api/local-agents/tasks/:id/discard": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "POST /api/local-agents/tasks/:id/stop": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "PUT /api/components/catalogue": { issue: "CB multi-account review: any signed-in user can replace the global component catalogue. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "PUT /api/local-agents/bots/:botId/grants": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "PUT /api/local-agents/devices/:id": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "PUT /api/local-agents/environments/:id/settings": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-  "PUT /api/local-agents/instances/:id": { issue: "CB multi-account review: reachable by any signed-in user today; must be admin-gated or explicitly admin-released. Other agents are fixing; remove when member gets 403.", statusCheck: true },
-};
+> = {};
