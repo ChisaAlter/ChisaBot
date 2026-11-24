@@ -94,16 +94,14 @@ export function createComponentRoutes(
   /**
    * A build announcing what it can draw.
    *
-   * The build knows what exists; this deployment decides what it may do. A component is an ordinary
-   * React file, so the only thing that can truthfully enumerate them is the app that compiled them.
-   * A second list kept here would be a copy to keep in step, and the first thing to fall out of it.
-   * Drop a file in and it appears here, published, and any Bot may draw it until somebody says
-   * otherwise.
-   *
-   * Additive only, and not an administrator action: any signed-in person's browser announces it on
-   * load, and it cannot change who may use a component, its publication state or its description.
+   * Additive only, and restricted to administrators: new entries land published in the global
+   * catalogue whose descriptions enter every Bot's context, so non-admin callers must never be
+   * able to register arbitrary components or poison first-boot descriptions.
    */
   routes.put("/catalogue", requireUser, async (context) => {
+    const forbidden = requireAdmin(context);
+    if (forbidden) return forbidden;
+
     const body = (await context.req.json().catch(() => null)) as {
       components?: unknown;
     } | null;
@@ -361,6 +359,7 @@ export function createComponentRoutes(
       const data = await store.callFunction(
         functionName,
         (body?.args ?? {}) as Record<string, unknown>,
+        context.var.actor,
       );
       await audit(context, "component.function_called", name, {
         bot: agentId,

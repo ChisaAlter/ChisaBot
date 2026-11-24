@@ -389,18 +389,26 @@ describe("what a component may read", () => {
   });
 
   test("every shipped function reads real rows and bounds its own arguments", async () => {
+    const admin = { id: "admin-test", role: "admin" as const };
+    const member = { id: "member-test", role: "user" as const };
     for (const entry of DATA_FUNCTIONS) {
       // Run with nothing, which is what a component sends before the model has supplied anything, and
       // with a hostile number: a value from the browser is a claim, and an unbounded one is a table
       // scan somebody asked for over the wire.
-      expect(await entry.run(database, {})).toBeDefined();
+      expect(await entry.run(database, {}, admin)).toBeDefined();
       expect(
-        await entry.run(database, { days: 100_000, limit: 100_000 }),
+        await entry.run(database, { days: 100_000, limit: 100_000 }, member),
       ).toBeDefined();
     }
   });
 
   test("a function this build does not ship cannot be run", async () => {
-    expect(store.callFunction(`nothing_${suite}`, {})).rejects.toThrow();
+    expect(
+      store.callFunction(
+        `nothing_${suite}`,
+        {},
+        { id: "admin-test", role: "admin" },
+      ),
+    ).rejects.toThrow();
   });
 });

@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import type { AgentActor } from "../agents/profile-types";
 import type { Database } from "../db/client";
 import {
   componentExclusions,
@@ -109,6 +110,7 @@ export type ComponentStore = {
   callFunction(
     functionName: string,
     args: Record<string, unknown>,
+    actor: AgentActor,
   ): Promise<unknown>;
   publish(name: string, by: string): Promise<void>;
   unpublish(name: string, by: string): Promise<void>;
@@ -394,13 +396,13 @@ export function createComponentStore(database: Database): ComponentStore {
       return Boolean(row);
     },
 
-    async callFunction(functionName, args) {
+    async callFunction(functionName, args, actor) {
       const fn = dataFunction(functionName);
       // Unreachable through the route, which resolves the function before asking about permission.
       // Kept because a store that runs whatever name it is handed is one refactor away from being the
       // hole this whole file exists to close.
       if (!fn) throw new ComponentNotFoundError(functionName);
-      return fn.run(database, args);
+      return fn.run(database, args, actor);
     },
 
     async saveDraft(name, description, by) {
