@@ -18,14 +18,14 @@ import {
 
 /*
  * V2 色彩主题可见性与单通道契约：
- *  - 7 套精调主题静态定义在 `app/src/styles/tokens.css`（`html[data-theme="<id>"]` + `html.dark[data-theme="<id>"]`），
+ *  - 6 套精调主题静态定义在 `app/src/styles/tokens.css`（`html[data-theme="<id>"]` + `html.dark[data-theme="<id>"]`），
  *    每套非 sky 主题的强调色、净色底色、实面底色均与默认 sky 明显区分；
  *  - 主按钮（--ink-primary vs --on-primary）与强调字色（--accent-ink）均满足 WCAG AA ≥ 4.5:1；
  *  - 自定义强调色通过 `deriveCustomAccentVars` 派生且保证浅/深均 ≥ 4.5:1；
  *  - 彻底清除历史 `[data-palette]` 与 `[data-theme-family]` 选择器，零 `:has()`。
  */
 
-describe("7 套色彩主题在 tokens.css 中可见且可读", () => {
+describe("6 套色彩主题在 tokens.css 中可见且可读", () => {
   test("tokens.css 保留单通道薄别名桥接且不再残留 data-palette / data-theme-family", () => {
     expect(tokensCss).toContain("--accent-color: var(--accent);");
     expect(tokensCss).toContain("--accent-blue: var(--accent);");
@@ -108,5 +108,55 @@ describe("7 套色彩主题在 tokens.css 中可见且可读", () => {
     expect(materialsCss).not.toContain(":has(");
     expect(materialsCss).not.toContain("!important");
     expect(materialsCss).not.toContain("100vmax");
+  });
+
+  test("新主题结构定制令牌（cossui 紧凑圆角、claude 暖色边线与衬线字体、aurora/porcelain 专属质感）在浅/深双版均有效且可区分", () => {
+    const px = (raw: string | undefined) =>
+      Number.parseFloat((raw ?? "").replace(/px$/, ""));
+
+    for (const scheme of SCHEMES) {
+      const skyTokens = themeTokenMap("sky", scheme, "pure");
+      const auroraTokens = themeTokenMap("aurora", scheme, "pure");
+      const porcelainTokens = themeTokenMap("porcelain", scheme, "pure");
+      const claudeTokens = themeTokenMap("claude", scheme, "pure");
+      const cossuiTokens = themeTokenMap("cossui", scheme, "pure");
+
+      // cossui：精准紧凑几何（--radius / --r-bubble 均显著小于 sky）且边框、阴影独立覆盖
+      expect(px(cossuiTokens["--radius"])).toBe(10);
+      expect(px(cossuiTokens["--r-bubble"])).toBe(12);
+      expect(px(cossuiTokens["--radius"])).toBeLessThan(
+        px(skyTokens["--radius"]),
+      );
+      expect(px(cossuiTokens["--r-bubble"])).toBeLessThan(
+        px(skyTokens["--r-bubble"]),
+      );
+      expect(cossuiTokens["--line"]).toBeTruthy();
+      expect(cossuiTokens["--line"]).not.toBe(skyTokens["--line"]);
+      expect(cossuiTokens["--shadow-1"]).toBeTruthy();
+      expect(cossuiTokens["--shadow-1"]).not.toBe(skyTokens["--shadow-1"]);
+
+      // aurora：更圆润弧度（--radius / --r-bubble 大于 sky）
+      expect(px(auroraTokens["--radius"])).toBe(16);
+      expect(px(auroraTokens["--r-bubble"])).toBe(18);
+      expect(px(auroraTokens["--radius"])).toBeGreaterThan(
+        px(skyTokens["--radius"]),
+      );
+
+      // porcelain：青花瓷典雅圆角 + 釉面高光
+      expect(px(porcelainTokens["--radius"])).toBe(12);
+      expect(porcelainTokens["--surface-hl-top"]).toBeTruthy();
+      expect(porcelainTokens["--surface-hl-top"]).not.toBe(
+        skyTokens["--surface-hl-top"],
+      );
+
+      // claude：暖色边线 + 专属衬线字体令牌
+      expect(claudeTokens["--font-claude-serif"]).toBeTruthy();
+      expect(claudeTokens["--line"]).toBeTruthy();
+      expect(claudeTokens["--line"]).not.toBe(skyTokens["--line"]);
+      expect(claudeTokens["--line"]).not.toBe(cossuiTokens["--line"]);
+    }
+
+    expect(stylesCss).toContain('html[data-theme="claude"]');
+    expect(stylesCss).toContain("var(--font-claude-serif)");
   });
 });

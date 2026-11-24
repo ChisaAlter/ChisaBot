@@ -996,7 +996,8 @@ const LivePanelCard = memo(function LivePanelCard({
       ) : null}
 
       <SmoothCollapse
-        innerClassName="flex flex-col gap-2"
+        className="live-panel-content"
+        innerClassName="live-panel-content-inner flex flex-col gap-2"
         open={!collapsed}
         unmountOnExit
       >

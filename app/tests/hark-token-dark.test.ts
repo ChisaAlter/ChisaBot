@@ -8,7 +8,7 @@ import { blocks } from "./contrast-model";
  * V2 单通道深浅色令牌守卫（取代旧 Hark html:root vs .dark 平行层补丁）：
  *   1. 全站深浅色基底唯一收敛在 `tokens.css` 的 `:root` 与 `html.dark`，彻底消灭 `[data-theme="dark|light"]` 与 `html:root` 平行层；
  *   2. 每一套核心色标（墨色、强调色、语义色、画布基色、实面底色、描边、玻璃别名）均在 `html.dark` 有明确深色值；
- *   3. 7 套色彩主题在 `tokens.css` 均成对声明浅/深版（`html[data-theme="<id>"]` + `html.dark[data-theme="<id>"]`）。
+ *   3. 6 套色彩主题在 `tokens.css` 均成对声明浅/深版（`html[data-theme="<id>"]` + `html.dark[data-theme="<id>"]`）。
  */
 const strip = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "");
 const tokensCss = strip(
@@ -43,7 +43,7 @@ test("不再存在历史 [data-theme=\"dark|light\"] 或 html:root 平行深浅�
   expect(stylesCss).not.toContain("data-theme-family");
 });
 
-test("所有核心颜色令牌在 html.dark 中均有深色值，7 套主题均成对提供浅/深覆盖", () => {
+test("所有核心颜色令牌在 html.dark 中均有深色值，6 套主题均成对提供浅/深覆盖", () => {
   const mustHaveDark = [
     "--ink-1",
     "--ink-2",

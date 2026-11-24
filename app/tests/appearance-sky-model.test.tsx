@@ -67,12 +67,12 @@ describe("四轴正交与背景画布互斥三选一", () => {
 
   test("切换色彩主题或界面材质不会劫持或改变当前背景画布", () => {
     setCanvas({ kind: "pure" });
-    setTheme("sakura");
+    setTheme("claude");
     setMaterial("clear");
     expect(getAppearanceConfig().canvas).toEqual({ kind: "pure" });
 
     setWallpaperSource("waterlily-pond");
-    setTheme("celadon");
+    setTheme("porcelain");
     setMaterial("solid");
     const afterWallpaper = getAppearanceConfig();
     expect(afterWallpaper.canvas.kind).toBe("wallpaper");
@@ -81,7 +81,7 @@ describe("四轴正交与背景画布互斥三选一", () => {
     }
 
     setSkyScene("dusk");
-    setTheme("violet");
+    setTheme("aurora");
     expect(getAppearanceConfig().canvas).toEqual({
       kind: "sky",
       scene: "dusk",

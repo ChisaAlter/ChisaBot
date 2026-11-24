@@ -160,6 +160,7 @@
 | [152](#152-pc-独立更新进度窗口极简改版2026-11-22)                                                             | PC 独立更新窗口改为极简纯白/深炭全窗居中进度布局，支持 —/□/×、实时进度、原位重启与手动下载链接                     | 2026-11-22                                                                 |
 | [153](#153-桌面端全面流畅度治理windows-小窗原子落位与竖屏面板零回跳2026-11-22)                               | 桌面端全面流畅度治理、Windows 小窗单步原子落位、竖屏面板开关零回跳、滚动区轻磨砂与防复发性能红线                     | 2026-11-22                                                                 |
 | [154](#154-主题背景画布与纯-css-材质四轴重设计2026-11-23)                                                    | 主题、背景画布与纯 CSS 材质四轴正交重设计、下线重型液态玻璃透镜、单通道 5 层 Token 与 `[data-surface]`、跨端同步与无损迁移 | 2026-11-23                                                                 |
+| [155](#155-六套深度定制主题体系默认天空星空--极光--青花瓷--deepseek--claude--coss-ui2026-11-24)                 | 六套深度定制主题体系：默认天空星空、极光、青花瓷、DeepSeek、Claude、coss ui、3×2 预览卡与无损迁移                      | 2026-11-24                                                                 |
 
 ## 0. 总原则
 
@@ -3162,6 +3163,25 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
   - `appearanceBootScript()`（`app/src/lib/palette.ts`）作为 `app/index.html` `<head>` 唯一首屏同步脚本，取代旧双启动脚本与硬编码 `chisabot-theme`，首帧挂齐 `.dark`、`data-theme`、`data-material`、`data-canvas`、`data-static-bg`、`data-sky` 与 `<meta name="theme-color">`。
   - PC（`pc/src/web-preload.js`、`main.js`、`config.js`、`ui/ui.js`、`sync-skyglass.mjs`）同步 `{ dark, theme, material, canvas, sky }` 并由 `tokens.css`/`canvas.css` 生成 `skyglass-tokens.css`；Android（`WebScreen.kt`）不再硬写 `chisabot-theme` 破坏系统跟随，并新增 `@JavascriptInterface setThemeMode`。
 - **设置页信息架构重组**：`appearance-preferences.tsx` 按四轴自上而下清晰重组，全缩略图卡片零模糊；`settings/index.tsx` 移除重复暗色开关与已删除的 `perf-mode-preference.tsx`，将「忙碌发送模式」与「隐私遮罩」迁回独立「对话与隐私」区块；`account-menu.tsx` 快捷外观升级为三态 `系统 / 浅色 / 深色` 并与设置页同源，`registry.ts` 同步更新搜索词条。
+
+---
+
+## 155. 六套深度定制主题体系（默认天空星空 / 极光 / 青花瓷 / DeepSeek / Claude / coss ui）（2026-11-24）
+
+- **设计目标与从 7 到 6 的结构升级**：在 §154 四轴正交外观架构基础上，将原先仅替换强调色与背景色标的 7 套平面色板（`sky / mist / celadon / sakura / amber / violet / mono`）收束并升级为 **6 套从色阶、圆角几何、边框高光、投影层次、字体细节到静态画布氛围全维度深度定制的主题**：
+  1. **默认 `sky`（晴空 · 星空）**：保留鲸屿经典晴空蓝（`#2563eb` / `#74aeff`）与 `14px` 圆角；在净色画布（`data-canvas="pure"`）下通过 `canvas.css` 的 `#sky-root #skyph::before` 提供零动画静态氛围——浅色复用启动页同款 3 朵柔和白云径向光晕，深色呈现静谧多层 `1px–1.5px` 星点与极淡星云光晕。
+  2. **极光 `aurora`（极地流光）**：极地冰川青绿（`#0d9488` / `#2dd4bf`）配幻彩紫罗兰流光渐变，采用更圆润的极光弧度（`--radius: 16px`、`--r-lg: 22px`、`--r-xl: 26px`、`--r-bubble: 18px`），净色画布叠加青绿-紫罗兰斜向柔光晕。
+  3. **青花瓷 `porcelain`（釉白钴蓝）**：景德镇甜白釉（`#f5f7fc` / `#11203d`）配苏麻离青钴蓝（`#1d4ed8` / `#6ea8ff`），典雅瓷器比例（`--radius: 12px`、`--r-bubble: 15px`），强化瓷釉顶部高光 `--surface-hl-top`（浅色 `rgba(255,255,255,0.92)` / 深色 `rgba(180,210,255,0.18)`）与极淡钴蓝角晕。
+  4. **DeepSeek `deepseek`（理性蓝灰）**：标志性科技蓝（`#4d6bfe` / `#5b7cff`）搭配冷静极简工程灰阶表面（`#f7f9fc` / `#1c1e23`），克制高可读数据与代码图表色阶。
+  5. **Claude `claude`（暖纸陶橙）**：温润羊皮纸（`#f6f4ec` / `#1c1b18`）配陶土暖橙（`#c6613f` / `#d97757`）、暖褐边线（`--line` / `--mat-*-border`）与柔和暖调阴影；定义 `--font-claude-serif` 并在 `html[data-theme="claude"] :is(.page-h1, .chat-empty-title)` 注入书卷人文衬线标题质感。
+  6. **coss ui `cossui`（精密锌灰）**：中性锌灰（`#18181b` / `#f4f4f5`）、清晰不透明 `1px` 描边（`--line` / `--line-strong` / `--stroke`）、轻底细投影（`--shadow-1` / `--card-shadow`）与精准紧凑几何（`--radius: 10px`、`--r-xs: 5px`、`--r-sm: 8px`、`--r-md: 10px`、`--r-bubble: 12px`、`--r-lg: 14px`、`--r-xl: 16px`），在浅/深双版均显著区隔于默认圆润风格。
+- **3×2 深度预览卡片与设置检索**：
+  - `appearance-preferences.tsx` 与 `styles.css` 将 `.ap-theme-grid` 升级为桌面 3 列（`repeat(3, minmax(0, 1fr))`）、窄屏 2 列（`repeat(2, minmax(0, 1fr))`）的 3×2 预览卡片；每张 `.ap-theme-card` 顶部渲染 `.ap-theme-preview`（画布 3 色渐变）、内嵌 `.ap-theme-preview-surface`（面层底色 + 两条 `.ap-theme-preview-line` 装饰微线）与强调色 `.ap-theme-swatch` 勾选标，底部展示 `.ap-theme-name` 与 `.ap-theme-tagline`（零 `backdrop-filter`）。
+  - `settings/registry.ts` 同步更新 `general.palette` 的中英文关键词与描述文案。
+- **跨端契约、红线保护与无损迁移**：
+  - `VALID_THEME_IDS` 严格固定为 `["sky", "aurora", "porcelain", "deepseek", "claude", "cossui"]`，`DEFAULT_THEME_ID = "sky"`。
+  - 退场主题与历史别名通过 `LEGACY_THEME_MAP` 在 `theme-family.ts`、`parseAppearanceConfig`、`migrateLegacyAppearance`、`appearanceBootScript()` 与 PC 端 `pc/src/main.js`（`pc:appearance`）全链路无损映射：`sky/default/azure/ocean → sky`、`aurora/violet/nocturne/emerald → aurora`、`porcelain/celadon → porcelain`、`deepseek/mist/london/stardust → deepseek`、`claude/amber/sunset/gold/sakura/ruby → claude`、`cossui/coss/mono → cossui`。
+  - 严格维持单通道与对比度红线：`--side-sec-main-ink` / `--side-sub-ink` / `--avatar-ink` 仅声明于 `:root` 与 `html.dark`；`--task-info` / `--sem-success` / `--sem-warn` / `--sem-danger` 不被任何主题块覆写；不新增非 `none` `backdrop-filter` 规则（`blurringRules.length === 4`）；6 主题 × 浅/深 × 3 材质 × 5 表面 × 净色/极值壁纸全矩阵保持 WCAG AA ≥ 4.5:1、`prefers-contrast: more` 全线 AAA ≥ 7.0:1；同步更新 `pc/src/ui/skyglass-tokens.css` 与 `pc/src/shell-fingerprint.json`。
 
 
 

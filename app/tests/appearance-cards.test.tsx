@@ -37,7 +37,7 @@ import { settleReactWork } from "./settle-react-work";
 /**
  * V2 全新四轴外观设置页真实 UI 渲染与交互断言：
  *  - 轴 1：外观模式三态分段（跟随系统 | 浅色 | 深色）；
- *  - 轴 2：7 套静态精选主题卡 + 折叠自定义强调色；
+ *  - 轴 2：6 套静态精选主题卡（3×2 深度预览卡片）+ 折叠自定义强调色；
  *  - 轴 3：互斥三选一背景画布（净色 | 动态天空（5 时刻 + 默认关天气）| 壁纸（15 幅艺术画作 + 仅模糊/薄幕 2 项滑块））；
  *  - 轴 4：3 档纯 CSS 材质（磨砂 | 通透 | 实色）+ 静止动态背景（省电）+ 减少透明度提示；
  *  - `isDefaultAppearance` 精确控制「恢复默认」按钮显隐。
@@ -91,27 +91,39 @@ function setInputValue(input: HTMLInputElement, value: string) {
   });
 }
 
-describe("四轴外观设置：模式、7 套主题、5 档天空与 3 档材质", () => {
-  test("7 套色彩主题卡全部渲染，点选只改 theme 不改画布，支持折叠自定义强调色", () => {
+describe("四轴外观设置：模式、6 套主题、5 档天空与 3 档材质", () => {
+  test("6 套色彩主题卡全部渲染，点选只改 theme 不改画布，支持折叠自定义强调色", () => {
     const view = render(
       <ThemeProvider>
         <AppearancePreferences />
       </ThemeProvider>,
     );
 
-    expect(THEMES).toHaveLength(7);
+    expect(THEMES).toHaveLength(6);
     expect(view.queryByTestId("appearance-reset")).toBeNull();
 
     for (const theme of THEMES) {
       const card = view.getByTestId(`theme-card-${theme.id}`);
       expect(card.textContent).toContain(theme.name);
+      expect(card.textContent).toContain(theme.tagline);
+      const preview = card.querySelector<HTMLElement>(".ap-theme-preview");
+      expect(preview?.style.background).toContain("gradient");
+      const previewSurface = card.querySelector<HTMLElement>(
+        ".ap-theme-preview-surface",
+      );
+      expect(previewSurface?.style.background).toBeTruthy();
+      expect(
+        card.querySelectorAll(".ap-theme-preview-line").length,
+      ).toBeGreaterThanOrEqual(2);
       const swatch = card.querySelector<HTMLElement>(".ap-theme-swatch");
       expect(swatch?.style.background).toBeTruthy();
     }
 
-    fireEvent.click(view.getByTestId("theme-card-sakura"));
-    expect(getAppearanceConfig().theme).toBe("sakura");
-    expect(getAppearanceConfig().canvas.kind).toBe("sky");
+    for (const id of ["claude", "cossui", "deepseek", "aurora", "porcelain"] as const) {
+      fireEvent.click(view.getByTestId(`theme-card-${id}`));
+      expect(getAppearanceConfig().theme).toBe(id);
+      expect(getAppearanceConfig().canvas.kind).toBe("sky");
+    }
     expect(isDefaultAppearance(getAppearanceConfig())).toBe(false);
     expect(view.getByTestId("appearance-reset")).toBeTruthy();
 

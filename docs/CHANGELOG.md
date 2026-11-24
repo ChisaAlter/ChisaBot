@@ -1,5 +1,10 @@
 ## Unreleased
 
+## 0.1.186 — 2026-11-24
+
+- 全端发版：`0.1.186`，Android `versionCode 366`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `5904bcbcb0e58752`；无新增数据库迁移。
+- **六套深度定制主题体系、自定义面板溢出对比度修复与深浅色平滑切换（`e0064245`，DESIGN §155）**：收束升级为天空星空 / 极光 / 青花瓷 / DeepSeek / Claude / coss ui 六套全维度定制主题与 3×2 预览卡并同步 PC 端与无损迁移；修复 `SmoothCollapse` 导致固定高度自定义面板内容溢出边框与底条压字及 `Ring` 对比度/窄列重叠/`0%` 残留圆点/`dark/cossui` 白底白字缺陷；新增 `theme-transition.ts` 协调器消除深浅翻转 1 帧撕裂并接入 GPU 合成层 240ms `View Transitions` 交叉淡入与快速连点防竞态（`theme-family.ts` · `appearance.ts` · `theme-provider.tsx` · `theme-transition.ts` · `live-panels.tsx` · `panel-board.tsx` · `charts.tsx` · `styles/{tokens,canvas,materials}.css` · `styles.css` · `pc/src/{main.js,shell-fingerprint.json,ui/skyglass-tokens.css}`）。
+
 ## 0.1.185 — 2026-11-24
 
 - 全端发版：`0.1.185`，Android `versionCode 365`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `78166a2f4823832d`；无新增数据库迁移。

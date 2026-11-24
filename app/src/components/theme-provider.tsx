@@ -4,7 +4,6 @@ import {
   useCallback,
   useContext,
   useMemo,
-  useRef,
   useSyncExternalStore,
 } from "react";
 import { useDocumentSync, useWindowEvent } from "@/hooks";
@@ -24,6 +23,10 @@ import {
   resolveDarkTheme,
   subscribeSystemDark,
 } from "@/lib/theme";
+import {
+  notifyThemeTransitionCommitted,
+  runThemeTransition,
+} from "@/lib/theme-transition";
 
 type ThemeContextValue = {
   mode: AppearanceMode;
@@ -43,7 +46,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     () => false,
   );
   const dark = resolveDarkTheme(mode, systemDark);
-  const committedDarkRef = useRef(dark);
 
   const setMode = useCallback((nextMode: AppearanceMode) => {
     setAppearanceMode(nextMode);
@@ -54,46 +56,37 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useDocumentSync({ dark, mode }, (doc, current) => {
-    const isThemeSwitch = committedDarkRef.current !== current.dark;
-    committedDarkRef.current = current.dark;
     const root = doc.documentElement;
-    let raf1 = 0;
-    let raf2 = 0;
-
-    // 切深浅色时冻结 1 帧全站 CSS transition，防止长对话 240+ 个隐藏操作按钮并发颜色过渡拖垮 INP。
-    if (isThemeSwitch) {
-      root.setAttribute("data-theme-switching", "1");
-    }
-
-    applyDarkTheme(current.dark, {
-      toggleRootClass: (name, force) => {
-        if (root.classList.contains(name) !== force) {
-          root.classList.toggle(name, force);
-        }
-      },
-      setRootColorScheme: (scheme) => {
-        if (root.style.colorScheme !== scheme) {
-          root.style.colorScheme = scheme;
-        }
-      },
-    });
-    applyAppearanceToDocument(getAppearanceConfig(), current.dark);
-    notifyAndroidTheme(current.dark, current.mode);
-
-    if (!isThemeSwitch) return;
-    if (typeof window.requestAnimationFrame === "function") {
-      raf1 = window.requestAnimationFrame(() => {
-        raf2 = window.requestAnimationFrame(() => {
-          root.removeAttribute("data-theme-switching");
-        });
+    const syncDom = () => {
+      applyDarkTheme(current.dark, {
+        toggleRootClass: (name, force) => {
+          if (root.classList.contains(name) !== force) {
+            root.classList.toggle(name, force);
+          }
+        },
+        setRootColorScheme: (scheme) => {
+          if (root.style.colorScheme !== scheme) {
+            root.style.colorScheme = scheme;
+          }
+        },
       });
-      return () => {
-        window.cancelAnimationFrame(raf1);
-        window.cancelAnimationFrame(raf2);
-        root.removeAttribute("data-theme-switching");
-      };
+      applyAppearanceToDocument(getAppearanceConfig(), current.dark);
+    };
+
+    const needsDomSwitch = root.classList.contains("dark") !== current.dark;
+    if (needsDomSwitch) {
+      const cfg = getAppearanceConfig();
+      const allowAnimate = !cfg.staticBackground;
+      runThemeTransition(syncDom, {
+        animate: allowAnimate,
+        waitForCommit: false,
+      });
+    } else {
+      syncDom();
+      notifyThemeTransitionCommitted();
     }
-    root.removeAttribute("data-theme-switching");
+
+    notifyAndroidTheme(current.dark, current.mode);
     return undefined;
   });
 

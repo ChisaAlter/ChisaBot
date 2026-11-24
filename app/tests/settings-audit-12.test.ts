@@ -67,14 +67,15 @@ describe("skill slug", () => {
 });
 
 describe("settings copy matches the product", () => {
-  test("色彩主题文案与数量严格来自 V2 THEMES（7 套），无陈旧数字与液态玻璃残留", () => {
+  test("色彩主题文案与数量严格来自 V2 THEMES（6 套），无陈旧数字与液态玻璃残留", () => {
     const palette = findEntry("general.palette")?.item;
     expect(palette).toBeDefined();
     expect(palette?.description).toContain(`${THEMES.length} 套`);
     for (const t of THEMES) {
       expect(palette?.description).toContain(t.name);
     }
-    expect(palette?.description).not.toContain("6 款");
+    expect(palette?.description).not.toContain("7 套");
+    expect(palette?.description).not.toContain("7 款");
     expect(palette?.description).not.toContain("8 款");
 
     const material = findEntry("general.material")?.item;

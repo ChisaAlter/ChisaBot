@@ -838,4 +838,55 @@ describe("rich components render", () => {
     ).container.querySelector(".jr-surface");
     expect(plain?.classList.contains("jr-card")).toBe(false);
   });
+
+  test("Ring and Gauge omit foreground progress arc at 0% so stroke-linecap: round leaves no dot", async () => {
+    const { container } = await draw({
+      root: "s",
+      elements: {
+        s: {
+          type: "Stack",
+          props: {},
+          children: ["r0", "rPos", "rSegZero", "g0", "gPos"],
+        },
+        r0: { type: "Ring", props: { value: 0, label: "CPU" }, children: [] },
+        rPos: {
+          type: "Ring",
+          props: { value: 7.8, center: "7.8%", label: "内存" },
+          children: [],
+        },
+        rSegZero: {
+          type: "Ring",
+          props: {
+            segments: [
+              { label: "空", value: 0 },
+              { label: "已用", value: 50 },
+            ],
+          },
+          children: [],
+        },
+        g0: {
+          type: "Gauge",
+          props: { value: 0, min: 0, max: 100, label: "负载" },
+          children: [],
+        },
+        gPos: {
+          type: "Gauge",
+          props: { value: 35, min: 0, max: 100, label: "温度" },
+          children: [],
+        },
+      },
+    });
+    const rings = container.querySelectorAll(".jr-ring");
+    expect(rings).toHaveLength(3);
+    expect(rings[0]?.querySelector(".jr-ring-track")).not.toBeNull();
+    expect(rings[0]?.querySelector(".jr-ring-arc")).toBeNull();
+    expect(rings[1]?.querySelector(".jr-ring-arc")).not.toBeNull();
+    expect(rings[2]?.querySelectorAll(".jr-ring-arc")).toHaveLength(1);
+
+    const gauges = container.querySelectorAll(".jr-gauge");
+    expect(gauges).toHaveLength(2);
+    expect(gauges[0]?.querySelector(".jr-gauge-track")).not.toBeNull();
+    expect(gauges[0]?.querySelector(".jr-gauge-arc")).toBeNull();
+    expect(gauges[1]?.querySelector(".jr-gauge-arc")).not.toBeNull();
+  });
 });

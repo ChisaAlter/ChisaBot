@@ -22,6 +22,10 @@ import {
   resolveDarkTheme,
   THEME_STORAGE_KEY,
 } from "@/lib/theme";
+import {
+  cancelActiveThemeTransition,
+  runThemeTransition,
+} from "@/lib/theme-transition";
 import { compressWallpaperImage } from "@/lib/wallpaper-compress";
 import type { PixelCropRect } from "@/lib/wallpaper-crop";
 import {
@@ -623,7 +627,12 @@ export function parseAppearanceConfig(
     const mode = parseAppearanceMode(
       typeof obj.mode === "string" ? obj.mode : null,
     );
-    const theme: ThemeId = isThemeId(obj.theme) ? obj.theme : DEFAULT_THEME_ID;
+    const theme: ThemeId =
+      (isThemeId(obj.theme)
+        ? obj.theme
+        : typeof obj.theme === "string"
+          ? mapLegacyThemeId(obj.theme)
+          : null) ?? DEFAULT_THEME_ID;
     const customAccent = normalizeHexColor(
       typeof obj.customAccent === "string" ? obj.customAccent : null,
     );
@@ -1293,6 +1302,10 @@ export function setAppearanceConfig(
         : prev.staticBackground,
   };
 
+  const prevDark = resolveDarkTheme(prev.mode);
+  const nextDark = resolveDarkTheme(next.mode);
+  const darkChanged = prevDark !== nextDark;
+
   currentConfig = next;
   persistConfig(next, options?.debounced ?? false);
 
@@ -1310,6 +1323,20 @@ export function setAppearanceConfig(
     for (const key of HARK_ENGINE_STORAGE_KEYS) {
       removeStoredKey(key);
     }
+  }
+
+  if (darkChanged) {
+    const allowAnimate =
+      !next.staticBackground &&
+      !(next.material === "solid" && next.staticBackground);
+    runThemeTransition(
+      () => {
+        applyAppearanceToDocument(next, nextDark);
+        emitChange();
+      },
+      { animate: allowAnimate, waitForCommit: true },
+    );
+    return;
   }
 
   applyAppearanceToDocument(next);
@@ -1446,9 +1473,11 @@ export function setStaticBackground(staticBackground: boolean): void {
 
 export function resetAppearance(): void {
   flushAppearanceWrites();
+  const prevDark = resolveDarkTheme(ensureConfig().mode);
   customWallpaperUrl = "";
   wallpaperLoading = false;
   const next = cloneConfig(DEFAULT_APPEARANCE_CONFIG);
+  const nextDark = resolveDarkTheme(next.mode);
   currentConfig = next;
   persistConfig(next, false);
   for (const key of LEGACY_APPEARANCE_STORAGE_KEYS) {
@@ -1460,6 +1489,17 @@ export function resetAppearance(): void {
   getWallpaperBackend()
     .removeSource?.()
     .catch(() => {});
+  cancelActiveThemeTransition();
+  if (prevDark !== nextDark) {
+    runThemeTransition(
+      () => {
+        applyAppearanceToDocument(next, nextDark);
+        emitChange();
+      },
+      { animate: false },
+    );
+    return;
+  }
   applyAppearanceToDocument(next);
   emitChange();
 }
@@ -1493,6 +1533,9 @@ export function syncAppearanceFromStorage(key: string | null): Promise<void> {
   }
 
   const changed = JSON.stringify(prev) !== JSON.stringify(next) || key === null;
+  const prevDark = resolveDarkTheme(prev.mode);
+  const nextDark = resolveDarkTheme(next.mode);
+  const darkChanged = prevDark !== nextDark;
   currentConfig = next;
 
   if (needsHydrate) {
@@ -1503,14 +1546,34 @@ export function syncAppearanceFromStorage(key: string | null): Promise<void> {
       wallpaperLoadGeneration,
       null,
     );
-    applyAppearanceToDocument(next);
-    emitChange();
+    if (darkChanged) {
+      runThemeTransition(
+        () => {
+          applyAppearanceToDocument(next, nextDark);
+          emitChange();
+        },
+        { animate: false },
+      );
+    } else {
+      applyAppearanceToDocument(next);
+      emitChange();
+    }
     return persistencePromise;
   }
 
   if (changed) {
-    applyAppearanceToDocument(next);
-    emitChange();
+    if (darkChanged) {
+      runThemeTransition(
+        () => {
+          applyAppearanceToDocument(next, nextDark);
+          emitChange();
+        },
+        { animate: false },
+      );
+    } else {
+      applyAppearanceToDocument(next);
+      emitChange();
+    }
   }
   return Promise.resolve();
 }

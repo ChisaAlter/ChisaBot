@@ -487,19 +487,22 @@ export function Ring({
         <svg aria-hidden className="jr-ring-svg" viewBox="0 0 36 36">
           <circle className="jr-ring-track" cx="18" cy="18" r="15.9155" />
           {single !== null ? (
-            <circle
-              className={cn("jr-ring-arc", toneClass(singleTone))}
-              cx="18"
-              cy="18"
-              r="15.9155"
-              strokeDasharray={`${single} ${100 - single}`}
-            />
+            single > 0 ? (
+              <circle
+                className={cn("jr-ring-arc", toneClass(singleTone))}
+                cx="18"
+                cy="18"
+                r="15.9155"
+                strokeDasharray={`${single} ${100 - single}`}
+              />
+            ) : null
           ) : (
             arcs.map((arc) => {
               const length = Math.max(
                 0,
                 (arc.end - arc.start) * 100 - (arcs.length > 1 ? 1.2 : 0),
               );
+              if (length <= 0) return null;
               return (
                 <circle
                   className={cn("jr-ring-arc", toneClass(partTone(arc.index)))}
@@ -586,12 +589,14 @@ export function Gauge({
           d="M10 60 A50 50 0 0 1 110 60"
           pathLength={100}
         />
-        <path
-          className="jr-gauge-arc"
-          d="M10 60 A50 50 0 0 1 110 60"
-          pathLength={100}
-          strokeDasharray={`${share * 100} 100`}
-        />
+        {share > 0 ? (
+          <path
+            className="jr-gauge-arc"
+            d="M10 60 A50 50 0 0 1 110 60"
+            pathLength={100}
+            strokeDasharray={`${share * 100} 100`}
+          />
+        ) : null}
       </svg>
       <div className="jr-gauge-center">
         <span className="jr-gauge-v">

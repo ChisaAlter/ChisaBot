@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.1.186 — 2026-11-24
+
+全端版本 `0.1.186`，Android `versionCode 366`：升级六套深度定制主题体系（DESIGN.md §155），修复自定义面板内容溢出边框、底部拖条压字与环形图低对比度缺陷，并接入 GPU 合成层 `View Transitions` 原子交叉淡入提升深浅色切换丝滑度。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `5904bcbcb0e58752`；无新增数据库迁移。
+
+- **六套深度定制主题体系与 3×2 预览卡（`e0064245`，DESIGN.md §155）**：
+  - 将 7 套平面色板升级收束为 `sky`（天空星空）/ `aurora`（极光）/ `porcelain`（青花瓷）/ `deepseek`（DeepSeek）/ `claude`（Claude）/ `cossui`（coss ui）六套全维度定制主题（色阶、圆角几何、边框高光、投影、衬线标题与净色静态氛围），升级设置页 3×2 深度预览卡片，并在 `theme-family.ts`、`appearance.ts`、`appearanceBootScript()` 与 PC 端 `pc/src/main.js` / `skyglass-tokens.css` 完成退场主题无损映射与同步。
+- **自定义面板溢出、拖拽遮挡与对比度修复（`e0064245`）**：
+  - 打通 `LivePanelCard` 内 `SmoothCollapse`（`.live-panel-content`）至 `.live-panel-body` 的 flex/grid 高度与列宽约束链，固定高度下仅主体内部滚动且底边/拖高条不再压字，并区分水平/垂直缩放提示态（`live-panels.tsx` · `panel-board.tsx` · `styles.css` · `panel-board.test.tsx`）。
+  - 在 `deriveCustomAccentVars` 为 `--accent` 增加图形对比度保底、`.jr-tone-accent` 改用 `--accent-blue-ink`、`dark/cossui` 徽章与主按钮改用 `--ink-on-accent` 消除白底白字，补齐窄列响应式 `Ring`、`0%` 无残留圆点及 `.jr-kv.is-2` 容器查询分隔线与标签省略（`theme-family.ts` · `charts.tsx` · `styles.css` · `theme-family.test.ts` · `json-render-rich.test.tsx`）。
+- **深浅色切换平滑过渡优化（`e0064245`）**：
+  - 新增 `app/src/lib/theme-transition.ts` 协调器并在 `appearance.ts` / `theme-provider.tsx` 接入，确保在翻转 `html.dark` 前先行挂齐 `data-theme-switching="1"` 消灭 1 帧明暗撕裂；支持时通过 `document.startViewTransition` 与 `styles.css` 240ms `ch-theme-crossfade` 做 GPU 原子交叉淡入，附带快速连点代际防护与减动效/性能模式降级（`theme-switch-tokens.test.tsx`）。
+
 ## 0.1.185 — 2026-11-24
 
 全端版本 `0.1.185`，Android `versionCode 365`：修复右边栏收起时向上瞬移撞入顶栏与拉高的错位缺陷，并新增缩放期跨断点 1 帧渐进挂载、最大化预护栏及全套 `html[data-resizing]` 过渡抑制，消除 PC 小窗切回大窗/最大化时的半屏空白撕裂。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `78166a2f4823832d`；无新增数据库迁移。
