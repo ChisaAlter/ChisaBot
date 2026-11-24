@@ -3472,6 +3472,12 @@ try {
     deviceStore,
     encryptionKey: config.keyEncryptionKey,
     enableServerHost: !config.isTestRuntime,
+    roleForUser: async (userId) => (await actorFor(userId)).role,
+    botAccessible: async (actorId, botId) =>
+      agentProfileStore
+        .get(await actorFor(actorId), botId)
+        .then((p) => p !== null)
+        .catch(() => false),
     ...(localBackend
       ? { inbox: localBackend.inbox, control: localBackend.control }
       : {}),
@@ -3877,7 +3883,7 @@ const taskCenter = createTaskCenterRuntime({
         }),
         listAgentInstances: (ownerUserId: string) => {
           if (!localAgents) throw new Error("localAgents unavailable");
-          return localAgents.instances.listInstances(ownerUserId);
+          return localAgents.listInstances(ownerUserId);
         },
       }
     : {}),
