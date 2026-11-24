@@ -28,6 +28,7 @@ import {
   type DesktopWindowBridge,
   desktopWindow,
   triggerCompactToggle,
+  triggerMaximizeToggle,
   useDesktopWindow,
 } from "@/lib/desktop-window";
 import { usePendingActionCount } from "@/lib/pending-actions";
@@ -146,7 +147,7 @@ export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
                 )
               )
                 return;
-              bridge.toggleMaximize();
+              triggerMaximizeToggle(bridge);
             }
           : undefined
       }
@@ -329,7 +330,7 @@ export const WindowControls = memo(function WindowControls({
           <button
             aria-label={maximized ? "还原" : "最大化"}
             className="win-ctrl"
-            onClick={() => bridge.toggleMaximize()}
+            onClick={() => triggerMaximizeToggle(bridge)}
             title={maximized ? "还原" : "最大化"}
             type="button"
           >

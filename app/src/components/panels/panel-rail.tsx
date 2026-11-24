@@ -37,7 +37,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useExternalConnection, useTimeout, useWindowEvent } from "@/hooks";
+import {
+  useDeferWhileResizing,
+  useExternalConnection,
+  useTimeout,
+  useWindowEvent,
+} from "@/hooks";
 import { useCurrentBotChat } from "@/lib/agents/bot-chat-context";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { dispatchComposerPrefill } from "@/lib/chat/quote-event";
@@ -243,6 +248,7 @@ export function PanelRail({ className }: { className?: string }) {
   });
 
   const wide = useWideForRail();
+  const wideBodyReady = useDeferWhileResizing(wide);
   const sheetOpen = usePanelSheetOpen();
   const onScreen = useKeptVisible();
   const railVisible = (wide ? open : sheetOpen) && onScreen;
@@ -263,7 +269,7 @@ export function PanelRail({ className }: { className?: string }) {
   }
   useTimeout(
     () => setRailMotion("idle"),
-    railMotion === "opening" ? 220 : railMotion === "closing" ? 170 : null,
+    railMotion === "opening" ? 260 : railMotion === "closing" ? 220 : null,
     `${railMotion}:${open}:${wide}`,
   );
   const handleCardAnimationEnd = useCallback(
@@ -514,7 +520,7 @@ export function PanelRail({ className }: { className?: string }) {
           ref={cardRef}
           style={{ width: cardWidth }}
         >
-          {panelBody}
+          {wideBodyReady ? panelBody : null}
         </section>
       </aside>
     </>

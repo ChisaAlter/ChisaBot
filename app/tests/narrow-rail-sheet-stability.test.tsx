@@ -21,6 +21,7 @@ import { PanelRail } from "@/components/panels/panel-rail";
 import { TaskCenterProvider } from "@/components/task-center/task-center-provider";
 import { agentKeys } from "@/lib/agents/queries";
 import { setPanelRailOpen, setPanelSheetOpen } from "@/lib/panels/rail-open";
+import { beginResizing, initResizeState } from "@/lib/resize-state";
 import {
   taskCenterKeys,
   taskCenterSnapshotOptions,
@@ -77,6 +78,7 @@ afterEach(async () => {
   setPanelRailOpen(true);
   wideMatches = false;
   mqlListeners.clear();
+  initResizeState()();
   cleanup();
   await settleReactWork();
   document.body.removeAttribute("data-has-narrow-rail");
@@ -373,5 +375,114 @@ describe("窄窗面板抽屉与右栏轮询门控", () => {
     expect(stylesCss).toMatch(
       /html\[data-resizing\]\s*:is\([\s\S]*?\.rail-tab[\s\S]*?\.ch-content-enter[\s\S]*?\)\s*\{\s*animation:\s*none;/,
     );
+
+    // 6. 宽窗右栏收起（closing）必须锚定 --glass-top 且 height: auto（禁止 top: 0 撞入顶栏并拉高），安装提示展开态同步偏移
+    const closingRailRule = stylesCss.match(
+      /\.glass-rail\[data-rail-motion="closing"\]\s*\{([^}]*)\}/,
+    );
+    expect(closingRailRule?.[1]).toContain("top: var(--glass-top);");
+    expect(closingRailRule?.[1]).toContain("height: auto;");
+    expect(closingRailRule?.[1]).not.toMatch(/\btop:\s*0\s*;/);
+    expect(stylesCss).toMatch(
+      /body\[data-install-hint="open"\]\s+\.glass-rail\[data-rail-motion="closing"\]\s*\{\s*top:\s*calc\(var\(--glass-top\)\s*\+\s*var\(--install-hint-gap,\s*0px\)\);/,
+    );
+
+    // 7. html[data-resizing] 抑制侧栏、壁纸与面板过渡/动画（防小窗↔大窗跨断点并发重排）
+    expect(stylesCss).toMatch(
+      /html\[data-resizing\]\s*:is\([\s\S]*?\[data-slot="sidebar-gap"\][\s\S]*?\[data-slot="sidebar-container"\][\s\S]*?\.chisabot-wallpaper-img[\s\S]*?\.live-panel[\s\S]*?\)\s*\{\s*transition:\s*none;/,
+    );
+  });
+
+  test("小窗切回大窗（缩放期）跨断点首帧先画右栏玻璃壳，下一帧 rAF 渐进挂载重内容；非缩放期首帧同步挂载", async () => {
+    globalThis.fetch = Object.assign(
+      async () =>
+        Response.json({
+          user: { id: "u1", email: "test@example.com", name: "测试" },
+          preferences: {},
+          items: [],
+          presets: [],
+          mine: [],
+          runs: [],
+        }),
+      { preconnect() {} },
+    ) as typeof fetch;
+
+    const realRaf = window.requestAnimationFrame;
+    const realCancelRaf = window.cancelAnimationFrame;
+    let rafQueue: FrameRequestCallback[] = [];
+    window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    }) as typeof window.requestAnimationFrame;
+    window.cancelAnimationFrame = ((id: number) => {
+      if (id > 0 && id <= rafQueue.length) {
+        rafQueue[id - 1] = () => {};
+      }
+    }) as typeof window.cancelAnimationFrame;
+
+    try {
+      wideMatches = false;
+      setPanelRailOpen(true);
+
+      const queryClient = createTestClient();
+      const rootRoute = createRootRoute({
+        component: () => (
+          <QueryClientProvider client={queryClient}>
+            <TaskCenterProvider>
+              <PanelRail />
+            </TaskCenterProvider>
+          </QueryClientProvider>
+        ),
+      });
+      const router = createRouter({
+        routeTree: rootRoute,
+        history: createMemoryHistory({ initialEntries: ["/"] }),
+      });
+
+      let view: ReturnType<typeof render> | undefined;
+      await act(async () => {
+        view = render(<RouterProvider router={router} />);
+      });
+      await settleReactWork();
+
+      // 1. 缩放期窄→宽：首帧右栏壳体立现，重型 PanelRailBody 暂缓 1 帧
+      await act(async () => {
+        beginResizing(220);
+        setWideViewport(true);
+      });
+      expect(
+        view?.container.querySelector("#chisabot-panel-rail"),
+      ).not.toBeNull();
+      expect(
+        view?.container.querySelector('[data-testid="panel-rail-close"]'),
+      ).toBeNull();
+
+      // 下一帧 rAF 后立即挂载完整内容
+      await act(async () => {
+        const pending = rafQueue;
+        rafQueue = [];
+        for (const cb of pending) cb(performance.now());
+      });
+      await settleReactWork();
+      expect(
+        view?.container.querySelector('[data-testid="panel-rail-close"]'),
+      ).not.toBeNull();
+
+      // 2. 复位到窄窗并结束缩放期，非缩放期窄→宽首帧同步挂载完整内容
+      initResizeState()();
+      await act(async () => {
+        setWideViewport(false);
+      });
+      await settleReactWork();
+      await act(async () => {
+        setWideViewport(true);
+      });
+      expect(
+        view?.container.querySelector('[data-testid="panel-rail-close"]'),
+      ).not.toBeNull();
+    } finally {
+      window.requestAnimationFrame = realRaf;
+      window.cancelAnimationFrame = realCancelRaf;
+    }
   });
 });

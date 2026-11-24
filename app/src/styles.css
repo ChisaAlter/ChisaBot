@@ -1107,9 +1107,10 @@ html {
 }
 .glass-rail[data-rail-motion="closing"] {
   position: absolute;
-  top: 0;
+  top: var(--glass-top);
   right: 0;
   bottom: 0;
+  height: auto;
   z-index: 6;
   opacity: 1;
   pointer-events: none;
@@ -1137,7 +1138,7 @@ html {
   }
   to {
     opacity: 0;
-    transform: translateX(24px);
+    transform: translateX(28px);
   }
 }
 .glass-rail[data-rail-motion="closing"] > .rail-card {
@@ -6380,6 +6381,9 @@ body[data-install-hint="open"] [data-testid="chat-transcript"] {
 body[data-install-hint="open"] .glass-body {
   padding-top: calc(var(--glass-top) + var(--install-hint-gap, 0px));
 }
+body[data-install-hint="open"] .glass-rail[data-rail-motion="closing"] {
+  top: calc(var(--glass-top) + var(--install-hint-gap, 0px));
+}
 body[data-install-hint="open"] [data-slot="sidebar-container"].glass-sidebar-container {
   top: calc(var(--glass-top) + var(--install-hint-gap, 0px));
   height: calc(100svh - var(--glass-top) - var(--install-hint-gap, 0px));
@@ -7941,6 +7945,11 @@ body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-hand
 }
 /* 折叠：只留标题那一行，不占整行的高度。 */
 .live-board-slot[data-collapsed] { align-self: start; }
+.live-panel {
+  transition:
+    gap var(--dur-collapse) var(--ease-out),
+    padding-block var(--dur-collapse) var(--ease-out);
+}
 .live-panel[data-collapsed] { padding-top: 10px; padding-bottom: 10px; gap: 0; }
 
 /* 标题左边：拖动握把 + 点标题折叠。 */
@@ -8143,6 +8152,7 @@ body[data-has-narrow-rail] .chat-composer-box:not([data-docked]) .chat-dock-hand
 .live-panel-src-refresh:disabled { opacity: 0.55; cursor: default; }
 
 @media (prefers-reduced-motion: reduce) {
+  .live-panel,
   .live-panel-grip,
   .live-panel-caret,
   .live-board-vsep::after,
@@ -9817,7 +9827,11 @@ html[data-theme-switching="1"] *::after {
 
 /* 窗口拖拽缩放与小窗横竖屏跨断点切换期纯过渡与重挂载并发入场动画抑制（严禁修改 backdrop-filter / --surface-blur / --glass-bg-opaque） */
 html[data-resizing] :is(
+  [data-slot="sidebar-gap"],
+  [data-slot="sidebar-container"],
   .ch-collapse,
+  .chisabot-wallpaper-img,
+  .live-panel,
   .rail-tabs-thumb,
   .rail-tab,
   .chat-bottom-pill,
@@ -9830,6 +9844,9 @@ html[data-resizing] :is(
   .rail-tab,
   .glass-rail[data-rail-motion] > .rail-card,
   .rail-pane[data-active="true"],
+  .live-panel,
+  .list-enter,
+  .glass-bot-comp-dot,
   .glass-icon-btn-ico,
   .glass-side-full,
   .glass-mini,

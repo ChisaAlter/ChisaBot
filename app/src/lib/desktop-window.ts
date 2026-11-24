@@ -95,6 +95,13 @@ export function triggerCompactToggle(bridge: DesktopWindowBridge | null) {
   bridge.toggleCompact?.();
 }
 
+/** 点击最大化/还原或双击顶栏时统一入口：先同步预挂过渡护栏，再通知主进程切窗。 */
+export function triggerMaximizeToggle(bridge: DesktopWindowBridge | null) {
+  if (!bridge) return;
+  beginCompactTransition();
+  bridge.toggleMaximize();
+}
+
 function notifySubscribers() {
   for (const listener of [...subscribers]) listener();
 }

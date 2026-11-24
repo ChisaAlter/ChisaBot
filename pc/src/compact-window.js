@@ -201,7 +201,8 @@ function createCompactController({ screen, onChange, animate }) {
     if (!win.isDestroyed()) {
       onChange(win, false, {
         maximized: win.isMaximized() || win.isFullScreen(),
-        transitioning: restore === true,
+        transitioning:
+          restore === true || win.isMaximized() || win.isFullScreen(),
       });
     }
   }

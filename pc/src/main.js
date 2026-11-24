@@ -2630,6 +2630,13 @@ function registerIpc() {
       nativeTheme.themeSource =
         next.dark === null ? "system" : next.dark ? "dark" : "light";
       broadcast("appearance");
+      if (
+        prev.dark !== next.dark &&
+        windows.chat &&
+        !windows.chat.isDestroyed()
+      ) {
+        windows.chat.setBackgroundColor(windowBackground());
+      }
       if (updateWindow && !updateWindow.isDestroyed())
         updateWindow.setBackgroundColor(updateWindowBackground());
     }

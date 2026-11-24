@@ -27,3 +27,4 @@ export {
   useInterval,
   useTimeout,
 } from "./use-timers";
+export { useDeferWhileResizing } from "./use-defer-while-resizing";
