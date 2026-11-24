@@ -2592,22 +2592,50 @@ function registerIpc() {
   handleWeb("pc:appearance", (value) => {
     const VALID_THEMES = new Set([
       "sky",
-      "mist",
-      "celadon",
-      "sakura",
-      "amber",
-      "violet",
-      "mono",
+      "aurora",
+      "porcelain",
+      "deepseek",
+      "claude",
+      "cossui",
     ]);
+    const LEGACY_THEME_MAP = {
+      sky: "sky",
+      default: "sky",
+      azure: "sky",
+      ocean: "sky",
+      aurora: "aurora",
+      violet: "aurora",
+      nocturne: "aurora",
+      emerald: "aurora",
+      porcelain: "porcelain",
+      celadon: "porcelain",
+      deepseek: "deepseek",
+      mist: "deepseek",
+      london: "deepseek",
+      stardust: "deepseek",
+      claude: "claude",
+      amber: "claude",
+      sunset: "claude",
+      gold: "claude",
+      sakura: "claude",
+      ruby: "claude",
+      cossui: "cossui",
+      coss: "cossui",
+      mono: "cossui",
+    };
+    const resolveTheme = (raw) => {
+      if (typeof raw !== "string") return null;
+      const key = raw.trim().toLowerCase();
+      if (VALID_THEMES.has(key)) return key;
+      return LEGACY_THEME_MAP[key] || null;
+    };
     const VALID_MATERIALS = new Set(["glass", "clear", "solid"]);
     const VALID_CANVASES = new Set(["pure", "sky", "wallpaper"]);
     const prev = config.get().appearance || {};
+    const prevTheme = resolveTheme(prev.theme) || "sky";
     const next = {
       dark: typeof value?.dark === "boolean" ? value.dark : null,
-      theme:
-        typeof value?.theme === "string" && VALID_THEMES.has(value.theme)
-          ? value.theme
-          : prev.theme || "sky",
+      theme: resolveTheme(value?.theme) || prevTheme,
       material:
         typeof value?.material === "string" &&
         VALID_MATERIALS.has(value.material)

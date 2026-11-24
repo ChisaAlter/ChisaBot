@@ -17,7 +17,7 @@ import { settleReactWork } from "./settle-react-work";
  * V2 主题 / 画布 / 材质性能与架构守卫：
  *  1. 所有 `--surface-*` 均注册为 `@property { inherits: false }`，且 0 条仅命中 `<html>`/`:root` 的规则声明它们；
  *     壁纸滑块仅写 `#sky-root` 的 `--canvas-blur` / `--canvas-scrim`，绝不污染 `<html>`，不注入 `#chisabot-glass-alpha`；
- *  2. 地址栏 `<meta name="theme-color">` 跟随 7 套主题 × 浅/深色；
+ *  2. 地址栏 `<meta name="theme-color">` 跟随 6 套主题 × 浅/深色；
  *  3. 多标签页通过 `storage` 事件同步 `chisabot-appearance`、性能模式薄代理与 `ThemeProvider`；
  *  4. 系统「减少动态效果」立刻暂停天空循环；
  *  5. 唯一启动脚本 `appearanceBootScript()` 内联进 `index.html`，首帧挂齐所有 V2 根属性并兼容旧 16 键；
@@ -221,14 +221,14 @@ describe("1) --surface-* 严格不继承，滑块仅改 #sky-root 不触碰 <htm
   });
 });
 
-describe("2) 地址栏颜色跟随 7 套主题 × 浅/深色", () => {
-  test("7 套主题浅/深均有独立 hex themeColor，且主题间可区分", () => {
-    expect(palette.THEMES).toHaveLength(7);
+describe("2) 地址栏颜色跟随 6 套主题 × 浅/深色", () => {
+  test("6 套主题浅/深均有独立 hex themeColor，且主题间可区分", () => {
+    expect(palette.THEMES).toHaveLength(6);
     for (const t of palette.THEMES) {
       expect(palette.themeMetaColor(t.id, false)).toMatch(/^#[0-9a-f]{6}$/);
       expect(palette.themeMetaColor(t.id, true)).toMatch(/^#[0-9a-f]{6}$/);
     }
-    expect(palette.themeMetaColor("sakura", false)).not.toBe(
+    expect(palette.themeMetaColor("claude", false)).not.toBe(
       palette.themeMetaColor("sky", false),
     );
   });
@@ -236,7 +236,7 @@ describe("2) 地址栏颜色跟随 7 套主题 × 浅/深色", () => {
   test("applyThemeColor 同步更新所有 meta[name=theme-color]", () => {
     document.head.innerHTML =
       '<meta name="theme-color" content="#9dbddc" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0c1626" media="(prefers-color-scheme: dark)">';
-    const color = palette.themeMetaColor("sakura", true);
+    const color = palette.themeMetaColor("claude", true);
     palette.applyThemeColor(color);
     const metas = [
       ...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'),
@@ -267,7 +267,7 @@ describe("3) 多标签页同步", () => {
     try {
       const remote = JSON.stringify({
         ...appearance.DEFAULT_APPEARANCE_CONFIG,
-        theme: "sakura",
+        theme: "claude",
         material: "clear",
         canvas: { kind: "pure" },
       });
@@ -275,10 +275,10 @@ describe("3) 多标签页同步", () => {
       fireStorage(appearance.APPEARANCE_STORAGE_KEY, remote);
 
       const cfg = appearance.getAppearanceConfig();
-      expect(cfg.theme).toBe("sakura");
+      expect(cfg.theme).toBe("claude");
       expect(cfg.material).toBe("clear");
       expect(cfg.canvas).toEqual({ kind: "pure" });
-      expect(document.documentElement.getAttribute("data-theme")).toBe("sakura");
+      expect(document.documentElement.getAttribute("data-theme")).toBe("claude");
       expect(document.documentElement.getAttribute("data-material")).toBe(
         "clear",
       );
@@ -512,7 +512,7 @@ describe("5) 唯一启动脚本 appearanceBootScript()", () => {
       [palette.APPEARANCE_STORAGE_KEY]: JSON.stringify({
         v: 2,
         mode: "dark",
-        theme: "sakura",
+        theme: "claude",
         customAccent: null,
         material: "clear",
         canvas: { kind: "pure" },
@@ -520,7 +520,7 @@ describe("5) 唯一启动脚本 appearanceBootScript()", () => {
       }),
     });
     expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(document.documentElement.getAttribute("data-theme")).toBe("sakura");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("claude");
     expect(document.documentElement.getAttribute("data-material")).toBe(
       "clear",
     );
@@ -530,17 +530,17 @@ describe("5) 唯一启动脚本 appearanceBootScript()", () => {
       'meta[name="theme-color"]',
     )) {
       expect(m.getAttribute("content")).toBe(
-        palette.themeMetaColor("sakura", true),
+        palette.themeMetaColor("claude", true),
       );
     }
 
-    // 未迁移旧键直读兼容
+    // 未迁移旧键直读兼容（退场 sakura 无损映射至 claude）
     runBoot({
       "chisabot-theme": "light",
       "chisabot-theme-palette": "sakura",
       "chisabot-glass-style": "crystal",
     });
-    expect(document.documentElement.getAttribute("data-theme")).toBe("sakura");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("claude");
     expect(document.documentElement.getAttribute("data-material")).toBe(
       "clear",
     );

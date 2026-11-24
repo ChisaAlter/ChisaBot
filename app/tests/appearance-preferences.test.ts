@@ -32,17 +32,16 @@ const canvasCss = readCss("styles/canvas.css");
 const materialsCss = readCss("styles/materials.css");
 const stylesCss = readCss("styles.css");
 
-describe("V2 外观核心模型：7 套主题、5 档动态天空、15 幅艺术壁纸与 3 档纯 CSS 材质", () => {
-  test("提供 7 套精选主题且每套浅/深元数据与 tokens.css 声明对齐，自定义强调色可派生完整 5 令牌", () => {
-    expect(THEMES).toHaveLength(7);
+describe("V2 外观核心模型：6 套主题、5 档动态天空、15 幅艺术壁纸与 3 档纯 CSS 材质", () => {
+  test("提供 6 套精选主题且每套浅/深元数据与 tokens.css 声明对齐，自定义强调色可派生完整 5 令牌", () => {
+    expect(THEMES).toHaveLength(6);
     expect(THEMES.map((t) => t.id)).toEqual([
       "sky",
-      "mist",
-      "celadon",
-      "sakura",
-      "amber",
-      "violet",
-      "mono",
+      "aurora",
+      "porcelain",
+      "deepseek",
+      "claude",
+      "cossui",
     ]);
     for (const theme of THEMES) {
       expect(tokensCss).toContain(`html[data-theme="${theme.id}"]`);
@@ -141,12 +140,12 @@ describe("V2 外观核心模型：7 套主题、5 档动态天空、15 幅艺术
       }
     }
 
-    setTheme("sakura");
+    setTheme("claude");
     setMaterial("clear");
     setWallpaperSource("starry-rhone");
     setWallpaperAdjustments({ blur: 14, scrim: 45 });
     const modified = getAppearanceConfig();
-    expect(modified.theme).toBe("sakura");
+    expect(modified.theme).toBe("claude");
     expect(modified.material).toBe("clear");
     expect(modified.canvas).toEqual({
       kind: "wallpaper",
@@ -177,5 +176,17 @@ describe("V2 外观核心模型：7 套主题、5 档动态天空、15 幅艺术
     for (const css of [tokensCss, canvasCss, materialsCss, stylesCss]) {
       expect(css).not.toContain("-webkit-backdrop-filter:");
     }
+    expect(canvasCss).toContain(
+      'html:not(.dark)[data-theme="sky"][data-canvas="pure"] #sky-root #skyph::before',
+    );
+    expect(canvasCss).toContain(
+      'html.dark[data-theme="sky"][data-canvas="pure"] #sky-root #skyph::before',
+    );
+    expect(canvasCss).toContain(
+      'html:not(.dark)[data-theme="aurora"][data-canvas="pure"] #sky-root #skyph::before',
+    );
+    expect(canvasCss).toContain(
+      'html.dark[data-theme="aurora"][data-canvas="pure"] #sky-root #skyph::before',
+    );
   });
 });

@@ -26,7 +26,7 @@ import {
 
 /**
  * V2 全矩阵 WCAG 对比度门禁：
- * - 7 主题 × 浅/深 × 3 材质（glass / clear / solid）× 5 表面 × 净色/极值黑白壁纸，所有墨色 ≥ 4.5:1；
+ * - 6 主题 × 浅/深 × 3 材质（glass / clear / solid）× 5 表面 × 净色/极值黑白壁纸，所有墨色 ≥ 4.5:1；
  * - 墨色层级严格单调（--ink-1 > --ink-2 > --ink-3 >= --ink-4）；
  * - 侧栏小字与头像字母 ≥ 4.5:1 且统一走令牌；
  * - 全站仅 `html[data-canvas="wallpaper"] #sky-root::after` 一处画壁纸护眼薄幕；
@@ -36,7 +36,7 @@ import {
 const AA = 4.5;
 const AAA = 7.0;
 
-describe("7 主题 × 浅/深 × 3 材质 × 净色/黑白极值壁纸 全矩阵 WCAG AA ≥ 4.5:1", () => {
+describe("6 主题 × 浅/深 × 3 材质 × 净色/黑白极值壁纸 全矩阵 WCAG AA ≥ 4.5:1", () => {
   for (const themeId of THEME_IDS) {
     for (const scheme of SCHEMES) {
       test(`${themeId} / ${scheme}：全部表面与墨色在净色与黑白极值壁纸下均 ≥ 4.5:1`, () => {
@@ -228,7 +228,7 @@ describe("全站唯一壁纸薄幕与壁纸下辅助字提级", () => {
 describe("prefers-contrast: more（高对比度模式实底全线 AAA ≥ 7:1）", () => {
   const moreBlock = extractMediaBlock(a11yModesCss, "(prefers-contrast: more)");
 
-  test("7 主题 × 浅/深 全部实底表面下 --ink-1..4 与侧栏小字均 ≥ 7:1", () => {
+  test("6 主题 × 浅/深 全部实底表面下 --ink-1..4 与侧栏小字均 ≥ 7:1", () => {
     expect(moreBlock.length).toBeGreaterThan(0);
     for (const scheme of SCHEMES) {
       const sel =
@@ -269,7 +269,7 @@ describe("独立语义色不随色彩主题漂移（DESIGN.md §127）", () => {
     "--sem-danger",
   ] as const;
 
-  test("--task-info 与 --sem-* 在 7 套主题的浅/深色下保持完全一致，绝不被主题块改写", () => {
+  test("--task-info 与 --sem-* 在 6 套主题的浅/深色下保持完全一致，绝不被主题块改写", () => {
     for (const scheme of SCHEMES) {
       for (const tok of SEMANTIC_TOKENS) {
         const baseline = tokenColor("sky", scheme, tok);

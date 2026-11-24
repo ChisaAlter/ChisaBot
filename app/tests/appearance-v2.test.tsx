@@ -30,6 +30,7 @@ import {
   isDefaultAppearance,
   LEGACY_APPEARANCE_STORAGE_KEYS,
   migrateLegacyAppearance,
+  parseAppearanceConfig,
   reloadAppearanceFromStorage,
   resetAppearance,
   resolveAutoSkyHour,
@@ -46,6 +47,7 @@ import {
   setWallpaperSource,
   shouldFetchLiveWeather,
   syncAppearanceFromStorage,
+  themeMetaColor,
 } from "@/lib/appearance";
 import { getPerfMode, setPerfMode } from "@/lib/perf-mode";
 import { settleReactWork } from "./settle-react-work";
@@ -120,23 +122,29 @@ describe("V2 16 键一次性无损迁移", () => {
 
   test("模式、主题族、旧 palette 与自定义强调色全组合无损映射", () => {
     const cases: Array<[string, AppearanceConfigV2["theme"]]> = [
+      ["sky", "sky"],
       ["azure", "sky"],
       ["default", "sky"],
       ["ocean", "sky"],
-      ["mist", "mist"],
-      ["stardust", "mist"],
-      ["london", "mist"],
-      ["celadon", "celadon"],
-      ["emerald", "celadon"],
-      ["sakura", "sakura"],
-      ["ruby", "sakura"],
-      ["amber", "amber"],
-      ["sunset", "amber"],
-      ["gold", "amber"],
-      ["violet", "violet"],
-      ["aurora", "violet"],
-      ["nocturne", "violet"],
-      ["mono", "mono"],
+      ["aurora", "aurora"],
+      ["violet", "aurora"],
+      ["nocturne", "aurora"],
+      ["emerald", "aurora"],
+      ["porcelain", "porcelain"],
+      ["celadon", "porcelain"],
+      ["deepseek", "deepseek"],
+      ["mist", "deepseek"],
+      ["stardust", "deepseek"],
+      ["london", "deepseek"],
+      ["claude", "claude"],
+      ["amber", "claude"],
+      ["sunset", "claude"],
+      ["gold", "claude"],
+      ["sakura", "claude"],
+      ["ruby", "claude"],
+      ["cossui", "cossui"],
+      ["coss", "cossui"],
+      ["mono", "cossui"],
     ];
     for (const [legacy, expected] of cases) {
       const res = migrateLegacyAppearance(
@@ -286,7 +294,7 @@ describe("V2 16 键一次性无损迁移", () => {
     expect(cfg).toEqual({
       v: 2,
       mode: "dark",
-      theme: "sakura",
+      theme: "claude",
       customAccent: null,
       material: "clear",
       canvas: {
@@ -315,7 +323,7 @@ describe("全字段判脏、自定义强调色 AA 对比度与 DOM 根契约", (
     resetAppearance();
     expect(isDefaultAppearance(getAppearanceConfig())).toBe(true);
 
-    setTheme("celadon");
+    setTheme("porcelain");
     expect(isDefaultAppearance(getAppearanceConfig())).toBe(false);
     resetAppearance();
 
@@ -379,7 +387,7 @@ describe("全字段判脏、自定义强调色 AA 对比度与 DOM 根契约", (
 
     setAppearanceConfig({
       mode: "dark",
-      theme: "violet",
+      theme: "aurora",
       customAccent: "#facc15",
       material: "clear",
       canvas: {
@@ -393,7 +401,7 @@ describe("全字段判脏、自定义强调色 AA 对比度与 DOM 根契约", (
 
     const root = document.documentElement;
     expect(root.classList.contains("dark")).toBe(true);
-    expect(root.getAttribute("data-theme")).toBe("violet");
+    expect(root.getAttribute("data-theme")).toBe("aurora");
     expect(root.getAttribute("data-material")).toBe("clear");
     expect(root.getAttribute("data-canvas")).toBe("wallpaper");
     expect(root.getAttribute("data-static-bg")).toBe("on");
@@ -435,7 +443,7 @@ describe("全字段判脏、自定义强调色 AA 对比度与 DOM 根契约", (
     const otherTab: AppearanceConfigV2 = {
       v: 2,
       mode: "light",
-      theme: "amber",
+      theme: "claude",
       customAccent: null,
       material: "solid",
       canvas: { kind: "pure" },
@@ -447,7 +455,7 @@ describe("全字段判脏、自定义强调色 AA 对比度与 DOM 根契约", (
     );
     await syncAppearanceFromStorage(APPEARANCE_STORAGE_KEY);
     expect(getAppearanceConfig()).toEqual(otherTab);
-    expect(document.documentElement.getAttribute("data-theme")).toBe("amber");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("claude");
     expect(document.documentElement.getAttribute("data-material")).toBe(
       "solid",
     );
@@ -467,7 +475,7 @@ describe("唯一首屏 appearanceBootScript()", () => {
       JSON.stringify({
         v: 2,
         mode: "dark",
-        theme: "sakura",
+        theme: "claude",
         customAccent: "#38bdf8",
         material: "clear",
         canvas: { kind: "pure" },
@@ -480,13 +488,13 @@ describe("唯一首屏 appearanceBootScript()", () => {
 
     const root = document.documentElement;
     expect(root.classList.contains("dark")).toBe(true);
-    expect(root.getAttribute("data-theme")).toBe("sakura");
+    expect(root.getAttribute("data-theme")).toBe("claude");
     expect(root.getAttribute("data-material")).toBe("clear");
     expect(root.getAttribute("data-canvas")).toBe("pure");
     expect(root.getAttribute("data-static-bg")).toBe("on");
     expect(root.getAttribute("data-sky")).toBe("off");
     expect(root.style.getPropertyValue("--accent")).toBe("#38bdf8");
-    expect(meta.content).toBe("#22121b");
+    expect(meta.content).toBe("#1c1b18");
     // 不回写旧 chisabot-theme 键
     expect(window.localStorage.getItem("chisabot-theme")).toBeNull();
     meta.remove();
@@ -503,11 +511,77 @@ describe("唯一首屏 appearanceBootScript()", () => {
 
     const root = document.documentElement;
     expect(root.classList.contains("dark")).toBe(true);
-    expect(root.getAttribute("data-theme")).toBe("mist");
+    expect(root.getAttribute("data-theme")).toBe("deepseek");
     expect(root.getAttribute("data-material")).toBe("solid");
     expect(root.getAttribute("data-canvas")).toBe("pure");
     expect(root.getAttribute("data-static-bg")).toBe("on");
     expect(root.getAttribute("data-perf")).toBe("on");
+  });
+
+  test("6 套退场主题 ID（mist/celadon/sakura/amber/violet/mono）在 parseAppearanceConfig / migrateLegacyAppearance / appearanceBootScript 无损迁移", () => {
+    const retiredCases: Array<[string, AppearanceConfigV2["theme"]]> = [
+      ["mist", "deepseek"],
+      ["celadon", "porcelain"],
+      ["sakura", "claude"],
+      ["amber", "claude"],
+      ["violet", "aurora"],
+      ["mono", "cossui"],
+    ];
+
+    const meta = document.createElement("meta");
+    meta.name = "theme-color";
+    meta.content = "#000000";
+    document.head.appendChild(meta);
+
+    try {
+      for (const [legacyId, expectedTheme] of retiredCases) {
+        const parsed = parseAppearanceConfig(
+          JSON.stringify({
+            v: 2,
+            mode: "dark",
+            theme: legacyId,
+            customAccent: null,
+            material: "glass",
+            canvas: { kind: "pure" },
+            staticBackground: false,
+          }),
+        );
+        expect(parsed?.theme).toBe(expectedTheme);
+
+        const migrated = migrateLegacyAppearance(
+          (key) => {
+            if (key === "chisabot-theme") return "light";
+            if (key === "chisabot-theme-family-light") return legacyId;
+            return null;
+          },
+          false,
+        );
+        expect(migrated.config.theme).toBe(expectedTheme);
+
+        window.localStorage.clear();
+        window.localStorage.setItem(
+          APPEARANCE_STORAGE_KEY,
+          JSON.stringify({
+            v: 2,
+            mode: "dark",
+            theme: legacyId,
+            customAccent: null,
+            material: "glass",
+            canvas: { kind: "pure" },
+            staticBackground: false,
+          }),
+        );
+        document.documentElement.className = "";
+        document.documentElement.removeAttribute("data-theme");
+        new Function(appearanceBootScript())();
+        expect(document.documentElement.getAttribute("data-theme")).toBe(
+          expectedTheme,
+        );
+        expect(meta.content).toBe(themeMetaColor(expectedTheme, true));
+      }
+    } finally {
+      meta.remove();
+    }
   });
 });
 

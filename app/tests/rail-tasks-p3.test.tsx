@@ -377,7 +377,7 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
     }
   });
 
-  test("浅色 / 深色 × 默认与 7 种配色 × 5 种色调，在最差的卡片底色上都 ≥ 4.5:1", () => {
+  test("浅色 / 深色 × 默认与 6 种配色 × 5 种色调，在最差的卡片底色上都 ≥ 4.5:1", () => {
     const textMix = mixPercent(
       ruleBody(".task-rail-item"),
       "--task-tone-text",
@@ -557,7 +557,7 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
     expect(worst).toBeGreaterThanOrEqual(3);
   });
 
-  test("7 套配色下状态字最小 CIEDE2000 ≥ 3.7（不含 paused/cancelled）", () => {
+  test("6 套配色下状态字最小 CIEDE2000 ≥ 3.7（不含 paused/cancelled）", () => {
     const textMix = mixPercent(
       ruleBody(".task-rail-item"),
       "--task-tone-text",
@@ -569,8 +569,7 @@ describe("P3-1 状态胶囊文字对比度 ≥ 4.5", () => {
         "--task-tone",
         token,
       );
-    // CB-140：配色轴换成主题族（令牌由 deriveSeed 写 DOM，不再躺在样式表选择器里）。
-    expect(FAMILY_IDS.length).toBeGreaterThanOrEqual(7);
+    expect(FAMILY_IDS.length).toBe(6);
 
     const modes = [
       { name: "light", root: ":root", inks: ["#0f172a", "#111a2b"] },

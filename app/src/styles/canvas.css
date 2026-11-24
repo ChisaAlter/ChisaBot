@@ -77,7 +77,7 @@ html[data-sky-painted] #sky-root #skyph {
   display: none;
 }
 
-/* ── 1. 净色画布（pure）：纯主题微渐变，隐藏 WebGL 与壁纸节点，零额外薄幕 ── */
+/* ── 1. 净色画布（pure）：纯主题微渐变与静态氛围层，隐藏 WebGL 与壁纸节点，零额外薄幕 ── */
 html[data-canvas="pure"] #sky-root #gl,
 html[data-canvas="pure"] #sky-root #skyfreeze,
 html[data-canvas="pure"] #sky-root .chisabot-wallpaper {
@@ -88,6 +88,182 @@ html[data-canvas="pure"] #sky-root #skyph {
 }
 html[data-canvas="pure"] #sky-root::after {
   content: none;
+}
+
+#sky-root::before,
+#sky-root #skyph::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: none;
+}
+
+/* 默认（sky）浅色：鲸屿启动加载页同款 3 朵柔和白云径向光晕 */
+html:not(.dark)[data-theme="sky"][data-canvas="pure"] #sky-root::before,
+html:not(.dark)[data-theme="sky"][data-canvas="pure"] #sky-root #skyph::before {
+  display: block;
+  background:
+    radial-gradient(
+      900px 380px at 18% 22%,
+      rgba(255, 255, 255, 0.75),
+      transparent 70%
+    ),
+    radial-gradient(
+      700px 300px at 72% 12%,
+      rgba(255, 255, 255, 0.55),
+      transparent 70%
+    ),
+    radial-gradient(
+      1100px 420px at 60% 78%,
+      rgba(255, 255, 255, 0.7),
+      transparent 70%
+    );
+}
+
+/* 默认（sky）深色：鲸屿深色静态星空（多层 1px–1.5px 星点 + 极淡星云光晕，零动画） */
+html.dark[data-theme="sky"][data-canvas="pure"] #sky-root::before,
+html.dark[data-theme="sky"][data-canvas="pure"] #sky-root #skyph::before {
+  display: block;
+  background-image:
+    radial-gradient(
+      1.5px 1.5px at 28px 42px,
+      rgba(255, 255, 255, 0.78),
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 96px 148px,
+      rgba(210, 228, 255, 0.58),
+      transparent
+    ),
+    radial-gradient(
+      1.5px 1.5px at 184px 76px,
+      rgba(255, 255, 255, 0.68),
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 236px 218px,
+      rgba(186, 214, 255, 0.5),
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 62px 232px,
+      rgba(255, 255, 255, 0.44),
+      transparent
+    ),
+    radial-gradient(
+      1.5px 1.5px at 142px 22px,
+      rgba(226, 238, 255, 0.62),
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 292px 124px,
+      rgba(255, 255, 255, 0.52),
+      transparent
+    ),
+    radial-gradient(
+      1.5px 1.5px at 334px 268px,
+      rgba(196, 222, 255, 0.66),
+      transparent
+    ),
+    radial-gradient(
+      880px 520px at 22% 18%,
+      rgba(72, 128, 220, 0.16),
+      transparent 70%
+    ),
+    radial-gradient(
+      960px 560px at 78% 76%,
+      rgba(116, 174, 255, 0.12),
+      transparent 72%
+    );
+  background-size:
+    260px 260px,
+    260px 260px,
+    260px 260px,
+    260px 260px,
+    370px 310px,
+    370px 310px,
+    370px 310px,
+    370px 310px,
+    100% 100%,
+    100% 100%;
+  background-repeat:
+    repeat, repeat, repeat, repeat, repeat, repeat, repeat, repeat, no-repeat,
+    no-repeat;
+}
+
+/* 极光（aurora）浅/深：斜向青绿-紫罗兰极光柔光晕 */
+html:not(.dark)[data-theme="aurora"][data-canvas="pure"] #sky-root::before,
+html:not(.dark)[data-theme="aurora"][data-canvas="pure"] #sky-root #skyph::before {
+  display: block;
+  background:
+    radial-gradient(
+      920px 440px at 14% 16%,
+      rgba(13, 148, 136, 0.14),
+      transparent 68%
+    ),
+    radial-gradient(
+      840px 480px at 84% 82%,
+      rgba(124, 58, 237, 0.12),
+      transparent 70%
+    ),
+    radial-gradient(
+      680px 320px at 56% 36%,
+      rgba(45, 212, 191, 0.1),
+      transparent 72%
+    );
+}
+html.dark[data-theme="aurora"][data-canvas="pure"] #sky-root::before,
+html.dark[data-theme="aurora"][data-canvas="pure"] #sky-root #skyph::before {
+  display: block;
+  background:
+    radial-gradient(
+      960px 460px at 16% 18%,
+      rgba(45, 212, 191, 0.16),
+      transparent 68%
+    ),
+    radial-gradient(
+      880px 500px at 84% 80%,
+      rgba(139, 92, 246, 0.16),
+      transparent 70%
+    ),
+    radial-gradient(
+      720px 340px at 52% 44%,
+      rgba(20, 184, 166, 0.08),
+      transparent 72%
+    );
+}
+
+/* 青花瓷（porcelain）浅/深：极淡青花钴蓝水墨角晕 */
+html:not(.dark)[data-theme="porcelain"][data-canvas="pure"] #sky-root::before,
+html:not(.dark)[data-theme="porcelain"][data-canvas="pure"] #sky-root #skyph::before {
+  display: block;
+  background:
+    radial-gradient(
+      760px 420px at 8% 10%,
+      rgba(29, 78, 216, 0.09),
+      transparent 68%
+    ),
+    radial-gradient(
+      820px 460px at 94% 90%,
+      rgba(37, 99, 235, 0.075),
+      transparent 70%
+    );
+}
+html.dark[data-theme="porcelain"][data-canvas="pure"] #sky-root::before,
+html.dark[data-theme="porcelain"][data-canvas="pure"] #sky-root #skyph::before {
+  display: block;
+  background:
+    radial-gradient(
+      760px 440px at 10% 12%,
+      rgba(110, 168, 255, 0.13),
+      transparent 68%
+    ),
+    radial-gradient(
+      840px 480px at 92% 88%,
+      rgba(59, 130, 246, 0.1),
+      transparent 70%
+    );
 }
 
 /* ── 2. 动态天空画布（sky）：WebGL 天空 + 单层轻薄护读幕 ── */

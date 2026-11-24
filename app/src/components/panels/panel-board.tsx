@@ -116,7 +116,7 @@ export function PanelBoard<T extends { id: string; title: string }>({
   layoutRef.current = layout;
 
   const [dragId, setDragId] = useState<string | null>(null);
-  const [resizing, setResizing] = useState(false);
+  const [resizing, setResizing] = useState<"ratio" | "height" | false>(false);
   const boardRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<DragState | null>(null);
   const ratioDrag = useRef<RatioDrag | null>(null);
@@ -326,7 +326,7 @@ export function PanelBoard<T extends { id: string; title: string }>({
       ratio: layoutRef.current.ratios[rowIndex]?.[0] ?? 0.5,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
-    setResizing(true);
+    setResizing("ratio");
   };
 
   const moveRatio = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -380,7 +380,7 @@ export function PanelBoard<T extends { id: string; title: string }>({
       moved: false,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
-    setResizing(true);
+    setResizing("height");
   };
 
   const moveHeight = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -536,7 +536,11 @@ export function PanelBoard<T extends { id: string; title: string }>({
         })}
       </PresenceList>
       {dragId || resizing ? (
-        <div aria-hidden className="live-board-drag-cover is-dragging" data-mode={dragId ? "move" : "resize"} />
+        <div
+          aria-hidden
+          className="live-board-drag-cover is-dragging"
+          data-mode={dragId ? "move" : resizing === "height" ? "resize-y" : "resize"}
+        />
       ) : null}
     </div>
   );

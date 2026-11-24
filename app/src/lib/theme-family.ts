@@ -1,7 +1,7 @@
 /**
  * V2 色彩主题元数据与自定义强调色对比度派生（四轴正交架构）。
  *
- * - 内置 7 套精调主题：sky / mist / celadon / sakura / amber / violet / mono；
+ * - 内置 6 套精调主题：sky / aurora / porcelain / deepseek / claude / cossui；
  *   每套主题的完整浅/深色令牌定义在 `app/src/styles/tokens.css`（通过 `html[data-theme="<ThemeId>"]` 命中），
  *   JS 不再向 <html> / <body> 批量注入 24 个派生内联变量。
  * - 仅当用户设置了 `customAccent` 时，由纯函数 {@link deriveCustomAccentVars} 按当前浅/深模式算出
@@ -11,29 +11,29 @@
 
 export type ThemeId =
   | "sky"
-  | "mist"
-  | "celadon"
-  | "sakura"
-  | "amber"
-  | "violet"
-  | "mono";
+  | "aurora"
+  | "porcelain"
+  | "deepseek"
+  | "claude"
+  | "cossui";
 
 export const DEFAULT_THEME_ID: ThemeId = "sky";
 
 export const VALID_THEME_IDS: readonly ThemeId[] = [
   "sky",
-  "mist",
-  "celadon",
-  "sakura",
-  "amber",
-  "violet",
-  "mono",
+  "aurora",
+  "porcelain",
+  "deepseek",
+  "claude",
+  "cossui",
 ] as const;
 
 export interface ThemeVariantMeta {
   accent: string;
+  onAccent: string;
   bg: string;
   fg: string;
+  surface: string;
   themeColor: string;
   canvasStops: readonly [string, string, string];
 }
@@ -41,144 +41,156 @@ export interface ThemeVariantMeta {
 export interface ThemeMeta {
   id: ThemeId;
   name: string;
+  tagline: string;
   description: string;
   light: ThemeVariantMeta;
   dark: ThemeVariantMeta;
 }
 
-/** 7 套精选主题元数据（色值与 tokens.css 对齐）。 */
+/** 6 套精选主题元数据（色值与 tokens.css 对齐）。 */
 export const THEMES: readonly ThemeMeta[] = [
   {
     id: "sky",
-    name: "晴空",
-    description: "清透蔚蓝与柔光云感",
+    name: "默认",
+    tagline: "晴空 · 星空",
+    description: "鲸屿经典浅色天空与深色静谧星空",
     light: {
-      accent: "#4176e6",
-      bg: "#f3f7fc",
-      fg: "#1a2233",
+      accent: "#2563eb",
+      onAccent: "#ffffff",
+      bg: "#f2f7fc",
+      fg: "#0b1220",
+      surface: "#f2f7fc",
       themeColor: "#9dbddc",
-      canvasStops: ["#dce9f8", "#edf4fc", "#f6f9fd"],
+      canvasStops: ["#9dbddc", "#c9dbeb", "#e4ecf3"],
+    },
+    dark: {
+      accent: "#74aeff",
+      onAccent: "#0b1220",
+      bg: "#121c30",
+      fg: "#f8fafc",
+      surface: "#121c30",
+      themeColor: "#070d1c",
+      canvasStops: ["#070d1c", "#0c1730", "#13213f"],
+    },
+  },
+  {
+    id: "aurora",
+    name: "极光",
+    tagline: "极地流光",
+    description: "极地冰川青绿与幻彩紫罗兰流光",
+    light: {
+      accent: "#0d9488",
+      onAccent: "#ffffff",
+      bg: "#eff9f7",
+      fg: "#091a1d",
+      surface: "#eff9f7",
+      themeColor: "#a8e2d8",
+      canvasStops: ["#c9f0e8", "#e4f5f5", "#ede8fa"],
+    },
+    dark: {
+      accent: "#2dd4bf",
+      onAccent: "#041c1a",
+      bg: "#0f222a",
+      fg: "#f2fdfb",
+      surface: "#0f222a",
+      themeColor: "#06151c",
+      canvasStops: ["#06151c", "#0b222c", "#181633"],
+    },
+  },
+  {
+    id: "porcelain",
+    name: "青花瓷",
+    tagline: "釉白钴蓝",
+    description: "景德镇甜白釉、苏麻离青钴蓝与夜窑霁蓝",
+    light: {
+      accent: "#1d4ed8",
+      onAccent: "#ffffff",
+      bg: "#f5f7fc",
+      fg: "#0c162b",
+      surface: "#f5f7fc",
+      themeColor: "#c4d5ee",
+      canvasStops: ["#dce6f5", "#edf2fa", "#f8f9fc"],
     },
     dark: {
       accent: "#6ea8ff",
-      bg: "#10141c",
-      fg: "#e8eef9",
-      themeColor: "#0c1626",
-      canvasStops: ["#0c1626", "#111b2c", "#151f30"],
+      onAccent: "#081226",
+      bg: "#11203d",
+      fg: "#f4f8ff",
+      surface: "#11203d",
+      themeColor: "#081226",
+      canvasStops: ["#081226", "#0f1e3b", "#172b4f"],
     },
   },
   {
-    id: "mist",
-    name: "晨雾",
-    description: "克制中性灰蓝，专注阅读",
+    id: "deepseek",
+    name: "DeepSeek",
+    tagline: "理性蓝灰",
+    description: "标志性科技蓝与冷静极简工程灰阶",
     light: {
-      accent: "#55657a",
-      bg: "#f4f5f7",
-      fg: "#26292e",
-      themeColor: "#cdd4de",
-      canvasStops: ["#e3e7ed", "#eff1f5", "#f7f8fa"],
+      accent: "#4d6bfe",
+      onAccent: "#ffffff",
+      bg: "#f7f9fc",
+      fg: "#111318",
+      surface: "#f7f9fc",
+      themeColor: "#dde6ff",
+      canvasStops: ["#eef3ff", "#f6f9ff", "#fcfdff"],
     },
     dark: {
-      accent: "#94a3b8",
-      bg: "#15181d",
-      fg: "#e2e6ec",
-      themeColor: "#15181d",
-      canvasStops: ["#13171d", "#181d25", "#1d222b"],
+      accent: "#5b7cff",
+      onAccent: "#0b1124",
+      bg: "#1c1e23",
+      fg: "#f5f6f8",
+      surface: "#1c1e23",
+      themeColor: "#1e2025",
+      canvasStops: ["#181a1e", "#1f2126", "#26282d"],
     },
   },
   {
-    id: "celadon",
-    name: "青瓷",
-    description: "温润松青与东方玉色",
+    id: "claude",
+    name: "Claude",
+    tagline: "暖纸陶橙",
+    description: "温润羊皮纸、陶土暖橙与书卷人文质感",
     light: {
-      accent: "#0f766e",
-      bg: "#f3faf7",
-      fg: "#10211c",
-      themeColor: "#a8d2c6",
-      canvasStops: ["#d8eee7", "#ebf6f2", "#f5fbf9"],
+      accent: "#c6613f",
+      onAccent: "#ffffff",
+      bg: "#f6f4ec",
+      fg: "#1c1b18",
+      surface: "#f6f4ec",
+      themeColor: "#ece7db",
+      canvasStops: ["#eeeae0", "#f5f4ee", "#faf9f5"],
     },
     dark: {
-      accent: "#3dd6b5",
-      bg: "#071411",
-      fg: "#e7f6f1",
-      themeColor: "#0a1d18",
-      canvasStops: ["#081915", "#0d221d", "#112822"],
+      accent: "#d97757",
+      onAccent: "#1a1512",
+      bg: "#1c1b18",
+      fg: "#faf8f4",
+      surface: "#1c1b18",
+      themeColor: "#1c1b18",
+      canvasStops: ["#181715", "#1f1e1b", "#252420"],
     },
   },
   {
-    id: "sakura",
-    name: "落樱",
-    description: "淡粉霞光与柔和暖调",
+    id: "cossui",
+    name: "coss ui",
+    tagline: "精密锌灰",
+    description: "coss.com/ui 中性锌灰、清晰不透明描边与紧凑几何",
     light: {
-      accent: "#d4527e",
-      bg: "#fcf3f6",
-      fg: "#331c26",
-      themeColor: "#ebc0cf",
-      canvasStops: ["#f7dfe8", "#fbeff3", "#fdf7f9"],
+      accent: "#18181b",
+      onAccent: "#fafafa",
+      bg: "#f8f8f9",
+      fg: "#09090b",
+      surface: "#f8f8f9",
+      themeColor: "#e4e4e7",
+      canvasStops: ["#ededf0", "#f5f5f7", "#fafafa"],
     },
     dark: {
-      accent: "#e0789c",
-      bg: "#1e1018",
-      fg: "#f2dfe8",
-      themeColor: "#22121b",
-      canvasStops: ["#1d0f17", "#25141e", "#2b1823"],
-    },
-  },
-  {
-    id: "amber",
-    name: "琥珀",
-    description: "暖金纸感与柔和日光",
-    light: {
-      accent: "#b45309",
-      bg: "#fbf6ee",
-      fg: "#1c1915",
-      themeColor: "#e6c8a2",
-      canvasStops: ["#f3e3cc", "#f9f0e2", "#fcf8f1"],
-    },
-    dark: {
-      accent: "#e2b15c",
-      bg: "#14100b",
-      fg: "#f6efe4",
-      themeColor: "#1a140d",
-      canvasStops: ["#18120b", "#201810", "#261d14"],
-    },
-  },
-  {
-    id: "violet",
-    name: "暮紫",
-    description: "微醺星云与深邃紫罗兰",
-    light: {
-      accent: "#7c3aed",
-      bg: "#f7f3fc",
-      fg: "#1c1524",
-      themeColor: "#c9bbe8",
-      canvasStops: ["#e7def8", "#f3eefb", "#f9f6fd"],
-    },
-    dark: {
-      accent: "#c4a1ff",
-      bg: "#120e18",
-      fg: "#f3eefc",
-      themeColor: "#171222",
-      canvasStops: ["#140f1e", "#1b1528", "#211a30"],
-    },
-  },
-  {
-    id: "mono",
-    name: "素墨",
-    description: "高对比黑白极简",
-    light: {
-      accent: "#111111",
-      bg: "#ffffff",
-      fg: "#050505",
-      themeColor: "#e5e7eb",
-      canvasStops: ["#e8eaee", "#f4f5f7", "#ffffff"],
-    },
-    dark: {
-      accent: "#ffffff",
-      bg: "#050505",
-      fg: "#f5f5f5",
-      themeColor: "#0c0c0e",
-      canvasStops: ["#070709", "#0e0e12", "#141418"],
+      accent: "#f4f4f5",
+      onAccent: "#09090b",
+      bg: "#121215",
+      fg: "#fafafa",
+      surface: "#121215",
+      themeColor: "#09090b",
+      canvasStops: ["#09090b", "#0f0f12", "#151519"],
     },
   },
 ] as const;
@@ -188,23 +200,28 @@ const THEME_MAP = new Map<ThemeId, ThemeMeta>(THEMES.map((t) => [t.id, t]));
 /** 旧 theme-family / data-palette id → V2 ThemeId 的无损映射表。 */
 export const LEGACY_THEME_MAP: Readonly<Record<string, ThemeId>> = {
   sky: "sky",
-  azure: "sky",
   default: "sky",
+  azure: "sky",
   ocean: "sky",
-  mist: "mist",
-  stardust: "mist",
-  london: "mist",
-  celadon: "celadon",
-  emerald: "celadon",
-  sakura: "sakura",
-  ruby: "sakura",
-  amber: "amber",
-  sunset: "amber",
-  gold: "amber",
-  violet: "violet",
-  aurora: "violet",
-  nocturne: "violet",
-  mono: "mono",
+  aurora: "aurora",
+  violet: "aurora",
+  nocturne: "aurora",
+  emerald: "aurora",
+  porcelain: "porcelain",
+  celadon: "porcelain",
+  deepseek: "deepseek",
+  mist: "deepseek",
+  london: "deepseek",
+  stardust: "deepseek",
+  claude: "claude",
+  amber: "claude",
+  sunset: "claude",
+  gold: "claude",
+  sakura: "claude",
+  ruby: "claude",
+  cossui: "cossui",
+  coss: "cossui",
+  mono: "cossui",
 };
 
 export function isThemeId(value: unknown): value is ThemeId {
@@ -314,30 +331,33 @@ export function deriveCustomAccentVars(
   };
 
   const [r, g, b] = hexToRgb(hex);
-  const accent = rgbToHex(r, g, b);
+  const rawAccent = rgbToHex(r, g, b);
   // 浅色检查偏灰面板表面 #eef2f7（比纯白更严格），深色检查较亮面板表面 #1c222e（比纯黑更严格）。
   const surfaceRef = dark ? "#1c222e" : "#eef2f7";
   const targetTone = dark ? "#f8fafc" : "#0b0f17";
-  const minRatio = 4.6;
 
-  let accentInk = accent;
-  if (contrast(accentInk, surfaceRef) < minRatio) {
+  const ensureContrast = (baseHex: string, minRatio: number): string => {
+    if (contrast(baseHex, surfaceRef) >= minRatio) return baseHex;
     let lo = 0;
     let hi = 1;
+    let best = baseHex;
     for (let step = 0; step < 24; step++) {
       const mid = (lo + hi) / 2;
-      const candidate = mixHex(accent, targetTone, mid);
+      const candidate = mixHex(baseHex, targetTone, mid);
       if (contrast(candidate, surfaceRef) >= minRatio) {
-        accentInk = candidate;
+        best = candidate;
         hi = mid;
       } else {
         lo = mid;
       }
     }
-    if (contrast(accentInk, surfaceRef) < minRatio) {
-      accentInk = targetTone;
-    }
-  }
+    return contrast(best, surfaceRef) >= minRatio ? best : targetTone;
+  };
+
+  // 非文本图形/控件对比度保底（WCAG 2.1 SC 1.4.11 >= 3.0:1，取 3.1 留余量），避免浅色近白或深色近黑导致弧线不可见。
+  const accent = ensureContrast(rawAccent, 3.1);
+  const accentInk = ensureContrast(rawAccent, 4.6);
+  const [ar, ag, ab] = hexToRgb(accent);
 
   const inkOnAccent =
     contrast("#ffffff", accent) >= contrast("#0f1115", accent)
@@ -347,8 +367,8 @@ export function deriveCustomAccentVars(
   return {
     "--accent": accent,
     "--accent-ink": accentInk,
-    "--accent-soft": `rgba(${r}, ${g}, ${b}, ${dark ? 0.2 : 0.14})`,
-    "--accent-ring": `rgba(${r}, ${g}, ${b}, ${dark ? 0.45 : 0.35})`,
+    "--accent-soft": `rgba(${ar}, ${ag}, ${ab}, ${dark ? 0.2 : 0.14})`,
+    "--accent-ring": `rgba(${ar}, ${ag}, ${ab}, ${dark ? 0.45 : 0.35})`,
     "--ink-on-accent": inkOnAccent,
   };
 }

@@ -234,8 +234,8 @@ export function AppearancePreferences() {
   const isDefault = isDefaultAppearance(config);
   const activeTheme = THEMES.find((t) => t.id === config.theme) ?? THEMES[0];
   const activeThemeAccent = dark
-    ? (activeTheme?.dark.accent ?? "#6ea8ff")
-    : (activeTheme?.light.accent ?? "#4176e6");
+    ? (activeTheme?.dark.accent ?? "#74aeff")
+    : (activeTheme?.light.accent ?? "#2563eb");
   const effectiveAccentHex = config.customAccent ?? activeThemeAccent;
 
   const hasStoredCustomImage = Boolean(customWallpaperUrl);
@@ -542,17 +542,35 @@ export function AppearancePreferences() {
                   >
                     <span
                       aria-hidden="true"
-                      className="ap-theme-swatch grid place-items-center"
+                      className="ap-theme-preview"
                       style={{
-                        background: variant.accent,
-                        color: dark ? "#0f1115" : "#ffffff",
+                        background: `linear-gradient(135deg, ${variant.canvasStops[0]}, ${variant.canvasStops[1]}, ${variant.canvasStops[2]})`,
                       }}
                     >
-                      {active ? (
-                        <IconCheck className="size-3.5 stroke-[2.8]" />
-                      ) : null}
+                      <span
+                        className="ap-theme-preview-surface"
+                        style={{
+                          background: variant.surface,
+                          color: variant.fg,
+                        }}
+                      >
+                        <span className="ap-theme-preview-line" />
+                        <span className="ap-theme-preview-line" />
+                      </span>
+                      <span
+                        className="ap-theme-swatch grid place-items-center"
+                        style={{
+                          background: variant.accent,
+                          color: variant.onAccent,
+                        }}
+                      >
+                        {active ? (
+                          <IconCheck className="size-3.5 stroke-[2.8]" />
+                        ) : null}
+                      </span>
                     </span>
                     <span className="ap-theme-name">{theme.name}</span>
+                    <span className="ap-theme-tagline">{theme.tagline}</span>
                   </button>
                 );
               })}
