@@ -23,9 +23,10 @@ import type { Vault } from "../vault/service";
  * （只允许发往 api.github.com；保险箱页面不能改、`api_request` 不能用），连接信息（登录名、头像、令牌类型）
  * 在 chisabot_github_connections。令牌只在这里解密，请求地址固定是 GitHub API，回来的内容里再把令牌抹掉。
  *
- * 机器人工具（只在连上之后给）：
- * - 读：github_list_repos / github_list_issues / github_list_pulls / github_get_issue / github_read_file，直接执行。
- * - 写：github_create_issue / github_comment / github_create_pr。先在 chisabot_github_actions 记一条待确认，
+ * 机器人工具：
+ * - 连接引导：github_connect 始终提供（未连接时仅暴露它），瞬时推出对话内连接/更换令牌卡片。
+ * - 读（连上之后给）：github_list_repos / github_list_issues / github_list_pulls / github_get_issue / github_read_file，直接执行。
+ * - 写（连上之后给）：github_create_issue / github_comment / github_create_pr。先在 chisabot_github_actions 记一条待确认，
  *   聊天里出确认卡片（lib/chat/github-tool.tsx），用户点「允许」时服务器才真正发请求；工具在服务器上等结果。
  *   网页不在场的回合（IM、长期任务、后台任务）不能确认，直接拒绝。
  *
@@ -95,11 +96,44 @@ export function canConfirm(initiator: AuditInitiator | undefined) {
   );
 }
 
+/** `github_connect` 工具的瞬时返回文本：标明连接状态并给出对话内卡片或非网页端独立链接卡。 */
+export function githubConnectResult(
+  connected: GithubConnectionView | null,
+  initiator?: AuditInitiator,
+): string {
+  if (connected && connected.status === "ok") {
+    return `⟦github:connected:@${connected.login}⟧ 已连接 GitHub 账号 @${connected.login}，可直接调用 github_* 工具读取仓库、Issue、PR、文件或发起写操作。`;
+  }
+  const fallbackLink = canConfirm(initiator)
+    ? ""
+    : "\n\n[连接 GitHub](/settings/connected-accounts/github)";
+  if (connected && connected.status === "invalid") {
+    return (
+      `⟦github:reconnect⟧ 当前 GitHub 账号 @${connected.login} 的访问令牌已失效，界面已推出「更换 GitHub 令牌」交互卡片，请用户就地重新填写有效令牌（令牌只发往服务器加密保存，机器人看不到）；用户点开卡片连接成功后会自动通知你继续处理。不要在聊天里索要令牌，也不要让用户改走本地凭据绕路。` +
+      fallbackLink
+    );
+  }
+  return (
+    "⟦github:connect⟧ 界面已推出「连接 GitHub」交互卡片，请用户直接点开卡片就地填入 GitHub 访问令牌（令牌只发往服务器加密保存，机器人看不到）；用户点开卡片连接成功后会自动通知你继续处理。不要在聊天里索要令牌，也不要让用户改走本地凭据绕路；连上后即可直接操作仓库、Issue、PR 和代码文件。" +
+    fallbackLink
+  );
+}
+
 /** 每轮给机器人的一句 GitHub 用法。 */
 export function githubGuidance(connected: GithubConnectionView | null) {
   if (!connected)
-    return "【GitHub】用户还没连接 GitHub。需要读写 GitHub 时，引导用户在对话里就地连接——回复末尾附独立一行的链接卡：\n[连接 GitHub](/settings/connected-accounts/github)\n用户点开就在原地填令牌（令牌只发往服务器，不进对话）；不要在聊天里要令牌，也不要用保险箱卡片要。";
-  return `【GitHub】已连接 GitHub 账号 @${connected.login}${connected.status === "invalid" ? "（令牌已失效，请用户更换——回复末尾附独立一行的链接卡：[连接 GitHub](/settings/connected-accounts/github)）" : ""}。用 github_* 工具读仓库、Issue、PR 和文件；建 Issue、评论、建 PR 会先弹确认卡片，用户允许后才发出——工具返回「拒绝」就停下，不要换别的方式绕过。`;
+    return [
+      "【GitHub】用户还没连接 GitHub。只要用户提到 GitHub、git 地址/远程地址、代码仓库、clone/push 凭据，或需要读写仓库/Issue/PR/代码文件（包括追问「你获取不到 git 地址吗 / 怎么连仓库 / 怎么推代码」），优先第一步调用 `github_connect` 直接推出对话内的 GitHub 连接流程。",
+      "不要先让用户手工用本地凭据绕路，不要在聊天里要令牌，也不要用保险箱卡片要；不要把 `/settings/connected-accounts/github` 塞进括号或行内反引号里。需要文字附入口时，必须在回复末尾附独立一行的链接卡：",
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    ].join("\n");
+  if (connected.status === "invalid")
+    return [
+      `【GitHub】已连接 GitHub 账号 @${connected.login}，但访问令牌已失效。只要涉及 GitHub、git 地址/远程地址、代码仓库、clone/push 凭据或读写仓库/Issue/PR/代码文件，优先第一步调用 \`github_connect\` 推出对话内的更换令牌卡片。`,
+      "不要先让用户手工用本地凭据绕路，不要在聊天里要令牌，也不要把 `/settings/connected-accounts/github` 塞进括号或行内反引号里；需要文字附入口时，必须在回复末尾附独立一行的链接卡：",
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    ].join("\n");
+  return `【GitHub】已连接 GitHub 账号 @${connected.login}。用 github_* 工具读仓库、Issue、PR 和文件；建 Issue、评论、建 PR 会先弹确认卡片，用户允许后才发出——工具返回「拒绝」就停下，不要换别的方式绕过。`;
 }
 
 const repoSchema = z.string().trim().regex(GITHUB_REPO, "仓库写成 owner/name");
@@ -241,7 +275,7 @@ export function createGithub(
       200,
     );
     if (status === 401)
-      return "GitHub 说令牌无效或已过期。请用户更换令牌——回复末尾附独立一行的链接卡：[连接 GitHub](/settings/connected-accounts/github)。";
+      return "GitHub 说令牌无效或已过期。请优先调用 github_connect 推出更换令牌卡片；如需文字入口，回复末尾附独立一行的链接卡：\n[连接 GitHub](/settings/connected-accounts/github)";
     if (status === 404)
       return `找不到${what}：可能不存在，或者令牌没有这个仓库的权限（fine-grained 令牌要在「仓库访问」里选上它）。`;
     if (status === 403 || status === 429)
@@ -323,7 +357,7 @@ export function createGithub(
       : null;
     if (!row || !secret)
       throw new GithubError(
-        "用户还没连接 GitHub。请用户在对话里就地连接——回复末尾附独立一行的链接卡：[连接 GitHub](/settings/connected-accounts/github)。",
+        "用户还没连接 GitHub。请优先调用 github_connect 在对话里推出连接卡片；如需文字入口，回复末尾附独立一行的链接卡：\n[连接 GitHub](/settings/connected-accounts/github)",
       );
     recent.set(owner, secret.value);
     return secret.value;
@@ -544,7 +578,6 @@ export function createGithub(
     agentId: string,
     initiator?: AuditInitiator,
   ): Promise<GrantedTool[]> {
-    if (!(await connectionRow(owner))) return [];
     const tool = <T extends z.ZodType>(
       name: string,
       description: string,
@@ -579,6 +612,19 @@ export function createGithub(
         }
       },
     });
+    const connectTool = tool(
+      "github_connect",
+      "推出对话内的「连接 GitHub」交互卡片，让用户就地填入或更换 GitHub 访问令牌（令牌只发往服务器加密保存，机器人看不到）。当用户提到 GitHub、git 地址/远程地址、代码仓库、clone/push 凭据、Issue/PR 或需要读写仓库，但尚未连接 GitHub 或令牌已失效时，优先第一步调用此工具。",
+      z
+        .object({
+          reason: z.string().trim().max(200).optional(),
+          repo: z.string().trim().max(200).optional(),
+        })
+        .strict(),
+      async () => githubConnectResult(await status(owner), initiator),
+      "read",
+    );
+    if (!(await connectionRow(owner))) return [connectTool];
     const untrusted = (text: string, source: string) =>
       markUntrusted(text, source);
     const page = z.number().int().min(1).max(50).optional();
@@ -592,6 +638,7 @@ export function createGithub(
       return propose(owner, agentId, kind, repo, payload);
     };
     return [
+      connectTool,
       tool(
         "github_list_repos",
         "列出用户能访问的 GitHub 仓库（最近更新的在前）。给 owner 就列那个用户 / 组织的仓库。",

@@ -114,6 +114,8 @@ describe("connect_service", () => {
     expect(tool.description).toContain("接入");
     // QA1102-13：不认识的服务名也原样传进来查，而不是反问用户。
     expect(tool.description).toContain("不认识");
+    expect(tool.description).toContain("github_connect");
+    expect(tool.description).toContain("独立成行");
   });
 
   test("reports a connector the Bot already holds and can use", async () => {
@@ -284,6 +286,55 @@ describe("connect_service", () => {
     expect(answer).toContain("chisa@gmail.com");
     expect(answer).toContain("email_connect");
     expect(answer).toContain("[打开账号连接](/settings/connected-accounts)");
+    expect(calls).toEqual([]);
+  });
+
+  test("resolves github / git / git仓库 aliases to built-in GitHub connector without web search", async () => {
+    const calls: string[] = [];
+    const built = connectServiceTools({
+      store: storeWith([]),
+      ownerUserId: "owner",
+      botId,
+      search: async (q) => {
+        calls.push(q);
+        return [];
+      },
+      builtinSources: async () => ({
+        github: { connected: false, login: null },
+      }),
+    })[0];
+    if (!built) throw new Error("connect_service was not built");
+
+    for (const query of [
+      "git",
+      "git仓库",
+      "git 仓库",
+      "github",
+      "github仓库",
+      "代码仓库",
+      "gh",
+    ]) {
+      const answer = (await built.execute({ service: query })) as string;
+      expect(answer).toContain("内置 GitHub 连接器");
+      expect(answer).toContain("github_connect");
+      expect(answer).toContain(
+        "[连接 GitHub](/settings/connected-accounts/github)",
+      );
+      expect(answer).not.toContain("没有这个服务的连接器");
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test("does not misclassify gitee or gitlab as the built-in GitHub connector", async () => {
+    const { tool, calls } = connectTool({ servers: [] });
+
+    const giteeAnswer = await run(tool, "gitee");
+    expect(giteeAnswer).not.toContain("内置 GitHub 连接器");
+    expect(giteeAnswer).toContain("国内应用目录收录了它的接法");
+
+    const gitlabAnswer = await run(tool, "极狐 GitLab");
+    expect(gitlabAnswer).not.toContain("内置 GitHub 连接器");
+    expect(gitlabAnswer).toContain("国内应用目录收录了它的接法");
     expect(calls).toEqual([]);
   });
 

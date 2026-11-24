@@ -12,6 +12,7 @@ import {
   BrokeredAccountRow,
   useBrokeredAccount,
 } from "@/components/plugins/brokered-account-row";
+import { GithubConnectionSection } from "@/components/settings/github-connection";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -49,10 +50,28 @@ export const Route = createFileRoute(
   "/_authed/settings/connected-accounts/$key",
 )({ component: RouteComponent });
 
+const BACK_TO_CONNECTED_ACCOUNTS = {
+  label: "已连接账号",
+  linkProps: { to: "/settings/connected-accounts" as const },
+};
+
 function RouteComponent() {
   const { key } = useParams({
     from: "/_authed/settings/connected-accounts/$key",
   });
+
+  if (key === "github") {
+    return (
+      <PageShell backButton={BACK_TO_CONNECTED_ACCOUNTS} title="GitHub">
+        <GithubConnectionSection />
+      </PageShell>
+    );
+  }
+
+  return <ConnectorAccountPage connectorKey={key} />;
+}
+
+function ConnectorAccountPage({ connectorKey: key }: { connectorKey: string }) {
   const queryClient = useQueryClient();
   const plugins = useQuery(pluginsPageQueryOptions());
   const connections = useQuery(connectionsQueryOptions());
@@ -147,10 +166,7 @@ function RouteComponent() {
     return <PageShell title={"账号"}>{null}</PageShell>;
   }
 
-  const back = {
-    label: "已连接账号",
-    linkProps: { to: "/settings/connected-accounts" as const },
-  };
+  const back = BACK_TO_CONNECTED_ACCOUNTS;
 
   /*
    * AND A CONNECTIONS READ THAT FAILED IS SAID RATHER THAN DEFAULTED, WHICH IS WHAT THIS PAGE DID
@@ -269,11 +285,9 @@ function RouteComponent() {
         title={
           entry
             ? pluginTitle(entry.key, entry.title)
-            : key === "github"
-              ? "GitHub"
-              : isPersonalSourceKey
-                ? "个人助理数据源与连接"
-                : "找不到这项连接"
+            : isPersonalSourceKey
+              ? "个人助理数据源与连接"
+              : "找不到这项连接"
         }
       >
         <PageEmpty>
@@ -281,11 +295,9 @@ function RouteComponent() {
             <span>
               {entry
                 ? "机器人用部署统一保存的凭据使用它，所有人都一样。"
-                : key === "github"
-                  ? "GitHub 在「账号连接」页最上面连接（用一个 GitHub 访问令牌）。"
-                  : isPersonalSourceKey
-                    ? "个人邮箱（IMAP / SMTP）、个人日历（ICS）与随手推 Webhook 均已在「账号连接」主页直接内置，无需单独跳转子页面。"
-                    : "这个链接里的服务不存在，可能已经移除了。回到「账号连接」看看能连接哪些服务。"}
+                : isPersonalSourceKey
+                  ? "个人邮箱（IMAP / SMTP）、个人日历（ICS）与随手推 Webhook 均已在「账号连接」主页直接内置，无需单独跳转子页面。"
+                  : "这个链接里的服务不存在，可能已经移除了。回到「账号连接」看看能连接哪些服务。"}
             </span>
             <Button
               render={<Link to="/settings/connected-accounts" />}

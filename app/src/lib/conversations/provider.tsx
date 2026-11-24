@@ -13,6 +13,7 @@ import { GithubTool } from "./github-tool";
 import { HandoffTool } from "./handoff-tool";
 import { LocalAgentTool } from "./local-agent-tool";
 import { PagesTool } from "./pages-tool";
+import { PersonalSourcesTool } from "./personal-sources-tool";
 import { RenderUiTool } from "./render-ui-tool";
 import { SandboxedTools } from "./sandboxed-tools";
 import { ScheduleTool } from "./schedule-tool";
@@ -47,8 +48,10 @@ export const ConversationToolsProvider = memo(
             <SignInTool />
             {/* 密钥保险箱的安全输入卡片（DESIGN.md §52）：`vault_request_secret` 在服务器上等，这里只画。 */}
             <VaultTool />
-            {/* GitHub 写操作的确认卡片（DESIGN.md §53）：github_create_issue / comment / create_pr 在服务器上等，这里只画。 */}
+            {/* GitHub 连接与写操作确认卡片（DESIGN.md §53）：github_connect / github_create_issue / comment / create_pr。 */}
             <GithubTool />
+            {/* 个人数据源（日历 / 邮箱 / 随身通知）安全连接卡片：calendar_connect / email_connect / notify_webhook_connect。 */}
+            <PersonalSourcesTool />
             {/* 页面卡片（DESIGN.md §54）：page_create / page_update / page_publish 在服务器上跑，这里只画。 */}
             <PagesTool />
             {/* 定时任务的确认卡（DESIGN.md §55）：`schedule_create` 在服务器上执行，这里只画。 */}

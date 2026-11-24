@@ -1,14 +1,38 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { githubTokenKind } from "../../shared/github";
-import { createDatabase } from "../src/db/client";
+import { ACTION_GUIDANCE } from "../../shared/bot-prompt";
+import {
+  type GithubConnectionView,
+  githubTokenKind,
+} from "../../shared/github";
+import { describeWorkerStep } from "../../shared/work-step";
+import { createDatabase, type Database } from "../src/db/client";
 import {
   canConfirm,
   createGithub,
+  githubConnectResult,
   githubGuidance,
 } from "../src/github/service";
-import { createVault } from "../src/vault/service";
+import { createVault, type Vault } from "../src/vault/service";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
+
+function makeConnection(
+  overrides: Partial<GithubConnectionView> = {},
+): GithubConnectionView {
+  return {
+    login: "octo",
+    name: "Octo Cat",
+    avatarUrl: "https://a/x.png",
+    htmlUrl: "https://github.com/octo",
+    tokenKind: "fine-grained",
+    scopes: [],
+    hint: "••••0000",
+    status: "ok",
+    connectedAt: "2026-10-01T00:00:00.000Z",
+    checkedAt: "2026-10-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 /** GitHub 账号连接（DESIGN.md §53）：令牌校验 + 存保险箱、读工具、写操作要确认、令牌不出服务器。 */
 describe("helpers", () => {
@@ -26,10 +50,204 @@ describe("helpers", () => {
     expect(canConfirm({ kind: "routine", id: "im:x" })).toBe(false);
     expect(canConfirm({ kind: "handoff", id: "w" })).toBe(false);
   });
-  test("guidance never contains a token", () => {
-    expect(githubGuidance(null)).toContain(
+  test("guidance prioritizes github_connect and forbids inline path hints when disconnected or invalid", () => {
+    const disconnected = githubGuidance(null);
+    expect(disconnected).toContain("github_connect");
+    expect(disconnected).toContain("git 地址/远程地址");
+    expect(disconnected).toContain("clone/push");
+    expect(disconnected).toContain(
+      "不要把 `/settings/connected-accounts/github` 塞进括号或行内反引号里",
+    );
+    expect(disconnected.split("\n")).toContain(
       "[连接 GitHub](/settings/connected-accounts/github)",
     );
+
+    const invalid = githubGuidance(makeConnection({ status: "invalid" }));
+    expect(invalid).toContain("@octo");
+    expect(invalid).toContain("github_connect");
+    expect(invalid).toContain("更换令牌");
+    expect(invalid).toContain(
+      "不要把 `/settings/connected-accounts/github` 塞进括号或行内反引号里",
+    );
+    expect(invalid.split("\n")).toContain(
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    );
+
+    const ok = githubGuidance(makeConnection({ status: "ok" }));
+    expect(ok).toContain("@octo");
+    expect(ok).toContain("github_*");
+  });
+  test("githubConnectResult covers disconnected, connected, invalid and non-web fallback", () => {
+    const webDisconnected = githubConnectResult(null, {
+      kind: "person",
+      surface: "web",
+    });
+    expect(webDisconnected).toStartWith("⟦github:connect⟧");
+    expect(webDisconnected).toContain("连接 GitHub");
+    expect(webDisconnected).not.toContain(
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    );
+
+    const imDisconnected = githubConnectResult(null, {
+      kind: "routine",
+      id: "im:room-1",
+    });
+    expect(imDisconnected).toStartWith("⟦github:connect⟧");
+    expect(imDisconnected.split("\n")).toContain(
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    );
+
+    const webInvalid = githubConnectResult(
+      makeConnection({ status: "invalid" }),
+      { kind: "person", surface: "web" },
+    );
+    expect(webInvalid).toStartWith("⟦github:reconnect⟧");
+    expect(webInvalid).toContain("@octo");
+    expect(webInvalid).not.toContain(
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    );
+
+    const appInvalid = githubConnectResult(
+      makeConnection({ status: "invalid" }),
+      { kind: "person", surface: "app" },
+    );
+    expect(appInvalid).toStartWith("⟦github:reconnect⟧");
+    expect(appInvalid.split("\n")).toContain(
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    );
+
+    const ok = githubConnectResult(makeConnection({ status: "ok" }));
+    expect(ok).toBe(
+      "⟦github:connected:@octo⟧ 已连接 GitHub 账号 @octo，可直接调用 github_* 工具读取仓库、Issue、PR、文件或发起写操作。",
+    );
+  });
+  test("tools exposes only github_connect when disconnected and includes it when connected or invalid", async () => {
+    let row: {
+      owner_user_id: string;
+      login: string;
+      name: string | null;
+      avatar_url: string | null;
+      html_url: string;
+      token_kind: string;
+      scopes: string;
+      status: "ok" | "invalid";
+      connected_at: string;
+      checked_at: string;
+    } | null = null;
+    let hasSecret = false;
+
+    const fakeDb = {
+      $client: {
+        unsafe: async () => (row ? [row] : []),
+      },
+    } as unknown as Database;
+    const fakeVault = {
+      list: async () =>
+        hasSecret
+          ? [
+              {
+                id: "sec_1",
+                name: "github",
+                label: "GitHub 访问令牌",
+                domains: ["api.github.com"],
+                hint: "••••0000",
+                managedBy: "github",
+              },
+            ]
+          : [],
+    } as unknown as Vault;
+
+    const gh = createGithub(fakeDb, { vault: fakeVault });
+
+    const disconnectedTools = await gh.tools("u1", "bot", {
+      kind: "person",
+      surface: "web",
+    });
+    expect(disconnectedTools.map((t) => t.name)).toEqual(["github_connect"]);
+    const connectTool = disconnectedTools[0];
+    expect(connectTool?.ref).toBe("github/github_connect");
+    expect(
+      await connectTool?.execute({
+        reason: "读取仓库代码",
+        repo: "octo/demo",
+      }),
+    ).toStartWith("⟦github:connect⟧");
+    expect(await connectTool?.execute({ unknown: true })).toContain("Refused.");
+    expect(await connectTool?.execute({ reason: "a".repeat(201) })).toContain(
+      "Refused.",
+    );
+
+    const imTools = await gh.tools("u1", "bot", {
+      kind: "routine",
+      id: "im:1",
+    });
+    expect(imTools.map((t) => t.name)).toEqual(["github_connect"]);
+    expect((await imTools[0]?.execute({}))?.split("\n")).toContain(
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    );
+
+    row = {
+      owner_user_id: "u1",
+      login: "octo",
+      name: "Octo Cat",
+      avatar_url: null,
+      html_url: "https://github.com/octo",
+      token_kind: "fine-grained",
+      scopes: "",
+      status: "ok",
+      connected_at: "2026-10-01T00:00:00.000Z",
+      checked_at: "2026-10-01T00:00:00.000Z",
+    };
+    hasSecret = true;
+
+    const connectedTools = await gh.tools("u1", "bot", {
+      kind: "person",
+      surface: "web",
+    });
+    expect(connectedTools.map((t) => t.name)).toContain("github_connect");
+    expect(connectedTools.map((t) => t.name)).toContain("github_list_repos");
+    expect(connectedTools.map((t) => t.name)).toContain("github_create_pr");
+    const connectedConnectTool = connectedTools.find(
+      (t) => t.name === "github_connect",
+    );
+    expect(await connectedConnectTool?.execute({})).toBe(
+      "⟦github:connected:@octo⟧ 已连接 GitHub 账号 @octo，可直接调用 github_* 工具读取仓库、Issue、PR、文件或发起写操作。",
+    );
+
+    row = { ...row, status: "invalid" };
+    const invalidTools = await gh.tools("u1", "bot", {
+      kind: "person",
+      surface: "web",
+    });
+    const invalidConnectTool = invalidTools.find(
+      (t) => t.name === "github_connect",
+    );
+    expect(await invalidConnectTool?.execute({})).toStartWith(
+      "⟦github:reconnect⟧",
+    );
+  });
+  test("describeWorkerStep formats github_connect and personal-sources connect steps", () => {
+    expect(describeWorkerStep("github_connect", {})).toBe(
+      "正在推出 GitHub 连接流程",
+    );
+    expect(describeWorkerStep("connect_service", {})).toBe(
+      "正在检查可用连接器",
+    );
+    expect(describeWorkerStep("calendar_connect", {})).toBe(
+      "正在推出日历连接流程",
+    );
+    expect(describeWorkerStep("email_connect", {})).toBe(
+      "正在推出邮箱连接流程",
+    );
+    expect(describeWorkerStep("notify_webhook_connect", {})).toBe(
+      "正在推出通知推送绑定流程",
+    );
+  });
+  test("ACTION_GUIDANCE guides in-chat connect cards instead of sending secrets in chat", () => {
+    expect(ACTION_GUIDANCE).toContain("calendar_connect");
+    expect(ACTION_GUIDANCE).toContain("email_connect");
+    expect(ACTION_GUIDANCE).toContain("notify_webhook_connect");
+    expect(ACTION_GUIDANCE).not.toContain("直接发来了日历 ICS 链接或邮箱+应用专用密码");
   });
 });
 
@@ -153,7 +371,11 @@ describe.skipIf(!url)("github", () => {
     ).rejects.toThrow("无效");
     expect(await github.status(owner)).toBeNull();
     expect(await vault.list(owner)).toHaveLength(0);
-    expect(await github.tools(owner, "bot")).toHaveLength(0);
+    const tools = await github.tools(owner, "bot");
+    expect(tools.map((t) => t.name)).toEqual(["github_connect"]);
+    expect(await tools[0]?.execute({ reason: "查看仓库" })).toStartWith(
+      "⟦github:connect⟧",
+    );
   });
 
   test("a valid token connects, lands in the vault encrypted and reserved", async () => {
@@ -196,9 +418,13 @@ describe.skipIf(!url)("github", () => {
 
   test("read tools work and never echo the token", async () => {
     const tools = await github.tools(owner, "bot");
+    expect(tools.map((t) => t.name)).toContain("github_connect");
     expect(tools.map((t) => t.name)).toContain("github_create_pr");
     const run = (name: string, args: unknown) =>
       tools.find((t) => t.name === name)!.execute(args);
+    expect(await run("github_connect", {})).toContain(
+      "⟦github:connected:@octo⟧",
+    );
     expect(await run("github_list_repos", {})).toContain("octo/demo（私有）");
     const issues = await run("github_list_issues", { repo: "octo/demo" });
     expect(issues).toContain("#1 [open] Bug A");
@@ -268,10 +494,12 @@ describe.skipIf(!url)("github", () => {
     ).toContain("不在网页聊天");
   });
 
-  test("disconnect removes the token and the tools", async () => {
+  test("disconnect removes the token and leaves only github_connect", async () => {
     await github.disconnect(owner);
     expect(await github.status(owner)).toBeNull();
     expect(await vault.list(owner)).toHaveLength(0);
-    expect(await github.tools(owner, "bot")).toHaveLength(0);
+    const tools = await github.tools(owner, "bot");
+    expect(tools.map((t) => t.name)).toEqual(["github_connect"]);
+    expect(await tools[0]?.execute({})).toStartWith("⟦github:connect⟧");
   });
 });

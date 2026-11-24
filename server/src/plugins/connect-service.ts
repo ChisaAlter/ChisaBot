@@ -124,7 +124,7 @@ const ALIASES: Record<string, readonly string[]> = {
     "ics",
     "webcal",
   ],
-  github: ["github", "gh"],
+  github: ["github", "gh", "git", "git仓库", "github仓库", "代码仓库"],
   webhook: [
     "webhook",
     "通知",
@@ -293,16 +293,52 @@ function isOverviewRequest(service: string): boolean {
   return OVERVIEW_KEYWORDS.has(normalized(service));
 }
 
+/**
+ * 短纯 ASCII 别名（如 `git`、`gh`）要求在原始小写文本中前后不紧贴其它英文字母，
+ * 避免 `gitee` / `gitlab` / `atomgit` / `variflight` 被误判为 GitHub。
+ */
+const BOUNDARY_ALIASES = new Set(["git", "gh"]);
+
+function hasIsolatedAsciiToken(lowerText: string, token: string): boolean {
+  let idx = lowerText.indexOf(token);
+  while (idx !== -1) {
+    const before = idx > 0 ? lowerText.charCodeAt(idx - 1) : 0;
+    const after =
+      idx + token.length < lowerText.length
+        ? lowerText.charCodeAt(idx + token.length)
+        : 0;
+    const beforeIsLetter = before >= 97 && before <= 122;
+    const afterIsLetter = after >= 97 && after <= 122;
+    if (!beforeIsLetter && !afterIsLetter) return true;
+    idx = lowerText.indexOf(token, idx + 1);
+  }
+  return false;
+}
+
+function aliasMatches(
+  rawLower: string,
+  normText: string,
+  token: string,
+): boolean {
+  if (!token) return false;
+  if (BOUNDARY_ALIASES.has(token)) {
+    return hasIsolatedAsciiToken(rawLower, token);
+  }
+  return normText.includes(token);
+}
+
 /** Every name this deployment might know a service by, normalized. */
 function namesFor(service: string): string[] {
+  const rawLower = service.toLowerCase();
   const base = normalized(service);
   const names = new Set([base]);
   for (const [key, aliases] of Object.entries(ALIASES)) {
+    const normKey = normalized(key);
     if (
-      base.includes(normalized(key)) ||
-      aliases.some((alias) => base.includes(normalized(alias)))
+      aliasMatches(rawLower, base, normKey) ||
+      aliases.some((alias) => aliasMatches(rawLower, base, normalized(alias)))
     ) {
-      names.add(normalized(key));
+      names.add(normKey);
       for (const alias of aliases) names.add(normalized(alias));
     }
   }
@@ -310,8 +346,11 @@ function namesFor(service: string): string[] {
 }
 
 function mentions(haystack: string, names: readonly string[]): boolean {
+  const rawLower = haystack.toLowerCase();
   const text = normalized(haystack);
-  return names.some((name) => name.length >= 2 && text.includes(name));
+  return names.some(
+    (name) => name.length >= 2 && aliasMatches(rawLower, text, name),
+  );
 }
 
 /** The first sentence of a vendor's own summary, so a long blurb does not become the answer. */
@@ -544,8 +583,8 @@ function builtinMatchSection(
         "✅ 【内置 GitHub 连接器】已经内置就绪：",
         `  - 当前账号状态：${statusText}`,
         "  - 支持能力：查看仓库、Issue、Pull Request、读取代码文件、创建 Issue / PR（连接后自动挂载 `github_*` 工具）",
-        "  - 怎么连接：用户在对话里点开连接卡，就地填入 Personal Access Token 即可（令牌只发往服务器，不进对话）。",
-        "  - 回复末尾请附上独立一行的链接卡：",
+        "  - 怎么连接：优先直接调用 `github_connect` 在对话里推出「连接 GitHub」交互卡片，让用户就地填入 Personal Access Token（令牌只发往服务器，不进对话；不要在聊天里要令牌或让用户绕回本地凭据）。",
+        "  - 如需在回复文字中附入口，请将下方链接卡单独放一行（不要塞进括号或行内反引号里）：",
         "    [连接 GitHub](/settings/connected-accounts/github)",
       ].join("\n"),
     );
@@ -568,7 +607,7 @@ function overviewReport(
     : "未连接（调用 calendar_connect 打开「设置 → 账号连接」，在安全表单输入私密地址）";
   const ghStatus = builtin?.github?.connected
     ? `已连接（@${builtin.github.login ?? "github"}）`
-    : "未连接（对话里点 [连接 GitHub](/settings/connected-accounts/github) 链接卡就地填令牌；也可在「设置 → 账号连接」填）";
+    : "未连接（优先调用 github_connect 在对话里推出连接卡片，或在回复末尾附独立成行的 [连接 GitHub](/settings/connected-accounts/github) 链接卡就地填令牌）";
 
   const addedIds = new Set(servers.map((s) => s.id));
   const unaddedCatalogue = CATALOGUE.filter(
@@ -582,7 +621,7 @@ function overviewReport(
       `- 电子邮箱（Gmail / QQ邮箱 / 163 / Outlook / iCloud IMAP 收信 + SMTP 确认发信）：${emailStatus}｜工具：email_list_recent、email_connect、email_send、morning_brief_generate`,
       `- 个人日历（Google Calendar / iCloud / Outlook / 飞书 iCal/ICS）：${calStatus}｜工具：calendar_list_events、calendar_connect、morning_brief_generate`,
       `- 随身通知推送 & 入站 Webhook（飞书 / 钉钉 / 企业微信 / Bark / Server酱）：已内置｜工具：notify_webhook_connect、notify_push、webhook_trigger_info、personal_check_updates`,
-      `- GitHub：${ghStatus}｜工具：github_repos、github_issues、github_pulls 等`,
+      `- GitHub：${ghStatus}｜工具：github_connect、github_list_repos、github_list_issues、github_list_pulls 等`,
     ].join("\n"),
   ];
 
@@ -653,7 +692,10 @@ function report(
    * would restate the same vendor's docs one layer down.
    */
   const directory =
-    matched.length === 0 && !catalogue && dirEntries.length > 0
+    matched.length === 0 &&
+    !catalogue &&
+    !builtinSection &&
+    dirEntries.length > 0
       ? directorySection(dirEntries)
       : null;
   const sections: string[] = [`【${service}】`];
@@ -894,7 +936,7 @@ export function connectServiceTools(
       name: "connect_service",
       ref: "web/connect_service",
       description:
-        "查看或主动开启外部服务连接器（填「全部」可列出当前所有内置连接器、已启用 MCP 插件、官方目录与账号状态；或填具体服务名如 Gmail、日历、GitHub、Notion、Google Drive、腾讯 ima、高德、滴滴、12306、小红书、飞书、语雀 等）。当用户问「你现在有什么连接器」「能连什么」「有 X 连接器吗」或让你连接/接入/开启某个服务时，第一步就调用它。用户指了一个你不认识的服务名也把名字原样传进来：国内应用它会查内置目录直接给出接法（一键添加 / 自定义端点 / 配对电脑 stdio / 官方 API 文档），查不到的再联网搜官方接法，比反问用户「X 是什么」有用。",
+        "查看或主动开启外部服务连接器（填「全部」可列出当前所有内置连接器、已启用 MCP 插件、官方目录与账号状态；或填具体服务名如 Gmail、日历、GitHub、Notion、Google Drive、腾讯 ima、高德、滴滴、12306、小红书、飞书、语雀 等）。当用户问「你现在有什么连接器」「能连什么」「有 X 连接器吗」或让你连接/接入/开启某个服务时，第一步就调用它；涉及 GitHub / Git 仓库连接时，也可直接调用 github_connect 推出对话内连接卡片，如需在回复里附连接入口务必使用独立成行的链接卡。用户指了一个你不认识的服务名也把名字原样传进来：国内应用它会查内置目录直接给出接法（一键添加 / 自定义端点 / 配对电脑 stdio / 官方 API 文档），查不到的再联网搜官方接法，比反问用户「X 是什么」有用。",
       parameters: z.object({
         service: z
           .string()
