@@ -14,7 +14,9 @@ import {
   checkPublicUrl,
   embeddedIpv4,
   isBlockedAddress,
+  isBlockedAddressAllowPrivate,
   isBlockedHostname,
+  isBlockedHostnameAllowPrivate,
 } from "../../shared/net/ssrf";
 import { OPS_CODES } from "../../shared/ops-codes";
 import {
@@ -63,11 +65,39 @@ describe("SSRF red-line: address / hostname floor", () => {
     for (const host of [
       "localhost",
       "metadata.google.internal",
+      "metadata.goog",
       "db",
       "nas.lan",
     ]) {
       expect(isBlockedHostname(host)).toBe(true);
     }
+    expect(isBlockedHostnameAllowPrivate("metadata.google.internal")).toBe(true);
+    expect(isBlockedHostnameAllowPrivate("metadata.goog")).toBe(true);
+  });
+
+  test("IPv4 and IPv6 addresses with %zone suffixes are stripped before subnet checks", () => {
+    for (const ip of [
+      "127.0.0.1%eth0",
+      "169.254.169.254%eth0",
+      "10.0.0.5%eth0",
+      "100.64.0.1%eth0",
+      "0.0.0.1%eth0",
+      "fe80::1%eth0",
+    ]) {
+      expect(isBlockedAddress(ip)).toBe(true);
+      expect(isBlockedHostname(ip)).toBe(true);
+    }
+    for (const ip of [
+      "169.254.169.254%eth0",
+      "100.64.0.1%eth0",
+      "0.0.0.1%eth0",
+      "fe80::1%eth0",
+    ]) {
+      expect(isBlockedAddressAllowPrivate(ip)).toBe(true);
+      expect(isBlockedHostnameAllowPrivate(ip)).toBe(true);
+    }
+    expect(isBlockedAddressAllowPrivate("127.0.0.1%eth0")).toBe(false);
+    expect(isBlockedAddress("8.8.8.8%eth0")).toBe(false);
   });
 });
 

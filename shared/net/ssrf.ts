@@ -151,7 +151,7 @@ export function isBlockedAddress(input: string): boolean {
   const address = input.trim().replace(/^\[|\]$/g, "");
   const clean = address.split("%")[0] ?? "";
   const version = isIP(clean);
-  if (version === 4) return v4List.check(address, "ipv4");
+  if (version === 4) return v4List.check(clean, "ipv4");
   if (version !== 6) return true;
   const v4 = embeddedIpv4(clean);
   if (v4 !== null && v4List.check(v4, "ipv4")) return true;
@@ -164,10 +164,10 @@ export function isBlockedAddress(input: string): boolean {
  */
 export function isBlockedAddressAllowPrivate(input: string): boolean {
   const address = input.trim().replace(/^\[|\]$/g, "");
-  const version = isIP(address.split("%")[0] ?? "");
-  if (version === 4) return v4PrivateList.check(address, "ipv4");
-  if (version !== 6) return true;
   const clean = address.split("%")[0] ?? "";
+  const version = isIP(clean);
+  if (version === 4) return v4PrivateList.check(clean, "ipv4");
+  if (version !== 6) return true;
   const v4 = embeddedIpv4(clean);
   if (v4 !== null && v4PrivateList.check(v4, "ipv4")) return true;
   return v6PrivateList.check(clean, "ipv6");
@@ -177,14 +177,16 @@ export function isBlockedAddressAllowPrivate(input: string): boolean {
 export function isBlockedHostname(input: string): boolean {
   const host = input.trim().toLowerCase().replace(/\.+$/, "");
   if (!host) return true;
-  if (isIP(host.replace(/^\[|\]$/g, ""))) return isBlockedAddress(host);
+  const bare = host.replace(/^\[|\]$/g, "").split("%")[0] ?? "";
+  if (isIP(bare)) return isBlockedAddress(bare);
   if (!host.includes(".")) return true; // 单段名字（localhost、intranet、容器名）只会是内网
   return (
     host === "localhost" ||
     /\.(localhost|local|internal|intranet|lan|home|corp|localdomain|home\.arpa)$/.test(
       host,
     ) ||
-    host === "metadata.google.internal"
+    host === "metadata.google.internal" ||
+    host === "metadata.goog"
   );
 }
 
@@ -195,9 +197,9 @@ export function isBlockedHostname(input: string): boolean {
 export function isBlockedHostnameAllowPrivate(input: string): boolean {
   const host = input.trim().toLowerCase().replace(/\.+$/, "");
   if (!host) return true;
-  if (isIP(host.replace(/^\[|\]$/g, "")))
-    return isBlockedAddressAllowPrivate(host);
-  return host === "metadata.google.internal";
+  const bare = host.replace(/^\[|\]$/g, "").split("%")[0] ?? "";
+  if (isIP(bare)) return isBlockedAddressAllowPrivate(bare);
+  return host === "metadata.google.internal" || host === "metadata.goog";
 }
 
 export type UrlVerdict = { ok: true; url: URL } | { ok: false; reason: string };
