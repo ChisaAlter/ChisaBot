@@ -423,6 +423,8 @@ export function createApp(
      * 没给 = 以前的单管理员。
      */
     singleUserGuard?: MiddlewareHandler<{ Variables: AppVariables }>;
+    /** 从请求头解析当前会话用户 ID（用于 OAuth 回调防 Login CSRF，兼容 Better Auth 与网关签名身份）。 */
+    resolveSessionUserId?: (headers: Headers) => Promise<string | null>;
     primaryAgentService?: PrimaryAgentService;
     quotaService?: QuotaService;
     demonstrationStore?: DemonstrationStore;
@@ -1682,16 +1684,31 @@ export function createApp(
           botsMayCallBack: Boolean(config.agentToolToken),
           publicUrl: config.publicUrl,
           appUrl: config.appUrl,
-          ...(auth
-            ? {
+          ...(() => {
+            const explicitResolver = options.resolveSessionUserId;
+            if (explicitResolver) {
+              return {
+                resolveSessionUserId: (request: Request) =>
+                  explicitResolver(request.headers),
+              };
+            }
+            if (auth) {
+              return {
                 resolveSessionUserId: async (request: Request) => {
                   const session = await auth.api
                     .getSession({ headers: request.headers })
                     .catch(() => null);
                   return session?.user?.id ?? null;
                 },
-              }
-            : {}),
+              };
+            }
+            if (options.singleUserGuard || !config.singleUser) {
+              return {
+                resolveSessionUserId: async () => null,
+              };
+            }
+            return {};
+          })(),
         },
         composio,
       ),

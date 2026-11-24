@@ -29,7 +29,9 @@ import {
 export function GalleryTools() {
   const queryClient = useQueryClient();
   useExternalConnection(objectConnectionKey(queryClient), () => {
-    void announceGallery(galleryManifest()).then((added) => {
+    const manifest = galleryManifest();
+    if (manifest.length === 0) return;
+    void announceGallery(manifest).then((added) => {
       if (added.length > 0) {
         void queryClient.invalidateQueries({ queryKey: componentKeys.all });
       }

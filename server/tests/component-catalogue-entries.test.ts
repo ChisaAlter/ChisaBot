@@ -15,11 +15,15 @@ import type { CatalogueEntry, ComponentStore } from "../src/components/store";
  * be complete, and the error names its index.
  */
 
-const asSignedIn: MiddlewareHandler<{ Variables: AppVariables }> = async (
+const asAdmin: MiddlewareHandler<{ Variables: AppVariables }> = async (
   context,
   next,
 ) => {
-  context.set("actor", { id: "u1", email: "someone@chisabot.test" });
+  context.set("actor", {
+    id: "u1",
+    email: "admin@chisabot.test",
+    role: "admin",
+  });
   return next();
 };
 
@@ -34,7 +38,7 @@ function harness() {
 
   const app = new Hono().route(
     "/components",
-    createComponentRoutes(store, asSignedIn, undefined, async () => true),
+    createComponentRoutes(store, asAdmin, undefined, async () => true),
   );
 
   return {

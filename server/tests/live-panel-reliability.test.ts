@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import type { MiddlewareHandler } from "hono";
+import type { AppVariables } from "../src/auth/guards";
 import {
   notifyControlReleased,
   onControlReleased,
@@ -9,6 +11,7 @@ import {
 } from "../src/live-panels/service";
 import {
   cleanSources,
+  LivePanelError,
   type LivePanelStore,
   nextRefreshAtTime,
   normalizeRefreshAt,
@@ -315,5 +318,78 @@ describe("删机器人：停掉它的面板刷新", () => {
     } finally {
       delete process.env.CHISABOT_PANEL_ORPHAN_SWEEP;
     }
+  });
+});
+
+describe("DELETE /api/live-panels/:id 归属校验顺序", () => {
+  test("用户 A 删除用户 B 正在刷新的面板时返回 404 且绝不中止 B 的刷新任务", async () => {
+    const rows: Record<string, Record<string, unknown>> = {
+      lp_b: row("lp_b", { ownerUserId: "user-b", botId: "bot-b" }),
+    };
+    const store = fakeStore(rows) as unknown as Record<string, unknown>;
+    store.get = async (owner: string, id: string) => {
+      const target = rows[id];
+      if (!target || target.ownerUserId !== owner) {
+        throw new LivePanelError("面板不存在", 404);
+      }
+      return target;
+    };
+    store.remove = async (owner: string, id: string) => {
+      const target = rows[id];
+      if (!target || target.ownerUserId !== owner) {
+        throw new LivePanelError("面板不存在", 404);
+      }
+      target.removed = true;
+    };
+
+    const aborted: string[] = [];
+    let releaseRefresh: (() => void) | undefined;
+    const service = createLivePanelService({
+      store: store as unknown as LivePanelStore,
+      log: () => {},
+      runHeadless: ({ panelId, signal }) =>
+        new Promise<void>((resolve, reject) => {
+          releaseRefresh = resolve;
+          signal.addEventListener("abort", () => {
+            aborted.push(panelId);
+            reject(signal.reason);
+          });
+        }),
+    });
+
+    let currentUserId = "user-a";
+    const requireUser: MiddlewareHandler<{ Variables: AppVariables }> = async (
+      c,
+      next,
+    ) => {
+      c.set("actor", {
+        id: currentUserId,
+        email: `${currentUserId}@chisabot.test`,
+        role: "user",
+      });
+      await next();
+    };
+    const routes = service.routes(requireUser);
+
+    expect((await service.refreshNow("user-b", "lp_b")).started).toBe(true);
+
+    // 用户 A 试图删除用户 B 正在刷新的面板：必须 404 且不能 abort B 的刷新
+    currentUserId = "user-a";
+    const crossUserRes = await routes.request("http://t/lp_b", {
+      method: "DELETE",
+    });
+    expect(crossUserRes.status).toBe(404);
+    expect(aborted).toEqual([]);
+    expect(rows.lp_b?.removed).toBe(false);
+
+    // 用户 B 删除自己的面板：必须 200 且中止正在进行的刷新
+    currentUserId = "user-b";
+    const ownerRes = await routes.request("http://t/lp_b", {
+      method: "DELETE",
+    });
+    expect(ownerRes.status).toBe(200);
+    expect(rows.lp_b?.removed).toBe(true);
+    expect(aborted).toEqual(["lp_b"]);
+    releaseRefresh?.();
   });
 });

@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { AgentActor } from "../agents/profile-types";
 import type { Database } from "../db/client";
 
 /**
@@ -33,8 +34,27 @@ export type DataFunction = {
   description: string;
   /** What it reads, in a few words, for the Admin page and for the audit row. */
   reads: string;
-  run: (database: Database, args: Record<string, unknown>) => Promise<unknown>;
+  run: (
+    database: Database,
+    args: Record<string, unknown>,
+    actor: AgentActor,
+  ) => Promise<unknown>;
 };
+
+/**
+ * Restricts an `audit_events` query to Bots the caller may access when the caller is not an admin.
+ * Mirrors `agentProfileStore`'s access predicate (`deleted_at IS NULL AND (visibility = 'public' OR owner_user_id = actor.id)`).
+ */
+function accessibleBotSqlFilter(actor: AgentActor) {
+  if (actor.role === "admin") return sql``;
+  return sql`and audit_events.payload->>'bot' is not null
+             and exists (
+               select 1 from agent_profiles ap
+               where ap.agent_id = audit_events.payload->>'bot'
+                 and ap.deleted_at is null
+                 and (ap.visibility = 'public' or ap.owner_user_id = ${actor.id})
+             )`;
+}
 
 /** A whole number from an untrusted body, clamped into a range it is safe to run. */
 function bounded(
@@ -55,8 +75,9 @@ export const DATA_FUNCTIONS: DataFunction[] = [
     description:
       "How many actions each Bot has taken, counted from the audit trail.",
     reads: "the audit trail",
-    async run(database, args) {
+    async run(database, args, actor) {
       const days = bounded(args.days, { fallback: 7, min: 1, max: 90 });
+      const scopeFilter = accessibleBotSqlFilter(actor);
       // Counted in the database rather than fetched and counted here: the trail is the one table that
       // grows without limit, and a component asking for a chart must not pull a year of it across the
       // wire in order to add up seven days.
@@ -65,6 +86,7 @@ export const DATA_FUNCTIONS: DataFunction[] = [
             from audit_events
             where payload->>'bot' is not null
               and created_at > now() - make_interval(days => ${days})
+              ${scopeFilter}
             group by 1
             order by actions desc
             limit 12`,
@@ -77,8 +99,9 @@ export const DATA_FUNCTIONS: DataFunction[] = [
     description:
       "The most recent things this deployment refused, and the reason each was refused.",
     reads: "the audit trail",
-    async run(database, args) {
+    async run(database, args, actor) {
       const limit = bounded(args.limit, { fallback: 10, min: 1, max: 50 });
+      const scopeFilter = accessibleBotSqlFilter(actor);
       const rows = await database.execute<{
         at: string;
         bot: string | null;
@@ -96,6 +119,7 @@ export const DATA_FUNCTIONS: DataFunction[] = [
               'component.function_refused',
               'bot.declined'
             )
+              ${scopeFilter}
             order by created_at desc
             limit ${limit}`,
       );
