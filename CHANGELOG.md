@@ -3,7 +3,7 @@
 ## Unreleased
 
 - **Claude 全站衬线字体与 DeepSeek（DSH 超椭圆）主题深度重构（DESIGN.md §155）**：
-  - 将 `claude` 主题的 `--font` 与 `--font-claude-serif` 统一为 `Georgia / Charter / Iowan Old Style / Cambria / Noto Serif SC / Songti SC` 衬线栈，并将 `styles.css` 失效选择器替换为全站标题（`.ph-title` / `.page-title` / `.ap-title` / `h1..h3`）、聊天气泡（`[data-slot="bubble-content"]`）与 Claude 主题卡标题；将 `deepseek` 主题对标官方 DSH（`@deepseek-ai/dsh-client-ui-theme`）规范重构为 `16px/20px` 圆角、`superellipse(1.5)` 超椭圆、`0.5px` 发丝边、`neutral-bluish` 冷蓝灰层次（`#4176e6` / `#5686fe`）与蓝青紫纯画布静谧光晕。PC 外壳指纹 `7314f9105596bec5` 不变，客户端代码指纹同步更新为 `a0a5718a0d9c0ead`。
+  - 将 `claude` 主题的 `--font` 与 `--font-claude-serif` 统一为 `Georgia / Charter / Iowan Old Style / Cambria / Noto Serif SC / Songti SC` 衬线栈，并将 `styles.css` 失效选择器替换为全站标题（`.ph-title` / `.page-title` / `.ap-title` / `h1..h3`）、聊天气泡（`[data-slot="bubble-content"]`）与 Claude 主题卡标题；将 `deepseek` 主题对标官方 DSH（`@deepseek-ai/dsh-client-ui-theme`）规范重构为 `16px/20px` 圆角、`superellipse(1.5)` 超椭圆、`0.5px` 发丝边、`neutral-bluish` 冷蓝灰层次（`#4176e6` / `#5686fe`）与蓝青紫纯画布静谧光晕。PC 外壳指纹 `7314f9105596bec5` 不变，客户端代码指纹同步更新为 `e3fec6689d6c030b`。
 
 ## 0.1.186 — 2026-11-24
 
