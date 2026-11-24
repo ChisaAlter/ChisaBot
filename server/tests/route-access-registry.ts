@@ -316,6 +316,11 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/computers/:botId/read": { access: "user" },
   "GET /api/computers/:botId/screenshot": { access: "user" },
   "GET /api/computers/:botId/status": { access: "user" },
+  "GET /api/computers/:botId/stream": {
+    access: "user",
+    reason:
+      "Bun.serve WebSocket screen stream upgrade guarded by resolveRequestActor + computerAccessCheck before app.fetch",
+  },
   "GET /api/computers/:botId/tabs": { access: "user" },
   "GET /api/computers/fleet": { access: "admin" },
   "GET /api/computers/policy": { access: "admin" },
@@ -528,6 +533,11 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
       "running build info, explicitly documented as reachable pre-sign-in",
   },
   "GET /api/voice/status": { access: "user" },
+  "GET /api/voice/ws": {
+    access: "machine",
+    reason:
+      "Bun.serve WebSocket voice upgrade guarded by one-time Sec-WebSocket-Protocol ticket + Origin check before app.fetch",
+  },
   "GET /api/web-search/settings": { access: "user" },
   "GET /api/webhooks": { access: "user" },
   "GET /api/webhooks/runs": { access: "user" },

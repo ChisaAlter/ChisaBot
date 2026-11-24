@@ -25,8 +25,9 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hono, MiddlewareHandler } from "hono";
-import { createAdminSmokeRoutes } from "../../src/admin-smoke";
+import { createExecutionNodeStore } from "../../src/admin/execution-node-store";
 import { createHarnessSettingsService } from "../../src/admin/harness-settings";
+import { createAdminSmokeRoutes } from "../../src/admin-smoke";
 import { createContextPolicyStore } from "../../src/agents/context-policy-store";
 import { createHistorySummaryModelService } from "../../src/agents/history-summary-settings";
 import { createRuntimeKernelRoutes } from "../../src/agents/kernel-status";
@@ -34,9 +35,9 @@ import { createModelFallbackService } from "../../src/agents/model-fallback-sett
 import { createModelObservationService } from "../../src/agents/model-observation";
 import { createRoutingAdminRoutes } from "../../src/agents/routing-log";
 import { createApp } from "../../src/app";
+import { createSpeechService } from "../../src/audio/speech-service";
 import type { AppVariables, AuthService } from "../../src/auth/guards";
 import { requireAdmin } from "../../src/auth/guards";
-import { createSpeechService } from "../../src/audio/speech-service";
 import { createBotAvatars } from "../../src/bot-avatars/service";
 import { createBotThreads } from "../../src/bot-threads";
 import { createBrowserBookmarks } from "../../src/browser-bookmarks/service";
@@ -48,17 +49,16 @@ import { createChatShots } from "../../src/chat-shots";
 import { createDesktopBrowserBridge } from "../../src/computer/desktop-browser-bridge";
 import { loadConfig } from "../../src/config";
 import { createConfirmations } from "../../src/confirmations/service";
+import { mountConversationRuntime } from "../../src/conversation-runtime";
 import { createConversationInteractions } from "../../src/conversations/interactions";
 import { createSideThreadRoutes } from "../../src/conversations/side-threads";
 import { createDshToolGateway } from "../../src/conversations/tool-gateway";
-import { mountConversationRuntime } from "../../src/conversation-runtime";
-import { createPushService } from "../../src/delivery/push-service";
 import { createForegroundRegistry } from "../../src/delivery/foreground-registry";
+import { createPushService } from "../../src/delivery/push-service";
 import { createQuickIntents } from "../../src/delivery/quick-intents";
+import { createDeviceHub } from "../../src/devices/hub";
 import { createDeviceRoutes } from "../../src/devices/routes";
 import { createDeviceStore } from "../../src/devices/store";
-import { createDeviceHub } from "../../src/devices/hub";
-import { createExecutionNodeStore } from "../../src/admin/execution-node-store";
 import {
   createFederationRoutes,
   createFederationService,
@@ -91,10 +91,14 @@ import { createSharingService } from "../../src/sharing/service";
 import { createChisaSkills } from "../../src/skills-chisa/tools";
 import { createSystemUpdateRoutes } from "../../src/system-update";
 import { createTaskCenterRuntime } from "../../src/task-center/runtime";
+import {
+  createUpgradeDispatcher,
+  UPGRADE_ROUTES,
+} from "../../src/upgrade-routes";
 import { createVault } from "../../src/vault/service";
 import { createVoiceCallService } from "../../src/voice/voice-routes";
-import { createWebSearchRoutes } from "../../src/web/tools";
 import { createWebSearchSettingsStore } from "../../src/web/search-settings";
+import { createWebSearchRoutes } from "../../src/web/tools";
 import { createWorkflowRoutes } from "../../src/workflows/routes";
 import { testEnvironment } from "./environment";
 
@@ -130,10 +134,51 @@ function depsOf<T extends object>(real: Partial<T> & object): T {
   }) as T;
 }
 
+export { UPGRADE_ROUTES };
+
 export type InventorySession =
   | { kind: "anonymous" }
   | { kind: "member"; userId: string }
   | { kind: "admin"; userId: string };
+
+/**
+ * Production-shaped pre-Hono WebSocket upgrade handler (`server/src/upgrade-routes.ts`)
+ * wired with real `createVoiceCallService` ticket verification and controllable session /
+ * computer-access guards so `route-auth-inventory.test.ts` covers Bun.serve upgrade routes.
+ */
+export function buildInventoryUpgradeHandler(
+  session: InventorySession,
+  options: { canAccessComputer?: boolean; computerConfigured?: boolean } = {},
+) {
+  const voiceCallService = createVoiceCallService(
+    depsOf({
+      trustedOrigins: [],
+      checkReady: async () => ({ asrReady: true, ttsReady: true }),
+      resolveTargetChannel: hole,
+      transcribe: hole,
+      synthesizeStream: hole,
+      runBotTurn: hole,
+    }),
+  );
+
+  return createUpgradeDispatcher({
+    voiceCallService,
+    computerConfigured: options.computerConfigured ?? true,
+    resolveRequestActor: async () => {
+      if (session.kind === "anonymous") {
+        throw new Error("Unauthorized");
+      }
+      return {
+        id: session.userId,
+        role: session.kind === "admin" ? "admin" : "user",
+      };
+    },
+    canAccessComputer: async () => options.canAccessComputer ?? false,
+    isActiveRecording: () => false,
+    locateComputer: async () => "http://127.0.0.1:9999",
+    toStreamUrl: (_baseUrl, botId) => `ws://127.0.0.1:9999/stream/${botId}`,
+  });
+}
 
 function authFor(session: InventorySession): AuthService {
   return {
@@ -227,7 +272,9 @@ export async function buildInventoryApp(
   const mediaPool = createMediaPoolService(hole, hole);
   const linkPreviews = await createLinkPreviews(hole, hole);
   const deviceStore = createDeviceStore(hole);
-  const deviceHub = createDeviceHub(depsOf({ store: deviceStore, confirm: hole }));
+  const deviceHub = createDeviceHub(
+    depsOf({ store: deviceStore, confirm: hole }),
+  );
   const pushService = createPushService(hole);
   const foregroundRegistry = createForegroundRegistry(hole);
   const quickIntents = createQuickIntents(hole);
@@ -320,7 +367,11 @@ export async function buildInventoryApp(
         [
           "/api/admin/smoke",
           createAdminSmokeRoutes(
-            depsOf({ requireUser, resolveConnection: hole, resolveConnectionForAgent: hole }),
+            depsOf({
+              requireUser,
+              resolveConnection: hole,
+              resolveConnectionForAgent: hole,
+            }),
           ),
         ],
         ["/api/ops/budget", createOpsBudgetRoutes(depsOf({ requireUser }))],
@@ -340,32 +391,50 @@ export async function buildInventoryApp(
           ),
         ],
         ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
-        ["/api/conversation-interactions", conversationInteractions.routes(requireUser)],
-        ["/api/admin/history-summary-model", historySummaryModel.routes(requireUser)],
+        [
+          "/api/conversation-interactions",
+          conversationInteractions.routes(requireUser),
+        ],
+        [
+          "/api/admin/history-summary-model",
+          historySummaryModel.routes(requireUser),
+        ],
         ["/api/admin/context-policies", contextPolicyStore.routes(requireUser)],
         [
           "/api/web-search",
-          createWebSearchRoutes(depsOf({ store: webSearchSettings, requireUser })),
+          createWebSearchRoutes(
+            depsOf({ store: webSearchSettings, requireUser }),
+          ),
         ],
         [
           "/api/webhooks",
-          createWebhookPanelRoutes(depsOf({ store: webhookPanelStore, requireUser })),
+          createWebhookPanelRoutes(
+            depsOf({ store: webhookPanelStore, requireUser }),
+          ),
         ],
         ["/api/bots", botLibrary.routes(requireUser)],
         [
           "/api/admin/runtime-kernel",
-          createRuntimeKernelRoutes(depsOf({ requireUser, kernel: "dsh", probeDsh: hole })),
+          createRuntimeKernelRoutes(
+            depsOf({ requireUser, kernel: "dsh", probeDsh: hole }),
+          ),
         ],
         [
           "/api/admin/system-update",
-          createSystemUpdateRoutes(depsOf({ service: systemUpdate, requireUser, auditStore: hole })),
+          createSystemUpdateRoutes(
+            depsOf({ service: systemUpdate, requireUser, auditStore: hole }),
+          ),
         ],
         ["/api/live-panels", livePanelService.routes(requireUser)],
         ["/api/chat-shots", chatShots.routes(requireUser)],
         ["/api/bot-threads", botThreads.routes(requireUser)],
         [
           "/api/side-threads",
-          createSideThreadRoutes(sideThreads, requireUser, depsOf({ steerParentThread: hole })),
+          createSideThreadRoutes(
+            sideThreads,
+            requireUser,
+            depsOf({ steerParentThread: hole }),
+          ),
         ],
         ["/api/im", imService.routes(requireUser)],
         ["/api/speech", speechService.routes(requireUser, requireAdmin)],
@@ -419,7 +488,10 @@ export async function buildInventoryApp(
           ),
         ],
         ["/api/push", pushService.routes(requireUser)],
-        ["/api/notifications/foreground", foregroundRegistry.routes(requireUser)],
+        [
+          "/api/notifications/foreground",
+          foregroundRegistry.routes(requireUser),
+        ],
         ["/api/intents", quickIntents.routes(requireUser)],
         [
           "/api/admin/routing",
@@ -438,7 +510,9 @@ export async function buildInventoryApp(
         ["/api/admin/harness", harnessSettingsService.routes(requireUser)],
         [
           "/api/admin/prompts",
-          createPromptWorkbenchRoutes(depsOf({ store: promptWorkbenchStore, requireUser })),
+          createPromptWorkbenchRoutes(
+            depsOf({ store: promptWorkbenchStore, requireUser }),
+          ),
         ],
         ["/api/sharing", createSharingRoutes(sharingService, requireUser)],
         [
@@ -455,7 +529,9 @@ export async function buildInventoryApp(
         ],
         [
           "/api/mcp-enhancements",
-          createMcpEnhancementRoutes(depsOf({ store: mcpEnhancementStore, requireUser })),
+          createMcpEnhancementRoutes(
+            depsOf({ store: mcpEnhancementStore, requireUser }),
+          ),
         ],
         ["/api/admin/execution-nodes", executionNodeStore.routes(requireUser)],
         [
@@ -470,7 +546,9 @@ export async function buildInventoryApp(
         ],
         [
           "/api/federation",
-          createFederationRoutes(depsOf({ service: federationService, requireUser })),
+          createFederationRoutes(
+            depsOf({ service: federationService, requireUser }),
+          ),
         ],
       ],
     },

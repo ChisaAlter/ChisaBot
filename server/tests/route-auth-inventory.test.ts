@@ -25,10 +25,15 @@
  * open" while the gap reproduces, "resolved" when the fix lands — at which point the entry
  * must be removed.
  */
-import { join } from "node:path";
+
 import { afterAll, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { KNOWN_GAPS, ROUTE_ACCESS } from "./route-access-registry";
-import { buildInventoryApp } from "./support/route-inventory";
+import {
+  buildInventoryApp,
+  buildInventoryUpgradeHandler,
+  UPGRADE_ROUTES,
+} from "./support/route-inventory";
 
 /*
  * AGENTS.md's Bun timer quirk: an AbortSignal.timeout does not fire when it is the only pending
@@ -43,10 +48,21 @@ const memberApp = await buildInventoryApp({
   userId: "inventory-member",
 });
 const anonymousApp = await buildInventoryApp({ kind: "anonymous" });
+const memberUpgrade = buildInventoryUpgradeHandler({
+  kind: "member",
+  userId: "inventory-member",
+});
+const anonymousUpgrade = buildInventoryUpgradeHandler({ kind: "anonymous" });
 
 const enumerated = new Set<string>();
 for (const route of memberApp.routes) {
   enumerated.add(`${route.method} ${route.path}`);
+}
+const upgradePaths = new Set<string>();
+for (const route of UPGRADE_ROUTES) {
+  const key = `${route.method} ${route.path}`;
+  enumerated.add(key);
+  upgradePaths.add(key);
 }
 
 /** A probe that never produced a response — a stub service hung inside the handler. */
@@ -56,9 +72,25 @@ function probePath(path: string): string {
   return path.replace(/:[^/]+/g, "probe").replaceAll("*", "probe");
 }
 
-async function probe(app: typeof memberApp, key: string): Promise<number> {
+async function probe(
+  app: typeof memberApp,
+  upgrade: typeof memberUpgrade,
+  key: string,
+): Promise<number> {
   const method = key.slice(0, key.indexOf(" "));
   const path = key.slice(key.indexOf(" ") + 1);
+  if (upgradePaths.has(key)) {
+    const url = new URL(`http://inventory.test${probePath(path)}`);
+    const request = new Request(url.toString(), {
+      method: method === "ALL" ? "GET" : method,
+      headers: { upgrade: "websocket" },
+    });
+    const res = await upgrade(request, url, { upgrade: () => true });
+    if (res === undefined) return 101;
+    if (res === null) return 404;
+    await res.text().catch(() => "");
+    return res.status;
+  }
   const request = app
     .request(`http://inventory.test${probePath(path)}`, {
       method: method === "ALL" ? "GET" : method,
@@ -96,8 +128,8 @@ async function collectViolations(
     await Promise.all(
       batch.map(async ([key]) => {
         statuses.set(key, {
-          member: await probe(memberApp, key),
-          anonymous: await probe(anonymousApp, key),
+          member: await probe(memberApp, memberUpgrade, key),
+          anonymous: await probe(anonymousApp, anonymousUpgrade, key),
         });
       }),
     );
@@ -179,12 +211,65 @@ describe("route authorization registry", () => {
       uncovered,
       `Mounts in index.ts/app.ts not represented in the inventory — add the builder to server/tests/support/route-inventory.ts:\n${uncovered.join("\n")}`,
     ).toEqual([]);
+
+    const upgradeSource = await Bun.file(
+      join(srcDir, "upgrade-routes.ts"),
+    ).text();
+    expect(
+      [...indexSource.matchAll(/\bserver\.upgrade\s*\(/g)],
+      "server/src/index.ts must delegate all WebSocket upgrades to server/src/upgrade-routes.ts",
+    ).toHaveLength(0);
+    expect(
+      [...upgradeSource.matchAll(/\bserver\.upgrade\s*\(/g)],
+      "Every server.upgrade() branch in server/src/upgrade-routes.ts must be declared in UPGRADE_ROUTES",
+    ).toHaveLength(UPGRADE_ROUTES.length);
   });
 
-  test(
-    "routes refuse callers their classification forbids",
-    async () => {
-      await collectViolations((key, member, anonymous) => {
+  test("Bun.serve pre-Hono WebSocket upgrade routes enforce their session and access guards", async () => {
+    const streamUrl = new URL(
+      "http://inventory.test/api/computers/bot-1/stream",
+    );
+    const streamReq = () =>
+      new Request(streamUrl.toString(), {
+        method: "GET",
+        headers: { upgrade: "websocket" },
+      });
+
+    const anonStream = await anonymousUpgrade(streamReq(), streamUrl, {
+      upgrade: () => true,
+    });
+    expect(anonStream?.status).toBe(401);
+
+    const deniedMemberStream = await memberUpgrade(streamReq(), streamUrl, {
+      upgrade: () => true,
+    });
+    expect(deniedMemberStream?.status).toBe(404);
+
+    const allowedMemberUpgrade = buildInventoryUpgradeHandler(
+      { kind: "member", userId: "inventory-member" },
+      { canAccessComputer: true },
+    );
+    const allowedMemberStream = await allowedMemberUpgrade(
+      streamReq(),
+      streamUrl,
+      { upgrade: () => true },
+    );
+    expect(allowedMemberStream).toBeUndefined();
+
+    const voiceUrl = new URL("http://inventory.test/api/voice/ws");
+    const anonVoice = await anonymousUpgrade(
+      new Request(voiceUrl.toString(), {
+        method: "GET",
+        headers: { upgrade: "websocket" },
+      }),
+      voiceUrl,
+      { upgrade: () => true },
+    );
+    expect(anonVoice?.status).toBe(401);
+  });
+
+  test("routes refuse callers their classification forbids", async () => {
+    await collectViolations((key, member, anonymous) => {
       const entry = ROUTE_ACCESS[key];
       if (entry.access === "admin" && member !== 403)
         return `${key}: member got ${member === HUNG ? "a hung handler" : member}, expected 403 for an admin route`;
@@ -194,18 +279,12 @@ describe("route authorization registry", () => {
         return `${key}: member got 401 — a signed-in user should reach the handler (reclassify as machine if a device/token credential gates it)`;
       if (entry.access === "public" && anonymous === 401)
         return `${key}: anonymous got 401 — public routes must not require a session`;
-      if (
-        entry.access === "machine" &&
-        anonymous >= 200 &&
-        anonymous < 300
-      )
+      if (entry.access === "machine" && anonymous >= 200 && anonymous < 300)
         return `${key}: anonymous got ${anonymous} — machine routes must reject callers without the machine credential`;
-        return null;
-      });
-    },
-    // ~1 300 in-process probes across both app builds.
-    120_000,
-  );
+      return null;
+    });
+  }, // ~1 300 in-process probes across both app builds.
+  120_000);
 
   test("known gaps that cannot be status-checked are still reported", () => {
     for (const [key, gap] of Object.entries(KNOWN_GAPS)) {

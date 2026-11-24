@@ -17,9 +17,12 @@ import {
   proposedSkillSchema,
   savedSkillAnswer,
 } from "../../shared/skill-authoring";
-import { VOICE_WS_PATH } from "../../shared/voice-call";
 import { workOwner } from "../../shared/work-owner";
 import { createActivityStore } from "./activity/activity";
+import {
+  createExecutionNodeStore,
+  createPgExecutionNodeStorage,
+} from "./admin/execution-node-store";
 import {
   createHarnessSettingsService,
   createPgHarnessSettingsStorage,
@@ -41,9 +44,9 @@ import {
   readRunAssertion,
 } from "./agents/callback-token";
 import { canUseComputer, computerAccessCheck } from "./agents/computer-access";
+import { createContextPolicyStore } from "./agents/context-policy-store";
 import { currentDateContext, USER_TIME_ZONE } from "./agents/current-date";
 import { createDshHealthProbe } from "./agents/dsh-health";
-import { createContextPolicyStore } from "./agents/context-policy-store";
 import { createAgentFetch } from "./agents/endpoint";
 import { createHandoffDesk, HANDOFF_KIND } from "./agents/handoff";
 import { createHandoffDelivery } from "./agents/handoff-delivery";
@@ -190,17 +193,12 @@ import {
   installActivityStore,
 } from "./computer/activity-store";
 import { onControlReleased } from "./computer/control-blocks";
-import { createDesktopBrowserBridge } from "./computer/desktop-browser-bridge";
 import {
   buildComputerStreamUrl,
   createDemonstrationStore,
-  isValidRecordingId,
   parseDemonstrationActionFrame,
 } from "./computer/demonstration-store";
-import {
-  createExecutionNodeStore,
-  createPgExecutionNodeStorage,
-} from "./admin/execution-node-store";
+import { createDesktopBrowserBridge } from "./computer/desktop-browser-bridge";
 import { createComputerGateway } from "./computer/gateway";
 import {
   createHeadlessComputerTools,
@@ -223,7 +221,6 @@ import {
   describeComputerIsolation,
 } from "./computer/provider";
 import { createSnapshotStore } from "./computer/snapshot-store";
-import { streamPathBotId } from "./computer/stream-path";
 import { loadConfig, readConversationRuntimeEnvDefaults } from "./config";
 import { markTurnTainted, withTurnTaint } from "./confirmations/context";
 import { createConfirmations } from "./confirmations/service";
@@ -299,6 +296,10 @@ import { createPcReleaseWatcher } from "./devices/pc-release-watcher";
 import { createDeviceRoutes } from "./devices/routes";
 import { createDeviceStore } from "./devices/store";
 import { deviceTools } from "./devices/tools";
+import {
+  createFederationRoutes,
+  createFederationService,
+} from "./federation/routes";
 import { createFleetAudit } from "./fleet-audit/service";
 import { executeRenderUi, renderUiTools } from "./generative-ui/render-ui";
 import { createGithub } from "./github/service";
@@ -419,10 +420,6 @@ import {
 } from "./responsibilities/webhook-panel-routes";
 import { createModelCompleter } from "./routing/model";
 import {
-  createFederationRoutes,
-  createFederationService,
-} from "./federation/routes";
-import {
   createInternalQuiesceRoutes,
   getRuntimeQuiesceController,
 } from "./runtime/quiesce";
@@ -451,6 +448,10 @@ import {
 } from "./tenant-package";
 import { createTurnRunner } from "./turns/run-turn";
 import { markUntrusted } from "./untrusted-content";
+import {
+  type ComputerStreamSocketData,
+  createUpgradeDispatcher,
+} from "./upgrade-routes";
 import { createUserInstructionsStore } from "./user-instructions";
 import { createUserPreferencesStore } from "./user-preferences";
 import { createVault, VAULT_GUIDANCE } from "./vault/service";
@@ -6557,14 +6558,21 @@ const toStreamUrl = (baseUrl: string, botId: string, recordingId?: string) =>
   );
 
 /** What each proxied socket carries: where to connect inward, and the socket once opened. */
-type StreamData = {
-  upstream: string;
-  ownerUserId: string;
-  botId: string;
-  recordingId?: string;
-  inward?: WebSocket;
-  detachLive?: () => void;
-};
+type StreamData = ComputerStreamSocketData;
+
+const handleUpgrade = createUpgradeDispatcher({
+  voiceCallService,
+  computerConfigured: Boolean(config.computer),
+  resolveRequestActor,
+  canAccessComputer: computerAccessCheck(agentProfileStore),
+  isActiveRecording: (ownerUserId, botId, recordingId) =>
+    demonstrationStore.isActiveRecording(ownerUserId, botId, recordingId),
+  locateComputer: (botId) =>
+    hasConfiguredComputer()
+      ? computerGateway.locate(botId)
+      : Promise.resolve(undefined),
+  toStreamUrl,
+});
 
 /**
  * Bun takes exactly one WebSocket handler for the server, and two features need one: the app proxies
@@ -6640,102 +6648,9 @@ serve<SocketData>({
         request.headers.get("accept")?.includes("text/event-stream"))
     )
       server.timeout(request, 0);
-    if (
-      url.pathname === VOICE_WS_PATH &&
-      request.headers.get("upgrade")?.toLowerCase() === "websocket"
-    ) {
-      const upgraded = await voiceCallService.prepareUpgrade(request);
-      if (!upgraded.ok) {
-        return new Response(upgraded.message, { status: upgraded.status });
-      }
-      if (
-        server.upgrade(request, {
-          data: upgraded.data,
-          headers: { "sec-websocket-protocol": upgraded.protocol },
-        })
-      ) {
-        return undefined as unknown as Response;
-      }
-      voiceCallService.releaseFailedUpgrade(upgraded.data);
-      return new Response("Expected a WebSocket upgrade.", { status: 400 });
-    }
-    const streamBotId = streamPathBotId(url.pathname);
-    if (
-      streamBotId !== null &&
-      request.headers.get("upgrade")?.toLowerCase() === "websocket"
-    ) {
-      if (!config.computer) {
-        return new Response("No computer is configured.", { status: 503 });
-      }
-      // The session guard, applied by hand because middleware does not run on an upgrade. An
-      // unauthenticated socket here would be the whole point of the proxy defeated.
-      const actor = await resolveRequestActor(request).catch(() => null);
-      if (!actor) {
-        return new Response("Sign in first.", { status: 401 });
-      }
-      // And which Bot, which the guard above does not answer. This socket carries that Bot's screen,
-      // so signing in is not enough: without this, anybody signed in watches anybody's Bot work. And
-      // seeing a Team Bot is not enough either: its screen is its owner's signed-in browser.
-      if (
-        !(await computerAccessCheck(agentProfileStore)(
-          { id: actor.id, role: actor.role },
-          streamBotId,
-        ))
-      ) {
-        return new Response("There is no such Bot.", { status: 404 });
-      }
-      /*
-       * Through the gateway, not the provider.
-       *
-       * `gateway.locate` runs checkComputerAddress; `provider.locate` does not, and the URL built
-       * below carries COMPUTER_TOKEN in its query string. A provider that answered with a foreign
-       * host was handed the deployment's computer token, which is the case that check was written
-       * for. Every acting path already went through the gateway; this one did not.
-       */
-      const rawRecording = url.searchParams.get("recording");
-      const recordingId =
-        isValidRecordingId(rawRecording) &&
-        demonstrationStore.isActiveRecording(
-          actor.id,
-          streamBotId,
-          rawRecording,
-        )
-          ? rawRecording
-          : undefined;
-      let upstream: string;
-      try {
-        const streamBase = hasConfiguredComputer()
-          ? await computerGateway.locate(streamBotId)
-          : undefined;
-        if (!streamBase) {
-          return new Response("No computer address is configured.", {
-            status: 503,
-          });
-        }
-        upstream = toStreamUrl(streamBase, streamBotId, recordingId);
-      } catch (error) {
-        // Said out loud rather than falling back to another Bot's computer, which is the failure this
-        // whole path exists to prevent.
-        return new Response(
-          error instanceof Error
-            ? error.message
-            : "That Bot's computer could not be reached.",
-          { status: 502 },
-        );
-      }
-      if (
-        server.upgrade(request, {
-          data: {
-            upstream,
-            ownerUserId: actor.id,
-            botId: streamBotId,
-            ...(recordingId ? { recordingId } : {}),
-          },
-        })
-      ) {
-        return undefined as unknown as Response;
-      }
-      return new Response("Expected a WebSocket upgrade.", { status: 400 });
+    const upgradeResponse = await handleUpgrade(request, url, server);
+    if (upgradeResponse !== null) {
+      return upgradeResponse as Response;
     }
     return app.fetch(request, { server });
   },
