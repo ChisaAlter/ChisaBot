@@ -43,7 +43,7 @@ import {
   readApprovedRunAssertion,
   readRunAssertion,
 } from "./agents/callback-token";
-import { canUseComputer, computerAccessCheck } from "./agents/computer-access";
+import { canUseComputer } from "./agents/computer-access";
 import { createContextPolicyStore } from "./agents/context-policy-store";
 import { currentDateContext, USER_TIME_ZONE } from "./agents/current-date";
 import { createDshHealthProbe } from "./agents/dsh-health";
@@ -6562,9 +6562,9 @@ type StreamData = ComputerStreamSocketData;
 
 const handleUpgrade = createUpgradeDispatcher({
   voiceCallService,
-  computerConfigured: Boolean(config.computer),
+  isComputerConfigured: hasConfiguredComputer,
   resolveRequestActor,
-  canAccessComputer: computerAccessCheck(agentProfileStore),
+  agentProfiles: agentProfileStore,
   isActiveRecording: (ownerUserId, botId, recordingId) =>
     demonstrationStore.isActiveRecording(ownerUserId, botId, recordingId),
   locateComputer: (botId) =>

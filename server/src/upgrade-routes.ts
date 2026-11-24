@@ -1,4 +1,6 @@
 import { VOICE_WS_PATH } from "../../shared/voice-call";
+import { computerAccessCheck } from "./agents/computer-access";
+import type { AgentProfileStore } from "./agents/profile-store";
 import type { AuthenticatedActor } from "./auth/guards";
 import { isValidRecordingId } from "./computer/demonstration-store";
 import { streamPathBotId } from "./computer/stream-path";
@@ -38,14 +40,11 @@ export type UpgradeDispatcherDeps = {
     VoiceCallService,
     "prepareUpgrade" | "releaseFailedUpgrade"
   >;
-  computerConfigured: boolean;
+  isComputerConfigured: () => boolean;
   resolveRequestActor: (
     request: Request,
   ) => Promise<Pick<AuthenticatedActor, "id" | "role">>;
-  canAccessComputer: (
-    actor: Pick<AuthenticatedActor, "id" | "role">,
-    botId: string,
-  ) => Promise<boolean>;
+  agentProfiles: Pick<AgentProfileStore, "get">;
   isActiveRecording: (
     ownerUserId: string,
     botId: string,
@@ -63,6 +62,8 @@ export type UpgradeDispatcherDeps = {
  * request is not one of the registered upgrade routes.
  */
 export function createUpgradeDispatcher(deps: UpgradeDispatcherDeps) {
+  const canAccessComputer = computerAccessCheck(deps.agentProfiles);
+
   return async function handleUpgrade(
     request: Request,
     url: URL,
@@ -93,7 +94,7 @@ export function createUpgradeDispatcher(deps: UpgradeDispatcherDeps) {
       streamBotId !== null &&
       request.headers.get("upgrade")?.toLowerCase() === "websocket"
     ) {
-      if (!deps.computerConfigured) {
+      if (!deps.isComputerConfigured()) {
         return new Response("No computer is configured.", { status: 503 });
       }
       // The session guard, applied by hand because middleware does not run on an upgrade. An
@@ -106,7 +107,7 @@ export function createUpgradeDispatcher(deps: UpgradeDispatcherDeps) {
       // so signing in is not enough: without this, anybody signed in watches anybody's Bot work. And
       // seeing a Team Bot is not enough either: its screen is its owner's signed-in browser.
       if (
-        !(await deps.canAccessComputer(
+        !(await canAccessComputer(
           { id: actor.id, role: actor.role },
           streamBotId,
         ))

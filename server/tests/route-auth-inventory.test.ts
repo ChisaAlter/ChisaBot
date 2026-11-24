@@ -27,13 +27,18 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
+import { createRequire } from "node:module";
 import { join } from "node:path";
+import type * as TsNamespace from "typescript";
 import { KNOWN_GAPS, ROUTE_ACCESS } from "./route-access-registry";
 import {
   buildInventoryApp,
   buildInventoryUpgradeHandler,
   UPGRADE_ROUTES,
 } from "./support/route-inventory";
+
+const require = createRequire(import.meta.url);
+const ts = require("typescript") as typeof TsNamespace;
 
 /*
  * AGENTS.md's Bun timer quirk: an AbortSignal.timeout does not fire when it is the only pending
@@ -215,14 +220,304 @@ describe("route authorization registry", () => {
     const upgradeSource = await Bun.file(
       join(srcDir, "upgrade-routes.ts"),
     ).text();
+    const indexAst = ts.createSourceFile(
+      "index.ts",
+      indexSource,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const upgradeAst = ts.createSourceFile(
+      "upgrade-routes.ts",
+      upgradeSource,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+
+    const unwrapAstExpr = (
+      expr: TsNamespace.Expression,
+    ): TsNamespace.Expression => {
+      let cur = expr;
+      for (;;) {
+        if (
+          ts.isParenthesizedExpression(cur) ||
+          ts.isAsExpression(cur) ||
+          ts.isTypeAssertionExpression(cur) ||
+          ts.isNonNullExpression(cur) ||
+          ts.isSatisfiesExpression(cur)
+        ) {
+          cur = cur.expression;
+          continue;
+        }
+        return cur;
+      }
+    };
+
+    const isUpgradeMemberAccess = (node: TsNamespace.Node): boolean => {
+      if (ts.isPropertyAccessExpression(node) && node.name.text === "upgrade") {
+        return true;
+      }
+      if (ts.isElementAccessExpression(node)) {
+        const arg = unwrapAstExpr(node.argumentExpression);
+        if (
+          (ts.isStringLiteral(arg) ||
+            ts.isNoSubstitutionTemplateLiteral(arg)) &&
+          arg.text === "upgrade"
+        ) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // AST check 1: server.upgrade / server?.upgrade / server["upgrade"] must not exist in index.ts
+    const indexUpgradeRefs: string[] = [];
+    const visitIndexUpgrades = (node: TsNamespace.Node) => {
+      if (
+        (ts.isPropertyAccessExpression(node) ||
+          ts.isElementAccessExpression(node)) &&
+        isUpgradeMemberAccess(node)
+      ) {
+        const target = unwrapAstExpr(node.expression);
+        if (ts.isIdentifier(target) && target.text === "server") {
+          const line =
+            indexAst.getLineAndCharacterOfPosition(node.getStart(indexAst))
+              .line + 1;
+          indexUpgradeRefs.push(`line ${line}: ${node.getText(indexAst)}`);
+        }
+      }
+      ts.forEachChild(node, visitIndexUpgrades);
+    };
+    visitIndexUpgrades(indexAst);
     expect(
-      [...indexSource.matchAll(/\bserver\.upgrade\s*\(/g)],
+      indexUpgradeRefs,
       "server/src/index.ts must delegate all WebSocket upgrades to server/src/upgrade-routes.ts",
-    ).toHaveLength(0);
+    ).toEqual([]);
+
+    // AST check 2: every server.upgrade / server?.upgrade / server["upgrade"] call in upgrade-routes.ts matches UPGRADE_ROUTES
+    const upgradeCallsInDispatcher: string[] = [];
+    const visitDispatcher = (node: TsNamespace.Node) => {
+      if (ts.isCallExpression(node)) {
+        const callee = unwrapAstExpr(node.expression);
+        if (isUpgradeMemberAccess(callee)) {
+          const line =
+            upgradeAst.getLineAndCharacterOfPosition(node.getStart(upgradeAst))
+              .line + 1;
+          upgradeCallsInDispatcher.push(`line ${line}`);
+        }
+      }
+      ts.forEachChild(node, visitDispatcher);
+    };
+    visitDispatcher(upgradeAst);
     expect(
-      [...upgradeSource.matchAll(/\bserver\.upgrade\s*\(/g)],
+      upgradeCallsInDispatcher,
       "Every server.upgrade() branch in server/src/upgrade-routes.ts must be declared in UPGRADE_ROUTES",
     ).toHaveLength(UPGRADE_ROUTES.length);
+
+    // AST check 3: createUpgradeDispatcher wiring & resolveRequestActor guards in index.ts
+    const dispatcherCalls: TsNamespace.CallExpression[] = [];
+    let resolveActorDecl: TsNamespace.FunctionDeclaration | undefined;
+    let serveCall: TsNamespace.CallExpression | undefined;
+    const findIndexNodes = (node: TsNamespace.Node) => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(unwrapAstExpr(node.expression))
+      ) {
+        const name = (unwrapAstExpr(node.expression) as TsNamespace.Identifier)
+          .text;
+        if (name === "createUpgradeDispatcher") dispatcherCalls.push(node);
+        if (name === "serve") serveCall = node;
+      }
+      if (
+        ts.isFunctionDeclaration(node) &&
+        node.name?.text === "resolveRequestActor"
+      ) {
+        resolveActorDecl = node;
+      }
+      ts.forEachChild(node, findIndexNodes);
+    };
+    findIndexNodes(indexAst);
+
+    expect(dispatcherCalls).toHaveLength(1);
+    const dispatcherObj = dispatcherCalls[0]?.arguments[0];
+    expect(dispatcherObj && ts.isObjectLiteralExpression(dispatcherObj)).toBe(
+      true,
+    );
+    const wiringProps = new Map<string, TsNamespace.Expression>();
+    if (dispatcherObj && ts.isObjectLiteralExpression(dispatcherObj)) {
+      for (const prop of dispatcherObj.properties) {
+        if (ts.isShorthandPropertyAssignment(prop)) {
+          wiringProps.set(prop.name.text, prop.name);
+        } else if (
+          ts.isPropertyAssignment(prop) &&
+          ts.isIdentifier(prop.name)
+        ) {
+          wiringProps.set(prop.name.text, unwrapAstExpr(prop.initializer));
+        }
+      }
+    }
+    const expectIdentifierProp = (key: string, expectedName: string) => {
+      const expr = wiringProps.get(key);
+      expect(
+        expr && ts.isIdentifier(expr) ? expr.text : expr?.getText(indexAst),
+        `index.ts createUpgradeDispatcher(${key}) must wire directly to ${expectedName}`,
+      ).toBe(expectedName);
+    };
+    expectIdentifierProp("voiceCallService", "voiceCallService");
+    expectIdentifierProp("resolveRequestActor", "resolveRequestActor");
+    expectIdentifierProp("agentProfiles", "agentProfileStore");
+    expectIdentifierProp("isComputerConfigured", "hasConfiguredComputer");
+
+    expect(resolveActorDecl?.body).toBeDefined();
+    let sawGatewayResolve = false;
+    let sawGetSession = false;
+    let hasHardcodedAdminRoleReturn = false;
+    const inspectResolveActor = (node: TsNamespace.Node) => {
+      if (ts.isCallExpression(node)) {
+        const callee = unwrapAstExpr(node.expression);
+        if (
+          ts.isIdentifier(callee) &&
+          callee.text === "resolveGatewayRequest"
+        ) {
+          sawGatewayResolve = true;
+        }
+        if (
+          ts.isPropertyAccessExpression(callee) &&
+          callee.name.text === "getSession"
+        ) {
+          sawGetSession = true;
+        }
+      }
+      if (ts.isReturnStatement(node) && node.expression) {
+        const ret = unwrapAstExpr(node.expression);
+        if (ts.isObjectLiteralExpression(ret)) {
+          for (const prop of ret.properties) {
+            if (
+              ts.isPropertyAssignment(prop) &&
+              ts.isIdentifier(prop.name) &&
+              prop.name.text === "role" &&
+              ts.isStringLiteral(unwrapAstExpr(prop.initializer)) &&
+              (unwrapAstExpr(prop.initializer) as TsNamespace.StringLiteral)
+                .text === "admin"
+            ) {
+              hasHardcodedAdminRoleReturn = true;
+            }
+          }
+        }
+      }
+      ts.forEachChild(node, inspectResolveActor);
+    };
+    if (resolveActorDecl?.body) inspectResolveActor(resolveActorDecl.body);
+    expect(sawGatewayResolve).toBe(true);
+    expect(sawGetSession).toBe(true);
+    expect(hasHardcodedAdminRoleReturn).toBe(false);
+
+    // AST check 4: every direct `return` in `serve({ fetch })` before `app.fetch` must be one of the sanctioned guards
+    expect(serveCall).toBeDefined();
+    const serveObj = serveCall?.arguments[0];
+    expect(serveObj && ts.isObjectLiteralExpression(serveObj)).toBe(true);
+    let fetchBody: TsNamespace.Block | undefined;
+    if (serveObj && ts.isObjectLiteralExpression(serveObj)) {
+      for (const prop of serveObj.properties) {
+        if (
+          ts.isMethodDeclaration(prop) &&
+          ts.isIdentifier(prop.name) &&
+          prop.name.text === "fetch"
+        ) {
+          fetchBody = prop.body;
+        } else if (
+          ts.isPropertyAssignment(prop) &&
+          ts.isIdentifier(prop.name) &&
+          prop.name.text === "fetch"
+        ) {
+          const init = unwrapAstExpr(prop.initializer);
+          if (
+            (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) &&
+            ts.isBlock(init.body)
+          ) {
+            fetchBody = init.body;
+          }
+        }
+      }
+    }
+    expect(fetchBody).toBeDefined();
+    const directReturns: TsNamespace.ReturnStatement[] = [];
+    let sawHandleUpgradeCall = false;
+    const collectFetchReturns = (node: TsNamespace.Node) => {
+      if (node !== fetchBody && ts.isFunctionLike(node)) return;
+      if (ts.isReturnStatement(node)) directReturns.push(node);
+      if (ts.isCallExpression(node)) {
+        const callee = unwrapAstExpr(node.expression);
+        if (ts.isIdentifier(callee) && callee.text === "handleUpgrade") {
+          sawHandleUpgradeCall = true;
+        }
+      }
+      ts.forEachChild(node, collectFetchReturns);
+    };
+    if (fetchBody) collectFetchReturns(fetchBody);
+    expect(sawHandleUpgradeCall).toBe(true);
+    expect(directReturns).toHaveLength(3);
+
+    const containsCallNamed = (
+      root: TsNamespace.Node,
+      name: string,
+    ): boolean => {
+      let found = false;
+      const walk = (n: TsNamespace.Node) => {
+        if (found) return;
+        if (ts.isCallExpression(n)) {
+          const callee = unwrapAstExpr(n.expression);
+          if (ts.isIdentifier(callee) && callee.text === name) found = true;
+        }
+        ts.forEachChild(n, walk);
+      };
+      walk(root);
+      return found;
+    };
+
+    const enclosingIfCondition = (
+      node: TsNamespace.Node,
+    ): TsNamespace.Expression | null => {
+      let cur = node.parent;
+      while (cur && cur !== fetchBody) {
+        if (ts.isIfStatement(cur)) return cur.expression;
+        cur = cur.parent;
+      }
+      return null;
+    };
+
+    for (const ret of directReturns) {
+      const expr = ret.expression ? unwrapAstExpr(ret.expression) : undefined;
+      if (
+        expr &&
+        ts.isCallExpression(expr) &&
+        ts.isPropertyAccessExpression(unwrapAstExpr(expr.expression))
+      ) {
+        const pa = unwrapAstExpr(
+          expr.expression,
+        ) as TsNamespace.PropertyAccessExpression;
+        if (
+          ts.isIdentifier(unwrapAstExpr(pa.expression)) &&
+          (unwrapAstExpr(pa.expression) as TsNamespace.Identifier).text ===
+            "app" &&
+          pa.name.text === "fetch"
+        ) {
+          continue;
+        }
+      }
+      if (expr && ts.isIdentifier(expr) && expr.text === "upgradeResponse") {
+        const cond = enclosingIfCondition(ret);
+        if (cond?.getText(indexAst).includes("upgradeResponse")) {
+          continue;
+        }
+      }
+      const cond = enclosingIfCondition(ret);
+      if (cond && containsCallNamed(cond, "isReplayedGatewayIdentity")) {
+        continue;
+      }
+      throw new Error(
+        `Unexpected pre-Hono return path in serve.fetch: ${ret.getText(indexAst)}`,
+      );
+    }
   });
 
   test("Bun.serve pre-Hono WebSocket upgrade routes enforce their session and access guards", async () => {
@@ -245,16 +540,66 @@ describe("route authorization registry", () => {
     });
     expect(deniedMemberStream?.status).toBe(404);
 
-    const allowedMemberUpgrade = buildInventoryUpgradeHandler(
+    // Team Bot seen via assignment (not owned, not public): must be refused (404)
+    const deniedTeamMemberUpgrade = buildInventoryUpgradeHandler(
       { kind: "member", userId: "inventory-member" },
-      { canAccessComputer: true },
+      {
+        botProfile: {
+          visibility: "private",
+          ownerUserId: "other-user",
+          assignedToMe: true,
+        },
+      },
     );
-    const allowedMemberStream = await allowedMemberUpgrade(
-      streamReq(),
-      streamUrl,
-      { upgrade: () => true },
+    expect(
+      (
+        await deniedTeamMemberUpgrade(streamReq(), streamUrl, {
+          upgrade: () => true,
+        })
+      )?.status,
+    ).toBe(404);
+
+    // Owner member: allowed (upgraded -> undefined)
+    const ownerUpgrade = buildInventoryUpgradeHandler(
+      { kind: "member", userId: "inventory-member" },
+      {
+        botProfile: { visibility: "private", ownerUserId: "inventory-member" },
+      },
     );
-    expect(allowedMemberStream).toBeUndefined();
+    expect(
+      await ownerUpgrade(streamReq(), streamUrl, { upgrade: () => true }),
+    ).toBeUndefined();
+
+    // Public Bot: member allowed (upgraded -> undefined)
+    const publicUpgrade = buildInventoryUpgradeHandler(
+      { kind: "member", userId: "inventory-member" },
+      { botProfile: { visibility: "public", ownerUserId: "other-user" } },
+    );
+    expect(
+      await publicUpgrade(streamReq(), streamUrl, { upgrade: () => true }),
+    ).toBeUndefined();
+
+    // Admin on another user's private Bot: allowed (upgraded -> undefined)
+    const adminUpgrade = buildInventoryUpgradeHandler(
+      { kind: "admin", userId: "inventory-admin" },
+      { botProfile: { visibility: "private", ownerUserId: "other-user" } },
+    );
+    expect(
+      await adminUpgrade(streamReq(), streamUrl, { upgrade: () => true }),
+    ).toBeUndefined();
+
+    // Missing / deleted Bot: refused (404)
+    const missingBotUpgrade = buildInventoryUpgradeHandler(
+      { kind: "member", userId: "inventory-member" },
+      { botProfile: null },
+    );
+    expect(
+      (
+        await missingBotUpgrade(streamReq(), streamUrl, {
+          upgrade: () => true,
+        })
+      )?.status,
+    ).toBe(404);
 
     const voiceUrl = new URL("http://inventory.test/api/voice/ws");
     const anonVoice = await anonymousUpgrade(
@@ -283,8 +628,7 @@ describe("route authorization registry", () => {
         return `${key}: anonymous got ${anonymous} — machine routes must reject callers without the machine credential`;
       return null;
     });
-  }, // ~1 300 in-process probes across both app builds.
-  120_000);
+  }, 120_000); // ~1 300 in-process probes across both app builds.
 
   test("known gaps that cannot be status-checked are still reported", () => {
     for (const [key, gap] of Object.entries(KNOWN_GAPS)) {

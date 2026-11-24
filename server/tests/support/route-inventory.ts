@@ -33,6 +33,8 @@ import { createHistorySummaryModelService } from "../../src/agents/history-summa
 import { createRuntimeKernelRoutes } from "../../src/agents/kernel-status";
 import { createModelFallbackService } from "../../src/agents/model-fallback-settings";
 import { createModelObservationService } from "../../src/agents/model-observation";
+import type { AgentProfileStore } from "../../src/agents/profile-store";
+import type { AgentProfile } from "../../src/agents/profile-types";
 import { createRoutingAdminRoutes } from "../../src/agents/routing-log";
 import { createApp } from "../../src/app";
 import { createSpeechService } from "../../src/audio/speech-service";
@@ -143,12 +145,16 @@ export type InventorySession =
 
 /**
  * Production-shaped pre-Hono WebSocket upgrade handler (`server/src/upgrade-routes.ts`)
- * wired with real `createVoiceCallService` ticket verification and controllable session /
- * computer-access guards so `route-auth-inventory.test.ts` covers Bun.serve upgrade routes.
+ * wired with real `createVoiceCallService` ticket verification and real `computerAccessCheck`
+ * over controllable session / profile stubs so `route-auth-inventory.test.ts` covers Bun.serve
+ * upgrade routes.
  */
 export function buildInventoryUpgradeHandler(
   session: InventorySession,
-  options: { canAccessComputer?: boolean; computerConfigured?: boolean } = {},
+  options: {
+    botProfile?: Partial<AgentProfile> | null;
+    computerConfigured?: boolean;
+  } = {},
 ) {
   const voiceCallService = createVoiceCallService(
     depsOf({
@@ -163,7 +169,7 @@ export function buildInventoryUpgradeHandler(
 
   return createUpgradeDispatcher({
     voiceCallService,
-    computerConfigured: options.computerConfigured ?? true,
+    isComputerConfigured: () => options.computerConfigured ?? true,
     resolveRequestActor: async () => {
       if (session.kind === "anonymous") {
         throw new Error("Unauthorized");
@@ -173,7 +179,19 @@ export function buildInventoryUpgradeHandler(
         role: session.kind === "admin" ? "admin" : "user",
       };
     },
-    canAccessComputer: async () => options.canAccessComputer ?? false,
+    agentProfiles: {
+      get: async (_actor, botId) => {
+        if (options.botProfile === null) {
+          throw new Error("Agent not found");
+        }
+        return {
+          id: botId,
+          visibility: "private",
+          ownerUserId: "inventory-owner",
+          ...options.botProfile,
+        } as unknown as Awaited<ReturnType<AgentProfileStore["get"]>>;
+      },
+    },
     isActiveRecording: () => false,
     locateComputer: async () => "http://127.0.0.1:9999",
     toStreamUrl: (_baseUrl, botId) => `ws://127.0.0.1:9999/stream/${botId}`,
