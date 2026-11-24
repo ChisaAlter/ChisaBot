@@ -83,6 +83,11 @@ if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
 const HAS_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
 if (!HAS_SINGLE_INSTANCE_LOCK) app.quit();
 
+const voiceAudio = require("./voice-audio");
+if (HAS_SINGLE_INSTANCE_LOCK) {
+  voiceAudio.applyDesktopVoiceAudioSwitches(app.commandLine);
+}
+
 const { createConfig } = require("./config");
 const {
   parseProxyList,
@@ -2639,6 +2644,9 @@ function registerIpc() {
     }),
   );
   handleWeb("pc:browser-profiles", () => getBrowserBridge().discoverProfiles());
+  voiceAudio.registerVoiceAudioIpc(ipcMain, {
+    verifySender: fromServerPage,
+  });
 }
 
 // ---------- 生命周期 ----------

@@ -127,6 +127,10 @@ if (isLocalPage) {
         return () => ipcRenderer.removeListener("state:changed", listener);
       },
     });
+    contextBridge.exposeInMainWorld("chisabotVoiceAudio", {
+      getPreferredConstraints: () =>
+        ipcRenderer.invoke("voice-audio:preferred-constraints"),
+    });
 
     // 外观：网页在 <html> 上维护 .dark + data-theme + data-material + data-canvas + data-sky，
     // 统一经 pc:appearance 上报 { dark, theme, material, canvas, sky }（保留旧 sky 布尔兼容字段）。

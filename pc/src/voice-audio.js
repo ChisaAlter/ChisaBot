@@ -24,12 +24,16 @@ function applyDesktopVoiceAudioSwitches(
   commandLine,
   platform = process.platform,
 ) {
-  if (!commandLine || typeof commandLine.appendSwitch !== "function") {
+  const target =
+    commandLine && typeof commandLine.appendSwitch === "function"
+      ? commandLine
+      : commandLine?.commandLine;
+  if (!target || typeof target.appendSwitch !== "function") {
     return [];
   }
   const applied = [];
   if (HARDWARE_AEC3_PLATFORMS.has(platform)) {
-    commandLine.appendSwitch("enable-features", "ChromeWideEchoCancellation");
+    target.appendSwitch("enable-features", "ChromeWideEchoCancellation");
     applied.push("ChromeWideEchoCancellation");
   }
   return applied;
