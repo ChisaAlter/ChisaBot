@@ -13,6 +13,19 @@ import type { AgentProfile, Isolation, LocalAgentKind } from "./local-agents";
 export const SERVER_ENVIRONMENT_ID = "server" as const;
 export type AgentEnvironmentId = typeof SERVER_ENVIRONMENT_ID | string;
 
+/**
+ * 服务器本机智能体（environmentId = "server"）访问判定的唯一真相源：
+ * 管理员恒可用；普通用户仅当部署级开关 `memberAccess`（服务器环境设置里的
+ * `member_access`，默认关）开启时可用。读列表、播种、授权与执行路径都要过它。
+ */
+export function canUseServerHost(
+  actor: { role?: string | null } | null | undefined,
+  memberAccess: boolean,
+): boolean {
+  if (actor?.role === "admin") return true;
+  return memberAccess === true;
+}
+
 export const AGENT_DRIVER_KINDS = [
   "codex",
   "claude",

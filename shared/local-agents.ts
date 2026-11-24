@@ -254,6 +254,11 @@ export type DeviceAgentSettings = {
   /** Docker / Podman 隔离用的镜像。 */
   containerImage: string;
   detected: DeviceAgentDetection | null;
+  /**
+   * 只对服务器本机环境（environmentId = "server"）有意义：是否放开普通用户使用
+   * 服务器本机智能体（默认关，只管理员可用；管理员在 设置 → 智能体提供方 里改）。
+   */
+  memberAccess: boolean;
   /** 有没有保存过（没有 = 全是默认值）。 */
   saved: boolean;
   updatedAt: string | null;
@@ -272,6 +277,7 @@ export function defaultAgentSettings(deviceId: string): DeviceAgentSettings {
     builtinModel: { kind: "server" },
     containerImage: DEFAULT_CONTAINER_IMAGE,
     detected: null,
+    memberAccess: false,
     saved: false,
     updatedAt: null,
   };

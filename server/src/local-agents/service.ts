@@ -14,6 +14,7 @@ import {
   type AgentProbeState,
   agentToolName,
   BOT_AGENT_GRANT_MODES,
+  canUseServerHost,
   isAgentDriverKind,
   type RuntimeInstanceSpec,
   SERVER_ENVIRONMENT_ID,
@@ -22,7 +23,6 @@ import {
   type DeviceOperation,
   isMobilePlatform,
 } from "../../../shared/devices";
-import { readLocalAgentLimits } from "../config";
 import {
   ACTIVE_LOCAL_TASK,
   AGENT_PROFILES,
@@ -59,6 +59,8 @@ import {
   profileLine,
 } from "../../../shared/local-agents";
 import type { AppVariables } from "../auth/guards";
+import type { ChisaBotRole } from "../auth/roles";
+import { readLocalAgentLimits } from "../config";
 import {
   connectionLanguageModel,
   type RuntimeModelConnection,
@@ -89,6 +91,7 @@ import {
   buildServerDeviceRecord,
   createServerAgentHost,
   parseEnvServerRoots,
+  type ServerAgentHost,
 } from "./server-host";
 
 /**
@@ -249,6 +252,7 @@ type SettingsRow = {
   builtin_model: BuiltinModel | null;
   container_image: string | null;
   detected: DeviceAgentDetection | null;
+  member_access?: boolean | null;
   updated_at: Date | string | null;
 };
 
@@ -316,6 +320,15 @@ export type LocalAgentServiceOptions = {
   encryptionKey?: string;
   /** 是否启用服务端本机智能体宿主（environmentId = "server"）。 */
   enableServerHost?: boolean;
+  /** 测试用：直接注入宿主实例（给了就不再按 enableServerHost 自建）。 */
+  serverHost?: ServerAgentHost | null;
+  /**
+   * 判定用户角色的唯一入口（默认按 user_roles 表解析）。返回 null / 抛错时按非管理员处理。
+   * 生产接线传与运行时一致的解析（含 dev actor），测试注入常量。
+   */
+  roleForUser?: (userId: string) => Promise<ChisaBotRole | null>;
+  /** 校验 botId 是不是这个用户可访问的机器人（PUT grants 用；未提供时不校验）。 */
+  botAccessible?: (actorId: string, botId: string) => Promise<boolean>;
   inbox?: ThreadInbox;
   control?: LocalRunControl;
   deliverTurn?: TurnRunner;
@@ -366,37 +379,58 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
   const deliveredInline = new Set<string>();
   const timeoutMs = options.timeoutMs ?? TASK_TIMEOUT_MS;
 
-  const serverHost = options.enableServerHost
-    ? createServerAgentHost({
-        onMessage: (message) => {
-          void (async () => {
-            if (
-              message.type === "agents_detected" ||
-              message.type === "agent_probe_result"
-            ) {
-              await handleNodeMessage(
-                buildServerDeviceRecord("system", parseEnvServerRoots()),
-                message,
-              );
-              return;
-            }
-            const taskId = String(message.taskId ?? "");
-            const row = taskId ? await taskRow(taskId) : null;
-            const sSettings = await settingsFor(SERVER_ENVIRONMENT_ID);
-            const roots = serverAllowedRoots(sSettings);
-            await handleNodeMessage(
-              buildServerDeviceRecord(row?.owner_user_id ?? "system", roots),
-              message,
-            );
-          })().catch((err) => {
-            console.warn(
-              "server host message error",
-              reasonWithoutStatement(err),
-            );
-          });
-        },
-      })
-    : null;
+  const roleForUser =
+    options.roleForUser ??
+    (async (userId: string): Promise<ChisaBotRole | null> => {
+      const rows = await sql.unsafe<{ role: string }[]>(
+        "SELECT role FROM user_roles WHERE user_id = $1",
+        [userId],
+      );
+      const roles = rows.map((r) => r.role);
+      return roles.includes("admin")
+        ? "admin"
+        : roles.includes("user")
+          ? "user"
+          : null;
+    });
+
+  const serverHost: ServerAgentHost | null =
+    options.serverHost !== undefined
+      ? options.serverHost
+      : options.enableServerHost
+        ? createServerAgentHost({
+            onMessage: (message) => {
+              void (async () => {
+                if (
+                  message.type === "agents_detected" ||
+                  message.type === "agent_probe_result"
+                ) {
+                  await handleNodeMessage(
+                    buildServerDeviceRecord("system", parseEnvServerRoots()),
+                    message,
+                  );
+                  return;
+                }
+                const taskId = String(message.taskId ?? "");
+                const row = taskId ? await taskRow(taskId) : null;
+                const sSettings = await settingsFor(SERVER_ENVIRONMENT_ID);
+                const roots = serverAllowedRoots(sSettings);
+                await handleNodeMessage(
+                  buildServerDeviceRecord(
+                    row?.owner_user_id ?? "system",
+                    roots,
+                  ),
+                  message,
+                );
+              })().catch((err) => {
+                console.warn(
+                  "server host message error",
+                  reasonWithoutStatement(err),
+                );
+              });
+            },
+          })
+        : null;
 
   function serverAllowedRoots(settings: DeviceAgentSettings): string[] {
     return [...new Set([...parseEnvServerRoots(), ...settings.workspaceRoots])];
@@ -417,12 +451,41 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     return hub.sendRaw(environmentId, message);
   }
 
+  /**
+   * 服务器本机环境的统一访问判定：canUseServerHost 是唯一真相源——管理员恒可，
+   * 普通用户只有部署级 memberAccess 开着才可（角色解析失败按无权限处理）。
+   * 读、播种、授权与每个执行入口都要过它，不信任授权时刻的快照。
+   */
+  async function serverHostAllowedFor(userId: string): Promise<boolean> {
+    if (!serverHost) return false;
+    let role: ChisaBotRole | null = null;
+    try {
+      role = await roleForUser(userId);
+    } catch {
+      role = null;
+    }
+    return canUseServerHost(
+      { role },
+      (await settingsFor(SERVER_ENVIRONMENT_ID)).memberAccess,
+    );
+  }
+
+  /** 实例可见性跟着环境走：没有服务器本机访问权的人，列表里不该出现它的实例。 */
+  async function visibleInstances<T extends { environmentId: string }>(
+    userId: string,
+    instances: T[],
+  ): Promise<T[]> {
+    return (await serverHostAllowedFor(userId))
+      ? instances
+      : instances.filter((i) => i.environmentId !== SERVER_ENVIRONMENT_ID);
+  }
+
   async function resolveTargetDevice(
     ownerUserId: string,
     environmentId: string,
   ): Promise<DeviceRecord | null> {
     if (environmentId === SERVER_ENVIRONMENT_ID) {
-      if (!serverHost) return null;
+      if (!(await serverHostAllowedFor(ownerUserId))) return null;
       const sSettings = await settingsFor(SERVER_ENVIRONMENT_ID);
       return buildServerDeviceRecord(
         ownerUserId,
@@ -472,6 +535,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         builtin_model jsonb,
         container_image text,
         detected jsonb,
+        member_access boolean NOT NULL DEFAULT false,
         updated_at timestamptz NOT NULL DEFAULT now()
       );
       CREATE TABLE IF NOT EXISTS chisabot_local_agent_tasks (
@@ -522,6 +586,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS session_id text;
       ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS turn_count integer NOT NULL DEFAULT 1;
       ALTER TABLE chisabot_local_agent_tasks ADD COLUMN IF NOT EXISTS pending_input jsonb;
+      ALTER TABLE chisabot_device_agent_settings ADD COLUMN IF NOT EXISTS member_access boolean NOT NULL DEFAULT false;
     `);
     await instancesStore.ensure();
     if (serverHost) {
@@ -592,6 +657,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           : base.builtinModel,
       containerImage: row.container_image || DEFAULT_CONTAINER_IMAGE,
       detected: row.detected ?? null,
+      memberAccess: row.member_access === true,
       saved: true,
       updatedAt: iso(row.updated_at),
     };
@@ -614,11 +680,11 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     settings: DeviceAgentSettings,
   ) {
     await sql.unsafe(
-      `INSERT INTO chisabot_device_agent_settings (device_id, owner_user_id, profile, workspace_roots, network, isolation, default_agent, builtin_model, container_image, detected, updated_at)
-       VALUES ($1, $2, $3, $4::text::jsonb, $5, $6, $7, $8::text::jsonb, $9, $10::text::jsonb, now())
+      `INSERT INTO chisabot_device_agent_settings (device_id, owner_user_id, profile, workspace_roots, network, isolation, default_agent, builtin_model, container_image, detected, member_access, updated_at)
+       VALUES ($1, $2, $3, $4::text::jsonb, $5, $6, $7, $8::text::jsonb, $9, $10::text::jsonb, $11, now())
        ON CONFLICT (device_id) DO UPDATE SET owner_user_id = EXCLUDED.owner_user_id, profile = EXCLUDED.profile, workspace_roots = EXCLUDED.workspace_roots,
          network = EXCLUDED.network, isolation = EXCLUDED.isolation, default_agent = EXCLUDED.default_agent, builtin_model = EXCLUDED.builtin_model,
-         container_image = EXCLUDED.container_image, detected = EXCLUDED.detected, updated_at = now()`,
+         container_image = EXCLUDED.container_image, detected = EXCLUDED.detected, member_access = EXCLUDED.member_access, updated_at = now()`,
       [
         device.id,
         device.ownerUserId,
@@ -630,6 +696,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         JSON.stringify(settings.builtinModel),
         settings.containerImage,
         settings.detected ? JSON.stringify(settings.detected) : null,
+        settings.memberAccess,
       ],
     );
     settingsCache.delete(device.id);
@@ -658,6 +725,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         .max(200)
         .regex(/^[\w./:@-]+$/u, "镜像名只能有字母、数字和 ./:@-")
         .optional(),
+      memberAccess: z.boolean().optional(),
     })
     .strict();
 
@@ -689,10 +757,21 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     const next: DeviceAgentSettings = {
       ...before,
       ...patch,
+      // memberAccess 只对服务器本机环境有意义；普通设备行不写这个键。
+      memberAccess:
+        deviceId === SERVER_ENVIRONMENT_ID
+          ? (patch.memberAccess ?? before.memberAccess)
+          : before.memberAccess,
       saved: true,
     } as DeviceAgentSettings;
     await writeSettings(device, next);
     const changes: string[] = [];
+    if (before.memberAccess !== next.memberAccess)
+      changes.push(
+        next.memberAccess
+          ? "服务器本机智能体：放开给普通用户"
+          : "服务器本机智能体：仅管理员可用",
+      );
     if (before.profile !== next.profile)
       changes.push(
         `档位：${PROFILE_INFO[before.profile].label} → ${PROFILE_INFO[next.profile].label}`,
@@ -1219,7 +1298,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
   }
 
   async function ensureServerSeedsForOwner(ownerUserId: string) {
-    if (!serverHost) return;
+    if (!(await serverHostAllowedFor(ownerUserId))) return;
     const existing = await instancesStore.listRows(
       ownerUserId,
       SERVER_ENVIRONMENT_ID,
@@ -1294,6 +1373,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           )
           .catch(() => []);
         for (const item of owners) {
+          if (!(await serverHostAllowedFor(item.owner_user_id))) continue;
           await instancesStore
             .syncDetectedAgents(
               item.owner_user_id,
@@ -1658,12 +1738,16 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         }
         try {
           await ensureServerSeedsForOwner(row.owner_user_id);
-          const { grant, instances } =
+          const { grant, instances: grantedRows } =
             await instancesStore.listGrantedInstances(
               row.owner_user_id,
               row.agent_id,
               { onlineOnly: true },
             );
+          const instances = await visibleInstances(
+            row.owner_user_id,
+            grantedRows,
+          );
           const parentDepth = Number(row.depth ?? 0);
           if (!grant.allowNestedSubagents) {
             return void reply({
@@ -1936,6 +2020,11 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       device = picked;
     }
 
+    if (
+      device.id === SERVER_ENVIRONMENT_ID &&
+      !(await serverHostAllowedFor(input.ownerUserId))
+    )
+      throw new LocalAgentError("服务器本机智能体当前只对管理员开放。", 403);
     if (
       device.id !== SERVER_ENVIRONMENT_ID &&
       isMobilePlatform(device.platform)
@@ -2645,6 +2734,11 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     rawAnswers: Record<string, string[] | string>,
   ): Promise<LocalAgentTaskView> {
     const row = await owned(actorId, id);
+    if (
+      row.device_id === SERVER_ENVIRONMENT_ID &&
+      !(await serverHostAllowedFor(actorId))
+    )
+      throw new LocalAgentError("服务器本机智能体当前只对管理员开放。", 403);
     const state = liveOf(id);
     const pending = state.pendingInput ?? row.pending_input ?? null;
     if (row.status !== "needs_input" || !pending) {
@@ -3025,6 +3119,11 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
 
   async function applyChanges(actorId: string, id: string, discard: boolean) {
     const row = await owned(actorId, id);
+    if (
+      row.device_id === SERVER_ENVIRONMENT_ID &&
+      !(await serverHostAllowedFor(actorId))
+    )
+      throw new LocalAgentError("服务器本机智能体当前只对管理员开放。", 403);
     if (!row.diff?.pending)
       throw new LocalAgentError(
         discard ? "没有要放弃的改动。" : "没有待应用的改动。",
@@ -3123,7 +3222,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     }
 
     const list: AgentEnvironmentSummary[] = [];
-    if (serverHost) {
+    if (await serverHostAllowedFor(actorId)) {
       const sSettings = await settingsFor(SERVER_ENVIRONMENT_ID);
       const sRoots = serverAllowedRoots(sSettings);
       const sRecord = buildServerDeviceRecord(actorId, sRoots);
@@ -3169,12 +3268,29 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     return list;
   }
 
+  /** 面向调用方的实例列表：先播种（有权者），再按环境可见性过滤。 */
+  async function listInstances(
+    actorId: string,
+    environmentId?: string,
+  ): Promise<AgentInstanceView[]> {
+    await ensureServerSeedsForOwner(actorId);
+    return visibleInstances(
+      actorId,
+      await instancesStore.listInstances(actorId, environmentId),
+    );
+  }
+
   async function probeInstance(
     actorId: string,
     instanceId: string,
   ): Promise<AgentInstanceView> {
     const row = await instancesStore.getRow(actorId, instanceId);
     if (!row) throw new LocalAgentError("没有这个智能体实例。", 404);
+    if (
+      row.environment_id === SERVER_ENVIRONMENT_ID &&
+      !(await serverHostAllowedFor(actorId))
+    )
+      throw new LocalAgentError("没有这个智能体实例。", 404);
     if (!isEnvironmentOnline(row.environment_id)) {
       const offlineProbe: AgentProbeState = {
         status: "unknown",
@@ -3295,7 +3411,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     threadId: string;
   }): Promise<GrantedTool[]> {
     await ensureServerSeedsForOwner(input.ownerUserId);
-    const { grant, instances: grantedInstances } =
+    const { grant, instances: granted } =
       await instancesStore.listGrantedInstances(
         input.ownerUserId,
         input.botId,
@@ -3303,6 +3419,8 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           onlineOnly: true,
         },
       );
+    // 授权时刻可能还开着：服务器本机实例要按当前部署开关再判一次。
+    const grantedInstances = await visibleInstances(input.ownerUserId, granted);
     if (grant.mode === "none") return [];
 
     const devices = (await deviceStore.forOwner(input.ownerUserId)).filter(
@@ -3446,8 +3564,12 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
               input.botId,
               { onlineOnly: true },
             );
+            const visible = await visibleInstances(
+              input.ownerUserId,
+              latest.instances,
+            );
             return JSON.stringify({
-              instances: latest.instances.map((i) => ({
+              instances: visible.map((i) => ({
                 id: i.id,
                 slug: i.slug,
                 name: i.name,
@@ -4020,6 +4142,25 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       }
     };
 
+    /** 读 memberAccess 的唯一入口（部署级设置，存在服务器环境自己的设置行里）。 */
+    const serverMemberAccess = async () =>
+      (await settingsFor(SERVER_ENVIRONMENT_ID)).memberAccess;
+
+    /**
+     * 使用层判定（授权写）：canUseServerHost 语义——管理员恒可，普通用户要部署
+     * 放开 memberAccess。环境/提供方配置写仍走 assertServerAdminIfNeeded（只管理员）。
+     */
+    const assertServerAccessIfNeeded = async (
+      actor: AppVariables["actor"],
+      environmentId: string,
+    ) => {
+      if (
+        environmentId === SERVER_ENVIRONMENT_ID &&
+        !canUseServerHost(actor, await serverMemberAccess())
+      )
+        throw new LocalAgentError("服务器本机智能体当前只对管理员开放。", 403);
+    };
+
     const ownEnvironment = async (actorId: string, envId: string) => {
       const target = await resolveTargetDevice(actorId, envId);
       if (!target) throw new LocalAgentError("没有这个运行环境。", 404);
@@ -4083,11 +4224,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
 
     app.get("/instances", async (c) => {
       const envId = c.req.query("environmentId") || undefined;
-      await ensureServerSeedsForOwner(c.var.actor.id);
-      const instances = await instancesStore.listInstances(
-        c.var.actor.id,
-        envId,
-      );
+      const instances = await listInstances(c.var.actor.id, envId);
       return c.json({ instances });
     });
 
@@ -4114,7 +4251,12 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         c.var.actor.id,
         c.req.param("id"),
       );
-      if (!inst) throw new LocalAgentError("没有这个智能体实例。", 404);
+      if (
+        !inst ||
+        (inst.environmentId === SERVER_ENVIRONMENT_ID &&
+          !(await serverHostAllowedFor(c.var.actor.id)))
+      )
+        throw new LocalAgentError("没有这个智能体实例。", 404);
       return c.json({ instance: inst });
     });
 
@@ -4161,12 +4303,29 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         instancesStore.getBotGrant(c.var.actor.id, botId),
         instancesStore.listInstances(c.var.actor.id),
       ]);
-      return c.json({ grant, instances });
+      return c.json({
+        grant,
+        instances: await visibleInstances(c.var.actor.id, instances),
+      });
     });
 
     app.put("/bots/:botId/grants", async (c) => {
       const botId = c.req.param("botId");
       const patch = botGrantPatchSchema.parse(await c.req.json());
+      if (
+        options.botAccessible &&
+        !(await options.botAccessible(c.var.actor.id, botId))
+      )
+        throw new LocalAgentError("没有这个机器人。", 404);
+      if (patch.instanceIds?.length) {
+        const serverIds = new Set(
+          (
+            await instancesStore.listRows(c.var.actor.id, SERVER_ENVIRONMENT_ID)
+          ).map((r) => r.id),
+        );
+        if (patch.instanceIds.some((id) => serverIds.has(id)))
+          await assertServerAccessIfNeeded(c.var.actor, SERVER_ENVIRONMENT_ID);
+      }
       const grant = await instancesStore.saveBotGrant(
         c.var.actor.id,
         botId,
@@ -4289,6 +4448,8 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     forDevice,
     forgetDevice,
     listEnvironments,
+    listInstances,
+    serverHostAllowedFor,
     probeInstance,
     probeEnvironment,
     tools,

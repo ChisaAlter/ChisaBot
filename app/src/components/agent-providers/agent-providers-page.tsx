@@ -737,6 +737,7 @@ function EnvironmentBoundaryPanel({
       isolation: Isolation;
       network: boolean;
       workspaceRoots: string[];
+      memberAccess: boolean;
     };
     effectiveRoots: string[];
     envRoots: string[];
@@ -751,6 +752,9 @@ function EnvironmentBoundaryPanel({
     envState.settings.isolation,
   );
   const [network, setNetwork] = useState<boolean>(envState.settings.network);
+  const [memberAccess, setMemberAccess] = useState<boolean>(
+    envState.settings.memberAccess,
+  );
   const [rootsText, setRootsText] = useState<string>(
     (envState.settings.workspaceRoots.length
       ? envState.settings.workspaceRoots
@@ -771,6 +775,7 @@ function EnvironmentBoundaryPanel({
         isolation,
         network,
         workspaceRoots,
+        ...(env.kind === "server" ? { memberAccess } : {}),
       });
       toast.success("已保存当前运行环境的工作区与隔离设置");
       onSaved();
@@ -869,6 +874,26 @@ function EnvironmentBoundaryPanel({
           />
         </div>
       </div>
+
+      {env.kind === "server" ? (
+        <div className="flex items-center justify-between rounded-lg border border-border/60 px-3 py-2">
+          <div>
+            <div className="text-xs font-medium">
+              {"允许普通用户使用服务器本机智能体"}
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              {
+                "默认关闭：普通用户看不到此运行环境、不会播种实例、授权与执行都会被拒；管理员始终可用"
+              }
+            </div>
+          </div>
+          <Switch
+            checked={memberAccess}
+            disabled={readOnly}
+            onCheckedChange={(v) => setMemberAccess(Boolean(v))}
+          />
+        </div>
+      ) : null}
 
       <div className="flex flex-col gap-1">
         <div className="text-xs font-medium text-muted-foreground">
