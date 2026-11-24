@@ -1,15 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { providerName, signInWith } from "@/lib/auth/client";
 
 /*
  * A browser origin, which the sign-in call needs for its callback URL and this environment has no
- * window to supply. Stubbed rather than designed around: where the browser sends somebody back to
- * is the browser's own business, and threading it through as an argument would only move the same
- * value to the caller.
+ * window to supply. Stubbed per-test and restored in afterEach so shared-process tests do not see
+ * a partial globalThis.window without addEventListener.
  */
-(globalThis as { window?: unknown }).window = {
-  location: { origin: "http://localhost:3010" },
-};
+let prevWindowDesc: PropertyDescriptor | undefined;
 
 /**
  * Starting sign-in, for each provider a deployment can configure.
@@ -20,6 +17,23 @@ import { providerName, signInWith } from "@/lib/auth/client";
  * deployment can gain one without the app being rebuilt.
  */
 describe("signInWith", () => {
+  beforeEach(() => {
+    prevWindowDesc = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "window", {
+      value: { location: { origin: "http://localhost:3010" } },
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  afterEach(() => {
+    if (prevWindowDesc) {
+      Object.defineProperty(globalThis, "window", prevWindowDesc);
+    } else {
+      Reflect.deleteProperty(globalThis, "window");
+    }
+    prevWindowDesc = undefined;
+  });
   test.each(["google", "microsoft", "okta"] as const)(
     "starts %s through the same call",
     async (provider) => {
