@@ -1,3 +1,4 @@
+import type { GuardedFetchOptions } from "../../../shared/net/guarded-fetch";
 import {
   checkAgentEndpoint,
   createAgentFetch,
@@ -127,6 +128,7 @@ export async function testAgentConnection(
     allowPrivateHosts?: boolean;
     allowedHosts?: ReadonlySet<string>;
     fetchImpl?: typeof fetch;
+    resolve?: GuardedFetchOptions["resolve"];
     timeoutMs?: number;
   } = {},
 ): Promise<ConnectionTestResult> {
@@ -146,6 +148,7 @@ export async function testAgentConnection(
       ? { allowPrivateHosts: options.allowPrivateHosts }
       : {}),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.resolve ? { resolve: options.resolve } : {}),
   });
   let response: Response;
   try {

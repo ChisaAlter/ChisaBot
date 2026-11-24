@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createServer } from "node:http";
 import { agentAuthHeaders, storeAgentAuth } from "../src/agents/auth-header";
 import { testAgentConnection } from "../src/agents/connection-test";
 import {
@@ -759,5 +760,231 @@ describe("named addresses on a redirect hop", () => {
       fetchImpl: redirectingTo("http://169.254.169.254/latest/meta-data/"),
     });
     await expect(dial("https://agent.example.com/start")).rejects.toThrow();
+  });
+});
+
+describe("DNS-pinned guarded fetch and full SSRF range enforcement", () => {
+  test("blocks CGNAT, 0.0.0.0/8, IPv4-translated metadata, and 6to4 at check and dial time", async () => {
+    const literalBypasses = [
+      "http://100.64.0.1/",
+      "http://0.0.0.1/",
+      "http://[::ffff:0:169.254.169.254]/",
+      "http://[2002:a9fe:a9fe::1]/",
+    ];
+    for (const allowPrivateHosts of [false, true]) {
+      for (const raw of literalBypasses) {
+        expect(checkAgentEndpoint(raw, { allowPrivateHosts }).allowed).toBe(
+          false,
+        );
+        let lookupCalls = 0;
+        const refusals: Array<{ address: string; reason: string }> = [];
+        const dial = createAgentFetch({
+          allowPrivateHosts,
+          resolve: async () => {
+            lookupCalls += 1;
+            return [{ address: "93.184.216.34", family: 4 }];
+          },
+          onRefusal: (refusal) => refusals.push(refusal),
+        });
+        await expect(dial(raw)).rejects.toThrow(EndpointNotAllowedError);
+        expect(lookupCalls).toBe(0);
+        expect(refusals).toHaveLength(1);
+      }
+    }
+  });
+
+  test("refuses domains resolving to metadata or private IPs without opening a socket", async () => {
+    let connections = 0;
+    const server = createServer((req, res) => {
+      req.resume();
+      connections += 1;
+      res.writeHead(200);
+      res.end("should never connect");
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = server.address() as { port: number };
+
+    try {
+      // 1. nip.io-style domain resolving to cloud metadata is refused even when allowPrivateHosts=true.
+      for (const allowPrivateHosts of [false, true]) {
+        const refusals: Array<{ address: string; reason: string }> = [];
+        const dial = createAgentFetch({
+          allowPrivateHosts,
+          resolve: async () => [{ address: "169.254.169.254", family: 4 }],
+          onRefusal: (refusal) => refusals.push(refusal),
+        });
+        await expect(
+          dial(`http://169.254.169.254.nip.io:${port}/ag-ui`),
+        ).rejects.toThrow(EndpointNotAllowedError);
+        expect(refusals).toHaveLength(1);
+        expect(refusals[0]?.address).toBe(
+          `http://169.254.169.254.nip.io:${port}/ag-ui`,
+        );
+      }
+
+      // 2. Domain resolving to loopback or RFC1918 is refused when allowPrivateHosts=false.
+      for (const privateIp of ["127.0.0.1", "10.0.0.5", "100.64.0.1"]) {
+        const dial = createAgentFetch({
+          allowPrivateHosts: false,
+          resolve: async () => [{ address: privateIp, family: 4 }],
+        });
+        await expect(
+          dial(`http://rebind.example:${port}/ag-ui`),
+        ).rejects.toThrow(EndpointNotAllowedError);
+      }
+
+      // 3. testAgentConnection also refuses DNS-resolved metadata/private targets.
+      const probeResult = await testAgentConnection(
+        `http://169.254.169.254.nip.io:${port}/ag-ui`,
+        {
+          allowPrivateHosts: false,
+          resolve: async () => [{ address: "169.254.169.254", family: 4 }],
+        },
+      );
+      expect(probeResult.ok).toBe(false);
+      if (!probeResult.ok) {
+        expect(probeResult.reason).toMatch(/may not live there/i);
+      }
+
+      expect(connections).toBe(0);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
+  test("refuses a redirect hop whose hostname resolves to metadata or private IP", async () => {
+    let secretHits = 0;
+    const server = createServer((req, res) => {
+      req.resume();
+      if (req.url === "/start") {
+        const { port } = server.address() as { port: number };
+        res.writeHead(307, {
+          Location: `http://169.254.169.254.nip.io:${port}/secret`,
+        });
+        res.end();
+        return;
+      }
+      secretHits += 1;
+      res.writeHead(200);
+      res.end("secret");
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = server.address() as { port: number };
+
+    try {
+      const refusals: Array<{ address: string; reason: string }> = [];
+      const dial = createAgentFetch({
+        allowPrivateHosts: false,
+        allowedHosts: new Set([`127.0.0.1:${port}`]),
+        resolve: async (hostname) => {
+          if (hostname === "169.254.169.254.nip.io") {
+            return [{ address: "169.254.169.254", family: 4 }];
+          }
+          return [{ address: "127.0.0.1", family: 4 }];
+        },
+        onRefusal: (refusal) => refusals.push(refusal),
+      });
+      await expect(dial(`http://127.0.0.1:${port}/start`)).rejects.toThrow(
+        EndpointNotAllowedError,
+      );
+      expect(secretHits).toBe(0);
+      expect(refusals).toHaveLength(1);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
+  test("reaches an allowedHosts endpoint and streams SSE chunks live before stream end", async () => {
+    let releaseSecondChunk: () => void = () => {};
+    const secondChunkGate = new Promise<void>((resolve) => {
+      releaseSecondChunk = resolve;
+    });
+    let receivedHost = "";
+    const server = createServer((req, res) => {
+      req.resume();
+      receivedHost = req.headers.host ?? "";
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+      });
+      res.write('data: {"type":"RUN_STARTED"}\n\n');
+      void secondChunkGate.then(() => {
+        res.write('data: {"type":"RUN_FINISHED"}\n\n');
+        res.end();
+      });
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = server.address() as { port: number };
+
+    try {
+      const dial = createAgentFetch({
+        allowPrivateHosts: false,
+        allowedHosts: new Set([`agent.internal:${port}`]),
+        resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+      });
+      const response = await dial(`http://agent.internal:${port}/ag-ui`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "text/event-stream",
+        },
+        body: JSON.stringify({ threadId: "t1" }),
+      });
+      expect(response.status).toBe(200);
+      expect(receivedHost).toBe(`agent.internal:${port}`);
+      expect(response.body).not.toBeNull();
+      if (!response.body) return;
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      // First chunk must arrive while the server is still holding the stream open.
+      const first = await reader.read();
+      expect(first.done).toBe(false);
+      expect(decoder.decode(first.value)).toContain("RUN_STARTED");
+
+      releaseSecondChunk();
+      let rest = "";
+      for (;;) {
+        const next = await reader.read();
+        if (next.done) break;
+        rest += decoder.decode(next.value, { stream: true });
+      }
+      expect(rest).toContain("RUN_FINISHED");
+    } finally {
+      releaseSecondChunk();
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+  });
+
+  test("refuses an allowedHosts hostname if its DNS resolves to cloud metadata", async () => {
+    const dial = createAgentFetch({
+      allowPrivateHosts: false,
+      allowedHosts: new Set(["agent.internal"]),
+      resolve: async () => [{ address: "169.254.169.254", family: 4 }],
+    });
+    await expect(dial("http://agent.internal/ag-ui")).rejects.toThrow(
+      EndpointNotAllowedError,
+    );
+
+    const dialV6 = createAgentFetch({
+      allowPrivateHosts: false,
+      allowedHosts: new Set(["agent.internal"]),
+      resolve: async () => [{ address: "fd00:ec2::254", family: 6 }],
+    });
+    await expect(dialV6("http://agent.internal/ag-ui")).rejects.toThrow(
+      EndpointNotAllowedError,
+    );
   });
 });
