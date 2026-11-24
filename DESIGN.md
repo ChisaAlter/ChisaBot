@@ -2157,7 +2157,7 @@ CB-050。审计里「推荐三款 2000 元以内的降噪耳机」画成纯文�
 ### 95.2 收藏夹
 
 - 每个用户一份，这个用户所有机器人的浏览器共用。新表 `chisabot_browser_bookmarks(id,user_id,title,url,position,…)` + `chisabot_browser_bookmark_seeds(user_id)`（开机 CREATE IF NOT EXISTS，只新增，回滚安全）。第一次读时种下起始页原来的五个（必应 / 百度 / GitHub / 维基百科 / 哔哩哔哩），记在 seeds 里——全删光以后不再种回来。最多 100 个；只收 http/https（没写协议补 https://）；同一网址再收藏返回原来那条。
-- `/api/browser-bookmarks`：GET / POST / PATCH :id / DELETE :id / PUT order / POST sync/:botId。只能动自己的（别人的 id 一律 404）。
+- `/api/browser-bookmarks`：GET / POST / PATCH :id / DELETE :id / PUT order / POST sync/:botId。只能动自己的（别人的 id 一律 404）；`sync/:botId` 与 `/api/computers` 共用电脑访问权判定（仅机主、管理员或公开机器人，不可仅凭可见性改写他人机器人的起始页）。
 - **新标签页上的常用网站 = 收藏夹前 12 个**：右栏画面出现、打开大屏、收藏夹每次变化时，网页调 `sync/:botId`，服务器推给那个机器人的浏览器；已经画着起始页、没在打字的空白标签当场重画。浏览器进程重启后先用默认五个，下一次推送换回来。
 
 ### 95.3 界面

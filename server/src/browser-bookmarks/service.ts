@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono, type MiddlewareHandler } from "hono";
+import { canUseComputer } from "../agents/computer-access";
+import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AgentActor, AgentProfile } from "../agents/profile-types";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
@@ -19,7 +21,7 @@ import type { Database } from "../db/client";
  *   PATCH  /api/browser-bookmarks/:id          → { title?, url? } 改名 / 改网址
  *   DELETE /api/browser-bookmarks/:id          → 删除
  *   PUT    /api/browser-bookmarks/order        → { ids: string[] } 调整顺序
- *   POST   /api/browser-bookmarks/sync/:botId  → 把收藏夹推给这个机器人的浏览器起始页（能看到这个机器人才行）
+ *   POST   /api/browser-bookmarks/sync/:botId  → 把收藏夹推给这个机器人的浏览器起始页（需具备该机器人的电脑访问权）
  */
 export type Bookmark = { id: string; title: string; url: string; position: number };
 
@@ -85,7 +87,11 @@ export type BookmarkStartLinks = (
 
 export function createBrowserBookmarks(
   database: Database,
-  deps: { agents?: BookmarkAgents; pushStartLinks?: BookmarkStartLinks } = {},
+  deps: {
+    agents?: BookmarkAgents;
+    canAccessComputer?: BotAccessCheck;
+    pushStartLinks?: BookmarkStartLinks;
+  } = {},
 ) {
   const sql = database.$client;
 
@@ -201,10 +207,16 @@ export function createBrowserBookmarks(
   }
 
   async function syncTo(actor: AgentActor, botId: string): Promise<{ ok: boolean; count: number }> {
-    if (!deps.agents || !deps.pushStartLinks) return { ok: false, count: 0 };
+    if ((!deps.canAccessComputer && !deps.agents) || !deps.pushStartLinks) {
+      return { ok: false, count: 0 };
+    }
     if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(botId)) throw new BookmarkError("找不到这个机器人。", 404);
-    const agent = await deps.agents.get(actor, botId);
-    if (!agent) throw new BookmarkError("找不到这个机器人。", 404);
+    const allowed = deps.canAccessComputer
+      ? await deps.canAccessComputer(actor, botId)
+      : deps.agents
+        ? canUseComputer(await deps.agents.get(actor, botId), actor)
+        : false;
+    if (!allowed) throw new BookmarkError("找不到这个机器人。", 404);
     const links = (await list(actor.id)).slice(0, START_LINKS).map(({ title, url }) => ({ title, url }));
     await deps.pushStartLinks(botId, links);
     return { ok: true, count: links.length };

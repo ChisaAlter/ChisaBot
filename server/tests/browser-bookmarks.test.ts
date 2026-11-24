@@ -215,3 +215,129 @@ describe.skipIf(!url)("bookmark routes", () => {
     );
   });
 });
+
+describe("sync computer access control", () => {
+  function fakeBookmarkDatabase() {
+    const bookmarks = new Map<
+      string,
+      Array<{ id: string; title: string; url: string; position: number }>
+    >();
+    const seeded = new Set<string>();
+    const sql = {
+      unsafe: async (query: string, params: unknown[] = []) => {
+        if (query.includes("INSERT INTO chisabot_browser_bookmark_seeds")) {
+          const userId = String(params[0]);
+          if (seeded.has(userId)) return [];
+          seeded.add(userId);
+          return [{ user_id: userId }];
+        }
+        if (query.includes("INSERT INTO chisabot_browser_bookmarks")) {
+          const [id, userId, title, url, position] = params as [
+            string,
+            string,
+            string,
+            string,
+            number,
+          ];
+          const list = bookmarks.get(userId) ?? [];
+          list.push({ id, title, url, position });
+          bookmarks.set(userId, list);
+          return [];
+        }
+        if (query.includes("SELECT id, title, url, position")) {
+          const userId = String(params[0]);
+          return bookmarks.get(userId) ?? [];
+        }
+        return [];
+      },
+    };
+    return { $client: sql } as unknown as ReturnType<typeof createDatabase>;
+  }
+
+  test("refuses bookmark sync to a Bot visible to the caller when the caller lacks computer access", async () => {
+    const owner: AgentActor = { id: "user-owner", role: "user" };
+    const teammate: AgentActor = { id: "user-teammate", role: "user" };
+    const admin: AgentActor = { id: "user-admin", role: "admin" };
+
+    const teamBot = {
+      id: "bot-team",
+      ownerUserId: owner.id,
+      visibility: "team",
+    } as unknown as AgentProfile;
+    const privateBot = {
+      id: "bot-private",
+      ownerUserId: owner.id,
+      visibility: "private",
+    } as unknown as AgentProfile;
+    const publicBot = {
+      id: "bot-public",
+      ownerUserId: owner.id,
+      visibility: "public",
+    } as unknown as AgentProfile;
+
+    const pushed: Array<{ botId: string; count: number }> = [];
+    const service = createBrowserBookmarks(fakeBookmarkDatabase(), {
+      agents: {
+        get: async (actor, id) => {
+          if (id === teamBot.id) return teamBot;
+          if (id === publicBot.id) return publicBot;
+          if (
+            id === privateBot.id &&
+            (actor.role === "admin" || actor.id === owner.id)
+          ) {
+            return privateBot;
+          }
+          return null;
+        },
+      },
+      pushStartLinks: async (botId, links) => {
+        pushed.push({ botId, count: links.length });
+      },
+    });
+
+    let currentActor: AgentActor = teammate;
+    const requireUser: MiddlewareHandler = async (c, next) => {
+      c.set("actor", currentActor);
+      await next();
+    };
+    const app = service.routes(requireUser as never);
+
+    // Teammate can see teamBot, but does NOT have computer access -> 404 and no push.
+    currentActor = teammate;
+    const teamDenied = await app.request("/sync/bot-team", { method: "POST" });
+    expect(teamDenied.status).toBe(404);
+    expect(pushed).toEqual([]);
+
+    // Teammate cannot sync to owner's privateBot either -> 404.
+    const privateDenied = await app.request("/sync/bot-private", {
+      method: "POST",
+    });
+    expect(privateDenied.status).toBe(404);
+    expect(pushed).toEqual([]);
+
+    // Public Bot computer is shared -> teammate can sync -> 200.
+    const publicAllowed = await app.request("/sync/bot-public", {
+      method: "POST",
+    });
+    expect(publicAllowed.status).toBe(200);
+    expect(pushed).toHaveLength(1);
+    expect(pushed[0]?.botId).toBe("bot-public");
+
+    // Owner can sync to their own teamBot -> 200.
+    currentActor = owner;
+    const ownerAllowed = await app.request("/sync/bot-team", {
+      method: "POST",
+    });
+    expect(ownerAllowed.status).toBe(200);
+    expect(pushed).toHaveLength(2);
+    expect(pushed[1]?.botId).toBe("bot-team");
+
+    // Admin can sync to any visible Bot -> 200.
+    currentActor = admin;
+    const adminAllowed = await app.request("/sync/bot-team", {
+      method: "POST",
+    });
+    expect(adminAllowed.status).toBe(200);
+    expect(pushed).toHaveLength(3);
+  });
+});
