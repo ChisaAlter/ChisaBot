@@ -17,7 +17,7 @@ ChisaBot 有两种「发布」：
 | 从 0.1.0 起              | 2026-10-12 归正；内部 0.2.x 全部作废。装着 0.2.x 的 PC 不会自动降级，要卸载后装 0.1.x 一次（数据保留）                                                     |
 | **三处同一个版本**       | 根 `package.json`（→ 服务器 `/api/version`）、`pc/package.json`、`android/app/build.gradle.kts` 的 `versionName`。CI 检查 PC 和 Android 一致，不一致不出包 |
 | **versionCode 只增不减** | Android 按它判断更新（0.1.0 = 206，0.1.15 = 221）；每次发版 +1，即使只是版本号同步                                                                         |
-| 补丁号递增               | 每次客户端发版 +0.0.1；只有服务器改动时可以只提升根 `package.json`（例：0.1.4 只是服务器版本号，没有客户端发版和标签）                                     |
+| 补丁号递增               | 每次发版全端同步 +0.0.1（根 `package.json`、`pc/package.json`、`android/app/build.gradle.kts` 同步提升并打标签；2026-11-17 起不再做仅升根 `package.json` 的服务器专属发版） |
 | 0.2.0                    | 留给真机验证后的下一个大版本（CB-019）                                                                                                                     |
 
 ## 2. 服务器 / 网页上线

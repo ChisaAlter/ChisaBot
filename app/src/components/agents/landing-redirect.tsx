@@ -18,9 +18,9 @@ import { agentKeys } from "@/lib/agents/queries";
  * forward to a Bot's conversation (last used → 主机器人 → first). Nothing is drawn while the roster
  * loads — the chat appears in place, no flash of a page that is about to leave.
  *
- * Proposed (not implemented yet): the server seeds a default Bot (「助手」) for anyone with none,
- * which makes the empty branch a last resort (e.g. every Bot hidden). Either way it is one button
- * away from a Bot.
+ * Note: the server seeds a default private Bot (「助手」) via `ensureDefaultBot` for anyone with
+ * none, so the empty branch below is only a last-resort fallback (e.g. every Bot hidden or
+ * deleted). Either way it is one button away from a Bot.
  */
 export function LandingRedirect() {
   const landing = useLanding();

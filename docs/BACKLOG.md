@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-22（`v0.1.180`）。
+> 状态最后核对：2026-11-24（`v0.1.183` + `Unreleased`，含 `f3582a0c` 与本轮文档/CI 收口）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
@@ -62,7 +62,7 @@
 | [CB-015](#cb-015) | 瘦身 P4c：合并重复系统（依赖并行功能）                                            | 精简 Slim             | `type: chore` · `area: slim` · `P2` · `status: blocked`                                       |
 | [CB-016](#cb-016) | 瘦身 P5：DROP 上游与已下线模块废弃空表（迁移 0068）                               | 精简 Slim             | `type: chore` · `area: slim` · `area: infra` · `P2` · `status: done`                          |
 | [CB-017](#cb-017) | 真机验证：Windows PC 客户端与安卓手机                                             | 0.2.0 release         | `type: chore` · `area: pc` · `area: android` · `P1` · `status: needs-user`                    |
-| [CB-018](#cb-018) | 旧内部 0.2.x 开发客户端手动覆盖重装为正式 0.1.x（当前 v0.1.143）                  | 0.2.0 release         | `type: chore` · `area: pc` · `P1` · `status: needs-user`                                      |
+| [CB-018](#cb-018) | 旧内部 0.2.x 开发客户端手动覆盖重装为正式 0.1.x（当前 v0.1.183）                  | 0.2.0 release         | `type: chore` · `area: pc` · `P1` · `status: needs-user`                                      |
 | [CB-019](#cb-019) | 发版 0.2.0（PC + Android）                                                        | 0.2.0 release         | `type: chore` · `area: infra` · `area: pc` · `area: android` · `P1`                           |
 | [CB-020](#cb-020) | CI「ChisaBot checks」server-typecheck 在 main 上一直失败                          | 精简 Slim             | `type: bug` · `area: infra` · `P1` · `status: done`                                           |
 | [CB-021](#cb-021) | 一轮里两次 page_update 会出两张同一页面的卡片                                     | 成熟度 Maturity       | `type: bug` · `area: pages` · `area: chat` · `P2` · `status: done`                            |
@@ -80,7 +80,7 @@
 | [CB-033](#cb-033) | 生产跨部署 stale-chunk 测试待跑                                                   | 成熟度 Maturity       | `type: chore` · `area: infra` · `P2`                                                          |
 | [CB-034](#cb-034) | 用真实账号验证 GitHub 连接与 IM 接入                                              | 成熟度 Maturity       | `type: chore` · `area: github` · `area: im` · `P2` · `status: needs-user`                     |
 | [CB-035](#cb-035) | 备用模型：管理员排序的回退列表 + 对话里说明换了模型 + 自检走回退                  | 成熟度 Maturity       | `type: bug` · `area: models` · `area: chat` · `P0` · `status: done`                           |
-| [CB-040](#cb-040) | 多用户：管理员给朋友开账号（每人独立的机器人 / 记忆 / 密钥 / 设备）               | 成熟度 Maturity       | `type: feat` · `area: infra` · `area: settings` · `P0` · `status: done（入口默认隐藏）`       |
+| [CB-040](#cb-040) | 多用户：管理员给朋友开账号（每人独立的机器人 / 记忆 / 密钥 / 设备）               | 成熟度 Maturity       | `type: feat` · `area: infra` · `area: settings` · `P0` · `status: done`（网关邀请默认关）     |
 | [CB-041](#cb-041) | 真实聊天路径（频道聊天）刷新 / 断网后正在写的回答丢失                             | 成熟度 Maturity       | `type: bug` · `area: chat` · `P0` · `status: done`                                            |
 | [CB-042](#cb-042) | 重新生成 / 编辑后重发                                                             | 成熟度 Maturity       | `type: feat` · `area: chat` · `P1` · `status: done`                                           |
 | [CB-043](#cb-043) | 频道聊天的跨设备实时同步（手机发的桌面看不到）                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `area: pwa` · `P1` · `status: done`                              |
@@ -223,7 +223,7 @@
 
 **PC 更新「稍后」永远不再提醒——待安装状态按周期重弹提示窗**
 
-标签：`type: bug` · `area: pc` · `P1` · `status: in-progress`
+标签：`type: bug` · `area: pc` · `P1` · `status: done`（#560 · `v0.1.167`）
 
 分支：`fix/update-remind`。问题（2026-11-18 用户实测）：新版本下载完弹一次提示窗 + 系统通知（showInactive 不抢焦点，易漏看），关掉之后直到进程退出都没有任何再提醒——常驻托盘的客户端几乎不退出，「稍后 = 退出时自动装」等价于「永远不装」。叠加 CB-136 的冻结 bug，客户端 14 小时没有任何新版本动静。
 
@@ -235,7 +235,7 @@
 
 **PC 客户端发版后不收敛：待安装冻结检查 + 内置前端切换晚于页面加载**
 
-标签：`type: bug` · `area: pc` · `P1` · `status: in-progress`
+标签：`type: bug` · `area: pc` · `P1` · `status: done`（#558 · `v0.1.166`）
 
 分支：`fix/pc-update-converge`。问题（2026-11-18 用户实测）：客户端 0.1.159 装着，0.1.160 下载完「待安装」后更新器永久停止检查（`check()` 对 downloaded 直接返回），错过 0.1.161–0.164 四次发版；应用常驻托盘几乎不退出，autoInstallOnAppQuit 也轮不到，客户端无限期落后。同时「内置前端优先 + 服务器更高切远程」的仲裁结果只存内存：启动探测一失败，整个会话锁死在旧 bundle，会话中嗅探到新版本也只广播状态不重载已加载页面。
 
@@ -711,11 +711,11 @@ PR #283 / #284 / #285 已发布，最终运行提交 `8a94383048c8c331fb7e7aa4db
 
 #### 验收标准
 
-- [ ] 聊天里出审批卡片：允许 / 拒绝，服务器原子地 pending→running，第二台设备 / 第二次点击不会重复执行
-- [ ] 设置里能看到、改、删审批偏好；机器人每轮读到偏好并遵守
-- [ ] 设备「询问」能力、GitHub 写操作沿用同一套卡片（或明确说明为什么不合并）
-- [ ] 单测 + 预览 e2e + 生产一次性机器人 e2e 通过；聊天滚动回归 7/7
-- [ ] DESIGN.md 新章节 + docs/approvals.md + CHANGELOG Unreleased
+- [x] 聊天里出审批卡片：允许 / 拒绝，服务器原子地 pending→running，第二台设备 / 第二次点击不会重复执行
+- [x] 设置里能看到、改、删审批偏好；机器人每轮读到偏好并遵守
+- [x] 设备「询问」能力、GitHub 写操作沿用同一套卡片（或明确说明为什么不合并）
+- [x] 单测 + 预览 e2e + 生产一次性机器人 e2e 通过；聊天滚动回归 7/7
+- [x] DESIGN.md 新章节 + CHANGELOG Unreleased（DESIGN.md §58 与 CHANGELOG 已补齐；审批说明合并于 DESIGN.md 与 docs/features.md，未另立独立 docs/approvals.md）
 
 #### 相关
 
@@ -735,10 +735,10 @@ PR #283 / #284 / #285 已发布，最终运行提交 `8a94383048c8c331fb7e7aa4db
 
 #### 验收标准
 
-- [ ] 设置里能分别选生图模型、识图模型；管理员设部署默认，用户可覆盖，清空覆盖回到默认
-- [ ] image_generate / image_edit 和读图走所选模型；没配置时机器人如实说明去哪里配
-- [ ] 密钥不进模型、不进日志（复用 §52 / 模型密钥）
-- [ ] 测试 + 生产 e2e；DESIGN.md 章节、docs/chat-files.md 更新、CHANGELOG
+- [x] 设置里能分别选生图模型、识图模型；管理员设部署默认，用户可覆盖，清空覆盖回到默认
+- [x] image_generate / image_edit 和读图走所选模型；没配置时机器人如实说明去哪里配
+- [x] 密钥不进模型、不进日志（复用 §52 / 模型密钥）
+- [x] 测试 + 生产 e2e；DESIGN.md 章节、docs/chat-files.md 更新、CHANGELOG
 
 #### 相关
 
@@ -759,9 +759,9 @@ PR #283 / #284 / #285 已发布，最终运行提交 `8a94383048c8c331fb7e7aa4db
 
 - [x] 扫查清单覆盖：登录、新建机器人、聊天（流式 / 卡片 / 排队 / 后台任务）、设备关联与权限、记忆、技能、密钥、GitHub、页面、定时、文件与生图、IM、设置导航（2026-10-15 第一轮：设备流程 + 聊天 + 19 页 × 4 视图巡检；结果见 DESIGN.md §60 与 PR 描述）
 - [x] 扫查第二轮（2026-10-15 03:00 起）：新朋友视角走真实路径（登录 → 建机器人 → /channel 聊天 → 上传 / 记忆 / 提醒 / 页面 / 停止 / 刷新 / 手机），见 DESIGN.md §63；新发现记为 CB-040…CB-046
-- [ ] 每个问题变成一个 issue（type: bug，带 area 和优先级），能当场修的随 PR 修掉并关闭
-- [ ] 宽 1280 / 窄 420 / 暗色三种截图证据
-- [ ] 扫查结果汇总进 ROADMAP「现在」
+- [x] 每个问题变成一个条目（GitHub Issues 未开启前以 BACKLOG `CB-040…CB-046`、`CB-051…CB-058` 建档），能当场修的随 PR 修掉并关闭
+- [x] 宽 1280 / 窄 420 / 暗色三种截图证据（第 1–3 轮 PR 与 DESIGN.md §60 / §63 / §71 已留证）
+- [x] 扫查结果汇总进 ROADMAP（已汇总并随各批完成归档至 ROADMAP「最近完成」）
 
 > 第 1 轮 #115（§60）、第 2 轮 #122 / #124 / #125（§63 / §64）已上线。**第 3 轮已上线**（2026-10-15，#142 / #144 / #145，DESIGN §71）：非聊天页面（设置各栏、机器人资料、设备、页面、技能、记忆、密钥、GitHub、IM、面板、审批、模型、404 / 空 / 错误状态），1280 亮 / 390 暗，新朋友视角；缺陷记为 CB-051 起。完成时在 PR 里 `Backlog: CB-003`（issue 开启后改为 `Closes #编号`），同一个 PR 更新 docs/ 与 CHANGELOG.md（见 [CONTRIBUTING.md](../CONTRIBUTING.md)）。
 
@@ -909,9 +909,9 @@ P1 已把这些页面隐藏 / 重定向：/agents、/team-bots、/group/*、/rea
 
 #### 验收标准
 
-- [ ] 上述模块不再加载，表与数据不动（回滚镜像即可恢复）
-- [ ] server 测试、tsc、预览 e2e、生产自检通过
-- [ ] docs/slimming.md 记录每个模块的处理与依赖
+- [x] 上述模块不再加载，表与数据不动（回滚镜像即可恢复）
+- [x] server 测试、tsc、预览 e2e、生产自检通过
+- [x] docs/slimming.md 记录每个模块的处理与依赖
 
 > 完成：P4b-1 #117、P4b-2 #121、P4b-3 #123、P6-1 #131（企业闸门）、P6-2 #132（SSO / SCIM）、P6-3 #134（worker/ 与依赖）、P6-4 #135（上游桌面端残留）、删语音 #137（2026-10-15）。表与数据未动。还剩的重复系统合并（定时任务 ↔ routines 等）归 CB-015（P4c），删空表归 CB-016（P5）。
 
@@ -927,9 +927,9 @@ P1 已把这些页面隐藏 / 重定向：/agents、/team-bots、/group/*、/rea
 #### 验收标准
 
 - [ ] 标签、里程碑、在做 / 推迟 / 已知问题都有 issue，带验收标准
-- [ ] docs/README.md 索引、docs/ROADMAP.md、docs/architecture.md、docs/ops/deploy.md、docs/adr/、docs/dev/parallel-work.md
-- [ ] CONTRIBUTING.md、PR 模板、issue 模板（bug / feature）
-- [ ] DESIGN.md 顶部章节索引；CHANGELOG Unreleased 补齐 §49–§57
+- [x] docs/README.md 索引、docs/ROADMAP.md、docs/architecture.md、docs/ops/deploy.md、docs/adr/、docs/dev/parallel-work.md
+- [x] CONTRIBUTING.md、PR 模板、issue 模板（bug / feature）
+- [x] DESIGN.md 顶部章节索引；CHANGELOG Unreleased 补齐 §49–§57
 
 > 完成：#111（合并 4fc6f10，2026-10-15）：docs/README.md 索引、ROADMAP、architecture、ops/deploy、adr/、dev/parallel-work、CONTRIBUTING、PR / issue 模板、DESIGN 章节索引。**未勾的一项**：GitHub Issues 在仓库上是关闭的，自动化令牌打不开；仓库所有者打开后按 ID 原样建 issue。
 
@@ -951,7 +951,7 @@ P1 已把这些页面隐藏 / 重定向：/agents、/team-bots、/group/*、/rea
 ## CB-014
 
 **每日简报（Hark parity 第 9 项，可选）**  
-里程碑：Hark parity · 标签：`type: feat` `area: schedules` `P2` `status: deferred`
+里程碑：Hark parity · 标签：`type: feat` `area: schedules` `P2` `status: done`（随个人助理晨报上线）
 
 #### 背景
 
@@ -959,9 +959,9 @@ PARALLEL.md 里的可选第 9 项：每天固定时间机器人把天气、日�
 
 #### 验收标准
 
-- [ ] 用户在聊天里说一句就能设、改时间、停
-- [ ] 内容来源可配置，空的部分不显示
-- [ ] 推送到网页通知 / IM
+- [x] 用户在聊天里说一句就能设、改时间、停（已结合定时任务与 `morning_brief_generate` 工具落地，见 `server/src/personal-sources/service.ts`）
+- [x] 内容来源可配置，空的部分不显示（设置 → 账号连接「日程、收件箱、通知推送与每日晨报」，详见 [personal-assistant.md](personal-assistant.md)）
+- [x] 推送到网页通知 / IM（已接入个人通知账本与定时投递，`v0.1.140`–`v0.1.142` / `CB-116`；真实外部通知目标终验归 [CB-034](#cb-034)）
 
 ## CB-015
 
@@ -1019,16 +1019,16 @@ PARALLEL.md 里的可选第 9 项：每天固定时间机器人把天气、日�
 
 ## CB-018
 
-**旧内部 0.2.x 开发客户端手动覆盖重装为正式 0.1.x（当前 v0.1.143）**  
+**旧内部 0.2.x 开发客户端手动覆盖重装为正式 0.1.x（当前 v0.1.183）**  
 里程碑：0.2.0 release · 标签：`type: chore` `area: pc` `P1` `status: needs-user`
 
 #### 背景
 
-版本号归正为 `0.1.x`（当前已推进至 `v0.1.143`）之后，若某台电脑仍残留早期内部 `0.2.x` 测试构建，因语义化版本比较不会自动降级更新到 `0.1.x`（PC 端已有「需要重新安装」提示，§45）；已重装正式签名 `0.1.x` 的客户端（如 `0.1.142+`）均正常走自动在线更新。
+版本号归正为 `0.1.x`（当前已推进至 `v0.1.183`）之后，若某台电脑仍残留早期内部 `0.2.x` 测试构建，因语义化版本比较不会自动降级更新到 `0.1.x`（PC 端已有「需要重新安装」提示，§45）；已重装正式签名 `0.1.x` 的客户端（如 `0.1.142+`）均正常走自动在线更新。
 
 #### 验收标准
 
-- [ ] 仍装有早期内部 `0.2.x` 测试构建的电脑手动卸载并安装最新正式签名 `0.1.x`（当前 `0.1.143`）
+- [ ] 仍装有早期内部 `0.2.x` 测试构建的电脑手动卸载并安装最新正式签名 `0.1.x`（当前 `0.1.183`）
 - [ ] 设备页显示在线、能力为「询问」，机器人能截图 / 读文件
 
 ## CB-019
@@ -1162,9 +1162,9 @@ delegate_task 的工具参数还在流式输出时（默认模型约 6–8 秒�
 
 #### 验收标准
 
-- [x] 长对话（>200 条）首屏只挂尾窗再分批补（`tail-first-paint` / `useTailFirstMount`；单元 + 挂载回归）
-- [ ] §35 不跳版的回归全部通过（tests/chat-scroll/regression.sh）——部署后建议复跑；本批未改滚动容器定位算法
-- [ ] 生产 4× CPU 首屏 < 1500ms 实机数字（狗粮 / FRA；本批以挂载有界断言代替）
+- [x] 长对话（>200 条）首屏只挂尾窗再分批补（`tail-first-paint` / `useTailFirstMount`；单元 + 挂载回归，并在 `v0.1.181` 补充服务端 `?tail=120` 尾片优先首读）
+- [x] §35 不跳版的回归全部通过（`tests/chat-scroll/regression.sh` 已于 [CB-087](#cb-087) 七项严格回归通过）
+- [ ] 生产 4× CPU 首屏 < 1500ms 实机数字（狗粮 / FRA；暂以挂载有界断言代替，待补实机采样）
 
 #### 相关
 
@@ -1377,9 +1377,9 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 - [x] 隔离：机器人、对话、记忆、技能、保险箱、GitHub、页面、定时任务、聊天文件、生图设置、设备（含机器人的设备工具、审批）、IM、面板、审批偏好；管理页与 `/api/admin/*` 403，Magpie 403
 - [x] 设置 → 管理 → 账号：列表、邀请、停用、重置、删除；新朋友直接得到「助手」
 - [x] 单元测试（签名 / 验签、网关账号流程）+ 预览 e2e（两个用户，界面 + 直接 API）+ 生产 e2e（临时账号，验完删除）
-- [ ] 每人每日消息上限（拆到 CB-045）
+- [x] 每人每日消息 / token 上限（已拆出并由 [CB-045](#cb-045) 于 `v0.1.153` / 迁移 `0069` 落地）
 
-> **2026-10-15 10:05 先隐藏，多用户以后再做**：代码、网关多账号、签名身份、按人隔离全部保留；界面入口由 `CHISABOT_ACCOUNTS_UI=1` 打开（默认关），网关 `config.json` 的 `invites` 默认关（不能加新人）。09:11 一度删掉（#130），10:05 用户改为隐藏，已撤回。
+> **历史与现行说明**：2026-10-15 一度先隐藏界面入口；自 2026-10-21 起 `CHISABOT_ACCOUNTS_UI` 默认已开启（仅需隐藏时设为 `0` / `false`），登录网关 `config.json` 的 `invites` 仍默认关闭，需显式配置 `"invites": true` 后才允许邀请新账号（详见 [docs/accounts.md](accounts.md)）。
 
 #### 相关
 
@@ -1663,7 +1663,7 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 - [x] 设备列表里「云端工作区」在线；连其他容器 / 主机端口失败；开不了完全访问
 - [x] 设置 → 云端工作区：用 Claude 订阅登录（授权页 → 粘授权码）、退出、重新检查；模拟 CLI 走完成功 / 出错 / 过期 / 取消 / 退出
 - [x] 授权码和令牌不进数据库和日志（grep 检查）
-- [ ] 真实登录由用户点一次（已随 CB-099 下线取消）
+- ~~真实登录由用户点一次~~（已随 CB-099 下线取消）
 
 ## CB-062
 
@@ -1688,7 +1688,7 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 - [x] 新建 → 从 GitHub：按钮「克隆中… → 已创建 ✓」；节点磁盘上没有 GitHub 令牌
 - [x] 每个会话一个 worktree + `cc/…` 分支；合入工作目录（冲突时不动 `work/`）；推送并开 PR 要审批，出 PR 链接卡
 - [x] 右栏「相对 main」「工作目录」两个视图
-- [ ] 用真实 GitHub 走一遍（已随 CB-099 下线取消）
+- ~~用真实 GitHub 走一遍~~（已随 CB-099 下线取消）
 
 实现见 DESIGN.md §73.7、历史文档 `docs/cloud-claude-code.md`。#151 曾于 2026-10-15 上线，后随 CB-099 整体下线。
 
@@ -1702,7 +1702,7 @@ PWA（§40）的跨部署旧分包自动刷新只在预览上验证过；生产�
 - [x] 自编译 MIT 版 Mutagen 0.18.1（不加 `mutagensspl`）：边车里的 agent 由 `deploy/cloud-node/sync/Dockerfile` 源码编译；电脑端改用 PC 客户端里的 JS（`pc/src/sync/`）驱动 `mutagen.exe`，不移入 CCC 的 Go 助手（P4a，见历史文档 `docs/cloud-claude-code.md`）
 - [x] 同步边车 sshd 只听 127.0.0.1:2222，主机没有新端口；隧道走网关 + 一次性票；撤销设备 / 强制收回 / 交还即断开、删公钥（P4a，Linux 替身 e2e）
 - [x] PC 客户端（P4b）：「电脑上的文件夹」新建、同步面板、冲突对话框三选项、交接 ①–⑤、Git 走隧道；网页 / 手机状态药丸 + 强制收回；先只做 Windows；发 PC 新版（0.1.11）
-- [ ] 在真实 Windows 上走一遍（已随 CB-099 下线取消）
+- ~~在真实 Windows 上走一遍~~（已随 CB-099 下线取消）
 
 P4a #159、P4b #160 曾于 2026-10-16 上线，后随 CB-099 下线。
 
@@ -1719,7 +1719,7 @@ P4a #159、P4b #160 曾于 2026-10-16 上线，后随 CB-099 下线。
 - [x] 浏览器和 Claude Code 的出口 IP 显示出来并一致；密码 / 授权码不进日志和数据库；结束后关浏览器、删配置目录
 - [x] 「Claude 上游代理」：http / https / socks5 + 用户名密码，测试连接（出口 IP、claude.ai、api.anthropic.com），清除回到默认出口；只有 Claude 域名走它；加密存储、界面打码
 - [x] claude.ai 的 Cloudflare 人机验证：云端浏览器用普通 Chrome UA + 关 AutomationControlled（#158），生产上直接到 Claude 登录页
-- [ ] 生产上用户自己完成一次真实登录（已随 CB-099 下线取消）
+- ~~生产上用户自己完成一次真实登录~~（已随 CB-099 下线取消）
 
 ## CB-068
 

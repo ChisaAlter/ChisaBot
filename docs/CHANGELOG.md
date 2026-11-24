@@ -1,5 +1,8 @@
 ## Unreleased
 
+- **右边栏显隐裁切卡顿与 PC 小窗横竖屏切换性能优化（`f3582a0c`）**：展开态卸载宽/窄窗面板把手解决 `rail-tab-in` `forwards` 覆盖 `data-hidden` 露出问题；重构 `.rail-head` 弹性标签网格并提升 `MIN_WIDTH` 至 `320` 确保三标签与收起键完整可见；移除右边栏 `width`/`padding` 布局过渡改帧 0 落位与纯 GPU 关键帧并收紧面板刷新与子树记忆化；合并 PC 主进程 `window:state` 原子推送、同步预挂 `data-resizing`、消除全树样式标脏并预合成 `materials.css` 色标（`panel-rail.tsx` · `live-panels.tsx` · `live-panels-query.ts` · `chat-transcript.tsx` · `desktop-window.ts` · `resize-state.ts` · `styles.css` · `styles/{materials,tokens}.css` · `pc/src/{main,compact-window,web-preload}.js` · `narrow-rail-sheet-stability.test.tsx` · `pc/test/compact.check.js`）。
+- **CI 测试回归修复、工程卫生与文档看板同步**：修复共享进程 `localStorage` 污染与多行格式化打断的源码断言（`conversation-sync.test.ts` · `sidebar-search-nav.test.ts` · `pc/test/{window-chrome,login}.check.js`），完善 `biome.json` 忽略与 CI 单测覆盖；同步更新 `CHANGELOG.md`、`docs/{CHANGELOG,BACKLOG,ROADMAP,HANDOFF,release,pc-update-signing,accounts}.md`、`docs/rfc/hark-redesign.md` 与 `landing-redirect.tsx` 过期注释。
+
 ## 0.1.183 — 2026-11-23
 
 - 全端发版：`0.1.183`，Android `versionCode 363`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `3cbd7edf912a2f07`；无新增数据库迁移。

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **右边栏显隐裁切卡顿与 PC 小窗横竖屏切换性能优化（`f3582a0c`）**：
+  - 展开态卸载宽窗与窄窗「面板」把手，修复 `rail-tab-in` `forwards` 动画覆盖 `data-hidden` 导致展开后把手仍露出的问题；重构 `.rail-head` 弹性标签网格并将面板最小宽度提升至 `320px`，确保三标签与顶部收起按键在各视口下完整可见。
+  - 移除右边栏 `width`/`padding` 布局过渡，改为帧 0 单次落位与纯 GPU 关键帧，并收紧面板刷新与子树记忆化。
+  - 合并 PC 主进程 `window:state` 原子推送、同步预挂 `data-resizing`、消除全树样式标脏并预合成 `materials.css` 色标，显著降低小窗横竖屏切换卡顿。
+- **CI 测试回归修复、工程卫生与文档看板同步**：
+  - 修复 `app/tests/conversation-sync.test.ts` 在 `test:app` 共享进程中污染 `window`/`localStorage` 导致后续测试失败的问题，修复 `sidebar-search-nav.test.ts`、`pc/test/window-chrome.check.js` 与 `pc/test/login.check.js` 因多行格式化被打断的源码断言，补齐 `biome.json` 忽略规则与 CI 单元测试覆盖。
+  - 同步更新 `docs/BACKLOG.md`、`docs/ROADMAP.md`、`docs/HANDOFF.md`、`docs/release.md`、`docs/pc-update-signing.md`、`docs/rfc/hark-redesign.md`、`docs/accounts.md` 及过期源码注释，消除版本号漂移与历史状态矛盾。
+
 ## 0.1.183 — 2026-11-23
 
 全端版本 `0.1.183`，Android `versionCode 363`：主题、背景画布与纯 CSS 材质四轴重设计全面落地（DESIGN.md §154；补齐 Web/Android 跟随系统、7 套主题 + 单一自定义强调色、互斥三画布、动态天空 4 固定时刻真实映射与实时天气默认关闭零请求、纯 CSS 三档材质与下线重型液态玻璃透镜、旧 16 键无损自动迁移及 PC/Android 跨端同步）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `3cbd7edf912a2f07`；无新增数据库迁移。
