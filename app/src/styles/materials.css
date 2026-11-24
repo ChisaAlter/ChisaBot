@@ -208,19 +208,37 @@
   }
 
   :where(html[data-theme="deepseek"]) {
-    --mat-panel-border: rgba(17, 19, 24, 0.1);
-    --mat-elevated-border: rgba(17, 19, 24, 0.13);
-    --mat-bubble-border: rgba(17, 19, 24, 0.09);
-    --mat-control-border: rgba(17, 19, 24, 0.11);
-    --mat-control-shadow: 0 2px 6px rgba(17, 19, 24, 0.05);
+    --mat-panel-border: rgba(0, 0, 0, 0.12);
+    --mat-panel-hl: none;
+    --mat-panel-shadow: var(--card-shadow);
+    --mat-elevated-border: rgba(0, 0, 0, 0.16);
+    --mat-elevated-hl: none;
+    --mat-elevated-shadow: var(--shadow-3);
+    --mat-bubble-border: rgba(0, 0, 0, 0.08);
+    --mat-bubble-hl: none;
+    --mat-bubble-shadow: var(--shadow-1);
+    --mat-inset-bg: rgba(38, 49, 72, 0.055);
+    --mat-inset-border: rgba(0, 0, 0, 0.08);
+    --mat-control-border: rgba(0, 0, 0, 0.12);
+    --mat-control-hl: none;
+    --mat-control-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   }
 
   :where(html.dark[data-theme="deepseek"]) {
-    --mat-panel-border: rgba(245, 246, 248, 0.11);
-    --mat-elevated-border: rgba(245, 246, 248, 0.14);
-    --mat-bubble-border: rgba(245, 246, 248, 0.1);
-    --mat-control-border: rgba(245, 246, 248, 0.11);
-    --mat-control-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+    --mat-panel-border: rgba(255, 255, 255, 0.12);
+    --mat-panel-hl: none;
+    --mat-panel-shadow: var(--card-shadow);
+    --mat-elevated-border: rgba(255, 255, 255, 0.16);
+    --mat-elevated-hl: none;
+    --mat-elevated-shadow: var(--shadow-3);
+    --mat-bubble-border: rgba(255, 255, 255, 0.1);
+    --mat-bubble-hl: none;
+    --mat-bubble-shadow: var(--shadow-1);
+    --mat-inset-bg: rgba(255, 255, 255, 0.055);
+    --mat-inset-border: rgba(255, 255, 255, 0.09);
+    --mat-control-border: rgba(255, 255, 255, 0.12);
+    --mat-control-hl: none;
+    --mat-control-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
   }
 
   :where(html[data-theme="claude"]) {
@@ -885,6 +903,50 @@ html .win-ctrls {
   border-width: 1.25px;
   border-top-width: 0;
   border-right-width: 0;
+}
+
+/* DeepSeek（DSH）标志性 0.5px 发丝边与超椭圆曲线（superellipse(1.5)） */
+html[data-theme="deepseek"]
+  :is(
+    [data-surface="panel"],
+    [data-surface="elevated"],
+    [data-surface="bubble"],
+    [data-surface="control"],
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-composer,
+    .sg-card,
+    .page-rows,
+    .ap-theme-card
+  ) {
+  border-width: 0.5px;
+}
+
+@supports (corner-shape: superellipse(1.5)) {
+  html[data-theme="deepseek"]
+    :is(
+      [data-surface="panel"],
+      [data-surface="elevated"],
+      [data-surface="bubble"],
+      [data-surface="inset"],
+      [data-surface="control"],
+      .glass-side-card,
+      .acct-card,
+      .acct-mini-card,
+      .glass-mini-card,
+      .rail-card,
+      .glass-composer,
+      .sg-card,
+      .page-rows,
+      .ap-theme-card,
+      .ap-theme-preview,
+      .ap-theme-preview-surface
+    ) {
+    corner-shape: superellipse(1.5);
+  }
 }
 
 /* inset：内嵌卡片、分段槽、左栏搜索框（零模糊） */

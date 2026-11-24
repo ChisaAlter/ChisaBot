@@ -901,102 +901,141 @@ html.dark[data-theme="porcelain"] {
   --chart-5: #1d4ed8;
 }
 
-/* 4. DeepSeek（deepseek）：现代工程几何与冷静蓝灰，低眩光中性灰边线与投影 */
+/* 4. DeepSeek（deepseek）：对标官方 DSH（@deepseek-ai/dsh-client-ui-theme）超椭圆圆角、0.5px 发丝边与冷蓝灰层次 */
 html[data-theme="deepseek"] {
-  --radius: 12px;
+  --font:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial,
+    sans-serif;
+  --radius: 16px;
+  --r-xs: 4px;
+  --r-sm: 8px;
   --r-md: 12px;
+  --r-12: 12px;
+  --r-16: 16px;
   --r-lg: 16px;
   --r-xl: 20px;
-  --r-bubble: 14px;
-  --ink-1: #111318;
-  --ink-2: #222630;
-  --ink-3: #353b49;
-  --ink-4: #495162;
+  --r-24: 28px;
+  --r-bubble: 20px;
+  --ink-1: #0f1115;
+  --ink-2: #23262e;
+  --ink-3: #3a3f4a;
+  --ink-4: #4d5360;
   --ink-on-accent: #ffffff;
-  --ink-primary: #2b48d8;
-  --ink-primary-hover: #3b58e8;
+  --ink-primary: #0f1115;
+  --ink-primary-hover: #43454a;
   --on-primary: #ffffff;
-  --accent: #4d6bfe;
-  --accent-ink: #2038ad;
-  --accent-soft: rgba(77, 107, 254, 0.12);
-  --accent-ring: rgba(77, 107, 254, 0.34);
+  --accent: #4176e6;
+  --accent-ink: #1d3b8b;
+  --accent-soft: rgba(65, 118, 230, 0.12);
+  --accent-ring: rgba(65, 118, 230, 0.34);
   --canvas-pure-bg: linear-gradient(
     165deg,
-    #eef3ff 0%,
-    #f6f9ff 50%,
-    #fcfdff 100%
+    #edf3fe 0%,
+    #f5f7fa 48%,
+    #f9fafb 100%
   );
-  --canvas-pure-base: #f6f9ff;
-  --canvas-scrim-rgb: 249 251 255;
+  --canvas-pure-base: #f5f7fa;
+  --canvas-scrim-rgb: 245 247 250;
   --surface-tint-rgb: 255 255 255;
-  --surface-accent-tint: rgba(77, 107, 254, 0.035);
-  --surface-solid-panel: #f7f9fc;
+  --surface-accent-tint: rgba(65, 118, 230, 0.04);
+  --surface-solid-panel: #f9fafb;
   --surface-solid-elevated: #ffffff;
-  --surface-solid-bubble: #f9fbff;
-  --surface-solid-inset: #ebeff6;
-  --surface-solid-control: #f1f4fa;
-  --line: rgba(17, 19, 24, 0.09);
-  --line-strong: rgba(17, 19, 24, 0.16);
-  --stroke: rgba(17, 19, 24, 0.11);
+  --surface-solid-bubble: #edf3fe;
+  --surface-solid-inset: #ebeef2;
+  --surface-solid-control: #f5f6f7;
+  --line: rgba(0, 0, 0, 0.08);
+  --line-strong: rgba(0, 0, 0, 0.16);
+  --stroke: rgba(0, 0, 0, 0.12);
+  --hover-wash: rgba(38, 49, 72, 0.06);
+  --fill-tertiary: rgba(38, 49, 72, 0.05);
   --shadow-1:
-    0 1px 2px rgba(17, 19, 24, 0.04), 0 4px 12px rgba(17, 19, 24, 0.05);
+    0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 3px 8px 0 rgba(0, 0, 0, 0.03),
+    0 0 16px 0 rgba(0, 0, 0, 0.02);
   --card-shadow:
-    0 4px 16px rgba(17, 19, 24, 0.06), 0 1px 4px rgba(17, 19, 24, 0.03);
-  --chart-1: #93a8ff;
-  --chart-2: #6b84fe;
-  --chart-3: #4d6bfe;
-  --chart-4: #3551d9;
-  --chart-5: #2038ad;
+    0 0 0 0.5px rgba(0, 0, 0, 0.14), 0 4px 16px 0 rgba(0, 0, 0, 0.035),
+    0 0 24px 0 rgba(0, 0, 0, 0.03);
+  --shadow-3:
+    0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 3px 8px 0 rgba(0, 0, 0, 0.04),
+    0 0 20px 0 rgba(0, 0, 0, 0.05);
+  --chart-1: #b7c8fe;
+  --chart-2: #7aaaff;
+  --chart-3: #4176e6;
+  --chart-4: #4868b2;
+  --chart-5: #283142;
 }
 html.dark[data-theme="deepseek"] {
-  --radius: 12px;
+  --font:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial,
+    sans-serif;
+  --radius: 16px;
+  --r-xs: 4px;
+  --r-sm: 8px;
   --r-md: 12px;
+  --r-12: 12px;
+  --r-16: 16px;
   --r-lg: 16px;
   --r-xl: 20px;
-  --r-bubble: 14px;
-  --ink-1: #f5f6f8;
-  --ink-2: #e5e7ec;
-  --ink-3: #d4d8e1;
-  --ink-4: #b6bcc9;
-  --ink-on-accent: #0b1124;
-  --ink-primary: #3b59f5;
-  --ink-primary-hover: #4d6bfe;
-  --on-primary: #ffffff;
-  --accent: #5b7cff;
-  --accent-ink: #cdd9ff;
-  --accent-soft: rgba(91, 124, 255, 0.18);
-  --accent-ring: rgba(91, 124, 255, 0.42);
+  --r-24: 28px;
+  --r-bubble: 20px;
+  --ink-1: #f9fafb;
+  --ink-2: #e3e7ed;
+  --ink-3: #cfd3d6;
+  --ink-4: #b1b6bd;
+  --ink-on-accent: #0f1115;
+  --ink-primary: #f9fafb;
+  --ink-primary-hover: #ebeef2;
+  --on-primary: #0f1115;
+  --accent: #5686fe;
+  --accent-ink: #c4d8ff;
+  --accent-soft: rgba(86, 134, 254, 0.2);
+  --accent-ring: rgba(122, 170, 255, 0.42);
   --canvas-pure-bg: linear-gradient(
     165deg,
-    #181a1e 0%,
-    #1f2126 52%,
-    #26282d 100%
+    #151517 0%,
+    #1b1b1c 52%,
+    #232324 100%
   );
-  --canvas-pure-base: #1f2126;
-  --canvas-scrim-rgb: 14 16 20;
-  --surface-tint-rgb: 22 24 28;
-  --surface-accent-tint: rgba(91, 124, 255, 0.05);
-  --surface-solid-panel: #1c1e23;
-  --surface-solid-elevated: #22252b;
-  --surface-solid-bubble: #1f2127;
-  --surface-solid-inset: #292c33;
-  --surface-solid-control: #25282e;
-  --line: rgba(245, 246, 248, 0.09);
-  --line-strong: rgba(245, 246, 248, 0.16);
-  --stroke: rgba(245, 246, 248, 0.11);
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28), 0 6px 16px rgba(0, 0, 0, 0.22);
-  --card-shadow: 0 6px 20px rgba(0, 0, 0, 0.34), 0 1px 4px rgba(0, 0, 0, 0.18);
-  --chart-1: #b8c7ff;
-  --chart-2: #8fa6ff;
-  --chart-3: #5b7cff;
-  --chart-4: #4d6bfe;
-  --chart-5: #3551d9;
+  --canvas-pure-base: #1b1b1c;
+  --canvas-scrim-rgb: 17 18 21;
+  --surface-tint-rgb: 27 27 29;
+  --surface-accent-tint: rgba(86, 134, 254, 0.055);
+  --surface-solid-panel: #1b1b1c;
+  --surface-solid-elevated: #232324;
+  --surface-solid-bubble: #242528;
+  --surface-solid-inset: #28292c;
+  --surface-solid-control: #232324;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --stroke: rgba(255, 255, 255, 0.12);
+  --hover-wash: rgba(255, 255, 255, 0.08);
+  --fill-tertiary: rgba(255, 255, 255, 0.06);
+  --shadow-1:
+    0 0 0 0.5px rgba(255, 255, 255, 0.12), 0 3px 8px 0 rgba(0, 0, 0, 0.22),
+    0 0 16px 0 rgba(0, 0, 0, 0.14);
+  --card-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 4px 16px 0 rgba(0, 0, 0, 0.28),
+    0 0 24px 0 rgba(0, 0, 0, 0.18);
+  --shadow-3:
+    0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 4px 12px 0 rgba(0, 0, 0, 0.36),
+    0 0 24px 0 rgba(0, 0, 0, 0.24);
+  --chart-1: #d3e2ff;
+  --chart-2: #7aaaff;
+  --chart-3: #5686fe;
+  --chart-4: #4176e6;
+  --chart-5: #283142;
 }
 
-/* 5. Claude（claude）：温润羊皮纸感与陶土暖橙，暖褐边线、柔和暖调阴影与衬线标题 */
+/* 5. Claude（claude）：温润羊皮纸感与陶土暖橙，全站书卷衬线字体、暖褐边线与柔和暖调阴影 */
 html[data-theme="claude"] {
   --font-claude-serif:
-    "Charter", "Iowan Old Style", Georgia, "Noto Serif SC", "Songti SC", serif;
+    "Georgia", "Charter", "Iowan Old Style", "Cambria",
+    "Noto Serif SC", "Noto Serif CJK SC", "Source Han Serif SC",
+    "Songti SC", "STZhongsong", "STSong", serif;
+  --font: var(--font-claude-serif);
+  --lh: 1.66;
+  --ls-tight: -0.005em;
   --radius: 14px;
   --r-md: 14px;
   --r-lg: 18px;
@@ -1044,7 +1083,12 @@ html[data-theme="claude"] {
 }
 html.dark[data-theme="claude"] {
   --font-claude-serif:
-    "Charter", "Iowan Old Style", Georgia, "Noto Serif SC", "Songti SC", serif;
+    "Georgia", "Charter", "Iowan Old Style", "Cambria",
+    "Noto Serif SC", "Noto Serif CJK SC", "Source Han Serif SC",
+    "Songti SC", "STZhongsong", "STSong", serif;
+  --font: var(--font-claude-serif);
+  --lh: 1.66;
+  --ls-tight: -0.005em;
   --radius: 14px;
   --r-md: 14px;
   --r-lg: 18px;
@@ -1461,6 +1505,48 @@ html.dark[data-theme="porcelain"][data-canvas="pure"] #sky-root #skyph::before {
       840px 480px at 92% 88%,
       rgba(59, 130, 246, 0.1),
       transparent 70%
+    );
+}
+
+/* DeepSeek（deepseek）浅/深：DSH 标志性蓝青紫极微静谧光晕（零动画） */
+html:not(.dark)[data-theme="deepseek"][data-canvas="pure"] #sky-root::before,
+html:not(.dark)[data-theme="deepseek"][data-canvas="pure"] #sky-root #skyph::before {
+  display: block;
+  background:
+    radial-gradient(
+      880px 420px at 14% 16%,
+      rgba(57, 100, 254, 0.08),
+      transparent 68%
+    ),
+    radial-gradient(
+      760px 420px at 86% 22%,
+      rgba(45, 200, 235, 0.06),
+      transparent 70%
+    ),
+    radial-gradient(
+      840px 460px at 78% 86%,
+      rgba(139, 118, 246, 0.065),
+      transparent 72%
+    );
+}
+html.dark[data-theme="deepseek"][data-canvas="pure"] #sky-root::before,
+html.dark[data-theme="deepseek"][data-canvas="pure"] #sky-root #skyph::before {
+  display: block;
+  background:
+    radial-gradient(
+      900px 440px at 16% 18%,
+      rgba(57, 100, 254, 0.11),
+      transparent 68%
+    ),
+    radial-gradient(
+      780px 420px at 84% 20%,
+      rgba(2, 147, 180, 0.085),
+      transparent 70%
+    ),
+    radial-gradient(
+      860px 480px at 78% 86%,
+      rgba(139, 118, 246, 0.095),
+      transparent 72%
     );
 }
 

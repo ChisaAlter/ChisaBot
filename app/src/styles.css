@@ -9270,9 +9270,19 @@ html.dark :is(.sg-segmented-item[aria-checked="true"], .sg-segmented-item[aria-p
   padding: 0 2px 2px;
   margin-top: -2px;
 }
-html[data-theme="claude"] :is(.page-h1, .chat-empty-title) {
+html[data-theme="claude"] :is(.ph-title, .page-title, .page-sec-t, .ap-title, h1, h2, h3) {
   font-family: var(--font-claude-serif);
   letter-spacing: -0.015em;
+}
+html[data-theme="claude"] [data-slot="bubble-content"] {
+  font-family: var(--font-claude-serif);
+  line-height: 1.7;
+}
+.ap-theme-card[data-testid="theme-card-claude"] .ap-theme-name {
+  font-family:
+    "Georgia", "Charter", "Iowan Old Style", "Cambria",
+    "Noto Serif SC", "Noto Serif CJK SC", "Source Han Serif SC",
+    "Songti SC", "STZhongsong", "STSong", serif;
 }
 
 /* 材质 3 档选择卡（磨砂 / 通透 / 实色） */

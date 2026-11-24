@@ -1,5 +1,7 @@
 ## Unreleased
 
+- **Claude 全站衬线字体与 DeepSeek（DSH）主题重构（DESIGN §155）**：为 `claude` 补齐 `--font` 与真实页面标题/气泡衬线覆盖；按官方 DSH 设计语言（`16px/20px`、`superellipse(1.5)`、`0.5px` 发丝边、`neutral-bluish` 与纯画布蓝青紫光晕）重构 `deepseek` 浅深双版并同步 PC `skyglass-tokens.css` 与 `shell-fingerprint.json`（外壳 `7314f9105596bec5` 不变，`clientHash` 更新为 `a0a5718a0d9c0ead`）。
+
 ## 0.1.186 — 2026-11-24
 
 - 全端发版：`0.1.186`，Android `versionCode 366`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `5904bcbcb0e58752`；无新增数据库迁移。

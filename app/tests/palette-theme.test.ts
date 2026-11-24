@@ -6,6 +6,8 @@ import {
   THEMES,
 } from "../src/lib/theme-family";
 import {
+  blocks,
+  canvasCss,
   contrast,
   materialsCss,
   parseColor,
@@ -149,14 +151,41 @@ describe("6 套色彩主题在 tokens.css 中可见且可读", () => {
         skyTokens["--surface-hl-top"],
       );
 
-      // claude：暖色边线 + 专属衬线字体令牌
+      // claude：暖色边线 + 全站书卷衬线字体（覆盖 --font 及真实标题/气泡选择器）
       expect(claudeTokens["--font-claude-serif"]).toBeTruthy();
+      expect(claudeTokens["--font"]).toBe("var(--font-claude-serif)");
       expect(claudeTokens["--line"]).toBeTruthy();
       expect(claudeTokens["--line"]).not.toBe(skyTokens["--line"]);
       expect(claudeTokens["--line"]).not.toBe(cossuiTokens["--line"]);
+
+      // deepseek：对标官方 DSH 设计规范（16px/20px 圆角、--accent #4176e6/#5686fe、--font 系统栈）
+      const deepseekTokens = themeTokenMap("deepseek", scheme, "pure");
+      expect(px(deepseekTokens["--radius"])).toBe(16);
+      expect(px(deepseekTokens["--r-bubble"])).toBe(20);
+      expect(deepseekTokens["--accent"]).toBe(
+        scheme === "dark" ? "#5686fe" : "#4176e6",
+      );
+      expect(deepseekTokens["--font"]).toContain('"PingFang SC"');
     }
 
     expect(stylesCss).toContain('html[data-theme="claude"]');
     expect(stylesCss).toContain("var(--font-claude-serif)");
+    expect(stylesCss).toContain(".ph-title");
+    expect(stylesCss).toContain('[data-slot="bubble-content"]');
+    expect(stylesCss).not.toContain(".page-h1");
+    expect(materialsCss).toContain("corner-shape: superellipse(1.5)");
+    expect(materialsCss).toContain("border-width: 0.5px");
+    expect(
+      blocks(
+        canvasCss,
+        'html:not(.dark)[data-theme="deepseek"][data-canvas="pure"] #sky-root::before, html:not(.dark)[data-theme="deepseek"][data-canvas="pure"] #sky-root #skyph::before',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      blocks(
+        canvasCss,
+        'html.dark[data-theme="deepseek"][data-canvas="pure"] #sky-root::before, html.dark[data-theme="deepseek"][data-canvas="pure"] #sky-root #skyph::before',
+      ).length,
+    ).toBeGreaterThan(0);
   });
 });
