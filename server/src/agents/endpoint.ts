@@ -1,4 +1,16 @@
-import { checkNavigationTarget } from "../computer/target";
+import { isIP } from "node:net";
+import {
+  BlockedUrlError,
+  type GuardedFetchOptions,
+  guardedFetchStream,
+} from "../../../shared/net/guarded-fetch";
+import {
+  expandIpv6,
+  isBlockedAddress,
+  isBlockedAddressAllowPrivate,
+  isBlockedHostname,
+  isBlockedHostnameAllowPrivate,
+} from "../../../shared/net/ssrf";
 import { withoutRunAssertion } from "../conversations/protocol";
 
 /**
@@ -10,48 +22,51 @@ import { withoutRunAssertion } from "../conversations/protocol";
  * "agent" and the runtime will happily fetch cloud credentials on a user's behalf, from inside the
  * deployment, on a schedule.
  *
- * Ordering is the control. If the private-host escape hatch is consulted before the
- * deny-list, the cloud metadata endpoint is reachable under the configuration every developer
- * actually runs. Never-allowed hosts are refused first, ahead of any opt-in, which is why this reuses
- * `checkNavigationTarget` rather than a second checker that would have to get the ordering right
- * again.
- *
- * A developer's own agent legitimately lives at
- * `http://localhost:4200/ag-ui`, so on a laptop the private-host opt-in is ON, which is the case where
- * this check is weakest. That is the same trade navigation makes, and the reason the never-allowed
- * list is checked ahead of it. In a hosted deployment the opt-in is off and a private address is
- * refused.
+ * Ordering is the control. Never-allowed ranges (cloud metadata, link-local, CGNAT, 0.0.0.0/8,
+ * 6to4, Teredo, embedded IPv4 forms) are refused first from the single canonical table in
+ * `shared/net/ssrf.ts`, ahead of any private-host opt-in or named host allowlist. At dial time,
+ * {@link createAgentFetch} resolves DNS and pins the verified IP via `guardedFetchStream` on every
+ * hop so DNS rebinding and `.nip.io`-style names cannot bypass the string check.
  */
 
+const CLOUD_METADATA_V6: readonly (readonly number[])[] = [
+  [0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254], // AWS IMDSv2 IPv6 (fd00:ec2::254)
+  [0xfd20, 0x00ce, 0, 0, 0, 0, 0, 0x0254], // GCP metadata IPv6 (fd20:ce::254)
+];
+
+function sameIpv6(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === 8 && b.length === 8 && a.every((v, i) => v === b[i]);
+}
+
+function isCloudMetadataIpv6(input: string): boolean {
+  const g = expandIpv6(input);
+  return g !== null && CLOUD_METADATA_V6.some((meta) => sameIpv6(g, meta));
+}
+
 /**
- * Is this address one the deployment named, and refused only for being private?
+ * An explicitly named IPv6 ULA literal (fc00::/7) that is not a cloud metadata endpoint.
  *
- * The second half is the load-bearing half. Re-running the check with the floor down separates
- * "refused because it is inside the network", which naming may overrule, from "refused because it is
- * the metadata address or is not a web address at all", which nothing may. Deciding that by reading
- * the refusal text would break the first time somebody rephrased it.
- *
- * Matching is exact, on the host as written, and a name with a port pins that port. No suffixes and
- * no patterns: a pattern that widened by accident is how host checks usually fail, and an operator
- * naming three addresses can name three addresses.
+ * `isBlockedAddressAllowPrivate` refuses fc00::/7 wholesale so blanket `allowPrivateHosts` cannot
+ * reach cloud IPv6 metadata. When an operator names one exact non-metadata ULA literal such as
+ * `[fd00::1:8443]` in `AGENT_ENDPOINT_ALLOWED_HOSTS`, only that exact literal is admitted.
  */
-function namedAsAllowed(
-  raw: string,
+function isNonMetadataUlaLiteral(hostname: string): boolean {
+  const bare = hostname.trim().replace(/^\[|\]$/g, "").split("%")[0] ?? "";
+  if (isIP(bare) !== 6) return false;
+  const g = expandIpv6(bare);
+  if (!g) return false;
+  return ((g[0] ?? 0) & 0xfe00) === 0xfc00 && !isCloudMetadataIpv6(bare);
+}
+
+/**
+ * Exact match against `allowedHosts` (stored in URL parser spelling, brackets included for IPv6).
+ * A host with a port pins that port; a bare host covers its ports.
+ */
+function isHostAllowed(
+  url: URL,
   allowedHosts: ReadonlySet<string> | undefined,
 ): boolean {
   if (!allowedHosts || allowedHosts.size === 0) return false;
-  if (!checkNavigationTarget(raw, { allowPrivateHosts: true }).allowed) {
-    return false;
-  }
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return false;
-  }
-  // As the parser spells them, brackets included: `[::1]:8443` names an address and a port and
-  // `[::1:8443]` names an address, and with the brackets gone the two read as one. The list is
-  // stored in the same spelling (see `normalizeAllowedHost` in config.ts).
   const hostname = url.hostname.toLowerCase();
   const host = url.port ? `${hostname}:${url.port}` : hostname;
   return allowedHosts.has(host) || allowedHosts.has(hostname);
@@ -78,40 +93,51 @@ export function checkAgentEndpoint(
     return { allowed: false, reason: "An agent needs a web address." };
   }
 
-  const verdict = checkNavigationTarget(raw.trim(), options);
-  if (!verdict.allowed && namedAsAllowed(raw.trim(), options.allowedHosts)) {
-    /*
-     * Named, one host at a time, by whoever runs this deployment.
-     *
-     * The private-host opt-in is a floor: it permits this deployment's whole network, to browsing
-     * and to agent endpoints alike, which is why it is refused in production. But a company's own
-     * agent legitimately lives at an internal address, and telling them to drop the floor to reach
-     * it is the advice that made the opt-in dangerous in the first place. So an address may be named
-     * instead, and nothing else is opened.
-     *
-     * Only ever reached for an address the strict check refused *for being private*. Anything on the
-     * never-allowed list, and anything that is not http or https, is refused before this and cannot
-     * be named back in — see `namedAsAllowed`, which re-runs the check with the floor down to find
-     * out which kind of refusal it was rather than pattern-matching the message.
-     *
-     * Agent endpoints only. Browsing is not widened by this: a page can steer a Bot somewhere, and
-     * an operator naming an address they run is a different act from a Bot following a link to it.
-     */
-    return { allowed: true, url: new URL(raw.trim()).toString() };
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return { allowed: false, reason: "That is not a web address." };
   }
-  if (!verdict.allowed) {
-    // The navigation wording talks about "the assistant opening" a page, which is not what is
-    // happening here, so the reason is restated for the form surface.
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
     return {
       allowed: false,
-      reason: verdict.reason.replace(
-        /the assistant is never allowed to open it\.|the assistant is not allowed to open it\./,
-        "an agent may not live there.",
-      ),
+      reason: `Only web addresses are allowed, and that one is ${url.protocol.replace(":", "")}.`,
     };
   }
 
-  return { allowed: true, url: verdict.url };
+  if (url.username || url.password) {
+    return {
+      allowed: false,
+      reason:
+        "An agent address may not include credentials, so an agent may not live there.",
+    };
+  }
+
+  const named = isHostAllowed(url, options.allowedHosts);
+  const allowPrivate = options.allowPrivateHosts === true || named;
+  const explicitNonMetadataUla =
+    named && isNonMetadataUlaLiteral(url.hostname);
+
+  // Checked before any private opt-in or allowlist so cloud metadata, CGNAT, 0.0.0.0/8, 6to4,
+  // Teredo, and embedded-IPv4 spellings can never be named back in.
+  if (!explicitNonMetadataUla && isBlockedHostnameAllowPrivate(url.hostname)) {
+    return {
+      allowed: false,
+      reason: "That address is not permitted, so an agent may not live there.",
+    };
+  }
+
+  if (!allowPrivate && isBlockedHostname(url.hostname)) {
+    return {
+      allowed: false,
+      reason:
+        "That address is inside this deployment's own network, so an agent may not live there.",
+    };
+  }
+
+  return { allowed: true, url: url.toString() };
 }
 
 /**
@@ -242,6 +268,8 @@ export function createAgentFetch(
      */
     allowedHosts?: ReadonlySet<string>;
     fetchImpl?: typeof fetch;
+    /** Injectable DNS resolver for tests; production resolves through Node DNS and pins the IP. */
+    resolve?: GuardedFetchOptions["resolve"];
     /**
      * Told about every address this refused to dial, and why.
      *
@@ -250,9 +278,7 @@ export function createAgentFetch(
      * deployment finds out nothing, and a stored agent that has quietly begun redirecting to the
      * metadata address is precisely the event worth being able to count.
      *
-     * A callback rather than an audit store, so this module keeps deciding and nothing else. It is
-     * the same reason `checkAgentEndpoint` reuses the navigation target check instead of growing a
-     * second one: a file that decides is testable without the machinery that records.
+     * A callback rather than an audit store, so this module keeps deciding and nothing else.
      *
      * Reporting must never be able to stop a refusal, so a throwing reporter is swallowed. The
      * refusal is the security property and the row is the record of it; losing the record is bad and
@@ -261,7 +287,6 @@ export function createAgentFetch(
     onRefusal?: (refusal: { address: string; reason: string }) => void;
   } = {},
 ): (url: string, init?: RequestInit) => Promise<Response> {
-  const doFetch = options.fetchImpl ?? fetch;
   const refuse = (address: string, reason: string) => {
     try {
       options.onRefusal?.({ address, reason });
@@ -278,7 +303,67 @@ export function createAgentFetch(
       ...(options.allowedHosts ? { allowedHosts: options.allowedHosts } : {}),
     });
 
-  return async function guardedFetch(url: string, init?: RequestInit) {
+  const dialHop = async (
+    target: string,
+    init: RequestInit | undefined,
+    hop: number,
+  ): Promise<Response> => {
+    if (options.fetchImpl) {
+      return options.fetchImpl(target, {
+        ...init,
+        redirect: "manual",
+      });
+    }
+    const parsed = new URL(target);
+    const named = isHostAllowed(parsed, options.allowedHosts);
+    const allowPrivate = options.allowPrivateHosts === true || named;
+    const explicitNonMetadataUla =
+      named && isNonMetadataUlaLiteral(parsed.hostname);
+    const targetV6 = explicitNonMetadataUla
+      ? expandIpv6(parsed.hostname)
+      : null;
+    const isBlocked =
+      explicitNonMetadataUla && targetV6
+        ? (address: string) => {
+            const candidate = expandIpv6(address);
+            if (candidate && sameIpv6(candidate, targetV6)) return false;
+            return isBlockedAddressAllowPrivate(address);
+          }
+        : allowPrivate
+          ? isBlockedAddressAllowPrivate
+          : isBlockedAddress;
+
+    const headers: Record<string, string> = {};
+    if (init?.headers) {
+      new Headers(init.headers).forEach((value, key) => {
+        headers[key] = value;
+      });
+    }
+
+    try {
+      return await guardedFetchStream(target, {
+        method: init?.method ?? "GET",
+        ...(Object.keys(headers).length ? { headers } : {}),
+        ...(init?.body !== undefined ? { body: init.body } : {}),
+        ...(init?.signal ? { signal: init.signal } : {}),
+        allowPrivate,
+        isBlocked,
+        ...(options.resolve ? { resolve: options.resolve } : {}),
+      });
+    } catch (error) {
+      if (error instanceof BlockedUrlError) {
+        throw refuse(
+          target,
+          hop === 0
+            ? `This deployment will not dial ${target}: that address resolved to a restricted network destination, so an agent may not live there.`
+            : `That address redirected to ${target}, and that address resolved to a restricted network destination, so an agent may not live there.`,
+        );
+      }
+      throw error;
+    }
+  };
+
+  return async function guardedAgentFetch(url: string, init?: RequestInit) {
     const stored = check(url);
     if (!stored.allowed) {
       throw refuse(
@@ -294,16 +379,15 @@ export function createAgentFetch(
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       // `manual` is what makes this a check rather than a comment: the caller sees the redirect, and
       // the underlying fetch cannot quietly follow one on its own.
-      const response = await doFetch(target, {
-        ...carried,
-        redirect: "manual",
-      });
+      const response = await dialHop(target, carried, hop);
       if (!REDIRECT_STATUSES.has(response.status)) return response;
 
       const location = response.headers.get("location");
       // A redirect status with nowhere to go is just an answer. Whatever it means, it is the
       // agent's own reply and not a hop.
       if (!location) return response;
+
+      await response.body?.cancel().catch(() => undefined);
 
       const next = new URL(location, target).toString();
       const verdict = check(next);

@@ -9,6 +9,8 @@ import {
   checkPublicUrl,
   isBlockedAddress,
   isBlockedAddressAllowPrivate,
+  isBlockedHostname,
+  isBlockedHostnameAllowPrivate,
 } from "./ssrf";
 
 /**
@@ -102,7 +104,7 @@ export async function resolvePublic(
   options: Pick<GuardedFetchOptions, "resolve" | "isBlocked"> = {},
 ): Promise<{ address: string; family: number }> {
   const blocked = options.isBlocked ?? isBlockedAddress;
-  const bare = hostname.replace(/^\[|\]$/g, "");
+  const bare = hostname.replace(/^\[|\]$/g, "").split("%")[0] ?? "";
   const literal = isIP(bare);
   const addresses = literal
     ? [{ address: bare, family: literal }]
@@ -567,6 +569,374 @@ export async function guardedFetchResponse(
   }
 }
 
+async function normalizeRequestBody(
+  rawBody: unknown,
+): Promise<string | Buffer | Uint8Array | undefined> {
+  if (typeof rawBody === "string") return rawBody;
+  if (rawBody instanceof URLSearchParams) return rawBody.toString();
+  if (rawBody instanceof Uint8Array) {
+    return Buffer.from(rawBody.buffer, rawBody.byteOffset, rawBody.byteLength);
+  }
+  if (rawBody instanceof ArrayBuffer) return Buffer.from(rawBody);
+  if (rawBody instanceof Blob) return Buffer.from(await rawBody.arrayBuffer());
+  if (rawBody != null) {
+    throw new TypeError("guarded fetch 不支持这种请求体");
+  }
+  return undefined;
+}
+
+function signalAbortError(signal: AbortSignal | undefined): Error {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const aborted = new Error("The operation was aborted");
+  aborted.name = "AbortError";
+  return aborted;
+}
+
+function timeoutError(message = "请求超时"): Error {
+  const err = new Error(message);
+  err.name = "TimeoutError";
+  return err;
+}
+
+export type GuardedStreamFetchOptions = {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: BodyInit | null;
+  signal?: AbortSignal;
+  /** Optional deadline covering DNS resolution and response headers (not the stream body lifetime). */
+  connectTimeoutMs?: number;
+  allowPrivate?: boolean;
+  resolve?: GuardedFetchOptions["resolve"];
+  isBlocked?: (address: string) => boolean;
+};
+
+/**
+ * 发起单跳 DNS 钉死的流式 HTTP/HTTPS 请求，返回标准 `Response`（`body` 为实时 `ReadableStream`），
+ * 供 SSE / AG-UI 等流式消费方使用。不自动跟随重定向（3xx 原样返回，由调用方逐跳检查）。
+ * URL 或解析出的任意 IP 被拦时抛 {@link BlockedUrlError}。
+ */
+export async function guardedFetchStream(
+  raw: string,
+  options: GuardedStreamFetchOptions = {},
+): Promise<Response> {
+  if (options.signal?.aborted) throw signalAbortError(options.signal);
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    denySsrf("不是有效的网址");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    denySsrf("只支持 http / https 网址");
+  }
+  if (url.username || url.password) {
+    denySsrf("网址里不能带账号密码");
+  }
+
+  const allowPrivate = options.allowPrivate === true;
+  const isBlocked =
+    options.isBlocked ??
+    (allowPrivate ? isBlockedAddressAllowPrivate : isBlockedAddress);
+  const bare = url.hostname.replace(/^\[|\]$/g, "").split("%")[0] ?? "";
+  if (isIP(bare)) {
+    if (isBlocked(bare)) denySsrf("不能访问内网地址");
+  } else {
+    const blockedHost = allowPrivate
+      ? isBlockedHostnameAllowPrivate(url.hostname)
+      : isBlockedHostname(url.hostname);
+    if (blockedHost) denySsrf("不能访问内网地址");
+  }
+
+  const method = (options.method ?? "GET").toUpperCase();
+  const body =
+    options.body !== undefined &&
+    options.body !== null &&
+    method !== "GET" &&
+    method !== "HEAD"
+      ? await normalizeRequestBody(options.body)
+      : undefined;
+
+  const deadline =
+    options.connectTimeoutMs !== undefined
+      ? Date.now() + options.connectTimeoutMs
+      : undefined;
+
+  const pinned = await new Promise<{ address: string; family: number }>(
+    (resolve, reject) => {
+      if (options.signal?.aborted) {
+        return reject(signalAbortError(options.signal));
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        options.signal?.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        cleanup();
+        reject(signalAbortError(options.signal));
+      };
+      if (deadline !== undefined) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          cleanup();
+          return reject(timeoutError());
+        }
+        timer = setTimeout(() => {
+          cleanup();
+          reject(timeoutError());
+        }, remaining);
+      }
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      resolvePublic(url.hostname, {
+        ...(options.resolve ? { resolve: options.resolve } : {}),
+        isBlocked,
+      }).then(
+        (address) => {
+          cleanup();
+          resolve(address);
+        },
+        (error) => {
+          cleanup();
+          reject(error);
+        },
+      );
+    },
+  );
+
+  if (options.signal?.aborted) throw signalAbortError(options.signal);
+
+  const reqHeaders: Record<string, string> = {};
+  let hasAcceptEncoding = false;
+  if (options.headers) {
+    for (const [key, value] of Object.entries(options.headers)) {
+      const lower = key.toLowerCase();
+      if (lower === "host" || lower === "connection") continue;
+      if (lower === "accept-encoding") hasAcceptEncoding = true;
+      reqHeaders[key] = value;
+    }
+  }
+  if (!hasAcceptEncoding) reqHeaders["accept-encoding"] = "identity";
+  reqHeaders.host = url.host;
+  // agent: false never pools sockets, so request connection close to avoid hanging sockets.
+  reqHeaders.connection = "close";
+
+  return new Promise<Response>((resolve, reject) => {
+    if (options.signal?.aborted) {
+      return reject(signalAbortError(options.signal));
+    }
+    const send = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const hostname = url.hostname.replace(/^\[|\]$/g, "");
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearConnectWait = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      options.signal?.removeEventListener("abort", onPreResponseAbort);
+    };
+
+    const failBeforeResponse = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearConnectWait();
+      reject(error);
+    };
+
+    const req = send(
+      {
+        protocol: url.protocol,
+        hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: `${url.pathname}${url.search}`,
+        method,
+        headers: reqHeaders,
+        // Never reuse a pooled socket that could predate this DNS verdict.
+        agent: false,
+        servername: isIP(bare) ? undefined : bare,
+        lookup: ((
+          _host: string,
+          opts: { all?: boolean } | undefined,
+          cb: (...args: unknown[]) => void,
+        ) => {
+          const callback =
+            typeof opts === "function"
+              ? (opts as (...args: unknown[]) => void)
+              : cb;
+          if (typeof opts === "object" && opts?.all) {
+            callback(null, [{ address: pinned.address, family: pinned.family }]);
+          } else {
+            callback(null, pinned.address, pinned.family);
+          }
+        }) as never,
+      },
+      (res) => {
+        if (settled) {
+          res.destroy();
+          return;
+        }
+        settled = true;
+        clearConnectWait();
+
+        const rawStatus = res.statusCode ?? 502;
+        const status = rawStatus >= 200 && rawStatus <= 599 ? rawStatus : 502;
+        const responseHeaders = new Headers();
+        for (const [name, value] of Object.entries(res.headers)) {
+          if (Array.isArray(value)) {
+            for (const part of value) responseHeaders.append(name, part);
+          } else if (value !== undefined) {
+            responseHeaders.set(name, value);
+          }
+        }
+
+        const empty =
+          method === "HEAD" ||
+          status === 204 ||
+          status === 205 ||
+          status === 304;
+        if (empty) {
+          res.resume();
+          const response = new Response(null, {
+            status,
+            headers: responseHeaders,
+          });
+          Object.defineProperty(response, "url", { value: url.toString() });
+          resolve(response);
+          return;
+        }
+
+        const decoder = decoderFor(
+          typeof res.headers["content-encoding"] === "string"
+            ? res.headers["content-encoding"]
+            : undefined,
+        );
+        if (decoder) {
+          responseHeaders.delete("content-encoding");
+          responseHeaders.delete("content-length");
+        }
+        const stream = decoder ? res.pipe(decoder) : res;
+        let streamClosed = false;
+        let detachAbort = () => {};
+
+        const readable = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const onStreamAbort = () => {
+              if (streamClosed) return;
+              streamClosed = true;
+              detachAbort();
+              stream.destroy();
+              res.destroy();
+              req.destroy();
+              try {
+                controller.error(signalAbortError(options.signal));
+              } catch {
+                // Controller already closed or errored.
+              }
+            };
+            detachAbort = () => {
+              options.signal?.removeEventListener("abort", onStreamAbort);
+            };
+            if (options.signal?.aborted) {
+              onStreamAbort();
+              return;
+            }
+            options.signal?.addEventListener("abort", onStreamAbort, {
+              once: true,
+            });
+            stream.on("data", (chunk: Buffer) => {
+              if (streamClosed) return;
+              try {
+                controller.enqueue(
+                  new Uint8Array(
+                    chunk.buffer,
+                    chunk.byteOffset,
+                    chunk.byteLength,
+                  ),
+                );
+                if (
+                  controller.desiredSize !== null &&
+                  controller.desiredSize <= 0
+                ) {
+                  stream.pause();
+                }
+              } catch {
+                streamClosed = true;
+                detachAbort();
+                stream.destroy();
+                res.destroy();
+                req.destroy();
+              }
+            });
+            stream.on("end", () => {
+              if (streamClosed) return;
+              streamClosed = true;
+              detachAbort();
+              try {
+                controller.close();
+              } catch {
+                // Controller already closed.
+              }
+            });
+            stream.on("error", (error: Error) => {
+              if (streamClosed) return;
+              streamClosed = true;
+              detachAbort();
+              try {
+                controller.error(error);
+              } catch {
+                // Controller already errored.
+              }
+            });
+          },
+          pull() {
+            if (!streamClosed) stream.resume();
+          },
+          cancel() {
+            streamClosed = true;
+            detachAbort();
+            stream.destroy();
+            res.destroy();
+            req.destroy();
+          },
+        });
+
+        const response = new Response(readable, {
+          status,
+          headers: responseHeaders,
+        });
+        Object.defineProperty(response, "url", { value: url.toString() });
+        resolve(response);
+      },
+    );
+
+    const onPreResponseAbort = () => {
+      req.destroy();
+      failBeforeResponse(signalAbortError(options.signal));
+    };
+
+    if (deadline !== undefined) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        req.destroy();
+        return failBeforeResponse(timeoutError());
+      }
+      timer = setTimeout(() => {
+        req.destroy();
+        failBeforeResponse(timeoutError());
+      }, remaining);
+    }
+
+    options.signal?.addEventListener("abort", onPreResponseAbort, {
+      once: true,
+    });
+    req.on("error", (error) => failBeforeResponse(error));
+    if (body !== undefined) req.end(body);
+    else req.end();
+  });
+}
+
 /**
  * 把 {@link guardedFetch} 包成标准 fetch 的形状（`(url, init) => Promise<Response>`），给 IM 适配器、
  * 扫码登录这类「本来就该用 fetch」的调用方换底（RV-01）：DNS 解析 → 全部公网 → 钉死 IP → 逐跳检查
@@ -590,21 +960,7 @@ export function createGuardedFetchLike(defaults: {
         headers[key] = value;
       });
     }
-    let body: string | Buffer | Uint8Array | undefined;
-    const rawBody = init.body as unknown;
-    if (typeof rawBody === "string") body = rawBody;
-    else if (rawBody instanceof URLSearchParams) body = rawBody.toString();
-    else if (rawBody instanceof Uint8Array)
-      body = Buffer.from(
-        rawBody.buffer,
-        rawBody.byteOffset,
-        rawBody.byteLength,
-      );
-    else if (rawBody instanceof ArrayBuffer) body = Buffer.from(rawBody);
-    else if (rawBody instanceof Blob)
-      body = Buffer.from(await rawBody.arrayBuffer());
-    else if (rawBody != null)
-      throw new TypeError("guarded fetch 不支持这种请求体");
+    const body = await normalizeRequestBody(init.body);
     return guardedFetchResponse(String(input), {
       method: init.method ?? "GET",
       ...(Object.keys(headers).length ? { headers } : {}),
