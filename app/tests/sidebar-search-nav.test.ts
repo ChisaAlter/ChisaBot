@@ -367,7 +367,9 @@ describe("IME Esc does not close the mobile drawer (CB-106 r2)", () => {
       join(import.meta.dir, "../src/components/ui/sidebar.tsx"),
       "utf8",
     );
-    expect(src).toContain('details?.reason === "escape-key" && isImeEscape(details.event)');
+    expect(src).toMatch(
+      /details\?\.reason\s*===\s*"escape-key"\s*&&\s*isImeEscape\(\s*details\.event\s*\)/,
+    );
     expect(src).toContain("details.cancel?.()");
   });
 });

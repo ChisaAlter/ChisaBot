@@ -81,7 +81,19 @@ test("login page: CSP-clean, has the four fields", () => {
 test("main process: no setup wizard left, login channels go through the local-page check", () => {
   const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
   assert.ok(!main.includes("setup.html") && !main.includes("openSetup"));
-  for (const ch of ["login:probe", "login:submit", "login:forget", "login:open"]) assert.ok(main.includes(`handleLocal("${ch}"`), ch);
+  for (const ch of [
+    "login:probe",
+    "login:submit",
+    "login:forget",
+    "login:open",
+  ])
+    assert.match(
+      main,
+      new RegExp(
+        `handleLocal\\(\\s*"${ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`,
+      ),
+      ch,
+    );
   assert.ok(main.includes('"will-redirect"') && main.includes("sessionExpired"), "会话过期时换本机登录页");
   assert.ok(main.includes("切换服务器") && main.includes("退出登录"), "托盘菜单");
   const preload = fs.readFileSync(path.join(__dirname, "..", "src", "preload.js"), "utf8");

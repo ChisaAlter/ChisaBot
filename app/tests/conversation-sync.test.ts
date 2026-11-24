@@ -19,15 +19,44 @@ import {
  */
 const realFetch = globalThis.fetch;
 let replies: ((url: string, init?: RequestInit) => Response)[] = [];
+let prevWindowDesc: PropertyDescriptor | undefined;
+let prevLocalStorageDesc: PropertyDescriptor | undefined;
+
+function restoreGlobalProperty(
+  key: "window" | "localStorage",
+  descriptor: PropertyDescriptor | undefined,
+) {
+  if (descriptor) {
+    Object.defineProperty(globalThis, key, descriptor);
+  } else {
+    Reflect.deleteProperty(globalThis, key);
+  }
+}
 
 beforeEach(() => {
   const store = new Map<string, string>();
-  (globalThis as { window?: unknown }).window = globalThis;
-  (globalThis as { localStorage?: unknown }).localStorage = {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => void store.set(key, value),
-    removeItem: (key: string) => void store.delete(key),
-  };
+  prevWindowDesc = Object.getOwnPropertyDescriptor(globalThis, "window");
+  prevLocalStorageDesc = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "localStorage",
+  );
+  Object.defineProperty(globalThis, "window", {
+    value: globalThis,
+    configurable: true,
+    writable: true,
+    enumerable: true,
+  });
+  Object.defineProperty(globalThis, "localStorage", {
+    value: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+      clear: () => store.clear(),
+    },
+    configurable: true,
+    writable: true,
+    enumerable: true,
+  });
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const next = replies.shift();
     if (!next) throw new Error("no reply queued");
@@ -36,6 +65,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  restoreGlobalProperty("localStorage", prevLocalStorageDesc);
+  restoreGlobalProperty("window", prevWindowDesc);
+  prevLocalStorageDesc = undefined;
+  prevWindowDesc = undefined;
   globalThis.fetch = realFetch;
   replies = [];
 });

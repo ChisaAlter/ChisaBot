@@ -58,9 +58,23 @@ test("main.js builds the login window, update window and local dialogs from wind
   assert.equal(updateOpts.length, 1, "独立更新进度窗口使用 updateWindowOptions");
   // 所有本机页面都带 ?frame=，页面才知道要不要自己裁圆角。
   for (const page of ["confirm.html", "approval.html"])
-    assert.match(main, new RegExp(`loadFile\\(path\\.join\\(UI, "${page.replace(".", "\\.")}"\\), \\{ query: windowChrome\\.frameQuery\\(FRAME\\) \\}\\)`), page);
-  assert.match(main, /loadFile\(path\.join\(UI, "update\.html"\), \{ query: windowChrome\.frameQuery\("dwm"\) \}\)/, "更新窗口走不透明无边框 dwm 帧");
-  assert.match(main, /loadFile\(path\.join\(UI, file\), \{ query: \{ \.\.\.windowChrome\.frameQuery\(FRAME\)/, "localWindow（登录窗）带 ?frame=");
+    assert.match(
+      main,
+      new RegExp(
+        `loadFile\\(\\s*path\\.join\\(UI,\\s*"${page.replace(".", "\\.")}"\\),\\s*\\{\\s*query:\\s*windowChrome\\.frameQuery\\(FRAME\\),?\\s*\\},?\\s*\\)`,
+      ),
+      page,
+    );
+  assert.match(
+    main,
+    /loadFile\(\s*path\.join\(UI,\s*"update\.html"\),\s*\{\s*query:\s*windowChrome\.frameQuery\("dwm"\),?\s*\},?\s*\)/,
+    "更新窗口走不透明无边框 dwm 帧",
+  );
+  assert.match(
+    main,
+    /loadFile\(\s*path\.join\(UI,\s*file\),\s*\{\s*query:\s*\{\s*\.\.\.windowChrome\.frameQuery\(FRAME\)/,
+    "localWindow（登录窗）带 ?frame=",
+  );
   // 只剩两个窗口不走 window-chrome：主窗口（自己的无边框 thickFrame）和 localWindow 的默认值。
   const created = main.match(/new BrowserWindow\(\{/g) || [];
   assert.equal(created.length, 5);
