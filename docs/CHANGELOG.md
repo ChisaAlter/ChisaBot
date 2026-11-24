@@ -1,5 +1,10 @@
 ## Unreleased
 
+## 0.1.185 — 2026-11-24
+
+- 全端发版：`0.1.185`，Android `versionCode 365`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `78166a2f4823832d`；无新增数据库迁移。
+- **右边栏收起定位修复与 PC 小窗切大窗跨断点防撕裂（`aeddeb17`）**：修复 `.glass-rail[data-rail-motion="closing"]` 因 `top: 0` 锚定 padding box 导致收起时向上撞入顶栏并拉高的错位问题（改为 `top: var(--glass-top); height: auto;` 并同步安装提示偏移），对齐 28px 退场位移与 `.live-panel` 折叠过渡；新增 `useDeferWhileResizing` 在缩放期跨 `768px`/`1280px` 断点推迟 1 帧挂载左右栏重型内部子树以防半屏空白撕裂，为顶栏最大化入口接入 `triggerMaximizeToggle` 预护栏、小窗直接最大化下发 `transitioning: true` 并在切深浅色时同步主窗底色，补全 `html[data-resizing]` 抑制与回归测试（`use-defer-while-resizing.ts` · `panel-rail.tsx` · `sidebar.tsx` · `desktop-window.ts` · `glass-topbar.tsx` · `styles.css` · `pc/src/{main,compact-window}.js` · `narrow-rail-sheet-stability.test.tsx`）。
+
 ## 0.1.184 — 2026-11-24
 
 - 全端发版：`0.1.184`，Android `versionCode 364`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `5984b599f6d42a71`；无新增数据库迁移。

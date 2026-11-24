@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.1.185 — 2026-11-24
+
+全端版本 `0.1.185`，Android `versionCode 365`：修复右边栏收起时向上瞬移撞入顶栏与拉高的错位缺陷，并新增缩放期跨断点 1 帧渐进挂载、最大化预护栏及全套 `html[data-resizing]` 过渡抑制，消除 PC 小窗切回大窗/最大化时的半屏空白撕裂。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `78166a2f4823832d`；无新增数据库迁移。
+
+- **PC 小窗↔大窗 / 最大化跨断点渐进挂载与防撕裂（`aeddeb17`）**：
+  - 新增 `app/src/hooks/use-defer-while-resizing.ts` 并接入 `sidebar.tsx` 与 `panel-rail.tsx`，在 `resizeInProgress()` 期间跨 `768px` / `1280px` 断点展开左右栏时先绘制完整外框与全宽壁纸，下一帧 `rAF + startTransition` 渐进挂载重型内部子树。
+  - 在 `desktop-window.ts` 与 `glass-topbar.tsx` 为最大化按钮与双击顶栏补齐 `triggerMaximizeToggle` 预护栏，在 `pc/src/compact-window.js` 让小窗态点系统最大化也标记 `transitioning: true`，并在 `pc/src/main.js` 切换深浅外观时同步更新主窗口原生背景色；在 `app/src/styles.css` 补全 `html[data-resizing]` 对侧栏容器、壁纸与 `.live-panel` 的纯过渡/动画抑制。
+- **右边栏收起原地平滑滑出与单面板折叠衔接（`aeddeb17`）**：
+  - 将 `.glass-rail[data-rail-motion="closing"]` 改为 `top: var(--glass-top); height: auto;` 并同步 `body[data-install-hint="open"]` 偏移，对齐 `@keyframes rail-card-exit` 28px 位移、放宽 `railMotion` 兜底定时器，并为 `.live-panel` 折叠补上 `gap` / `padding-block` 过渡及归零降级，同步扩充 `narrow-rail-sheet-stability.test.tsx` 回归守卫。
+
 ## 0.1.184 — 2026-11-24
 
 全端版本 `0.1.184`，Android `versionCode 364`：完成多账号安全加固与路由鉴权/SSRF 门禁收口（`batch1/multi-account-security`）、PC 桌面端语音通话音频增强接线、右边栏显隐裁切卡顿与 PC 小窗横竖屏切换性能优化，以及 CI 共享进程 `window`/`localStorage` 污染修复、单测覆盖补齐与全仓文档看板同步。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `5984b599f6d42a71`；无新增数据库迁移。
