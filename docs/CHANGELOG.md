@@ -1,9 +1,12 @@
 ## Unreleased
 
+## 0.1.184 — 2026-11-24
+
+- 全端发版：`0.1.184`，Android `versionCode 364`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `5984b599f6d42a71`；无新增数据库迁移。
 - **多账号安全加固与鉴权/SSRF 门禁收口（`batch1/multi-account-security`）**：抽离 `Bun.serve` 升级路由至 `server/src/upgrade-routes.ts` 并与全量路由鉴权台账共享守卫（清空 `KNOWN_GAPS`）；本机 Agent 全路径统一接入 `canUseServerHost` / `serverHostAllowedFor` / `resolveTargetDevice` 门控；OAuth 回调移除 `DEV_ACTOR` 回退改为会话强绑定；修复 SSRF `%zone` 与 `metadata.goog`、`createAgentFetch` 接入 DNS 钉死 `guardedFetchStream` 并将 `no-raw-fetch.test.ts` 升级为 TS AST 门禁；同步修复组件函数作用域、实时面板与浏览器书签归属鉴权（`upgrade-routes.ts` · `local-agents/service.ts` · `plugins/{app-builder,routes}.ts` · `agents/endpoint.ts` · `shared/net/{ssrf,guarded-fetch}.ts` · `components/{functions,routes,store}.ts` · `live-panels/service.ts` · `browser-bookmarks/service.ts` · `route-auth-inventory.test.ts` · `no-raw-fetch.test.ts`）。
 - **PC 桌面端语音通话音频增强接线（`pc/src/voice-audio.js`）**：`pc/src/main.js` 接入 `applyDesktopVoiceAudioSwitches`（Win/macOS 硬件 AEC3）与带 `fromServerPage` 守卫的 `registerVoiceAudioIpc`，`pc/src/web-preload.js` 在同源顶层框架守卫下暴露 `window.chisabotVoiceAudio.getPreferredConstraints()` 对接 `call-client.ts`，新增 `pc/test/voice-audio.check.js` 并同步更新 `pc/src/shell-fingerprint.json`（外壳指纹 `7314f9105596bec5` 不变，`clientHash` 更新为 `5984b599f6d42a71`）。
 - **右边栏显隐裁切卡顿与 PC 小窗横竖屏切换性能优化（`f3582a0c`）**：展开态卸载宽/窄窗面板把手解决 `rail-tab-in` `forwards` 覆盖 `data-hidden` 露出问题；重构 `.rail-head` 弹性标签网格并提升 `MIN_WIDTH` 至 `320` 确保三标签与收起键完整可见；移除右边栏 `width`/`padding` 布局过渡改帧 0 落位与纯 GPU 关键帧并收紧面板刷新与子树记忆化；合并 PC 主进程 `window:state` 原子推送、同步预挂 `data-resizing`、消除全树样式标脏并预合成 `materials.css` 色标（`panel-rail.tsx` · `live-panels.tsx` · `live-panels-query.ts` · `chat-transcript.tsx` · `desktop-window.ts` · `resize-state.ts` · `styles.css` · `styles/{materials,tokens}.css` · `pc/src/{main,compact-window,web-preload}.js` · `narrow-rail-sheet-stability.test.tsx` · `pc/test/compact.check.js`）。
-- **CI 测试回归修复、工程卫生与文档看板同步**：修复共享进程 `localStorage` 污染与多行格式化打断的源码断言（`conversation-sync.test.ts` · `sidebar-search-nav.test.ts` · `pc/test/{window-chrome,login}.check.js`），完善 `biome.json` 忽略与 CI 单测覆盖；同步更新 `CHANGELOG.md`、`docs/{CHANGELOG,BACKLOG,ROADMAP,HANDOFF,release,pc-update-signing,accounts}.md`、`docs/rfc/hark-redesign.md` 与 `landing-redirect.tsx` 过期注释。
+- **CI 测试回归修复、工程卫生与文档看板同步**：修复 `conversation-sync.test.ts` 与 `auth-client.test.ts` 共享进程 `window`/`localStorage` 污染及多行格式化打断的源码断言（`sidebar-search-nav.test.ts` · `pc/test/{window-chrome,login}.check.js`），完善 `biome.json` 忽略与 CI 单测覆盖；同步更新 `CHANGELOG.md`、`docs/{CHANGELOG,BACKLOG,ROADMAP,HANDOFF,release,pc-update-signing,accounts}.md`、`docs/rfc/hark-redesign.md` 与 `landing-redirect.tsx` 过期注释。
 
 ## 0.1.183 — 2026-11-23
 

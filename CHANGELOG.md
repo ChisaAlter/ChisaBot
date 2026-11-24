@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.184 — 2026-11-24
+
+全端版本 `0.1.184`，Android `versionCode 364`：完成多账号安全加固与路由鉴权/SSRF 门禁收口（`batch1/multi-account-security`）、PC 桌面端语音通话音频增强接线、右边栏显隐裁切卡顿与 PC 小窗横竖屏切换性能优化，以及 CI 共享进程 `window`/`localStorage` 污染修复、单测覆盖补齐与全仓文档看板同步。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `5984b599f6d42a71`；无新增数据库迁移。
+
 - **多账号安全加固与鉴权/SSRF 门禁收口（`batch1/multi-account-security`）**：
   - 建立全量路由鉴权台账与 WebSocket 升级守卫（`server/src/upgrade-routes.ts`、`server/tests/route-access-registry.ts`、`server/tests/route-auth-inventory.test.ts`），清空全部已知鉴权缺口（`KNOWN_GAPS = {}`）并以 AST 锁死 `index.ts` 无旁路。
   - 收紧本机 Agent 宿主机权限（`canUseServerHost` / `serverHostAllowedFor` / `resolveTargetDevice`），全读、播种、授权、执行与恢复路径统一受控；移除 OAuth 回调 `DEV_ACTOR` 回退，强制会话绑定且 fail-closed。
@@ -13,7 +17,7 @@
   - 移除右边栏 `width`/`padding` 布局过渡，改为帧 0 单次落位与纯 GPU 关键帧，并收紧面板刷新与子树记忆化。
   - 合并 PC 主进程 `window:state` 原子推送、同步预挂 `data-resizing`、消除全树样式标脏并预合成 `materials.css` 色标，显著降低小窗横竖屏切换卡顿。
 - **CI 测试回归修复、工程卫生与文档看板同步**：
-  - 修复 `app/tests/conversation-sync.test.ts` 在 `test:app` 共享进程中污染 `window`/`localStorage` 导致后续测试失败的问题，修复 `sidebar-search-nav.test.ts`、`pc/test/window-chrome.check.js` 与 `pc/test/login.check.js` 因多行格式化被打断的源码断言，补齐 `biome.json` 忽略规则与 CI 单元测试覆盖。
+  - 修复 `app/tests/conversation-sync.test.ts` 与 `app/tests/auth-client.test.ts` 在 `test:app` 共享进程中覆写 `globalThis.window`/`localStorage` 污染后续测试的缺陷，修复 `sidebar-search-nav.test.ts`、`pc/test/window-chrome.check.js` 与 `pc/test/login.check.js` 因多行格式化被打断的源码断言，补齐 `biome.json` 忽略规则与 CI 单元测试覆盖。
   - 同步更新 `docs/BACKLOG.md`、`docs/ROADMAP.md`、`docs/HANDOFF.md`、`docs/release.md`、`docs/pc-update-signing.md`、`docs/rfc/hark-redesign.md`、`docs/accounts.md` 及过期源码注释，消除版本号漂移与历史状态矛盾。
 
 ## 0.1.183 — 2026-11-23

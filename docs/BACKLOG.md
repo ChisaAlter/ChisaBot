@@ -1,6 +1,6 @@
 # Backlog（议题清单）
 
-> 状态最后核对：2026-11-24（`v0.1.183` + `Unreleased`，含 `f3582a0c` 与本轮文档/CI 收口）。
+> 状态最后核对：2026-11-24（`v0.1.184`）。
 >
 > **为什么是文件**：仓库的 GitHub Issues 目前是关闭的（fork 默认关闭，自动化令牌没有仓库管理权限，开不了）。在仓库所有者打开
 > Settings → General → Features → Issues 之前，这里就是 issue 列表；打开之后每一条按 ID 原样建成 GitHub issue，标签、里程碑、
