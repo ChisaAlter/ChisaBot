@@ -209,7 +209,7 @@ function Sidebar({
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
   const desktopContentReady = useDeferWhileResizing(
-    !isMobile && !parked && collapsible !== "none",
+    !isMobile && collapsible !== "none",
   );
   // 返回键 / 浏览器返回先关抽屉（CB-098，lib/overlay-back.ts）。
   useBackDismiss(
