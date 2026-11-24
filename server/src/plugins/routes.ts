@@ -2148,6 +2148,9 @@ export function createPluginRoutes(
       const sessionUserId = connect.resolveSessionUserId
         ? await connect.resolveSessionUserId(context.req.raw)
         : null;
+      if (connect.resolveSessionUserId && !sessionUserId) {
+        return context.redirect(failed);
+      }
       const state = await readConnectState(
         context.req.query("state") ?? "",
         connect.encryptionKey,

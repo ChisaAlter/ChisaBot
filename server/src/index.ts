@@ -5974,6 +5974,19 @@ const federationService = createFederationService({
   ...(config.publicUrl ? { hostUrl: config.publicUrl } : {}),
 });
 
+const resolveOAuthSessionUserId = async (
+  headers: Headers,
+): Promise<string | null> => {
+  try {
+    const actor = await resolveRequestActor(
+      new Request("http://chisabot.local/oauth/callback", { headers }),
+    );
+    return actor.id;
+  } catch {
+    return null;
+  }
+};
+
 const app = createApp(
   config,
   auth,
@@ -6237,6 +6250,7 @@ const app = createApp(
           ),
         }
       : {}),
+    resolveSessionUserId: resolveOAuthSessionUserId,
     extraRoutes: ({ requireUser }) => [
       ...(dshToolGateway
         ? [
@@ -6481,13 +6495,7 @@ const app = createApp(
           encryptionKey: config.keyEncryptionKey,
           publicUrl: config.publicUrl,
           appUrl: config.appUrl,
-          resolveSessionUserId: async (headers) => {
-            if (!auth) return DEV_ACTOR.id;
-            const session = await auth.api
-              .getSession({ headers })
-              .catch(() => null);
-            return session?.user?.id ?? null;
-          },
+          resolveSessionUserId: resolveOAuthSessionUserId,
         }),
       ],
       [

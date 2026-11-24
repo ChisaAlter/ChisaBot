@@ -655,14 +655,15 @@ export function createAppBuilderRoutes(
       return context.redirect(`${redirectBackBase}?app_oauth=failed`, 302);
     }
 
-    // 校验当前登录会话用户与 state 绑定发起者一致，防止 Login CSRF
-    if (options.resolveSessionUserId) {
-      const sessionUserId = await options
-        .resolveSessionUserId(context.req.raw.headers)
-        .catch(() => null);
-      if (!sessionUserId || sessionUserId !== state.userId) {
-        return context.redirect(`${redirectBackBase}?app_oauth=failed`, 302);
-      }
+    // 校验当前登录会话用户与 state 绑定发起者一致，防止 Login CSRF；未提供解析器或无法识别身份时一律拒绝
+    if (!options.resolveSessionUserId) {
+      return context.redirect(`${redirectBackBase}?app_oauth=failed`, 302);
+    }
+    const sessionUserId = await options
+      .resolveSessionUserId(context.req.raw.headers)
+      .catch(() => null);
+    if (!sessionUserId || sessionUserId !== state.userId) {
+      return context.redirect(`${redirectBackBase}?app_oauth=failed`, 302);
     }
 
     try {
