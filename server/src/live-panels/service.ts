@@ -1181,8 +1181,9 @@ export function createLivePanelService(deps: LivePanelServiceDeps) {
     });
     app.delete("/:id", async (c) => {
       try {
-        running.get(c.req.param("id"))?.abort(new Error("面板已删除"));
-        await store.remove(c.var.actor.id, c.req.param("id"));
+        const panelId = c.req.param("id");
+        await store.remove(c.var.actor.id, panelId);
+        running.get(panelId)?.abort(new Error("面板已删除"));
         return c.json({ ok: true });
       } catch (error) {
         return fail(c, error);
