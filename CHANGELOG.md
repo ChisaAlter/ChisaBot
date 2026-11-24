@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **多账号安全加固与鉴权/SSRF 门禁收口（`batch1/multi-account-security`）**：
+  - 建立全量路由鉴权台账与 WebSocket 升级守卫（`server/src/upgrade-routes.ts`、`server/tests/route-access-registry.ts`、`server/tests/route-auth-inventory.test.ts`），清空全部已知鉴权缺口（`KNOWN_GAPS = {}`）并以 AST 锁死 `index.ts` 无旁路。
+  - 收紧本机 Agent 宿主机权限（`canUseServerHost` / `serverHostAllowedFor` / `resolveTargetDevice`），全读、播种、授权、执行与恢复路径统一受控；移除 OAuth 回调 `DEV_ACTOR` 回退，强制会话绑定且 fail-closed。
+  - 加固 SSRF 防护（修复 IPv6 `%zone` 与 `metadata.goog`，`createAgentFetch` 统一走 DNS 钉死 `guardedFetchStream`，`no-raw-fetch.test.ts` 升级为 TS AST 门禁且零白名单），同步修复组件函数作用域、实时面板与浏览器书签归属/授权校验。
+- **PC 桌面端语音通话音频增强接线（`pc/src/voice-audio.js`）**：
+  - 在 `pc/src/main.js` 接入启动期硬件回声消除开关 `applyDesktopVoiceAudioSwitches` 与基于主窗口顶层同源守卫的 `voice-audio:preferred-constraints` IPC，并在 `pc/src/web-preload.js` 暴露 `window.chisabotVoiceAudio.getPreferredConstraints()` 对接前端语音通话客户端，同步新增 `pc/test/voice-audio.check.js` 并更新 `pc/src/shell-fingerprint.json` 客户端指纹（外壳指纹 `7314f9105596bec5` 不变）。
 - **右边栏显隐裁切卡顿与 PC 小窗横竖屏切换性能优化（`f3582a0c`）**：
   - 展开态卸载宽窗与窄窗「面板」把手，修复 `rail-tab-in` `forwards` 动画覆盖 `data-hidden` 导致展开后把手仍露出的问题；重构 `.rail-head` 弹性标签网格并将面板最小宽度提升至 `320px`，确保三标签与顶部收起按键在各视口下完整可见。
   - 移除右边栏 `width`/`padding` 布局过渡，改为帧 0 单次落位与纯 GPU 关键帧，并收紧面板刷新与子树记忆化。
