@@ -38,6 +38,10 @@
   inherits: false;
   initial-value: #f2f7fc;
 }
+@property --surface-bg-hold {
+  syntax: "*";
+  inherits: false;
+}
 @property --surface-blur {
   syntax: "*";
   inherits: false;
@@ -136,6 +140,26 @@
   syntax: "<color>";
   inherits: true;
   initial-value: rgba(255, 255, 255, 0.62);
+}
+@property --mat-glass-panel-hold {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.93);
+}
+@property --mat-glass-elevated-hold {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.95);
+}
+@property --mat-clear-panel-hold {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.84);
+}
+@property --mat-clear-elevated-hold {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.88);
 }
 
 /* ========================================================================================
@@ -365,6 +389,26 @@
   --mat-clear-control: color-mix(
     in srgb,
     rgb(var(--surface-tint-rgb) / 0.62) 95%,
+    var(--accent) 5%
+  );
+  --mat-glass-panel-hold: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.93) 95%,
+    var(--accent) 5%
+  );
+  --mat-glass-elevated-hold: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.95) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-panel-hold: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.84) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-elevated-hold: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.88) 95%,
     var(--accent) 5%
   );
 
@@ -635,6 +679,26 @@ html.dark {
     in srgb,
     rgb(var(--surface-tint-rgb) / 0.64) 94%,
     var(--accent) 6%
+  );
+  --mat-glass-panel-hold: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.93) 94%,
+    var(--accent) 6%
+  );
+  --mat-glass-elevated-hold: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.95) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-panel-hold: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.84) 94%,
+    var(--accent) 6%
+  );
+  --mat-clear-elevated-hold: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.88) 95%,
+    var(--accent) 5%
   );
 
   /* 线条与洗底 */

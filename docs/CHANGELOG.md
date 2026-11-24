@@ -1,5 +1,7 @@
 ## Unreleased
 
+- **左右面板弹出透明度跳变与聊天气泡材质统一**：在 `tokens.css` / `materials.css` 新增 `--surface-bg-hold` 与 `--mat-*-hold` 预合成色标，使 `glass-hold` 剥离模糊期间自动补厚底色（不影响遮罩层）；移除 `.glass-side-full`/`.glass-mini`、`rail-card-enter`/`rail-card-exit` 与 `.rail-sheet` 的 `opacity: 0` 淡入；删除 `styles.css` 对用户/AI 气泡的 `--glass-user`/`--glass-strong` 残留覆写并统一 `padding: 12px 16px;`，使双方一致走 `[data-surface="bubble"]` 单通道，新增 `bubble-and-panel-surface.test.ts` 回归守卫（`styles/{tokens,materials}.css` · `styles.css` · `bubble-and-panel-surface.test.ts`）。
+
 ## 0.1.186 — 2026-11-24
 
 - 全端发版：`0.1.186`，Android `versionCode 366`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `5904bcbcb0e58752`；无新增数据库迁移。

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **左右面板弹出透明度跳变与聊天气泡材质统一**：
+  - 在 `tokens.css` / `materials.css` 新增不继承表面变量 `--surface-bg-hold` 与预合成 hold 色标（`--mat-{glass,clear}-{panel,elevated}-hold`），`glass-hold` 及入退场剥离模糊期间同步补厚底色而不影响遮罩层；移除宽屏左栏 `glass-fade-in`、宽屏右栏 `rail-card-enter`/`rail-card-exit` `opacity: 0` 淡入，并让窄屏右栏抽屉 `.rail-sheet` 与 `.hk-drawer` 保持 `opacity: 1` 纯位平滑入出。
+  - 移除 `styles.css` 中残留的 AI 气泡 `--glass-strong` 覆写与用户气泡悬空 `--glass-user` 覆写并统一内边距，使双方气泡一致走 `[data-surface="bubble"]` 单通道（补齐 `bubble-and-panel-surface.test.ts` 回归守卫；无需数据库迁移，端侧刷新即生效）。
+
 ## 0.1.186 — 2026-11-24
 
 全端版本 `0.1.186`，Android `versionCode 366`：升级六套深度定制主题体系（DESIGN.md §155），修复自定义面板内容溢出边框、底部拖条压字与环形图低对比度缺陷，并接入 GPU 合成层 `View Transitions` 原子交叉淡入提升深浅色切换丝滑度。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `5904bcbcb0e58752`；无新增数据库迁移。

@@ -32,6 +32,7 @@
       var(--mat-glass-panel-1) 0%,
       var(--mat-glass-panel-2) 100%
     );
+    --mat-panel-bg-hold: var(--mat-glass-panel-hold);
     --mat-panel-blur: blur(20px) saturate(160%);
     --mat-panel-border: rgba(255, 255, 255, 0.56);
     --mat-panel-hl:
@@ -44,6 +45,7 @@
       var(--mat-glass-elevated-1) 0%,
       var(--mat-glass-elevated-2) 100%
     );
+    --mat-elevated-bg-hold: var(--mat-glass-elevated-hold);
     --mat-elevated-blur: blur(12px) saturate(160%);
     --mat-elevated-border: rgba(255, 255, 255, 0.64);
     --mat-elevated-hl:
@@ -104,6 +106,7 @@
       var(--mat-clear-panel-1) 0%,
       var(--mat-clear-panel-2) 100%
     );
+    --mat-panel-bg-hold: var(--mat-clear-panel-hold);
     --mat-panel-blur: blur(16px) saturate(180%);
     --mat-panel-border: rgba(255, 255, 255, 0.72);
     --mat-panel-hl:
@@ -116,6 +119,7 @@
       var(--mat-clear-elevated-1) 0%,
       var(--mat-clear-elevated-2) 100%
     );
+    --mat-elevated-bg-hold: var(--mat-clear-elevated-hold);
     --mat-elevated-blur: blur(12px) saturate(175%);
     --mat-elevated-border: rgba(255, 255, 255, 0.76);
     --mat-elevated-hl:
@@ -279,12 +283,14 @@
 
   :where(html[data-material="solid"]) {
     --mat-panel-bg: var(--surface-solid-panel);
+    --mat-panel-bg-hold: var(--surface-solid-panel);
     --mat-panel-blur: none;
     --mat-panel-border: var(--line-strong);
     --mat-panel-hl: none;
     --mat-panel-shadow: var(--shadow-1);
 
     --mat-elevated-bg: var(--surface-solid-elevated);
+    --mat-elevated-bg-hold: var(--surface-solid-elevated);
     --mat-elevated-blur: none;
     --mat-elevated-border: var(--line-strong);
     --mat-elevated-hl: none;
@@ -320,6 +326,7 @@
   ) {
     --surface-bg: var(--mat-panel-bg);
     --surface-bg-solid: var(--surface-solid-panel);
+    --surface-bg-hold: var(--mat-panel-bg-hold);
     --surface-blur: var(--mat-panel-blur);
     --surface-border: var(--mat-panel-border);
     --surface-highlight: var(--mat-panel-hl);
@@ -356,6 +363,7 @@
   ) {
     --surface-bg: var(--mat-elevated-bg);
     --surface-bg-solid: var(--surface-solid-elevated);
+    --surface-bg-hold: var(--mat-elevated-bg-hold);
     --surface-blur: var(--mat-elevated-blur);
     --surface-border: var(--mat-elevated-border);
     --surface-highlight: var(--mat-elevated-hl);
@@ -445,6 +453,7 @@
       var(--mat-glass-panel-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-panel);
+    --surface-bg-hold: var(--mat-glass-panel-hold);
     --surface-blur: blur(20px) saturate(160%);
     --surface-border: var(--mat-panel-border);
     --surface-highlight: var(--mat-panel-hl);
@@ -461,6 +470,7 @@
       var(--mat-glass-elevated-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-elevated);
+    --surface-bg-hold: var(--mat-glass-elevated-hold);
     --surface-blur: blur(12px) saturate(160%);
     --surface-border: var(--mat-elevated-border);
     --surface-highlight: var(--mat-elevated-hl);
@@ -518,6 +528,7 @@
       var(--mat-glass-panel-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-panel);
+    --surface-bg-hold: var(--mat-glass-panel-hold);
     --surface-blur: blur(20px) saturate(160%);
     --surface-border: var(--mat-panel-border);
     --surface-highlight: var(--mat-panel-hl);
@@ -534,6 +545,7 @@
       var(--mat-glass-elevated-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-elevated);
+    --surface-bg-hold: var(--mat-glass-elevated-hold);
     --surface-blur: blur(12px) saturate(160%);
     --surface-border: var(--mat-elevated-border);
     --surface-highlight: var(--mat-elevated-hl);
@@ -590,6 +602,7 @@
       var(--mat-clear-panel-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-panel);
+    --surface-bg-hold: var(--mat-clear-panel-hold);
     --surface-blur: blur(16px) saturate(180%);
     --surface-border: var(--mat-panel-border);
     --surface-highlight: var(--mat-panel-hl);
@@ -605,6 +618,7 @@
       var(--mat-clear-elevated-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-elevated);
+    --surface-bg-hold: var(--mat-clear-elevated-hold);
     --surface-blur: blur(12px) saturate(175%);
     --surface-border: var(--mat-elevated-border);
     --surface-highlight: var(--mat-elevated-hl);
@@ -658,6 +672,7 @@
       var(--mat-clear-panel-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-panel);
+    --surface-bg-hold: var(--mat-clear-panel-hold);
     --surface-blur: blur(16px) saturate(180%);
     --surface-border: var(--mat-panel-border);
     --surface-highlight: var(--mat-panel-hl);
@@ -673,6 +688,7 @@
       var(--mat-clear-elevated-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-elevated);
+    --surface-bg-hold: var(--mat-clear-elevated-hold);
     --surface-blur: blur(12px) saturate(175%);
     --surface-border: var(--mat-elevated-border);
     --surface-highlight: var(--mat-elevated-hl);
@@ -722,6 +738,7 @@
   :where(html[data-material="solid"]) :where([data-surface="panel"]) {
     --surface-bg: var(--surface-solid-panel);
     --surface-bg-solid: var(--surface-solid-panel);
+    --surface-bg-hold: var(--surface-solid-panel);
     --surface-blur: none;
     --surface-border: var(--line-strong);
     --surface-highlight: none;
@@ -733,6 +750,7 @@
   :where(html[data-material="solid"]) :where([data-surface="elevated"]) {
     --surface-bg: var(--surface-solid-elevated);
     --surface-bg-solid: var(--surface-solid-elevated);
+    --surface-bg-hold: var(--surface-solid-elevated);
     --surface-blur: none;
     --surface-border: var(--line-strong);
     --surface-highlight: none;
@@ -977,6 +995,7 @@ html :is(.jr-card, .live-panel-body) .jr-card {
   to {
     --surface-blur: none;
     backdrop-filter: none;
+    --surface-bg: var(--surface-bg-hold, var(--surface-bg-solid));
   }
 }
 
@@ -1018,6 +1037,7 @@ html :is(.jr-card, .live-panel-body) .jr-card {
 .glass-rail:is(.is-collapsed, [data-rail-motion="closing"]) > .rail-card {
   --surface-blur: none;
   backdrop-filter: none;
+  --surface-bg: var(--surface-bg-hold, var(--surface-bg-solid));
 }
 
 :is([data-slot="dialog-overlay"], [data-slot="sheet-overlay"])[data-open]:not(
