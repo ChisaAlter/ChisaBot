@@ -1,4 +1,11 @@
 import { useCallback, useSyncExternalStore } from "react";
+import { beginResizing } from "@/lib/resize-state";
+
+export type DesktopWindowStatePayload = {
+  maximized?: boolean;
+  compact?: boolean;
+  transitioning?: boolean;
+};
 
 /**
  * ChisaBot 无边框窗口的窗口控制（DESIGN.md §18）。
@@ -21,6 +28,10 @@ export type DesktopWindowBridge = {
   toggleCompact?(): void;
   isCompact?(): Promise<boolean>;
   onCompactChange?(callback: (compact: boolean) => void): () => void;
+  /** 合并推送 maximized + compact 状态，避免小窗切换期间分两次 IPC 与双重重渲。 */
+  onStateChange?(
+    callback: (state: DesktopWindowStatePayload) => void,
+  ): () => void;
 };
 
 export type DesktopWindowSnapshot = {
@@ -55,13 +66,34 @@ export function canCompact(bridge: DesktopWindowBridge | null): boolean {
  * 同一个 resize 监听、同一个 250ms 边缘裁切轮询与一次 <html> 属性同步，彻底消除双份定时器和双写 DOM。
  * 最后一个消费方卸载时自动拆除全部监听与定时器并清理 --edge-clip-r。
  */
+/** 小窗切换期间暂缓 --edge-clip-r 写入的结算窗口（ms），避免 unmaximize/setBounds 中间态在 <html> 上反复触发布局样式重算。 */
+const COMPACT_CLIP_SETTLE_MS = 220;
+
 const subscribers = new Set<() => void>();
 let activeBridge: DesktopWindowBridge | null = null;
 let activeSnapshot: DesktopWindowSnapshot | null = null;
 let fallbackBridge: DesktopWindowBridge | null = null;
 let fallbackSnapshot: DesktopWindowSnapshot | null = null;
 let teardownActive: (() => void) | null = null;
+let onCompactTransitionStart: (() => void) | null = null;
 let sessionSeq = 0;
+
+/**
+ * 标记即将发生小窗竖屏↔横屏切换：
+ * 1) 同步预挂 `html[data-resizing]`，令单次原子 `setBounds` 首帧跨断点即享过渡/动画抑制；
+ * 2) 暂缓过渡期内的 `--edge-clip-r` 根属性写入，待落位稳定后一次结算，避免 160–290ms 全树 RecalcStyle 抖动。
+ */
+export function beginCompactTransition() {
+  beginResizing(COMPACT_CLIP_SETTLE_MS);
+  onCompactTransitionStart?.();
+}
+
+/** 点击顶栏小窗按钮时统一入口：先同步预挂过渡护栏，再通知主进程原子切窗。 */
+export function triggerCompactToggle(bridge: DesktopWindowBridge | null) {
+  if (!bridge || !canCompact(bridge)) return;
+  beginCompactTransition();
+  bridge.toggleCompact?.();
+}
 
 function notifySubscribers() {
   for (const listener of [...subscribers]) listener();
@@ -82,6 +114,7 @@ function stopActiveBridge() {
   sessionSeq += 1;
   const teardown = teardownActive;
   teardownActive = null;
+  onCompactTransitionStart = null;
   activeBridge = null;
   activeSnapshot = null;
   teardown?.();
@@ -95,6 +128,9 @@ function startActiveBridge(bridge: DesktopWindowBridge) {
   let maximizedNow = false;
   let compactNow = false;
   let lastClip = "";
+  let compactSettling = false;
+  let compactSettleTimer = 0;
+  let resizeClipRaf = 0;
   activeSnapshot = { bridge, maximized: false, compact: false };
 
   const root = document.documentElement;
@@ -109,7 +145,8 @@ function startActiveBridge(bridge: DesktopWindowBridge) {
    * 不引发布局，不变时不写样式）——0.1.161 的让位逻辑否则只在窗口改大小时生效，
    * 把手跟着出屏被裁半条（用户 2026-11-18 截图实测）。浏览器没有这座桥，变量不设、恒回落 0。
    */
-  const syncEdgeClip = () => {
+  const syncEdgeClip = (force = false) => {
+    if (compactSettling && !force) return;
     const availLeft =
       (window.screen as Screen & { availLeft?: number }).availLeft ?? 0;
     const availWidth = window.screen.availWidth;
@@ -135,21 +172,49 @@ function startActiveBridge(bridge: DesktopWindowBridge) {
     }
   };
 
-  const updateState = (nextMax: boolean, nextCompact: boolean) => {
+  const pauseClipForCompact = () => {
+    compactSettling = true;
+    window.clearTimeout(compactSettleTimer);
+    compactSettleTimer = window.setTimeout(() => {
+      compactSettleTimer = 0;
+      compactSettling = false;
+      syncEdgeClip(true);
+    }, COMPACT_CLIP_SETTLE_MS);
+  };
+  onCompactTransitionStart = pauseClipForCompact;
+
+  const onWindowResize = () => {
+    if (compactSettling) {
+      // 窗口实际 resize 已到达，刷新结算窗口以便落位后单次更新 --edge-clip-r。
+      pauseClipForCompact();
+      return;
+    }
+    if (resizeClipRaf) return;
+    resizeClipRaf = window.requestAnimationFrame(() => {
+      resizeClipRaf = 0;
+      syncEdgeClip();
+    });
+  };
+
+  const updateState = (
+    nextMax: boolean,
+    nextCompact: boolean,
+    options?: { skipClip?: boolean },
+  ) => {
     const changed = nextMax !== maximizedNow || nextCompact !== compactNow;
     maximizedNow = nextMax;
     compactNow = nextCompact;
     writeDocumentFlags(root, maximizedNow, compactNow);
-    syncEdgeClip();
+    if (!options?.skipClip) syncEdgeClip();
     if (changed) {
       activeSnapshot = { bridge, maximized: maximizedNow, compact: compactNow };
       notifySubscribers();
     }
   };
 
-  syncEdgeClip();
-  window.addEventListener("resize", syncEdgeClip, { passive: true });
-  const clipTimer = window.setInterval(syncEdgeClip, 250);
+  syncEdgeClip(true);
+  window.addEventListener("resize", onWindowResize, { passive: true });
+  const clipTimer = window.setInterval(() => syncEdgeClip(), 250);
 
   void bridge
     .isMaximized()
@@ -159,12 +224,10 @@ function startActiveBridge(bridge: DesktopWindowBridge) {
     })
     .catch(() => {});
 
-  const offMax = bridge.onMaximizedChange((value) => {
-    if (seq !== sessionSeq) return;
-    updateState(Boolean(value), compactNow);
-  });
-
+  let offMax = () => {};
   let offCompact = () => {};
+  let offState = () => {};
+
   if (canCompact(bridge)) {
     void bridge
       .isCompact?.()
@@ -173,18 +236,48 @@ function startActiveBridge(bridge: DesktopWindowBridge) {
         updateState(maximizedNow, Boolean(value));
       })
       .catch(() => {});
-    offCompact =
-      bridge.onCompactChange?.((value) => {
-        if (seq !== sessionSeq) return;
-        updateState(maximizedNow, Boolean(value));
-      }) ?? offCompact;
+  }
+
+  if (typeof bridge.onStateChange === "function") {
+    offState = bridge.onStateChange((state) => {
+      if (seq !== sessionSeq) return;
+      const nextMax =
+        typeof state.maximized === "boolean" ? state.maximized : maximizedNow;
+      const nextCompact =
+        typeof state.compact === "boolean" ? state.compact : compactNow;
+      const isCompactToggle =
+        state.transitioning === true || nextCompact !== compactNow;
+      if (isCompactToggle) {
+        beginCompactTransition();
+      }
+      updateState(nextMax, nextCompact, { skipClip: isCompactToggle });
+    });
+  } else {
+    offMax = bridge.onMaximizedChange((value) => {
+      if (seq !== sessionSeq) return;
+      updateState(Boolean(value), compactNow);
+    });
+    if (canCompact(bridge)) {
+      offCompact =
+        bridge.onCompactChange?.((value) => {
+          if (seq !== sessionSeq) return;
+          const nextCompact = Boolean(value);
+          if (nextCompact !== compactNow) beginCompactTransition();
+          updateState(maximizedNow, nextCompact, {
+            skipClip: nextCompact !== compactNow,
+          });
+        }) ?? offCompact;
+    }
   }
 
   teardownActive = () => {
+    offState();
     offMax();
     offCompact();
-    window.removeEventListener("resize", syncEdgeClip);
+    window.removeEventListener("resize", onWindowResize);
     window.clearInterval(clipTimer);
+    window.clearTimeout(compactSettleTimer);
+    if (resizeClipRaf) window.cancelAnimationFrame(resizeClipRaf);
     root.style.removeProperty("--edge-clip-r");
   };
 }

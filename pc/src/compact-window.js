@@ -76,7 +76,12 @@ function clampToArea(bounds, area) {
   const height = Math.min(bounds.height, area.height);
   const x = Math.min(Math.max(bounds.x, area.x), area.x + area.width - width);
   const y = Math.min(Math.max(bounds.y, area.y), area.y + area.height - height);
-  return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
 }
 
 /**
@@ -89,16 +94,28 @@ function computeCompactBounds(current, area, opts = {}) {
   const minWidth = opts.minWidth || 0;
   const minHeight = opts.minHeight || 0;
   const margin = opts.maximized ? EDGE_MARGIN : 0;
-  const width = Math.max(minWidth, Math.min(COMPACT_WIDTH, area.width - EDGE_MARGIN * 2));
-  const height = Math.max(minHeight, Math.min(COMPACT_HEIGHT, area.height - EDGE_MARGIN * 2));
+  const width = Math.max(
+    minWidth,
+    Math.min(COMPACT_WIDTH, area.width - EDGE_MARGIN * 2),
+  );
+  const height = Math.max(
+    minHeight,
+    Math.min(COMPACT_HEIGHT, area.height - EDGE_MARGIN * 2),
+  );
   // 右边缘、上边缘不动（最大化时向内留一点边），向左下收缩。
-  const right = Math.min(current.x + current.width, area.x + area.width) - margin;
+  const right =
+    Math.min(current.x + current.width, area.x + area.width) - margin;
   const top = Math.max(current.y, area.y) + margin;
   return clampToArea({ x: right - width, y: top, width, height }, area);
 }
 
 function intersects(a, b) {
-  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+  return (
+    a.x < b.x + b.width &&
+    b.x < a.x + a.width &&
+    a.y < b.y + b.height &&
+    b.y < a.y + a.height
+  );
 }
 
 /**
@@ -113,10 +130,13 @@ function createCompactController({ screen, onChange, animate }) {
   const states = new WeakMap();
   /** 进行中的窗口动画：enter/leave 互相打断、窗口关闭时取消。 */
   const anims = new WeakMap();
+  /** 同步执行 enter/leave 几何变更期间置位，用于屏蔽中间态 unmaximize/maximize 触发的冗余 IPC。 */
+  const transitioning = new WeakSet();
   /** 本次运行里用户最后一次摆放的小窗（显示器 id + 位置）。 */
   let lastCompact = null;
 
   const isCompact = (win) => Boolean(win && states.has(win));
+  const isTransitioning = (win) => Boolean(win && transitioning.has(win));
 
   const cancelAnim = (win) => {
     const cancel = anims.get(win);
@@ -153,32 +173,45 @@ function createCompactController({ screen, onChange, animate }) {
         lastCompact = { displayId: screen.getDisplayMatching(b).id, bounds: b };
       }
     }
-    if (restore && !win.isDestroyed()) {
-      const { bounds, maximized, fullScreen } = state.restore;
-      // 原来的显示器还在就原样放回；拔掉了就夹进现在这台显示器的工作区。
-      const onScreen = screen.getAllDisplays().some((d) => intersects(d.workArea, bounds));
-      const area = screen.getDisplayMatching(win.getBounds()).workArea;
-      const target = onScreen ? bounds : clampToArea(bounds, area);
-      // 落位后恢复最大化 / 全屏（Windows 原子落位时同步紧接 maximize，不先停留在普通尺寸再二次闪跳）。
-      runTo(
-        win,
-        target,
-        () => {
-          if (win.isDestroyed()) return;
-          if (maximized) win.maximize();
-          if (fullScreen) win.setFullScreen(true);
-        },
-        { phase: "leave", maximized, fullScreen },
-      );
+    transitioning.add(win);
+    try {
+      if (restore && !win.isDestroyed()) {
+        const { bounds, maximized, fullScreen } = state.restore;
+        // 原来的显示器还在就原样放回；拔掉了就夹进现在这台显示器的工作区。
+        const onScreen = screen
+          .getAllDisplays()
+          .some((d) => intersects(d.workArea, bounds));
+        const area = screen.getDisplayMatching(win.getBounds()).workArea;
+        const target = onScreen ? bounds : clampToArea(bounds, area);
+        // 落位后恢复最大化 / 全屏（Windows 原子落位时同步紧接 maximize，不先停留在普通尺寸再二次闪跳）。
+        runTo(
+          win,
+          target,
+          () => {
+            if (win.isDestroyed()) return;
+            if (maximized) win.maximize();
+            if (fullScreen) win.setFullScreen(true);
+          },
+          { phase: "leave", maximized, fullScreen },
+        );
+      }
+    } finally {
+      transitioning.delete(win);
     }
-    if (!win.isDestroyed()) onChange(win, false);
+    if (!win.isDestroyed()) {
+      onChange(win, false, {
+        maximized: win.isMaximized() || win.isFullScreen(),
+        transitioning: restore === true,
+      });
+    }
   }
 
   function enter(win) {
     const maximized = win.isMaximized();
     const fullScreen = win.isFullScreen();
     const currentBounds = win.getBounds();
-    const restoreBounds = maximized || fullScreen ? win.getNormalBounds() : currentBounds;
+    const restoreBounds =
+      maximized || fullScreen ? win.getNormalBounds() : currentBounds;
     const display = screen.getDisplayMatching(currentBounds);
     const area = display.workArea;
     const [minWidth, minHeight] = win.getMinimumSize();
@@ -186,26 +219,48 @@ function createCompactController({ screen, onChange, animate }) {
     let target =
       lastCompact && lastCompact.displayId === display.id
         ? clampToArea(lastCompact.bounds, area)
-        : computeCompactBounds(maximized || fullScreen ? area : currentBounds, area, {
-            maximized: maximized || fullScreen,
-            minWidth,
-            minHeight,
-          });
-    if (target.width > LEAVE_WIDTH) target = computeCompactBounds(area, area, { maximized: true, minWidth, minHeight });
-    const state = { restore: { bounds: restoreBounds, maximized, fullScreen }, applying: true };
+        : computeCompactBounds(
+            maximized || fullScreen ? area : currentBounds,
+            area,
+            {
+              maximized: maximized || fullScreen,
+              minWidth,
+              minHeight,
+            },
+          );
+    if (target.width > LEAVE_WIDTH)
+      target = computeCompactBounds(area, area, {
+        maximized: true,
+        minWidth,
+        minHeight,
+      });
+    const state = {
+      restore: { bounds: restoreBounds, maximized, fullScreen },
+      applying: true,
+    };
     states.set(win, state);
-    if (fullScreen) win.setFullScreen(false);
-    if (maximized) win.unmaximize();
-    // 落位期间（含异步晚到的 resize）不算「用户把窗口拉宽」；done 之后才恢复判宽。
-    runTo(
-      win,
-      target,
-      () => {
-        state.applying = false;
-      },
-      { phase: "enter", maximized, fullScreen },
-    );
-    onChange(win, true);
+    transitioning.add(win);
+    try {
+      if (fullScreen) win.setFullScreen(false);
+      if (maximized) win.unmaximize();
+      // 落位期间（含异步晚到的 resize）不算「用户把窗口拉宽」；done 之后才恢复判宽。
+      runTo(
+        win,
+        target,
+        () => {
+          state.applying = false;
+        },
+        { phase: "enter", maximized, fullScreen },
+      );
+    } finally {
+      transitioning.delete(win);
+    }
+    if (!win.isDestroyed()) {
+      onChange(win, true, {
+        maximized: win.isMaximized() || win.isFullScreen(),
+        transitioning: true,
+      });
+    }
   }
 
   /** 主窗口创建后调用一次：用户在小窗里自己最大化 / 全屏 / 拉宽 = 离开小窗（不恢复）。 */
@@ -222,6 +277,7 @@ function createCompactController({ screen, onChange, animate }) {
     });
     win.on("closed", () => {
       cancelAnim(win);
+      transitioning.delete(win);
       states.delete(win);
     });
   }
@@ -233,7 +289,7 @@ function createCompactController({ screen, onChange, animate }) {
     return isCompact(win);
   }
 
-  return { toggle, isCompact, watch };
+  return { toggle, isCompact, isTransitioning, watch };
 }
 
 module.exports = {

@@ -1255,6 +1255,15 @@ function SettleAtEnd({
       const active = () =>
         !s.released && performance.now() < s.until && !held();
       let frame = 0;
+      /** 瞬时滚动到指定位置而不改写视口内联 style.scrollBehavior（避免标脏整棵对话树 4,500+ 节点样式重算）。 */
+      const scrollTopInstant = (top: number) => {
+        const clamped = Math.max(0, top);
+        if (typeof element.scrollTo === "function") {
+          element.scrollTo({ top: clamped, behavior: "instant" });
+          return;
+        }
+        element.scrollTop = clamped;
+      };
       /** 回到上次那一条；找到了返回 true。 */
       const toRemembered = () => {
         const r = s.restore;
@@ -1263,10 +1272,9 @@ function SettleAtEnd({
           `[data-message-id="${CSS.escape(r.anchor)}"]`,
         );
         if (!row) return false;
-        element.style.scrollBehavior = "auto";
         const ok = scrollToMessage(r.anchor, {
           align: "start",
-          behavior: "auto",
+          behavior: "instant",
           scrollMargin: r.offset,
         });
         // 滚动容器对齐时会算上行距 / 内边距，差那么一点：量一下，补齐到离开时的那个像素。
@@ -1274,8 +1282,7 @@ function SettleAtEnd({
           row.getBoundingClientRect().top -
           element.getBoundingClientRect().top -
           r.offset;
-        if (Math.abs(off) > 1) element.scrollTop += off;
-        element.style.scrollBehavior = "";
+        if (Math.abs(off) > 1) scrollTopInstant(element.scrollTop + off);
         return ok;
       };
       const settle = () => {
@@ -1285,9 +1292,7 @@ function SettleAtEnd({
           if (!s.hydrating) s.restore = null;
           else return;
         }
-        element.style.scrollBehavior = "auto";
-        scrollToEnd({ behavior: "auto" });
-        element.style.scrollBehavior = "";
+        scrollToEnd({ behavior: "instant" });
       };
       const pin = () => {
         if (!active()) return;
@@ -1593,9 +1598,7 @@ function SettleAtEnd({
           lastHeight -= use;
           // 全吃进去了：滚动容器要是已经先「跟着底部」滚了这一截（它比我们早动），放回去，画面不动（§94）。
           if (use === grew && seen.atBottom && element.scrollTop !== seen.top) {
-            element.style.scrollBehavior = "auto";
-            element.scrollTop = seen.top;
-            element.style.scrollBehavior = "";
+            scrollTopInstant(seen.top);
           } else if (
             grew > use &&
             seen.atBottom &&
@@ -1815,10 +1818,8 @@ function SettleAtEnd({
         setSlack(total);
         if (spacerHeight > 0) {
           const top = element.scrollTop;
-          element.style.scrollBehavior = "auto";
-          scrollToEnd({ behavior: "auto" });
-          element.scrollTop = top;
-          element.style.scrollBehavior = "";
+          scrollToEnd({ behavior: "instant" });
+          scrollTopInstant(top);
         }
         const finish = (remaining = 0) => {
           setSlack(remaining);
@@ -1919,9 +1920,7 @@ function SettleAtEnd({
                 !s.restore &&
                 (!spacer || spacer.hidden)
               ) {
-                element.style.scrollBehavior = "auto";
-                element.scrollTop += shrink;
-                element.style.scrollBehavior = "";
+                scrollTopInstant(element.scrollTop + shrink);
               }
               look();
             });
@@ -3779,10 +3778,11 @@ function useKeepBottomOnPrepend(
       atBottom.current !== true
     )
       return;
-    const behavior = element.style.scrollBehavior;
-    element.style.scrollBehavior = "auto";
-    element.scrollTop = element.scrollHeight;
-    element.style.scrollBehavior = behavior;
+    if (typeof element.scrollTo === "function") {
+      element.scrollTo({ top: element.scrollHeight, behavior: "instant" });
+    } else {
+      element.scrollTop = element.scrollHeight;
+    }
   }, [firstId, viewport, opening]);
 }
 

@@ -194,10 +194,7 @@ const LiveBody = memo(function LiveBody({
    */
   const [syncDeps, setSyncDeps] = useState({ live, store });
   const [syncEpoch, setSyncEpoch] = useState(0);
-  if (
-    syncDeps.store !== store ||
-    !sameLiveRecord(syncDeps.live, live)
-  ) {
+  if (syncDeps.store !== store || !sameLiveRecord(syncDeps.live, live)) {
     setSyncDeps({ live, store });
     setSyncEpoch(syncEpoch + 1);
   }
@@ -514,11 +511,7 @@ function DataSourcePanel({
   useDocumentEvent("pointerdown", (event) => {
     if (leaving) return;
     const target = event.target;
-    if (
-      target instanceof Node &&
-      box.current &&
-      !box.current.contains(target)
-    )
+    if (target instanceof Node && box.current && !box.current.contains(target))
       onClose();
   });
   useDocumentEvent("keydown", (event) => {
@@ -721,9 +714,15 @@ function LivePanelMenuContent({
       side="bottom"
       sideOffset={6}
     >
-      <DropdownMenuItem className="glass-mi" disabled={busy} onClick={onRefresh}>
+      <DropdownMenuItem
+        className="glass-mi"
+        disabled={busy}
+        onClick={onRefresh}
+      >
         <IconRefresh className={icon} />
-        <span className="min-w-0 flex-1">{busy ? "正在刷新…" : "立即刷新"}</span>
+        <span className="min-w-0 flex-1">
+          {busy ? "正在刷新…" : "立即刷新"}
+        </span>
       </DropdownMenuItem>
       <DropdownMenuSeparator className="glass-sep" />
       <DropdownMenuGroup>
@@ -1039,7 +1038,7 @@ const LivePanelCard = memo(function LivePanelCard({
  * 卡片怎么摆（并排 / 单独一行、分隔条比例、拖高、折叠）由 `PanelBoard` 按机器人的 `panelLayout` 决定；
  * `width` 是右栏实测内容宽度，`drawer` 是窄窗口抽屉（永远单列）。
  */
-export function LivePanelList({
+export const LivePanelList = memo(function LivePanelList({
   active = true,
   botId,
   width = 0,
@@ -1112,6 +1111,26 @@ export function LivePanelList({
     },
     [removeMutate],
   );
+  const renderCard = useCallback(
+    (
+      panel: LivePanel,
+      chrome: {
+        collapsed: boolean;
+        grip: ReactNode;
+        toggleCollapsed: () => void;
+      },
+    ) => (
+      <LivePanelCard
+        active={active}
+        collapsed={chrome.collapsed}
+        grip={chrome.grip}
+        onRemove={handleRemove}
+        onToggleCollapse={chrome.toggleCollapsed}
+        panel={panel}
+      />
+    ),
+    [active, handleRemove],
+  );
   return (
     <PanelBoard
       botId={botId}
@@ -1119,16 +1138,7 @@ export function LivePanelList({
       key={botId}
       panels={list.data ?? EMPTY_PANELS}
       width={width}
-      renderCard={(panel, chrome) => (
-        <LivePanelCard
-          active={active}
-          collapsed={chrome.collapsed}
-          grip={chrome.grip}
-          onRemove={handleRemove}
-          onToggleCollapse={chrome.toggleCollapsed}
-          panel={panel}
-        />
-      )}
+      renderCard={renderCard}
     />
   );
-}
+});

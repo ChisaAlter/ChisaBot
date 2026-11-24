@@ -57,14 +57,20 @@ const APP_USER_MODEL_ID = "cn.ayase.chisabot.pc";
   try {
     const legacy = path.join(app.getPath("appData"), "ChisaBot PC");
     const current = app.getPath("userData");
-    if (current !== legacy && !fs.existsSync(current) && fs.existsSync(legacy)) {
+    if (
+      current !== legacy &&
+      !fs.existsSync(current) &&
+      fs.existsSync(legacy)
+    ) {
       fs.renameSync(legacy, current);
     }
   } catch {}
 })();
 
 // 在 app.whenReady() 之前读取持久化桌面偏好：应用硬件加速开关与显式时区覆盖。
-const bootstrapDesktopPrefs = desktopPrefs.readBootstrapDesktopPrefs(app.getPath("userData"));
+const bootstrapDesktopPrefs = desktopPrefs.readBootstrapDesktopPrefs(
+  app.getPath("userData"),
+);
 if (bootstrapDesktopPrefs.hardwareAcceleration === false) {
   app.disableHardwareAcceleration();
 }
@@ -78,10 +84,18 @@ const HAS_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
 if (!HAS_SINGLE_INSTANCE_LOCK) app.quit();
 
 const { createConfig } = require("./config");
-const { parseProxyList, describeProxy, createProxyAgent, createAgentFetch } = require("./agent/proxy");
+const {
+  parseProxyList,
+  describeProxy,
+  createProxyAgent,
+  createAgentFetch,
+} = require("./agent/proxy");
 const auth = require("./agent/auth");
 const { ensureEnrolled } = require("./agent/enrollment");
-const { animateWindowBounds, createCompactController } = require("./compact-window");
+const {
+  animateWindowBounds,
+  createCompactController,
+} = require("./compact-window");
 const { createLocalWebController } = require("./local-web");
 const { createDiagnosticsRingBuffer } = require("./diagnostics-log");
 const BUILD = buildConfig.load();
@@ -135,7 +149,10 @@ function disposeResidentWinHelper() {
 
 const PARTITION = "persist:chisabot";
 /** 本机小窗口的窗框（DESIGN.md §91）：Windows 上透明窗口 + 网页裁圆角（clip），macOS 系统圆角（dwm）。 */
-const FRAME = windowChrome.frameMode({ platform: process.platform, override: process.env.CHISABOT_WINDOW_FRAME });
+const FRAME = windowChrome.frameMode({
+  platform: process.platform,
+  override: process.env.CHISABOT_WINDOW_FRAME,
+});
 const ASSETS = path.join(__dirname, "..", "assets");
 /**
  * 窗口 / 任务栏图标：Windows 上用多尺寸 .ico（resources/icons/chisabot-<哈希>.ico，开发运行时 build/icon.ico），
@@ -143,7 +160,9 @@ const ASSETS = path.join(__dirname, "..", "assets");
  */
 const WINDOW_ICON = (() => {
   if (process.platform === "win32") {
-    const packaged = shellRefresh.findIcon({ resourcesPath: process.resourcesPath });
+    const packaged = shellRefresh.findIcon({
+      resourcesPath: process.resourcesPath,
+    });
     if (packaged) return packaged;
     const dev = path.join(__dirname, "..", "build", "icon.ico");
     if (fs.existsSync(dev)) return dev;
@@ -155,10 +174,16 @@ const HIDDEN = process.argv.includes("--hidden");
 /** 外壳指纹与客户端代码指纹（scripts/shell-fingerprint.js 打包前写入）：单次读盘解析。 */
 const { SHELL_HASH, CLIENT_HASH } = (() => {
   try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(__dirname, "shell-fingerprint.json"), "utf8"));
+    const parsed = JSON.parse(
+      fs.readFileSync(path.join(__dirname, "shell-fingerprint.json"), "utf8"),
+    );
     return {
-      SHELL_HASH: typeof parsed.hash === "string" && parsed.hash ? parsed.hash : "",
-      CLIENT_HASH: typeof parsed.clientHash === "string" && parsed.clientHash ? parsed.clientHash : "",
+      SHELL_HASH:
+        typeof parsed.hash === "string" && parsed.hash ? parsed.hash : "",
+      CLIENT_HASH:
+        typeof parsed.clientHash === "string" && parsed.clientHash
+          ? parsed.clientHash
+          : "",
     };
   } catch {
     return { SHELL_HASH: "", CLIENT_HASH: "" };
@@ -236,7 +261,9 @@ function extractDeepLinkFromArgv(argv) {
 
 try {
   if (process.defaultApp && process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient("chisabot", process.execPath, [path.resolve(process.argv[1])]);
+    app.setAsDefaultProtocolClient("chisabot", process.execPath, [
+      path.resolve(process.argv[1]),
+    ]);
   } else {
     app.setAsDefaultProtocolClient("chisabot");
   }
@@ -276,10 +303,16 @@ function getBrowserBridge() {
   if (!browserBridgeInstance) {
     const { createDesktopBrowserBridgeClient } = require("./browser-bridge");
     browserBridgeInstance = createDesktopBrowserBridgeClient({
-      getGrantedScopes: () => (Array.isArray(agent?.device?.grantedScopes) ? agent.device.grantedScopes : []),
+      getGrantedScopes: () =>
+        Array.isArray(agent?.device?.grantedScopes)
+          ? agent.device.grantedScopes
+          : [],
       confirmApproval: (req) =>
         confirmLocal({
-          title: req.kind === "passkey_forward" ? "允许本机通行密钥验证？" : "允许导入单域名登录态？",
+          title:
+            req.kind === "passkey_forward"
+              ? "允许本机通行密钥验证？"
+              : "允许导入单域名登录态？",
           description:
             req.kind === "passkey_forward"
               ? `云端浏览器请求在本机完成 ${req.origin}（rpId: ${req.rpId}）的通行密钥 ${req.ceremonyKind} 操作。`
@@ -344,7 +377,9 @@ function localWindow(name, file, { query, ...options } = {}) {
     ...options,
   });
   win.setMenu(null);
-  win.loadFile(path.join(UI, file), { query: { ...windowChrome.frameQuery(FRAME), ...(query || {}) } });
+  win.loadFile(path.join(UI, file), {
+    query: { ...windowChrome.frameQuery(FRAME), ...(query || {}) },
+  });
   win.once("ready-to-show", () => win.show());
   win.on("closed", () => {
     windows[name] = null;
@@ -366,16 +401,22 @@ function openLogin(notice = "") {
   const existing = windows.login && !windows.login.isDestroyed();
   // 无边框、圆角、固定大小（DESIGN.md §91）：右上角只有最小化 + 关闭，页面顶部是拖动带。
   const win = localWindow("login", "login.html", {
-    ...windowChrome.loginWindowOptions(FRAME, { background: windowBackground(), workAreaHeight: screen.getPrimaryDisplay().workArea.height }),
+    ...windowChrome.loginWindowOptions(FRAME, {
+      background: windowBackground(),
+      workAreaHeight: screen.getPrimaryDisplay().workArea.height,
+    }),
     query: notice ? { notice } : undefined,
   });
-  if (existing && notice) win.webContents.send("state:changed", `notice:${notice}`);
+  if (existing && notice)
+    win.webContents.send("state:changed", `notice:${notice}`);
   return win;
 }
 
 function loginUrl(url) {
   try {
-    return isServerUrl(url) && /^\/(?:login|sign)\/?$/.test(new URL(url).pathname);
+    return (
+      isServerUrl(url) && /^\/(?:login|sign)\/?$/.test(new URL(url).pathname)
+    );
   } catch {
     return false;
   }
@@ -406,7 +447,13 @@ async function proxyAgentFor(url) {
       if (oldest !== undefined) proxyAgents.delete(oldest);
     }
     const list = parseProxyList(answer);
-    proxyAgents.set(key, createProxyAgent(list, { secure, onRoute: (proxy) => (proxyRoute = describeProxy(proxy)) }));
+    proxyAgents.set(
+      key,
+      createProxyAgent(list, {
+        secure,
+        onRoute: (proxy) => (proxyRoute = describeProxy(proxy)),
+      }),
+    );
   }
   const agent = proxyAgents.get(key);
   if (!agent) proxyRoute = "直连";
@@ -415,7 +462,9 @@ async function proxyAgentFor(url) {
 const netFetch = createAgentFetch((url) => proxyAgentFor(url.toString()));
 
 async function cookieHeaderFor(origin) {
-  const cookies = await session.fromPartition(PARTITION).cookies.get({ url: `${origin}/` });
+  const cookies = await session
+    .fromPartition(PARTITION)
+    .cookies.get({ url: `${origin}/` });
   return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
 }
 
@@ -426,11 +475,22 @@ async function sessionStatus() {
   try {
     const cookieHeader = await cookieHeaderFor(origin);
     const [authOutcome] = await Promise.allSettled([
-      auth.probe({ fetchImpl: netFetch, serverUrl: origin, cookieHeader, timeoutMs: 3000 }),
-      localWeb.probeVersion({ origin, fetchImpl: netFetch, cookieHeader, timeoutMs: 2500 }),
+      auth.probe({
+        fetchImpl: netFetch,
+        serverUrl: origin,
+        cookieHeader,
+        timeoutMs: 3000,
+      }),
+      localWeb.probeVersion({
+        origin,
+        fetchImpl: netFetch,
+        cookieHeader,
+        timeoutMs: 2500,
+      }),
     ]);
     if (authOutcome.status !== "fulfilled") return "offline";
-    if (authOutcome.value.gateway && !authOutcome.value.authenticated) return "login";
+    if (authOutcome.value.gateway && !authOutcome.value.authenticated)
+      return "login";
     return "ok";
   } catch {
     return "offline";
@@ -471,7 +531,8 @@ function openApp(pathname) {
         }
         return openChat(pathname, {
           offline: status === "offline",
-          prewarmedWin: prewarmed && !prewarmed.isDestroyed() ? prewarmed : null,
+          prewarmedWin:
+            prewarmed && !prewarmed.isDestroyed() ? prewarmed : null,
         });
       })
       .finally(() => {
@@ -486,7 +547,11 @@ function openApp(pathname) {
 function openDeviceSettings(tab) {
   const { deviceId } = config.get();
   const query = tab ? `?tab=${encodeURIComponent(tab)}` : "";
-  return openApp(deviceId ? `/settings/devices/${encodeURIComponent(deviceId)}${query}` : "/settings/devices");
+  return openApp(
+    deviceId
+      ? `/settings/devices/${encodeURIComponent(deviceId)}${query}`
+      : "/settings/devices",
+  );
 }
 
 let chatOffline = false;
@@ -508,7 +573,8 @@ let cachedServerUrlRaw = "";
 let cachedServerOriginValue = "";
 
 function serverOrigin() {
-  const raw = (config.peek ? config.peek().serverUrl : config.get().serverUrl) || "";
+  const raw =
+    (config.peek ? config.peek().serverUrl : config.get().serverUrl) || "";
   if (raw === cachedServerUrlRaw) return cachedServerOriginValue;
   cachedServerUrlRaw = raw;
   try {
@@ -560,7 +626,12 @@ function handleDeepLinkUrl(rawUrl) {
     openLogin();
     return true;
   }
-  if (windows.chat && !windows.chat.isDestroyed() && !chatOffline && chatDomReady) {
+  if (
+    windows.chat &&
+    !windows.chat.isDestroyed() &&
+    !chatOffline &&
+    chatDomReady
+  ) {
     flushPendingDeepLink();
     return true;
   }
@@ -572,7 +643,11 @@ function openChat(pathname, options) {
   const { serverUrl } = config.get();
   if (!serverUrl) return openLogin();
   if (!options?.prewarmOnly && windows.chat && !windows.chat.isDestroyed()) {
-    if (options?.prewarmedWin && !options.prewarmedWin.isDestroyed() && options.prewarmedWin !== windows.chat) {
+    if (
+      options?.prewarmedWin &&
+      !options.prewarmedWin.isDestroyed() &&
+      options.prewarmedWin !== windows.chat
+    ) {
       options.prewarmedWin.destroy();
     }
     const effectivePath = pathname || pendingDeepLink?.pathname || null;
@@ -636,7 +711,14 @@ function openChat(pathname, options) {
   }
   win.webContents.setWindowOpenHandler(({ url }) => {
     // 同一服务器的弹窗（例如连接账号的授权窗口）照常打开；本机桥只认主窗口，弹窗里拿不到。
-    if (isServerUrl(url)) return { action: "allow", overrideBrowserWindowOptions: { autoHideMenuBar: true, icon: WINDOW_ICON } };
+    if (isServerUrl(url))
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          icon: WINDOW_ICON,
+        },
+      };
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
@@ -679,25 +761,56 @@ function openChat(pathname, options) {
     if (isServerUrl(url)) rememberWebPath(url);
   });
   // 载不出网页（断网、服务器维护）时换成本机的离线页：同样的天空和玻璃，紧急停止照样能按，恢复后自动回到原页面。
-  win.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
-    if (!isMainFrame || code === -3 || !isServerUrl(url)) return;
-    try {
-      rememberWebPath(url);
-    } catch {}
-    showOffline(win, description || String(code));
+  win.webContents.on(
+    "did-fail-load",
+    (_event, code, description, url, isMainFrame) => {
+      if (!isMainFrame || code === -3 || !isServerUrl(url)) return;
+      try {
+        rememberWebPath(url);
+      } catch {}
+      showOffline(win, description || String(code));
+    },
+  );
+  win.webContents.on("render-process-gone", () =>
+    showOffline(win, "页面进程意外退出"),
+  );
+  win.webContents.on("did-start-loading", () => {
+    lastSentWindowState.delete(win);
   });
-  win.webContents.on("render-process-gone", () => showOffline(win, "页面进程意外退出"));
-  const sendMaximized = () => {
-    if (!win.isDestroyed()) win.webContents.send("window:maximized", win.isMaximized() || win.isFullScreen());
-  };
-  for (const name of ["maximize", "unmaximize", "enter-full-screen", "leave-full-screen"]) win.on(name, sendMaximized);
-  // 小窗模式（DESIGN.md §36）：Ctrl+Shift+M 在主窗口里随时可用（网页、离线页都一样，旧网页没有按钮也能切）。
+  // 小窗模式（DESIGN.md §36）：先注册 watch，用户手动最大化时先离小窗再统一发一次去重后的 window:state。
   compactWindows().watch(win);
+  const sendMaximized = () => {
+    if (win.isDestroyed()) return;
+    // 小窗原子进出期间 unmaximize()/maximize() 的中间态由 compactController.onChange 一次性合批下发，避免前端收到双份 IPC 与 --edge-clip-r 抖动。
+    if (compactWindows().isTransitioning(win)) return;
+    sendWindowState(win, {
+      compact: compactWindows().isCompact(win),
+      maximized: win.isMaximized() || win.isFullScreen(),
+      transitioning: false,
+    });
+  };
+  for (const name of [
+    "maximize",
+    "unmaximize",
+    "enter-full-screen",
+    "leave-full-screen",
+  ])
+    win.on(name, sendMaximized);
   win.on("focus", () => {
-    if (updater) void updater.nudge({ reason: "focus", minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS });
+    if (updater)
+      void updater.nudge({
+        reason: "focus",
+        minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS,
+      });
   });
   win.webContents.on("before-input-event", (event, input) => {
-    if (input.type !== "keyDown" || !(input.control || input.meta) || !input.shift || input.alt) return;
+    if (
+      input.type !== "keyDown" ||
+      !(input.control || input.meta) ||
+      !input.shift ||
+      input.alt
+    )
+      return;
     if (String(input.key).toLowerCase() !== "m") return;
     event.preventDefault();
     compactWindows().toggle(win);
@@ -722,7 +835,9 @@ function showOffline(win, reason) {
   if (win.isDestroyed()) return;
   cancelChatRetry();
   chatOffline = true;
-  win.loadFile(path.join(UI, "offline.html"), { query: { error: String(reason).slice(0, 80) } });
+  win.loadFile(path.join(UI, "offline.html"), {
+    query: { error: String(reason).slice(0, 80) },
+  });
   clearInterval(chatRetryTimer);
   chatRetryTimer = setInterval(() => {
     void retryChat().catch(() => {});
@@ -730,7 +845,11 @@ function showOffline(win, reason) {
 }
 
 async function probeServer(origin, signal) {
-  const response = await net.fetch(`${origin}/`, { method: "HEAD", cache: "no-store", signal });
+  const response = await net.fetch(`${origin}/`, {
+    method: "HEAD",
+    cache: "no-store",
+    signal,
+  });
   return response.status < 500;
 }
 
@@ -738,14 +857,29 @@ function retryChat() {
   const win = windows.chat;
   if (!win || win.isDestroyed() || !chatOffline) return Promise.resolve(true);
   if (chatRetry) return chatRetry.promise;
-  const request = { origin: serverOrigin(), controller: new AbortController(), promise: null };
+  const request = {
+    origin: serverOrigin(),
+    controller: new AbortController(),
+    promise: null,
+  };
   chatRetry = request;
   request.promise = (async () => {
     // Use the same bounded wait as login probing; timer and button share this request.
-    const signal = AbortSignal.any([request.controller.signal, AbortSignal.timeout(8000)]);
-    const reachable = await probeServer(request.origin, signal).catch(() => false);
+    const signal = AbortSignal.any([
+      request.controller.signal,
+      AbortSignal.timeout(8000),
+    ]);
+    const reachable = await probeServer(request.origin, signal).catch(
+      () => false,
+    );
     // Closing, logging out or navigating replaces the owner of this recovery attempt.
-    if (chatRetry !== request || win.isDestroyed() || windows.chat !== win || request.origin !== serverOrigin()) return false;
+    if (
+      chatRetry !== request ||
+      win.isDestroyed() ||
+      windows.chat !== win ||
+      request.origin !== serverOrigin()
+    )
+      return false;
     if (!reachable) throw new Error("仍然连不上服务器。");
     await localWeb.probeVersion({
       origin: request.origin,
@@ -753,7 +887,13 @@ function retryChat() {
       cookieHeader: await cookieHeaderFor(request.origin).catch(() => ""),
       timeoutMs: 2500,
     });
-    if (chatRetry !== request || win.isDestroyed() || windows.chat !== win || request.origin !== serverOrigin()) return false;
+    if (
+      chatRetry !== request ||
+      win.isDestroyed() ||
+      windows.chat !== win ||
+      request.origin !== serverOrigin()
+    )
+      return false;
     chatOffline = false;
     clearInterval(chatRetryTimer);
     await win.loadURL(`${request.origin}${lastWebPath || "/"}`);
@@ -773,8 +913,13 @@ let lastTrayKey = "";
 function trayIcon(kind) {
   let cached = trayIconCache.get(kind);
   if (!cached) {
-    const image = nativeImage.createFromPath(path.join(ASSETS, `tray-${kind}.png`));
-    cached = process.platform === "darwin" ? image.resize({ width: 18, height: 18 }) : image;
+    const image = nativeImage.createFromPath(
+      path.join(ASSETS, `tray-${kind}.png`),
+    );
+    cached =
+      process.platform === "darwin"
+        ? image.resize({ width: 18, height: 18 })
+        : image;
     trayIconCache.set(kind, cached);
   }
   return cached;
@@ -788,7 +933,8 @@ function statusKind() {
 function statusText() {
   const local = config.get();
   if (!local.serverUrl) return "未登录";
-  if (!config.getToken()) return enrollIssue || "已登录，但这台电脑还没登记为设备";
+  if (!config.getToken())
+    return enrollIssue || "已登录，但这台电脑还没登记为设备";
   if (local.localPaused) return "紧急停止中";
   switch (agent?.state) {
     case "online":
@@ -797,12 +943,16 @@ function statusText() {
       return "正在连接…";
     case "revoked": {
       const { INVALID_TOKEN_DETAIL, invalidTokenHint } = getNodeAgentMod();
-      return agentDetail === INVALID_TOKEN_DETAIL ? invalidTokenHint(agent?.invalidTokenRetryMs) : "已被撤销，请重新登记这台电脑";
+      return agentDetail === INVALID_TOKEN_DETAIL
+        ? invalidTokenHint(agent?.invalidTokenRetryMs)
+        : "已被撤销，请重新登记这台电脑";
     }
     default: {
       // 把真实原因写出来（以前一律「离线（自动重连中）」，看不出是被拦、超时还是代理问题）。
       const why = agent?.lastError || agentDetail;
-      return why ? `离线（自动重连中）：${String(why).slice(0, 120)}` : "离线（自动重连中）";
+      return why
+        ? `离线（自动重连中）：${String(why).slice(0, 120)}`
+        : "离线（自动重连中）";
     }
   }
 }
@@ -833,28 +983,60 @@ function refreshTray() {
         { type: "separator" },
         { label: "打开 ChisaBot", click: () => void openApp() },
         ...(enroll
-          ? [{ label: "重新登记这台电脑", click: () => void repairDevice({ force: true, manual: true }) }]
+          ? [
+              {
+                label: "重新登记这台电脑",
+                click: () => void repairDevice({ force: true, manual: true }),
+              },
+            ]
           : []),
         ...(hasServer
           ? [
               // 打开主窗口并直接弹出网页「绑定手机」二维码（DESIGN.md §33）。
-              { label: "绑定手机…", click: () => void openApp("/settings/devices?pair=1") },
-              { label: "这台电脑的权限…", click: () => void openDeviceSettings() },
-              { label: "本机设置…", click: () => void openDeviceSettings("local") },
+              {
+                label: "绑定手机…",
+                click: () => void openApp("/settings/devices?pair=1"),
+              },
+              {
+                label: "这台电脑的权限…",
+                click: () => void openDeviceSettings(),
+              },
+              {
+                label: "本机设置…",
+                click: () => void openDeviceSettings("local"),
+              },
             ]
           : []),
         ...(updStatus === "downloaded"
-          ? [{ label: `重启以安装 ${updVersion || "新版本"}…`, click: () => openUpdateWindow({ focus: true }) }]
+          ? [
+              {
+                label: `重启以安装 ${updVersion || "新版本"}…`,
+                click: () => openUpdateWindow({ focus: true }),
+              },
+            ]
           : updStatus === "downloading"
-            ? [{ label: `正在下载新版本 ${updVersion || ""}…`, click: () => openUpdateWindow({ focus: true }) }]
+            ? [
+                {
+                  label: `正在下载新版本 ${updVersion || ""}…`,
+                  click: () => openUpdateWindow({ focus: true }),
+                },
+              ]
             : updStatus === "verifying"
-              ? [{ label: `正在校验新版本 ${updVersion || ""}…`, click: () => openUpdateWindow({ focus: true }) }]
+              ? [
+                  {
+                    label: `正在校验新版本 ${updVersion || ""}…`,
+                    click: () => openUpdateWindow({ focus: true }),
+                  },
+                ]
               : []),
         { type: "separator" },
         ...(fullAccess
           ? [
               { label: "完全访问已开启", enabled: false },
-              { label: "关闭完全访问", click: () => agent?.setConfig({ fullAccess: "off" }) },
+              {
+                label: "关闭完全访问",
+                click: () => agent?.setConfig({ fullAccess: "off" }),
+              },
             ]
           : []),
         {
@@ -863,7 +1045,9 @@ function refreshTray() {
         },
         { type: "separator" },
         { label: "切换服务器…", click: () => openLogin("switch") },
-        ...(hasServer ? [{ label: "退出登录…", click: () => void confirmLogout() }] : []),
+        ...(hasServer
+          ? [{ label: "退出登录…", click: () => void confirmLogout() }]
+          : []),
         { type: "separator" },
         {
           label: "退出 ChisaBot",
@@ -886,24 +1070,29 @@ function screenshotHook({ maxWidth }) {
     width: Math.round(display.size.width * display.scaleFactor),
     height: Math.round(display.size.height * display.scaleFactor),
   };
-  return desktopCapturer.getSources({ types: ["screen"], thumbnailSize: physical }).then((sources) => {
-    const source = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
-    if (!source) throw new Error("没有可截取的屏幕。");
-    let image = source.thumbnail;
-    const size = image.getSize();
-    if (size.width > maxWidth) image = image.resize({ width: maxWidth, quality: "good" });
-    const out = image.getSize();
-    return {
-      format: "png",
-      width: out.width,
-      height: out.height,
-      screenWidth: physical.width,
-      screenHeight: physical.height,
-      scaleFactor: display.scaleFactor,
-      note: "鼠标坐标使用 screenWidth × screenHeight（物理像素）",
-      base64: image.toPNG().toString("base64"),
-    };
-  });
+  return desktopCapturer
+    .getSources({ types: ["screen"], thumbnailSize: physical })
+    .then((sources) => {
+      const source =
+        sources.find((s) => String(s.display_id) === String(display.id)) ||
+        sources[0];
+      if (!source) throw new Error("没有可截取的屏幕。");
+      let image = source.thumbnail;
+      const size = image.getSize();
+      if (size.width > maxWidth)
+        image = image.resize({ width: maxWidth, quality: "good" });
+      const out = image.getSize();
+      return {
+        format: "png",
+        width: out.width,
+        height: out.height,
+        screenWidth: physical.width,
+        screenHeight: physical.height,
+        scaleFactor: display.scaleFactor,
+        note: "鼠标坐标使用 screenWidth × screenHeight（物理像素）",
+        base64: image.toPNG().toString("base64"),
+      };
+    });
 }
 
 /** 已登录服务器，但这台电脑没有可用的设备令牌（没登记 / 令牌无效 / 被撤销）。 */
@@ -920,7 +1109,10 @@ function needsEnroll() {
 let enrollingOpts = null;
 function repairDevice({ force = false, manual = false } = {}) {
   if (enrolling) {
-    if ((force && !enrollingOpts?.force) || (manual && !enrollingOpts?.manual)) {
+    if (
+      (force && !enrollingOpts?.force) ||
+      (manual && !enrollingOpts?.manual)
+    ) {
       return enrolling.then(() => repairDevice({ force, manual }));
     }
     return enrolling;
@@ -937,17 +1129,37 @@ function repairDevice({ force = false, manual = false } = {}) {
     info: { ...clientInfo(), name: config.get().deviceName || os.hostname() },
   })
     .then((result) => {
-      enrollIssue = result.status === "enrolled" || result.status === "already" || result.status === "no-server" ? "" : result.message;
+      enrollIssue =
+        result.status === "enrolled" ||
+        result.status === "already" ||
+        result.status === "no-server"
+          ? ""
+          : result.message;
       if (result.status === "enrolled" || result.status === "already") {
         if (result.status === "enrolled") {
           agentDetail = "";
-          config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "enroll", outcome: "succeeded", summary: `${manual ? "重新登记" : "自动补登记"}：${result.message}` });
+          config.appendAudit({
+            at: new Date().toISOString(),
+            actor: "本机",
+            operation: "enroll",
+            outcome: "succeeded",
+            summary: `${manual ? "重新登记" : "自动补登记"}：${result.message}`,
+          });
         }
         startAgent();
       } else if (result.status === "failed") {
-        config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "enroll", outcome: "failed", summary: result.message.slice(0, 300) });
+        config.appendAudit({
+          at: new Date().toISOString(),
+          actor: "本机",
+          operation: "enroll",
+          outcome: "failed",
+          summary: result.message.slice(0, 300),
+        });
       } else if (result.status === "offline") {
-        enrollRetryTimer = setTimeout(() => void repairDevice({ force }), 60_000);
+        enrollRetryTimer = setTimeout(
+          () => void repairDevice({ force }),
+          60_000,
+        );
       }
       if (manual && result.status === "login") void openApp();
       if (manual && Notification.isSupported() && result.status !== "already")
@@ -993,43 +1205,97 @@ function startAgent() {
   const handleExtra = (message) => {
     if (message?.type === "desktop_browser_cookie_request") {
       if (config.get().localPaused || agent?.device?.paused) {
-        agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision: { approved: false, reason: "设备已紧急停止，拒绝本机 Cookie 导入请求。" } });
+        agent?.sendRaw({
+          type: "desktop_browser_cookie_response",
+          requestId: message.requestId,
+          decision: {
+            approved: false,
+            reason: "设备已紧急停止，拒绝本机 Cookie 导入请求。",
+          },
+        });
         return true;
       }
       const exp = Date.parse(String(message.expiresAt || ""));
       if (!Number.isFinite(exp) || exp <= Date.now()) {
-        agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision: { approved: false, reason: "本机 Cookie 导入审批请求已过期。" } });
+        agent?.sendRaw({
+          type: "desktop_browser_cookie_response",
+          requestId: message.requestId,
+          decision: {
+            approved: false,
+            reason: "本机 Cookie 导入审批请求已过期。",
+          },
+        });
         return true;
       }
       void getBrowserBridge()
         .handleCookieApprovalRequest(message)
         .then((decision) => {
-          agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision });
+          agent?.sendRaw({
+            type: "desktop_browser_cookie_response",
+            requestId: message.requestId,
+            decision,
+          });
         })
         .catch((err) => {
-          diagnosticsLog.record({ category: "browser_bridge", level: "error", event: "cookie_approval_failed", message: String(err?.message || err) });
-          agent?.sendRaw({ type: "desktop_browser_cookie_response", requestId: message.requestId, decision: { approved: false, reason: "本机 Cookie 导入处理异常，已拒绝。" } });
+          diagnosticsLog.record({
+            category: "browser_bridge",
+            level: "error",
+            event: "cookie_approval_failed",
+            message: String(err?.message || err),
+          });
+          agent?.sendRaw({
+            type: "desktop_browser_cookie_response",
+            requestId: message.requestId,
+            decision: {
+              approved: false,
+              reason: "本机 Cookie 导入处理异常，已拒绝。",
+            },
+          });
         });
       return true;
     }
     if (message?.type === "desktop_browser_webauthn_request") {
       if (config.get().localPaused || agent?.device?.paused) {
-        agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result: { ok: false, error: "设备已紧急停止，拒绝本机 Passkey 请求。" } });
+        agent?.sendRaw({
+          type: "desktop_browser_webauthn_response",
+          requestId: message.requestId,
+          result: {
+            ok: false,
+            error: "设备已紧急停止，拒绝本机 Passkey 请求。",
+          },
+        });
         return true;
       }
       const exp = Date.parse(String(message.expiresAt || ""));
       if (!Number.isFinite(exp) || exp <= Date.now()) {
-        agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result: { ok: false, error: "本机 Passkey 转发请求已过期。" } });
+        agent?.sendRaw({
+          type: "desktop_browser_webauthn_response",
+          requestId: message.requestId,
+          result: { ok: false, error: "本机 Passkey 转发请求已过期。" },
+        });
         return true;
       }
       void getBrowserBridge()
         .handleWebAuthnRequest(message)
         .then((result) => {
-          agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result });
+          agent?.sendRaw({
+            type: "desktop_browser_webauthn_response",
+            requestId: message.requestId,
+            result,
+          });
         })
         .catch((err) => {
-          diagnosticsLog.record({ category: "browser_bridge", level: "error", event: "webauthn_forward_failed", message: String(err?.message || err) });
-          agent?.sendRaw({ type: "desktop_browser_webauthn_response", requestId: message.requestId, result: { ok: false, error: "本机 Passkey 转发处理异常，已拒绝。" } });
+          diagnosticsLog.record({
+            category: "browser_bridge",
+            level: "error",
+            event: "webauthn_forward_failed",
+            message: String(err?.message || err),
+          });
+          agent?.sendRaw({
+            type: "desktop_browser_webauthn_response",
+            requestId: message.requestId,
+            result: { ok: false, error: "本机 Passkey 转发处理异常，已拒绝。" },
+          });
         });
       return true;
     }
@@ -1043,10 +1309,17 @@ function startAgent() {
     clientInfo: { ...clientInfo(), suggestedRoots: suggestedRoots() },
     getAgent: (url) => proxyAgentFor(url),
     approve: (request) => askApproval(request),
-    local: () => ({ paused: config.get().localPaused, forceLocalApproval: config.get().forceLocalApproval }),
+    local: () => ({
+      paused: config.get().localPaused,
+      forceLocalApproval: config.get().forceLocalApproval,
+    }),
     // 完全访问（docs/pc-node.md §13）：网页上打开后，这台电脑还要本人在本机确认一次才生效（网页脚本点不到这个窗口）。
     acceptFullAccess: (device) => {
-      const until = device.fullAccessUntil && !String(device.fullAccessUntil).startsWith("9999") ? `，到 ${new Date(device.fullAccessUntil).toLocaleString("zh-CN", { hour12: false })} 自动关闭` : "，直到你手动关闭";
+      const until =
+        device.fullAccessUntil &&
+        !String(device.fullAccessUntil).startsWith("9999")
+          ? `，到 ${new Date(device.fullAccessUntil).toLocaleString("zh-CN", { hour12: false })} 自动关闭`
+          : "，直到你手动关闭";
       return confirmLocal({
         title: "允许机器人完全访问这台电脑？",
         description: `网页上为「${device.name}」打开了完全访问${until}。开启后机器人可以不经询问运行任何命令、读写整台电脑的文件、长时间运行程序，也可以申请管理员权限。所有操作仍会记录；托盘「紧急停止」随时可以立即关闭。`,
@@ -1057,10 +1330,23 @@ function startAgent() {
   agent.events.on("full_access", () => refreshTray());
   agentRuntime.bind(agent, { isPaused: () => !!config.get().localPaused });
   agent.events.on("state", (event) => {
-    agentDetail = event?.detail ? String(event.detail) : event?.state === "online" ? "" : agentDetail;
-    diagnosticsLog.record({ category: "connection", event: "agent_state", message: event?.state || "unknown", detail: event?.detail ? { detail: event.detail } : undefined });
+    agentDetail = event?.detail
+      ? String(event.detail)
+      : event?.state === "online"
+        ? ""
+        : agentDetail;
+    diagnosticsLog.record({
+      category: "connection",
+      event: "agent_state",
+      message: event?.state || "unknown",
+      detail: event?.detail ? { detail: event.detail } : undefined,
+    });
     refreshTray();
-    if (event && event.state === "online" && config.get().autoUpdate !== false) {
+    if (
+      event &&
+      event.state === "online" &&
+      config.get().autoUpdate !== false
+    ) {
       ensureUpdaterStarted();
       void updater?.check();
     }
@@ -1068,9 +1354,14 @@ function startAgent() {
   // 连接失败（断网、DNS、证书）由 core 自己重连；没有监听时 EventEmitter 的 "error" 会让主进程崩溃。
   agent.events.on("error", () => {});
   agent.events.on("config", (device) => {
-    if (device && typeof device.paused === "boolean" && device.paused !== config.get().localPaused)
+    if (
+      device &&
+      typeof device.paused === "boolean" &&
+      device.paused !== config.get().localPaused
+    )
       config.set({ localPaused: device.paused });
-    if (device?.name) config.set({ deviceName: device.name, deviceId: device.id });
+    if (device?.name)
+      config.set({ deviceName: device.name, deviceId: device.id });
     refreshTray();
   });
   agent.events.on("audit", (entry) => {
@@ -1078,7 +1369,8 @@ function startAgent() {
     broadcast("audit");
   });
   agent.events.on("call", ({ operation, botName }) => {
-    if (operation === "input" || operation === "shell") tray?.setToolTip(`ChisaBot · ${botName || "机器人"} 正在操作…`);
+    if (operation === "input" || operation === "shell")
+      tray?.setToolTip(`ChisaBot · ${botName || "机器人"} 正在操作…`);
   });
   agent.events.on("approval_closed", ({ id }) => closeApproval(id));
   agent.events.on("check_update", ({ version, reason } = {}) => {
@@ -1090,12 +1382,19 @@ function startAgent() {
       summary: `收到服务器更新推送${version ? `（${version}）` : ""}${reason ? ` · ${reason}` : ""}`,
     });
     ensureUpdaterStarted();
-    void updater?.nudge({ version, reason: reason || "server_push", minGapMs: getUpdaterMod().DEFAULT_PUSH_GAP_MS });
+    void updater?.nudge({
+      version,
+      reason: reason || "server_push",
+      minGapMs: getUpdaterMod().DEFAULT_PUSH_GAP_MS,
+    });
   });
   agent.events.on("revoked", () => {
     refreshTray();
     if (Notification.isSupported())
-      new Notification({ title: "ChisaBot", body: "这台电脑已被撤销，请重新登录。" }).show();
+      new Notification({
+        title: "ChisaBot",
+        body: "这台电脑已被撤销，请重新登录。",
+      }).show();
   });
   agent.start();
   refreshTray();
@@ -1103,7 +1402,13 @@ function startAgent() {
 
 function setPaused(paused) {
   config.set({ localPaused: paused });
-  config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: paused ? "kill_switch_on" : "kill_switch_off", outcome: "succeeded", summary: paused ? "紧急停止" : "解除紧急停止" });
+  config.appendAudit({
+    at: new Date().toISOString(),
+    actor: "本机",
+    operation: paused ? "kill_switch_on" : "kill_switch_off",
+    outcome: "succeeded",
+    summary: paused ? "紧急停止" : "解除紧急停止",
+  });
   if (paused) {
     for (const item of approvalQueue.splice(0)) item.resolve("deny");
     if (currentApproval) {
@@ -1125,7 +1430,8 @@ async function requestPaused(paused) {
   if (!config.get().localPaused) return false;
   const ok = await confirmLocal({
     title: "解除紧急停止？",
-    description: "解除后，机器人可以再次按这台电脑的权限设置操作它（「询问」的操作仍会先问你）。",
+    description:
+      "解除后，机器人可以再次按这台电脑的权限设置操作它（「询问」的操作仍会先问你）。",
     confirmLabel: "解除紧急停止",
   });
   if (ok) setPaused(false);
@@ -1141,7 +1447,15 @@ let confirmWindow = null;
 
 function confirmLocal({ title, description, confirmLabel }) {
   return new Promise((resolve) => {
-    confirmQueue.push({ request: { id: `c${Date.now()}${Math.random().toString(36).slice(2, 6)}`, title, description, confirmLabel }, resolve });
+    confirmQueue.push({
+      request: {
+        id: `c${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
+        title,
+        description,
+        confirmLabel,
+      },
+      resolve,
+    });
     pumpConfirm();
   });
 }
@@ -1149,19 +1463,34 @@ function confirmLocal({ title, description, confirmLabel }) {
 function pumpConfirm() {
   if (confirmCurrent || !confirmQueue.length) return;
   confirmCurrent = confirmQueue.shift();
-  const parent = windows.chat && !windows.chat.isDestroyed() && windows.chat.isVisible() ? windows.chat : undefined;
+  const parent =
+    windows.chat && !windows.chat.isDestroyed() && windows.chat.isVisible()
+      ? windows.chat
+      : undefined;
   confirmWindow = new BrowserWindow({
     width: 440,
-    height: confirmCurrent.request.description && confirmCurrent.request.description.length > 90 ? 330 : 260,
-    ...windowChrome.dialogWindowOptions(FRAME, { background: windowBackground() }),
+    height:
+      confirmCurrent.request.description &&
+      confirmCurrent.request.description.length > 90
+        ? 330
+        : 260,
+    ...windowChrome.dialogWindowOptions(FRAME, {
+      background: windowBackground(),
+    }),
     parent,
     modal: !!parent,
     alwaysOnTop: !parent,
     show: false,
     title: "ChisaBot · 本机确认",
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true },
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      sandbox: true,
+    },
   });
-  confirmWindow.loadFile(path.join(UI, "confirm.html"), { query: windowChrome.frameQuery(FRAME) });
+  confirmWindow.loadFile(path.join(UI, "confirm.html"), {
+    query: windowChrome.frameQuery(FRAME),
+  });
   dialogWidth.set(confirmWindow, 440);
   showAfterFit(confirmWindow, () => {
     confirmWindow?.show();
@@ -1203,7 +1532,10 @@ function askApproval(request) {
     if (config.get().localPaused) return resolve("deny");
     approvalQueue.push({ request, resolve });
     if (Notification.isSupported())
-      new Notification({ title: "ChisaBot 请求操作这台电脑", body: `${request.botName || "机器人"}：${request.summary}` }).show();
+      new Notification({
+        title: "ChisaBot 请求操作这台电脑",
+        body: `${request.botName || "机器人"}：${request.summary}`,
+      }).show();
     pumpApprovals();
   });
 }
@@ -1219,15 +1551,23 @@ function pumpApprovals() {
     height,
     x: workArea.x + workArea.width - width - 16,
     y: workArea.y + workArea.height - height - 16,
-    ...windowChrome.dialogWindowOptions(FRAME, { background: windowBackground() }),
+    ...windowChrome.dialogWindowOptions(FRAME, {
+      background: windowBackground(),
+    }),
     alwaysOnTop: true,
     skipTaskbar: false,
     show: false,
     title: "ChisaBot 请求操作这台电脑",
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true },
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      sandbox: true,
+    },
   });
   approvalWindow.setAlwaysOnTop(true, "screen-saver");
-  approvalWindow.loadFile(path.join(UI, "approval.html"), { query: windowChrome.frameQuery(FRAME) });
+  approvalWindow.loadFile(path.join(UI, "approval.html"), {
+    query: windowChrome.frameQuery(FRAME),
+  });
   dialogWidth.set(approvalWindow, width);
   showAfterFit(approvalWindow, () => {
     approvalWindow?.showInactive();
@@ -1259,10 +1599,23 @@ function closeApproval(id) {
 let dismissedDownloadVersion = "";
 
 function updateLogger() {
-  const write = (level) => (...args) =>
-    config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_log", outcome: level, summary: args.map(String).join(" ").slice(0, 300) });
+  const write =
+    (level) =>
+    (...args) =>
+      config.appendAudit({
+        at: new Date().toISOString(),
+        actor: "本机",
+        operation: "update_log",
+        outcome: level,
+        summary: args.map(String).join(" ").slice(0, 300),
+      });
   // 只记 warn / error；info 太多。
-  return { info: () => {}, debug: () => {}, warn: write("warn"), error: write("error") };
+  return {
+    info: () => {},
+    debug: () => {},
+    warn: write("warn"),
+    error: write("error"),
+  };
 }
 
 function updateWindowBackground() {
@@ -1320,7 +1673,8 @@ function startUpdater() {
     autoUpdater,
     feedUrl: feed.url,
     // 本机 config.json 的 updateFeed 是手动覆盖：它失效（源上版本比本机还低）时退回构建期的源再查。
-    fallbackFeed: feed.source === "local" ? buildConfig.resolveFeed(BUILD, {}) : "",
+    fallbackFeed:
+      feed.source === "local" ? buildConfig.resolveFeed(BUILD, {}) : "",
     currentVersion: pkg.version,
     isPackaged: app.isPackaged,
     platform: process.platform,
@@ -1342,26 +1696,59 @@ function startUpdater() {
       }
     },
     onAvailable: (version) => {
-      config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_available", outcome: "succeeded", summary: `发现新版本 ${version || ""}，正在后台下载` });
-      if (Notification.isSupported()) new Notification({ title: "ChisaBot", body: `发现新版本 ${version || ""}，正在后台下载…` }).show();
-      if ((!updateWindow || updateWindow.isDestroyed()) && dismissedDownloadVersion !== (version || "")) {
+      config.appendAudit({
+        at: new Date().toISOString(),
+        actor: "本机",
+        operation: "update_available",
+        outcome: "succeeded",
+        summary: `发现新版本 ${version || ""}，正在后台下载`,
+      });
+      if (Notification.isSupported())
+        new Notification({
+          title: "ChisaBot",
+          body: `发现新版本 ${version || ""}，正在后台下载…`,
+        }).show();
+      if (
+        (!updateWindow || updateWindow.isDestroyed()) &&
+        dismissedDownloadVersion !== (version || "")
+      ) {
         openUpdateWindow({ focus: false });
       }
     },
     onDownloaded: (version) => {
       dismissedDownloadVersion = "";
-      config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_downloaded", outcome: "succeeded", summary: `新版本 ${version || ""} 已下载` });
+      config.appendAudit({
+        at: new Date().toISOString(),
+        actor: "本机",
+        operation: "update_downloaded",
+        outcome: "succeeded",
+        summary: `新版本 ${version || ""} 已下载`,
+      });
       promptUpdate(version);
     },
     onRejected: ({ version, code, reason }) => {
-      config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_rejected", outcome: "failed", summary: `新版本 ${version || ""} 签名校验失败，已拒绝安装（${code}）：${reason}`.slice(0, 300) });
+      config.appendAudit({
+        at: new Date().toISOString(),
+        actor: "本机",
+        operation: "update_rejected",
+        outcome: "failed",
+        summary:
+          `新版本 ${version || ""} 签名校验失败，已拒绝安装（${code}）：${reason}`.slice(
+            0,
+            300,
+          ),
+      });
     },
   });
   updater.schedule();
   // 「稍后」≈ 永远不装：客户端常驻托盘几乎不退出，autoInstallOnAppQuit 轮不到。
   // 待安装状态按周期重弹提示窗，直到装上或被更新版本顶掉（CB-137）。
   setInterval(() => {
-    if (updater?.state.status === "downloaded" && Date.now() - updatePromptAt >= UPDATE_REMIND_MS) promptUpdate(updater.state.version);
+    if (
+      updater?.state.status === "downloaded" &&
+      Date.now() - updatePromptAt >= UPDATE_REMIND_MS
+    )
+      promptUpdate(updater.state.version);
   }, UPDATE_REMIND_TICK_MS).unref();
   return updater;
 }
@@ -1377,14 +1764,30 @@ let updatePromptAt = 0;
 
 function promptUpdate(version) {
   updatePromptAt = Date.now();
-  const alreadyOpen = updateWindow && !updateWindow.isDestroyed() && updateWindow.isVisible();
-  if (!alreadyOpen && Notification.isSupported()) new Notification({ title: "ChisaBot", body: `新版本 ${version || ""} 已下载，重启以安装。` }).show();
+  const alreadyOpen =
+    updateWindow && !updateWindow.isDestroyed() && updateWindow.isVisible();
+  if (!alreadyOpen && Notification.isSupported())
+    new Notification({
+      title: "ChisaBot",
+      body: `新版本 ${version || ""} 已下载，重启以安装。`,
+    }).show();
   openUpdateWindow({ focus: true });
 }
 
 function openUpdateWindow({ focus = true, allowIdle = false } = {}) {
   const status = updater?.state.status;
-  if (!allowIdle && !["checking", "available", "downloading", "verifying", "downloaded", "error"].includes(status)) return false;
+  if (
+    !allowIdle &&
+    ![
+      "checking",
+      "available",
+      "downloading",
+      "verifying",
+      "downloaded",
+      "error",
+    ].includes(status)
+  )
+    return false;
   if (updateWindow && !updateWindow.isDestroyed()) {
     if (focus && updateWindow.isMinimized()) updateWindow.restore();
     sendUpdateState();
@@ -1396,25 +1799,46 @@ function openUpdateWindow({ focus = true, allowIdle = false } = {}) {
     }
     return true;
   }
-  const chat = windows.chat && !windows.chat.isDestroyed() ? windows.chat : null;
+  const chat =
+    windows.chat && !windows.chat.isDestroyed() ? windows.chat : null;
   const chatVisible = Boolean(chat?.isVisible() && !chat.isMinimized());
-  const workArea = (chat ? screen.getDisplayMatching(chat.getBounds()) : screen.getPrimaryDisplay()).workArea;
+  const workArea = (
+    chat
+      ? screen.getDisplayMatching(chat.getBounds())
+      : screen.getPrimaryDisplay()
+  ).workArea;
   const { computeUpdateWindowBounds } = getUpdatePlacementMod();
-  const bounds = computeUpdateWindowBounds({ chat: chat ? chat.getBounds() : null, chatVisible, workArea });
+  const bounds = computeUpdateWindowBounds({
+    chat: chat ? chat.getBounds() : null,
+    chatVisible,
+    workArea,
+  });
   updateWindow = new BrowserWindow({
-    ...windowChrome.updateWindowOptions({ background: updateWindowBackground() }),
+    ...windowChrome.updateWindowOptions({
+      background: updateWindowBackground(),
+    }),
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
     icon: WINDOW_ICON,
     show: false,
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true },
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      sandbox: true,
+    },
   });
   updateWindow.setMenu(null);
-  updateWindow.loadFile(path.join(UI, "update.html"), { query: windowChrome.frameQuery("dwm") });
+  updateWindow.loadFile(path.join(UI, "update.html"), {
+    query: windowChrome.frameQuery("dwm"),
+  });
   const sendMax = () => {
-    if (updateWindow && !updateWindow.isDestroyed()) updateWindow.webContents.send("window:local-maximized", updateWindow.isMaximized());
+    if (updateWindow && !updateWindow.isDestroyed())
+      updateWindow.webContents.send(
+        "window:local-maximized",
+        updateWindow.isMaximized(),
+      );
   };
   updateWindow.on("maximize", sendMax);
   updateWindow.on("unmaximize", sendMax);
@@ -1434,7 +1858,10 @@ function openUpdateWindow({ focus = true, allowIdle = false } = {}) {
     return { action: "deny" };
   });
   updateWindow.on("closed", () => {
-    if (updater?.state.status === "downloading" || updater?.state.status === "verifying") {
+    if (
+      updater?.state.status === "downloading" ||
+      updater?.state.status === "verifying"
+    ) {
       dismissedDownloadVersion = updater.state.version || "";
     }
     updateWindow = null;
@@ -1445,7 +1872,13 @@ function openUpdateWindow({ focus = true, allowIdle = false } = {}) {
 function installUpdateNow() {
   if (updater?.state.status !== "downloaded") return false;
   const how = updater.state.fullInstall ? "重新安装" : "重启并安装";
-  config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_install", outcome: "succeeded", summary: `${how} ${updater.state.version || ""}` });
+  config.appendAudit({
+    at: new Date().toISOString(),
+    actor: "本机",
+    operation: "update_install",
+    outcome: "succeeded",
+    summary: `${how} ${updater.state.version || ""}`,
+  });
   quitting = true;
   agent?.stop();
   setTimeout(() => updater.install(), 50);
@@ -1462,7 +1895,9 @@ function publicState() {
     hostname: os.hostname(),
     serverUrl: local.serverUrl,
     defaultServerUrl: BUILD.serverUrl,
-    recentServers: Array.isArray(local.recentServers) ? local.recentServers.slice(0, 6) : [],
+    recentServers: Array.isArray(local.recentServers)
+      ? local.recentServers.slice(0, 6)
+      : [],
     remember: local.remember !== false,
     username: local.username,
     loggedIn: !!(local.serverUrl && config.getToken()),
@@ -1474,7 +1909,12 @@ function publicState() {
     networkRoute: proxyRoute,
     device: agent?.device ?? null,
     appearance: local.appearance,
-    local: { autoStart: local.autoStart, forceLocalApproval: local.forceLocalApproval, localPaused: local.localPaused, startHidden: local.startHidden },
+    local: {
+      autoStart: local.autoStart,
+      forceLocalApproval: local.forceLocalApproval,
+      localPaused: local.localPaused,
+      startHidden: local.startHidden,
+    },
   };
 }
 
@@ -1503,14 +1943,22 @@ function webLocalState() {
     hardwareAcceleration: local.hardwareAcceleration !== false,
     spellcheck: local.spellcheck !== false,
     timezone: local.timezone || "",
-    allowedEgressDomains: Array.isArray(local.allowedEgressDomains) ? local.allowedEgressDomains : [],
+    allowedEgressDomains: Array.isArray(local.allowedEgressDomains)
+      ? local.allowedEgressDomains
+      : [],
     update: updater ? updater.state : { supported: false, status: "idle" },
     webUi: localWeb.statusFor(serverOrigin()),
   };
 }
 
 function broadcast(kind = "state") {
-  for (const win of [windows.login, windows.chat, approvalWindow, confirmWindow, updateWindow]) {
+  for (const win of [
+    windows.login,
+    windows.chat,
+    approvalWindow,
+    confirmWindow,
+    updateWindow,
+  ]) {
     if (win && !win.isDestroyed()) win.webContents.send("state:changed", kind);
   }
 }
@@ -1521,8 +1969,10 @@ async function injectCookies(origin, cookies) {
     // 跟服务器给的寿命走：有 Max-Age / Expires 就是持久 Cookie（记住登录 = 30 天），没有就是会话 Cookie
     // （没勾记住登录：退出客户端后失效，下次启动回到本机登录页）。
     let expirationDate;
-    if (cookie.maxAge > 0) expirationDate = Math.floor(Date.now() / 1000) + cookie.maxAge;
-    else if (cookie.expires > Date.now()) expirationDate = Math.floor(cookie.expires / 1000);
+    if (cookie.maxAge > 0)
+      expirationDate = Math.floor(Date.now() / 1000) + cookie.maxAge;
+    else if (cookie.expires > Date.now())
+      expirationDate = Math.floor(cookie.expires / 1000);
     await ses.cookies.set({
       url: `${origin}/`,
       name: cookie.name,
@@ -1548,7 +1998,9 @@ function fromLocalUi(event) {
     // 比较解码后的路径，安装目录里有空格或中文（如 C:\Users\张三\…）时 URL 编码方式不影响判断。
     const file = path.resolve(fileURLToPath(event.senderFrame.url));
     const root = path.resolve(UI) + path.sep;
-    return process.platform === "win32" ? file.toLowerCase().startsWith(root.toLowerCase()) : file.startsWith(root);
+    return process.platform === "win32"
+      ? file.toLowerCase().startsWith(root.toLowerCase())
+      : file.startsWith(root);
   } catch {
     return false;
   }
@@ -1557,28 +2009,61 @@ function fromLocalUi(event) {
 /** 主窗口里的本机离线页（file://）：同样要能最小化 / 关闭无边框窗口。 */
 function fromChatLocalPage(event) {
   const chat = windows.chat;
-  return Boolean(chat && !chat.isDestroyed() && event.sender === chat.webContents && String(event.senderFrame?.url || "").startsWith("file:"));
+  return Boolean(
+    chat &&
+      !chat.isDestroyed() &&
+      event.sender === chat.webContents &&
+      String(event.senderFrame?.url || "").startsWith("file:"),
+  );
 }
 
 /** 网页本机桥：只认主窗口、顶层框架、而且是已登录的那台服务器。 */
 function fromServerPage(event) {
   const chat = windows.chat;
-  if (!chat || chat.isDestroyed() || event.sender !== chat.webContents) return false;
+  if (!chat || chat.isDestroyed() || event.sender !== chat.webContents)
+    return false;
   if (!isTopFrame(event)) return false;
   return isServerUrl(event.senderFrame.url) && !!serverOrigin();
 }
 
 function handleLocal(channel, fn) {
   ipcMain.handle(channel, (event, payload) => {
-    if (!fromLocalUi(event)) throw new Error("拒绝：调用来源不是 ChisaBot 本机页面。");
+    if (!fromLocalUi(event))
+      throw new Error("拒绝：调用来源不是 ChisaBot 本机页面。");
     return fn(payload, event);
   });
 }
 
 function handleWeb(channel, fn) {
   ipcMain.handle(channel, (event, payload) => {
-    if (!fromServerPage(event)) throw new Error("拒绝：只有已登录服务器的页面可以使用本机桥。");
+    if (!fromServerPage(event))
+      throw new Error("拒绝：只有已登录服务器的页面可以使用本机桥。");
     return fn(payload, event);
+  });
+}
+
+/** 主窗口最近一次推送给渲染进程的窗口状态（去重，避免小窗/最大化切换发出重复 IPC）。 */
+const lastSentWindowState = new WeakMap();
+function sendWindowState(win, { compact, maximized, transitioning = false }) {
+  if (!win || win.isDestroyed()) return;
+  const nextCompact = Boolean(compact);
+  const nextMaximized = Boolean(maximized);
+  const prev = lastSentWindowState.get(win);
+  if (
+    prev &&
+    prev.compact === nextCompact &&
+    prev.maximized === nextMaximized &&
+    !transitioning
+  )
+    return;
+  lastSentWindowState.set(win, {
+    compact: nextCompact,
+    maximized: nextMaximized,
+  });
+  win.webContents.send("window:state", {
+    compact: nextCompact,
+    maximized: nextMaximized,
+    transitioning: Boolean(transitioning),
   });
 }
 
@@ -1588,14 +2073,24 @@ function compactWindows() {
   if (!compactController) {
     compactController = createCompactController({
       screen,
-      onChange: (win, compact) => {
-        if (!win.isDestroyed()) win.webContents.send("window:compact", compact);
+      onChange: (win, compact, meta) => {
+        if (win.isDestroyed()) return;
+        sendWindowState(win, {
+          compact,
+          maximized:
+            typeof meta?.maximized === "boolean"
+              ? meta.maximized
+              : win.isMaximized() || win.isFullScreen(),
+          transitioning: meta?.transitioning === true,
+        });
       },
       // macOS 走系统原生动画（减少动画时直接落位）；Windows / Linux 单次原子 setBounds 落位消除 16ms 卡顿与二次闪跳。
       animate: (win, target, done, meta) => {
         let reducedMotion = false;
         try {
-          reducedMotion = Boolean(systemPreferences.getAnimationSettings?.().prefersReducedMotion);
+          reducedMotion = Boolean(
+            systemPreferences.getAnimationSettings?.().prefersReducedMotion,
+          );
         } catch {
           /* 平台不支持读动画设置就当没减少动画 */
         }
@@ -1613,7 +2108,8 @@ function compactWindows() {
 /** 无边框主窗口的窗口控制：已登录服务器的顶层页面，或主窗口里的本机离线页。 */
 function handleChatWindow(channel, fn) {
   ipcMain.handle(channel, (event, payload) => {
-    if (!fromServerPage(event) && !fromChatLocalPage(event)) throw new Error("拒绝：只有主窗口可以控制窗口。");
+    if (!fromServerPage(event) && !fromChatLocalPage(event))
+      throw new Error("拒绝：只有主窗口可以控制窗口。");
     return fn(payload, event);
   });
 }
@@ -1628,7 +2124,10 @@ async function dropDevice(serverUrl) {
   const token = config.getToken();
   agent?.stop();
   agent = null;
-  if (token && serverUrl) await auth.unenroll({ fetchImpl: netFetch, serverUrl, token }).catch(() => false);
+  if (token && serverUrl)
+    await auth
+      .unenroll({ fetchImpl: netFetch, serverUrl, token })
+      .catch(() => false);
   config.setToken(null);
   config.set({ deviceId: "", deviceName: "", localPaused: false });
 }
@@ -1640,11 +2139,25 @@ async function logout() {
   const local = config.get();
   if (local.serverUrl) {
     const origin = serverOrigin();
-    await auth.logoutSession({ fetchImpl: netFetch, serverUrl: origin, cookieHeader: await cookieHeaderFor(origin).catch(() => "") }).catch(() => false);
+    await auth
+      .logoutSession({
+        fetchImpl: netFetch,
+        serverUrl: origin,
+        cookieHeader: await cookieHeaderFor(origin).catch(() => ""),
+      })
+      .catch(() => false);
   }
   await dropDevice(local.serverUrl);
-  config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "logout", outcome: "succeeded", summary: "已退出本机登录并清除设备记录" });
-  await session.fromPartition(PARTITION).clearStorageData({ storages: ["cookies"] });
+  config.appendAudit({
+    at: new Date().toISOString(),
+    actor: "本机",
+    operation: "logout",
+    outcome: "succeeded",
+    summary: "已退出本机登录并清除设备记录",
+  });
+  await session
+    .fromPartition(PARTITION)
+    .clearStorageData({ storages: ["cookies"] });
   if (windows.chat && !windows.chat.isDestroyed()) windows.chat.destroy();
   windows.chat = null;
   refreshTray();
@@ -1654,7 +2167,8 @@ async function logout() {
 async function confirmLogout() {
   const ok = await confirmLocal({
     title: "退出登录？",
-    description: "会作废这台电脑的设备令牌并清除登录状态，机器人不能再操作它。之后可以重新登录或换一台服务器。",
+    description:
+      "会作废这台电脑的设备令牌并清除登录状态，机器人不能再操作它。之后可以重新登录或换一台服务器。",
     confirmLabel: "退出登录",
   });
   if (ok) setTimeout(() => void logout(), 50);
@@ -1670,17 +2184,31 @@ async function submitLogin(input) {
   const serverUrl = auth.normalizeServerUrl(input.serverUrl);
   const username = String(input.username || "").trim();
   const remember = input.remember === true;
-  const sessionInfo = await auth.login({ fetchImpl: netFetch, serverUrl, username, password: String(input.password || ""), remember });
+  const sessionInfo = await auth.login({
+    fetchImpl: netFetch,
+    serverUrl,
+    username,
+    password: String(input.password || ""),
+    remember,
+  });
   const prev = config.get();
   const ses = session.fromPartition(PARTITION);
-  if (prev.serverUrl && (prev.serverUrl !== serverUrl || prev.username !== username)) {
+  if (
+    prev.serverUrl &&
+    (prev.serverUrl !== serverUrl || prev.username !== username)
+  ) {
     await dropDevice(prev.serverUrl);
     if (windows.chat && !windows.chat.isDestroyed()) windows.chat.destroy();
     windows.chat = null;
     await ses.clearStorageData({ storages: ["cookies"] });
   }
   await injectCookies(serverUrl, sessionInfo.cookies);
-  const recent = [serverUrl, ...(Array.isArray(prev.recentServers) ? prev.recentServers : []).filter((s) => s !== serverUrl)].slice(0, 6);
+  const recent = [
+    serverUrl,
+    ...(Array.isArray(prev.recentServers) ? prev.recentServers : []).filter(
+      (s) => s !== serverUrl,
+    ),
+  ].slice(0, 6);
   config.set({ serverUrl, username, remember, recentServers: recent });
   const versionProbe = localWeb.probeVersion({
     origin: serverUrl,
@@ -1693,7 +2221,9 @@ async function submitLogin(input) {
   let warning = "";
   const token = config.getToken();
   if (token) {
-    const check = await auth.checkToken({ fetchImpl: netFetch, serverUrl, token }).catch(() => ({ ok: false }));
+    const check = await auth
+      .checkToken({ fetchImpl: netFetch, serverUrl, token })
+      .catch(() => ({ ok: false }));
     if (check.ok) device = check.device;
     else if (check.revoked || check.invalid) config.setToken(null);
   }
@@ -1703,17 +2233,36 @@ async function submitLogin(input) {
         fetchImpl: netFetch,
         serverUrl,
         cookieHeader: sessionInfo.cookieHeader,
-        info: { ...clientInfo(), name: config.get().deviceName || os.hostname() },
+        info: {
+          ...clientInfo(),
+          name: config.get().deviceName || os.hostname(),
+        },
       });
-      config.set({ deviceId: result.device.id, deviceName: result.device.name, localPaused: false });
+      config.set({
+        deviceId: result.device.id,
+        deviceName: result.device.name,
+        localPaused: false,
+      });
       config.setToken(result.token);
       device = result.device;
     } catch (error) {
       warning = `已登录，但这台电脑没能登记为设备：${error.message}`;
-      config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "enroll", outcome: "failed", summary: warning.slice(0, 300) });
+      config.appendAudit({
+        at: new Date().toISOString(),
+        actor: "本机",
+        operation: "enroll",
+        outcome: "failed",
+        summary: warning.slice(0, 300),
+      });
     }
   }
-  config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "login", outcome: "succeeded", summary: `登录 ${serverUrl}（${remember ? "记住登录" : "本次会话"}）` });
+  config.appendAudit({
+    at: new Date().toISOString(),
+    actor: "本机",
+    operation: "login",
+    outcome: "succeeded",
+    summary: `登录 ${serverUrl}（${remember ? "记住登录" : "本次会话"}）`,
+  });
   clearTimeout(enrollRetryTimer);
   enrollIssue = warning;
   agentDetail = "";
@@ -1724,28 +2273,56 @@ async function submitLogin(input) {
 
 async function setLocal(patch) {
   const current = config.get();
-  if (typeof patch.localPaused === "boolean" && patch.localPaused !== current.localPaused) await requestPaused(patch.localPaused);
-  if (typeof patch.forceLocalApproval === "boolean" && patch.forceLocalApproval !== current.forceLocalApproval) {
+  if (
+    typeof patch.localPaused === "boolean" &&
+    patch.localPaused !== current.localPaused
+  )
+    await requestPaused(patch.localPaused);
+  if (
+    typeof patch.forceLocalApproval === "boolean" &&
+    patch.forceLocalApproval !== current.forceLocalApproval
+  ) {
     const ok =
       patch.forceLocalApproval ||
       (await confirmLocal({
         title: "关闭高风险操作的本机确认？",
-        description: "关闭后，权限里设为「允许」的命令行、写入文件、鼠标键盘会直接执行，不再在这台电脑上弹窗。建议保持开启。",
+        description:
+          "关闭后，权限里设为「允许」的命令行、写入文件、鼠标键盘会直接执行，不再在这台电脑上弹窗。建议保持开启。",
         confirmLabel: "仍然关闭",
       }));
     if (ok) {
       config.set({ forceLocalApproval: patch.forceLocalApproval });
-      config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "config_changed", outcome: "succeeded", summary: `本机确认 → ${patch.forceLocalApproval ? "开启" : "关闭"}` });
+      config.appendAudit({
+        at: new Date().toISOString(),
+        actor: "本机",
+        operation: "config_changed",
+        outcome: "succeeded",
+        summary: `本机确认 → ${patch.forceLocalApproval ? "开启" : "关闭"}`,
+      });
     }
   }
   if (typeof patch.autoStart === "boolean") {
     config.set({ autoStart: patch.autoStart });
-    if (app.isPackaged || process.platform === "win32") app.setLoginItemSettings({ openAtLogin: patch.autoStart, args: ["--hidden"] });
+    if (app.isPackaged || process.platform === "win32")
+      app.setLoginItemSettings({
+        openAtLogin: patch.autoStart,
+        args: ["--hidden"],
+      });
   }
-  if (typeof patch.startHidden === "boolean") config.set({ startHidden: patch.startHidden });
-  if (typeof patch.autoUpdate === "boolean" && patch.autoUpdate !== (current.autoUpdate !== false)) {
+  if (typeof patch.startHidden === "boolean")
+    config.set({ startHidden: patch.startHidden });
+  if (
+    typeof patch.autoUpdate === "boolean" &&
+    patch.autoUpdate !== (current.autoUpdate !== false)
+  ) {
     config.set({ autoUpdate: patch.autoUpdate });
-    config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "config_changed", outcome: "succeeded", summary: `自动更新 → ${patch.autoUpdate ? "开启" : "关闭"}` });
+    config.appendAudit({
+      at: new Date().toISOString(),
+      actor: "本机",
+      operation: "config_changed",
+      outcome: "succeeded",
+      summary: `自动更新 → ${patch.autoUpdate ? "开启" : "关闭"}`,
+    });
     updater?.schedule();
   }
   const desktopPatch = desktopPrefs.sanitizeDesktopPrefsPatch(patch);
@@ -1753,7 +2330,9 @@ async function setLocal(patch) {
     config.set(desktopPatch);
     if (typeof desktopPatch.spellcheck === "boolean") {
       try {
-        session.fromPartition(PARTITION).setSpellCheckerEnabled?.(desktopPatch.spellcheck);
+        session
+          .fromPartition(PARTITION)
+          .setSpellCheckerEnabled?.(desktopPatch.spellcheck);
       } catch {}
     }
     if (typeof desktopPatch.timezone === "string") {
@@ -1784,13 +2363,21 @@ function registerIpc() {
       throw new Error(`[${error.kind || "invalid"}] ${error.message}`);
     }
   };
-  handleLocal("login:probe", tagged(async ({ serverUrl }) => {
-    const result = await auth.probe({ fetchImpl: netFetch, serverUrl });
-    return { origin: result.origin, gateway: result.gateway };
-  }));
-  handleLocal("login:submit", tagged((input) => submitLogin(input)));
+  handleLocal(
+    "login:probe",
+    tagged(async ({ serverUrl }) => {
+      const result = await auth.probe({ fetchImpl: netFetch, serverUrl });
+      return { origin: result.origin, gateway: result.gateway };
+    }),
+  );
+  handleLocal(
+    "login:submit",
+    tagged((input) => submitLogin(input)),
+  );
   handleLocal("login:forget", (serverUrl) => {
-    const recent = (config.get().recentServers || []).filter((s) => s !== serverUrl);
+    const recent = (config.get().recentServers || []).filter(
+      (s) => s !== serverUrl,
+    );
     config.set({ recentServers: recent });
     return recent;
   });
@@ -1843,14 +2430,26 @@ function registerIpc() {
   // 审批 / 本机确认按内容定高（DESIGN.md §91.3）：审批窗贴住右下角往上长，确认窗保持中心。
   handleLocal("dialog:fit", ({ height } = {}, event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win.isDestroyed() || (win !== approvalWindow && win !== confirmWindow)) return false;
+    if (
+      !win ||
+      win.isDestroyed() ||
+      (win !== approvalWindow && win !== confirmWindow)
+    )
+      return false;
     const h = windowChrome.fitHeight(height);
     if (!h) return false;
     const b = win.getBounds();
     const width = dialogWidth.get(win) || b.width;
     if (Math.abs(b.height - h) >= 2 || b.width !== width) {
-      if (win === approvalWindow) win.setBounds({ x: b.x, y: b.y + b.height - h, width, height: h });
-      else win.setBounds({ x: b.x, y: Math.round(b.y + (b.height - h) / 2), width, height: h });
+      if (win === approvalWindow)
+        win.setBounds({ x: b.x, y: b.y + b.height - h, width, height: h });
+      else
+        win.setBounds({
+          x: b.x,
+          y: Math.round(b.y + (b.height - h) / 2),
+          width,
+          height: h,
+        });
     }
     pendingShow.get(win)?.();
     return true;
@@ -1866,11 +2465,13 @@ function registerIpc() {
 
   // 网页本机桥（web-preload.js → window.chisabotPC）
   ipcMain.on("pc:origin", (event) => {
-    event.returnValue = event.sender === windows.chat?.webContents ? serverOrigin() : "";
+    event.returnValue =
+      event.sender === windows.chat?.webContents ? serverOrigin() : "";
   });
   handleWeb("pc:state", () => webLocalState());
   // 无边框主窗口的窗口控制（网页顶栏右上角）。关闭 = 和原来点 ✕ 一样隐藏到托盘。
-  const chatWin = (event) => (fromServerPage(event) || fromChatLocalPage(event) ? windows.chat : null);
+  const chatWin = (event) =>
+    fromServerPage(event) || fromChatLocalPage(event) ? windows.chat : null;
   ipcMain.on("window:minimize", (event) => chatWin(event)?.minimize());
   ipcMain.on("window:toggle-maximize", (event) => {
     const win = chatWin(event);
@@ -1879,18 +2480,31 @@ function registerIpc() {
     else win.maximize();
   });
   ipcMain.on("window:close", (event) => chatWin(event)?.close());
-  handleChatWindow("window:is-maximized", () => Boolean(windows.chat && !windows.chat.isDestroyed() && windows.chat.isMaximized()));
+  handleChatWindow("window:is-maximized", () =>
+    Boolean(
+      windows.chat && !windows.chat.isDestroyed() && windows.chat.isMaximized(),
+    ),
+  );
   // 小窗模式：网页右上角的「小窗模式 / 恢复窗口」按钮。
   ipcMain.on("window:toggle-compact", (event) => {
     const win = chatWin(event);
     if (win) compactWindows().toggle(win);
   });
-  handleChatWindow("window:is-compact", () => compactWindows().isCompact(windows.chat));
-  handleWeb("pc:set", (patch) => setLocal(patch && typeof patch === "object" ? patch : {}));
+  handleChatWindow("window:is-compact", () =>
+    compactWindows().isCompact(windows.chat),
+  );
+  handleWeb("pc:set", (patch) =>
+    setLocal(patch && typeof patch === "object" ? patch : {}),
+  );
   handleWeb("pc:pick-folders", async () => {
     const result = await dialog.showOpenDialog(windows.chat, {
       title: "选择允许机器人访问的文件夹",
-      properties: ["openDirectory", "multiSelections", "createDirectory", "dontAddToRecent"],
+      properties: [
+        "openDirectory",
+        "multiSelections",
+        "createDirectory",
+        "dontAddToRecent",
+      ],
     });
     return result.canceled ? [] : result.filePaths;
   });
@@ -1901,27 +2515,47 @@ function registerIpc() {
     if (agent?.state === "revoked" && agentDetail !== "设备令牌无效") {
       const ok = await confirmLocal({
         title: "重新登记这台电脑？",
-        description: "这台电脑之前被撤销了关联。重新登记后它会作为新设备出现在设备列表里，能力默认「询问」（每次要你批准）。",
+        description:
+          "这台电脑之前被撤销了关联。重新登记后它会作为新设备出现在设备列表里，能力默认「询问」（每次要你批准）。",
         confirmLabel: "重新登记",
       });
-      if (!ok) return { status: "cancelled", message: "已取消。", state: webLocalState() };
+      if (!ok)
+        return {
+          status: "cancelled",
+          message: "已取消。",
+          state: webLocalState(),
+        };
     }
     const result = await repairDevice({ force: true, manual: true });
-    return { status: result.status, message: result.message, state: webLocalState() };
+    return {
+      status: result.status,
+      message: result.message,
+      state: webLocalState(),
+    };
   });
   // 设备页「重新连接」：没登记就补登记，否则跳过退避立刻重连。
   handleWeb("pc:reconnect", async () => {
     if (needsEnroll() && agent?.state !== "revoked") {
       const result = await repairDevice({ manual: false });
-      return { status: result.status, message: result.message, state: webLocalState() };
+      return {
+        status: result.status,
+        message: result.message,
+        state: webLocalState(),
+      };
     }
     if (!agent) startAgent();
     else agent.reconnectNow();
-    return { status: "reconnecting", message: "正在重新连接…", state: webLocalState() };
+    return {
+      status: "reconnecting",
+      message: "正在重新连接…",
+      state: webLocalState(),
+    };
   });
   handleWeb("pc:check-update", async () => {
     const activeUpdater = ensureUpdaterStarted();
-    const next = activeUpdater ? await activeUpdater.check() : { supported: false, status: "idle" };
+    const next = activeUpdater
+      ? await activeUpdater.check()
+      : { supported: false, status: "idle" };
     if (["downloading", "verifying", "downloaded"].includes(next?.status)) {
       dismissedDownloadVersion = "";
       openUpdateWindow({ focus: true });
@@ -1942,26 +2576,42 @@ function registerIpc() {
     const next = {
       kind: pendingDeepLink.kind,
       ...(pendingDeepLink.agentId ? { agentId: pendingDeepLink.agentId } : {}),
-      ...(pendingDeepLink.channelId ? { channelId: pendingDeepLink.channelId } : {}),
+      ...(pendingDeepLink.channelId
+        ? { channelId: pendingDeepLink.channelId }
+        : {}),
       pathname: pendingDeepLink.pathname,
     };
     pendingDeepLink = null;
     return next;
   });
   handleWeb("pc:appearance", (value) => {
-    const VALID_THEMES = new Set(["sky", "mist", "celadon", "sakura", "amber", "violet", "mono"]);
+    const VALID_THEMES = new Set([
+      "sky",
+      "mist",
+      "celadon",
+      "sakura",
+      "amber",
+      "violet",
+      "mono",
+    ]);
     const VALID_MATERIALS = new Set(["glass", "clear", "solid"]);
     const VALID_CANVASES = new Set(["pure", "sky", "wallpaper"]);
     const prev = config.get().appearance || {};
     const next = {
       dark: typeof value?.dark === "boolean" ? value.dark : null,
-      theme: typeof value?.theme === "string" && VALID_THEMES.has(value.theme) ? value.theme : prev.theme || "sky",
+      theme:
+        typeof value?.theme === "string" && VALID_THEMES.has(value.theme)
+          ? value.theme
+          : prev.theme || "sky",
       material:
-        typeof value?.material === "string" && VALID_MATERIALS.has(value.material)
+        typeof value?.material === "string" &&
+        VALID_MATERIALS.has(value.material)
           ? value.material
           : prev.material || "glass",
       canvas:
-        typeof value?.canvas === "string" && VALID_CANVASES.has(value.canvas) ? value.canvas : prev.canvas || "sky",
+        typeof value?.canvas === "string" && VALID_CANVASES.has(value.canvas)
+          ? value.canvas
+          : prev.canvas || "sky",
       sky: value?.sky !== false,
     };
     if (
@@ -1972,9 +2622,11 @@ function registerIpc() {
       prev.sky !== next.sky
     ) {
       config.set({ appearance: next });
-      nativeTheme.themeSource = next.dark === null ? "system" : next.dark ? "dark" : "light";
+      nativeTheme.themeSource =
+        next.dark === null ? "system" : next.dark ? "dark" : "light";
       broadcast("appearance");
-      if (updateWindow && !updateWindow.isDestroyed()) updateWindow.setBackgroundColor(updateWindowBackground());
+      if (updateWindow && !updateWindow.isDestroyed())
+        updateWindow.setBackgroundColor(updateWindowBackground());
     }
     return true;
   });
@@ -1982,7 +2634,8 @@ function registerIpc() {
     diagnosticsLog.buildExportPayload({
       clientVersion: pkg.version,
       agentState: agent?.state || "offline",
-      accessibilityGrants: getAccessibilityBridge().authorizer.snapshot().grants.length,
+      accessibilityGrants:
+        getAccessibilityBridge().authorizer.snapshot().grants.length,
     }),
   );
   handleWeb("pc:browser-profiles", () => getBrowserBridge().discoverProfiles());
@@ -2024,7 +2677,13 @@ app.on("before-quit", (event) => {
     return;
   }
   if (outcome)
-    config?.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "update_install", outcome: "succeeded", summary: `${updater.state.fullInstall ? "退出时重新安装" : "退出时安装"} ${updater.state.version || ""}` });
+    config?.appendAudit({
+      at: new Date().toISOString(),
+      actor: "本机",
+      operation: "update_install",
+      outcome: "succeeded",
+      summary: `${updater.state.fullInstall ? "退出时重新安装" : "退出时安装"} ${updater.state.version || ""}`,
+    });
   config?.flushAuditSync?.();
 });
 
@@ -2035,8 +2694,27 @@ async function scanShortcutsAsync({ desktopDir, appData }) {
   const roots = [];
   if (desktopDir) roots.push([desktopDir, 0]);
   if (appData) {
-    roots.push([path.win32.join(appData, "Microsoft", "Windows", "Start Menu", "Programs"), 1]);
-    roots.push([path.win32.join(appData, "Microsoft", "Internet Explorer", "Quick Launch", "User Pinned", "TaskBar"), 0]);
+    roots.push([
+      path.win32.join(
+        appData,
+        "Microsoft",
+        "Windows",
+        "Start Menu",
+        "Programs",
+      ),
+      1,
+    ]);
+    roots.push([
+      path.win32.join(
+        appData,
+        "Microsoft",
+        "Internet Explorer",
+        "Quick Launch",
+        "User Pinned",
+        "TaskBar",
+      ),
+      0,
+    ]);
   }
   const dirEntries = new Map();
   const dirPaths = new Set();
@@ -2094,10 +2772,17 @@ async function refreshShellIfChanged() {
   const defaultCandidates = shellRefresh.shortcutCandidates({
     desktopDir,
     appData: process.env.APPDATA,
-    shortcutName: pkg.build?.nsis?.shortcutName || pkg.productName || "ChisaBot",
+    shortcutName:
+      pkg.build?.nsis?.shortcutName || pkg.productName || "ChisaBot",
   });
-  const scannedCandidates = await scanShortcutsAsync({ desktopDir, appData: process.env.APPDATA });
-  const candidates = dedupeWinPaths([...defaultCandidates, ...scannedCandidates]);
+  const scannedCandidates = await scanShortcutsAsync({
+    desktopDir,
+    appData: process.env.APPDATA,
+  });
+  const candidates = dedupeWinPaths([
+    ...defaultCandidates,
+    ...scannedCandidates,
+  ]);
   const existingPairs = await Promise.all(
     candidates.map(async (link) => [
       link,
@@ -2122,7 +2807,17 @@ async function refreshShellIfChanged() {
   };
   // 指纹没变也看一眼：有快捷方式的图标还不是这份 .ico（或指向已不存在的旧安装位置）就修。
   const changed = shellRefresh.needsShellRefresh({ current: SHELL_HASH, last });
-  if (!changed && !shellRefresh.staleShortcuts({ shell, exists: fastExists, execPath: process.execPath, icon, candidates: existingLinks }).length) return;
+  if (
+    !changed &&
+    !shellRefresh.staleShortcuts({
+      shell,
+      exists: fastExists,
+      execPath: process.execPath,
+      icon,
+      candidates: existingLinks,
+    }).length
+  )
+    return;
   let result = { updated: [], cacheRefreshed: false };
   try {
     result = shellRefresh.refreshShell({
@@ -2135,11 +2830,22 @@ async function refreshShellIfChanged() {
       systemRoot: process.env.SystemRoot || process.env.windir,
       osRelease: os.release(),
       run: (cmd, args) => {
-        const child = require("node:child_process").spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true });
+        const child = require("node:child_process").spawn(cmd, args, {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        });
         child.on("error", () => {});
         child.unref();
       },
-      log: (line) => config.appendAudit({ at: new Date().toISOString(), actor: "本机", operation: "shell_refresh", outcome: "warn", summary: line.slice(0, 300) }),
+      log: (line) =>
+        config.appendAudit({
+          at: new Date().toISOString(),
+          actor: "本机",
+          operation: "shell_refresh",
+          outcome: "warn",
+          summary: line.slice(0, 300),
+        }),
     });
   } finally {
     config.set({ shellHash: SHELL_HASH });
@@ -2159,13 +2865,27 @@ const localWeb = createLocalWebController({
   getServerOrigin: serverOrigin,
   onModeChange: ({ origin, mode, prevMode, serverVersion }) => {
     broadcast();
-    if (serverVersion && getUpdaterMod().compareVersion(serverVersion, pkg.version) > 0) {
+    if (
+      serverVersion &&
+      getUpdaterMod().compareVersion(serverVersion, pkg.version) > 0
+    ) {
       ensureUpdaterStarted();
-      void updater?.nudge({ version: serverVersion, reason: "server_version", minGapMs: 30_000 });
+      void updater?.nudge({
+        version: serverVersion,
+        reason: "server_version",
+        minGapMs: 30_000,
+      });
     }
     // 探测/嗅探可能晚于页面加载（窗口里还是内置旧前端）：local→remote 一旦翻转就重载聊天窗口，
     // 换到服务器前端。serverVersions 单调递增，local→remote 每会话最多翻一次，不会反复重载。
-    if (mode === "remote" && prevMode === "local" && origin === serverOrigin() && windows.chat && !windows.chat.isDestroyed() && !chatOffline) {
+    if (
+      mode === "remote" &&
+      prevMode === "local" &&
+      origin === serverOrigin() &&
+      windows.chat &&
+      !windows.chat.isDestroyed() &&
+      !chatOffline
+    ) {
       windows.chat.webContents.reload();
     }
   },
@@ -2184,9 +2904,12 @@ app.whenReady().then(() => {
   const refreshEgressPolicy = () => {
     const origin = serverOrigin();
     const raw = config?.peek ? config.peek() : config?.get();
-    const domains = Array.isArray(raw?.allowedEgressDomains) ? raw.allowedEgressDomains : [];
+    const domains = Array.isArray(raw?.allowedEgressDomains)
+      ? raw.allowedEgressDomains
+      : [];
     const domainsKey = domains.join("\0");
-    if (origin === cachedEgressOrigin && domainsKey === cachedEgressDomainsKey) return;
+    if (origin === cachedEgressOrigin && domainsKey === cachedEgressDomainsKey)
+      return;
     cachedEgressOrigin = origin;
     cachedEgressDomainsKey = domainsKey;
     activeEgressPolicy = desktopPrefs.compileEgressPolicy({
@@ -2222,25 +2945,38 @@ app.whenReady().then(() => {
         // 文件 > 关闭窗口（⌘W）：macOS 惯例；关的是窗口不是进程——和窗口里的 ✕ 一样只是隐藏，应用常驻。
         { label: "文件", submenu: [{ role: "close", label: "关闭窗口" }] },
         { role: "editMenu", label: "编辑" },
-        { label: "视图", submenu: [{ role: "togglefullscreen", label: "切换全屏" }] },
+        {
+          label: "视图",
+          submenu: [{ role: "togglefullscreen", label: "切换全屏" }],
+        },
         { role: "windowMenu", label: "窗口" },
       ]),
     );
     // 开发运行时是 Electron 默认图标，dock 上换成品牌图标；打包版用 build/icon.icns。
     if (!app.isPackaged) {
       try {
-        app.dock?.setIcon(nativeImage.createFromPath(path.join(ASSETS, "icon.png")));
+        app.dock?.setIcon(
+          nativeImage.createFromPath(path.join(ASSETS, "icon.png")),
+        );
       } catch {}
     }
   }
   // 休眠唤醒 / 解锁后网络往往刚恢复，旧连接可能已经半死：立刻重连，不等退避和看门狗；顺手节流补查一次更新。
   powerMonitor.on("resume", () => {
     agent?.reconnectNow();
-    if (updater) void updater.nudge({ reason: "resume", minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS });
+    if (updater)
+      void updater.nudge({
+        reason: "resume",
+        minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS,
+      });
   });
   powerMonitor.on("unlock-screen", () => {
     agent?.reconnectNow();
-    if (updater) void updater.nudge({ reason: "unlock", minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS });
+    if (updater)
+      void updater.nudge({
+        reason: "unlock",
+        minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS,
+      });
   });
   config = createConfig({ dir: app.getPath("userData"), safeStorage });
   refreshEgressPolicy();
@@ -2249,7 +2985,12 @@ app.whenReady().then(() => {
     ses.setSpellCheckerEnabled?.(config.get().spellcheck !== false);
   } catch {}
   const appearance = config.get().appearance || {};
-  nativeTheme.themeSource = typeof appearance.dark === "boolean" ? (appearance.dark ? "dark" : "light") : "system";
+  nativeTheme.themeSource =
+    typeof appearance.dark === "boolean"
+      ? appearance.dark
+        ? "dark"
+        : "light"
+      : "system";
   registerIpc();
   // 全局快捷键 Alt+Space 呼出 ChisaBot 随手问浮窗（Spotlight 模式）
   try {
@@ -2258,9 +2999,11 @@ app.whenReady().then(() => {
         if (win && !win.isDestroyed()) {
           win.show();
           win.focus();
-          win.webContents.executeJavaScript(
-            'window.dispatchEvent(new CustomEvent("chisabot-spotlight"))',
-          ).catch(() => {});
+          win.webContents
+            .executeJavaScript(
+              'window.dispatchEvent(new CustomEvent("chisabot-spotlight"))',
+            )
+            .catch(() => {});
         }
       });
     });

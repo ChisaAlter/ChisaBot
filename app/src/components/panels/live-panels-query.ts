@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { client } from "@/lib/client";
 import { isChatRunning } from "@/lib/conversations/computer-activity";
@@ -69,13 +69,33 @@ export function useLivePanels(
   const onScreen = useKeptVisible();
   const pollActive = (options?.active ?? true) && onScreen;
   const queryClient = useQueryClient();
-  // 一轮刚结束：右栏可见时再看一次（面板可能在最后一步才填好）。
+  // 一轮刚结束：右栏可见时再看一次（面板可能在最后一步才填好）；若结束时右栏收起，等到下次展开再补刷，
+  // 避免未运行回合时每次展开右栏都无故 invalidate 抢占首帧。
+  const wasRunningRef = useRef(running);
+  const pendingBotRef = useRef<string | null>(null);
   useExternalConnection(
-    !running && pollActive && botId ? botId : null,
-    (activeBotId) => {
-      void queryClient.invalidateQueries({
-        queryKey: livePanelKeys.list(activeBotId),
-      });
+    botId ? `${botId}\x01${running ? 1 : 0}\x01${pollActive ? 1 : 0}` : null,
+    () => {
+      if (!botId) return;
+      const wasRunning = wasRunningRef.current;
+      wasRunningRef.current = running;
+      if (wasRunning && !running) {
+        if (pollActive) {
+          pendingBotRef.current = null;
+          void queryClient.invalidateQueries({
+            queryKey: livePanelKeys.list(botId),
+          });
+        } else {
+          pendingBotRef.current = botId;
+        }
+        return;
+      }
+      if (pollActive && pendingBotRef.current === botId) {
+        pendingBotRef.current = null;
+        void queryClient.invalidateQueries({
+          queryKey: livePanelKeys.list(botId),
+        });
+      }
     },
   );
   return useQuery({

@@ -17,40 +17,327 @@
  * - 全部模糊半径 <= 20px，气泡内禁止嵌套模糊，全屏遮罩 0 模糊；
  * - 表面变量（--surface-*）全为 @property { inherits: false } 且仅在表面节点自身声明，
  *   严禁挂在 <html> 上；
+ * - 材质色标（--mat-glass-* / --mat-clear-*）在 tokens.css 经 @property <color> 于 <html> 一次求值，
+ *   旧类名仅作单份无祖先遍历回落映射，避免 240+ 气泡逐节点重复求值 color-mix 与 5 倍重复选择器扫描；
  * - 保留 glass-hold 与 [data-starting-style]/[data-ending-style]/关闭态剥离模糊（glass-hold-panels）；
  * - 光学字缘保护仅单层轻影 0 1px 1px 作用于裸露文字，气泡/卡片/代码块/表单控件严格 text-shadow: none。
  * ========================================================================================== */
 
 @layer surfaces {
-  /* ── 1. 默认材质（glass · 浅色，含未写 data-material 兜底） ─────────────────────────────── */
+  /* ── 0. 根级材质槽位（O(1) 仅命中 <html>，供单份旧类名回落规则直接消费） ─────────────── */
 
-  /* 1.1 panel：均衡柔焦磨砂（20px saturate 160%） */
+  :where(html[data-material="glass"], html:not([data-material])) {
+    --mat-panel-bg: linear-gradient(
+      145deg,
+      var(--mat-glass-panel-1) 0%,
+      var(--mat-glass-panel-2) 100%
+    );
+    --mat-panel-blur: blur(20px) saturate(160%);
+    --mat-panel-border: rgba(255, 255, 255, 0.56);
+    --mat-panel-hl:
+      inset 0 1px 0 rgba(255, 255, 255, 0.8),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+    --mat-panel-shadow: var(--card-shadow);
+
+    --mat-elevated-bg: linear-gradient(
+      160deg,
+      var(--mat-glass-elevated-1) 0%,
+      var(--mat-glass-elevated-2) 100%
+    );
+    --mat-elevated-blur: blur(12px) saturate(160%);
+    --mat-elevated-border: rgba(255, 255, 255, 0.64);
+    --mat-elevated-hl:
+      inset 0 1px 0 rgba(255, 255, 255, 0.84),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.48);
+    --mat-elevated-shadow: var(--shadow-3);
+
+    --mat-bubble-bg: linear-gradient(
+      145deg,
+      var(--mat-glass-bubble-1) 0%,
+      var(--mat-glass-bubble-2) 100%
+    );
+    --mat-bubble-blur: blur(8px) saturate(155%);
+    --mat-bubble-border: rgba(255, 255, 255, 0.58);
+    --mat-bubble-hl:
+      inset 0 1px 0 rgba(255, 255, 255, 0.78),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.36);
+    --mat-bubble-shadow: var(--shadow-1);
+
+    --mat-inset-bg: rgba(15, 23, 42, 0.05);
+    --mat-inset-border: var(--line);
+    --mat-inset-hl: none;
+
+    --mat-control-bg: var(--mat-glass-control);
+    --mat-control-border: rgba(255, 255, 255, 0.56);
+    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+    --mat-control-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+  }
+
+  :where(html.dark[data-material="glass"], html.dark:not([data-material])) {
+    --mat-panel-border: rgba(255, 255, 255, 0.12);
+    --mat-panel-hl:
+      inset 0 1px 0 rgba(255, 255, 255, 0.14),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+
+    --mat-elevated-border: rgba(255, 255, 255, 0.14);
+    --mat-elevated-hl:
+      inset 0 1px 0 rgba(255, 255, 255, 0.16),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+
+    --mat-bubble-border: rgba(255, 255, 255, 0.12);
+    --mat-bubble-hl:
+      inset 0 1px 0 rgba(255, 255, 255, 0.13),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+
+    --mat-inset-bg: rgba(255, 255, 255, 0.065);
+    --mat-inset-border: var(--line);
+    --mat-inset-hl: none;
+
+    --mat-control-border: rgba(255, 255, 255, 0.12);
+    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    --mat-control-shadow: 0 6px 18px rgba(0, 0, 0, 0.26);
+  }
+
+  :where(html[data-material="clear"]) {
+    --mat-panel-bg: linear-gradient(
+      145deg,
+      var(--mat-clear-panel-1) 0%,
+      var(--mat-clear-panel-2) 100%
+    );
+    --mat-panel-blur: blur(16px) saturate(180%);
+    --mat-panel-border: rgba(255, 255, 255, 0.72);
+    --mat-panel-hl:
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.92),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+    --mat-panel-shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
+
+    --mat-elevated-bg: linear-gradient(
+      160deg,
+      var(--mat-clear-elevated-1) 0%,
+      var(--mat-clear-elevated-2) 100%
+    );
+    --mat-elevated-blur: blur(12px) saturate(175%);
+    --mat-elevated-border: rgba(255, 255, 255, 0.76);
+    --mat-elevated-hl:
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.94),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.52);
+    --mat-elevated-shadow: var(--shadow-3);
+
+    --mat-bubble-bg: linear-gradient(
+      145deg,
+      var(--mat-clear-bubble-1) 0%,
+      var(--mat-clear-bubble-2) 100%
+    );
+    --mat-bubble-blur: blur(6px) saturate(170%);
+    --mat-bubble-border: rgba(255, 255, 255, 0.68);
+    --mat-bubble-hl:
+      inset 0 1px 0 rgba(255, 255, 255, 0.88),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.44);
+    --mat-bubble-shadow: 0 6px 20px rgba(15, 23, 42, 0.07);
+
+    --mat-inset-bg: rgba(255, 255, 255, 0.42);
+    --mat-inset-border: rgba(255, 255, 255, 0.58);
+    --mat-inset-hl: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+
+    --mat-control-bg: var(--mat-clear-control);
+    --mat-control-border: rgba(255, 255, 255, 0.68);
+    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.84);
+    --mat-control-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+  }
+
+  :where(html.dark[data-material="clear"]) {
+    --mat-panel-border: rgba(255, 255, 255, 0.18);
+    --mat-panel-hl:
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.22),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.11);
+    --mat-panel-shadow: 0 10px 32px rgba(0, 0, 0, 0.34);
+
+    --mat-elevated-border: rgba(255, 255, 255, 0.2);
+    --mat-elevated-hl:
+      inset 0 1.5px 0 rgba(255, 255, 255, 0.24),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+
+    --mat-bubble-border: rgba(255, 255, 255, 0.18);
+    --mat-bubble-hl:
+      inset 0 1px 0 rgba(255, 255, 255, 0.2),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    --mat-bubble-shadow: var(--shadow-1);
+
+    --mat-inset-bg: rgba(16, 23, 38, 0.42);
+    --mat-inset-border: rgba(255, 255, 255, 0.14);
+    --mat-inset-hl: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+
+    --mat-control-border: rgba(255, 255, 255, 0.16);
+    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+    --mat-control-shadow: 0 6px 18px rgba(0, 0, 0, 0.26);
+  }
+
+  :where(html[data-material="solid"]) {
+    --mat-panel-bg: var(--surface-solid-panel);
+    --mat-panel-blur: none;
+    --mat-panel-border: var(--line-strong);
+    --mat-panel-hl: none;
+    --mat-panel-shadow: var(--shadow-1);
+
+    --mat-elevated-bg: var(--surface-solid-elevated);
+    --mat-elevated-blur: none;
+    --mat-elevated-border: var(--line-strong);
+    --mat-elevated-hl: none;
+    --mat-elevated-shadow: var(--shadow-3);
+
+    --mat-bubble-bg: var(--surface-solid-bubble);
+    --mat-bubble-blur: none;
+    --mat-bubble-border: var(--line-strong);
+    --mat-bubble-hl: none;
+    --mat-bubble-shadow: var(--shadow-1);
+
+    --mat-inset-bg: var(--surface-solid-inset);
+    --mat-inset-border: var(--line);
+    --mat-inset-hl: none;
+
+    --mat-control-bg: var(--surface-solid-control);
+    --mat-control-border: var(--line-strong);
+    --mat-control-hl: none;
+    --mat-control-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  }
+
+  /* ── 1. 旧类名单份回落映射（零 html[data-material] 祖先遍历；位于 [data-surface] 之前） ── */
+
+  :where(
+    .glass-side-card,
+    .acct-card,
+    .acct-mini-card,
+    .glass-mini-card,
+    .rail-card,
+    .glass-composer,
+    .glass-seg,
+    .glass-search
+  ) {
+    --surface-bg: var(--mat-panel-bg);
+    --surface-bg-solid: var(--surface-solid-panel);
+    --surface-blur: var(--mat-panel-blur);
+    --surface-border: var(--mat-panel-border);
+    --surface-highlight: var(--mat-panel-hl);
+    --surface-shadow: var(--mat-panel-shadow);
+    --surface-ink: var(--ink-1);
+    --surface-ink-2: var(--ink-2);
+  }
+
+  :where(
+    .hk-drawer,
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="combobox-content"],
+    [data-slot="dialog-content"]:not(.bg-transparent),
+    [data-slot="sheet-content"],
+    .model-popover,
+    .perm-popover,
+    .context-popover,
+    .chat-spotlight-panel,
+    .live-panel-src-pop,
+    .rail-lib,
+    .bm-menu,
+    .bm-manager,
+    .glass-toast,
+    .page-loader-card,
+    .sg-savebar,
+    .auth-card,
+    .update-banner,
+    .install-hint
+  ) {
+    --surface-bg: var(--mat-elevated-bg);
+    --surface-bg-solid: var(--surface-solid-elevated);
+    --surface-blur: var(--mat-elevated-blur);
+    --surface-border: var(--mat-elevated-border);
+    --surface-highlight: var(--mat-elevated-hl);
+    --surface-shadow: var(--mat-elevated-shadow);
+    --surface-ink: var(--ink-1);
+    --surface-ink-2: var(--ink-2);
+  }
+
+  :where(
+    .jr-card,
+    .cf-card,
+    .gh-card,
+    .page-card,
+    .schedule-card,
+    .bot-exchange-card,
+    .chat-question,
+    .chat-work-steps,
+    .chat-draft-card,
+    .chat-history-notice,
+    .chat-history-more,
+    .to-card,
+    .hr-card,
+    .win-ctrls,
+    .rs-capsule,
+    .chat-thinking
+  ) {
+    --surface-bg: var(--mat-bubble-bg);
+    --surface-bg-solid: var(--surface-solid-bubble);
+    --surface-blur: var(--mat-bubble-blur);
+    --surface-border: var(--mat-bubble-border);
+    --surface-highlight: var(--mat-bubble-hl);
+    --surface-shadow: var(--mat-bubble-shadow);
+    --surface-ink: var(--ink-1);
+    --surface-ink-2: var(--ink-2);
+  }
+
+  :where(
+    .rail-card .glass-card,
+    .sg-segmented,
+    .rail-tabs,
+    .side-search,
+    .glass-list-add,
+    .glass-mini-search
+  ) {
+    --surface-bg: var(--mat-inset-bg);
+    --surface-bg-solid: var(--surface-solid-inset);
+    --surface-blur: none;
+    --surface-border: var(--mat-inset-border);
+    --surface-highlight: var(--mat-inset-hl);
+    --surface-shadow: none;
+    --surface-ink: var(--ink-1);
+    --surface-ink-2: var(--ink-2);
+  }
+
+  :where(
+    .glass-pill,
+    .glass-newchat,
+    .glass-icon-btn,
+    .glass-mini-new,
+    .rail-tab,
+    .page-rows,
+    .sg-card,
+    .page-section > form,
+    .page
+      :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(
+        .border-dashed
+      ):not(.page-rows)
+  ) {
+    --surface-bg: var(--mat-control-bg);
+    --surface-bg-solid: var(--surface-solid-control);
+    --surface-blur: none;
+    --surface-border: var(--mat-control-border);
+    --surface-highlight: var(--mat-control-hl);
+    --surface-shadow: var(--mat-control-shadow);
+    --surface-ink: var(--ink-1);
+    --surface-ink-2: var(--ink-2);
+  }
+
+  /* ── 2. 标准 [data-surface] 正交矩阵（单属性直命中，直接消费预合成色标） ─────────────── */
+
+  /* 2.1 默认材质（glass · 浅色，含未写 data-material 兜底） */
   :where(html[data-material="glass"], html:not([data-material]))
-    :where(
-      [data-surface="panel"],
-      .glass-side-card,
-      .acct-card,
-      .acct-mini-card,
-      .glass-mini-card,
-      .rail-card,
-      .glass-composer,
-      .glass-seg,
-      .glass-search
-    ) {
+    :where([data-surface="panel"]) {
     --surface-bg: linear-gradient(
       145deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.78) 94%,
-          var(--accent) 6%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.72) 96%,
-          var(--accent) 4%
-        )
-        100%
+      var(--mat-glass-panel-1) 0%,
+      var(--mat-glass-panel-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-panel);
     --surface-blur: blur(20px) saturate(160%);
@@ -63,49 +350,12 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  /* 1.2 elevated：弹窗 / 菜单 / 抽屉 / 浮层（12px 轻模糊 + 护读釉底） */
   :where(html[data-material="glass"], html:not([data-material]))
-    :where(
-      [data-surface="elevated"],
-      .hk-drawer,
-      [data-slot="dropdown-menu-content"],
-      [data-slot="dropdown-menu-sub-content"],
-      [data-slot="context-menu-content"],
-      [data-slot="context-menu-sub-content"],
-      [data-slot="select-content"],
-      [data-slot="popover-content"],
-      [data-slot="combobox-content"],
-      [data-slot="dialog-content"]:not(.bg-transparent),
-      [data-slot="sheet-content"],
-      .model-popover,
-      .perm-popover,
-      .context-popover,
-      .chat-spotlight-panel,
-      .live-panel-src-pop,
-      .rail-lib,
-      .bm-menu,
-      .bm-manager,
-      .glass-toast,
-      .page-loader-card,
-      .sg-savebar,
-      .auth-card,
-      .update-banner,
-      .install-hint
-    ) {
+    :where([data-surface="elevated"]) {
     --surface-bg: linear-gradient(
       160deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.86) 95%,
-          var(--accent) 5%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.8) 97%,
-          var(--accent) 3%
-        )
-        100%
+      var(--mat-glass-elevated-1) 0%,
+      var(--mat-glass-elevated-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-elevated);
     --surface-blur: blur(12px) saturate(160%);
@@ -118,44 +368,12 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  /* 1.3 bubble：聊天气泡、对话卡、思考胶囊、PC 窗口角托（8px 轻模糊保滚动丝滑） */
   :where(html[data-material="glass"], html:not([data-material]))
-    :where(
-      [data-surface="bubble"],
-      .glass-main
-        [data-slot="bubble"]:not(.chat-bubble-bare)
-        > [data-slot="bubble-content"],
-      .jr-card,
-      .cf-card,
-      .gh-card,
-      .page-card,
-      .schedule-card,
-      .bot-exchange-card,
-      .chat-question,
-      .chat-work-steps,
-      .chat-draft-card,
-      .chat-history-notice,
-      .chat-history-more,
-      .to-card,
-      .hr-card,
-      .win-ctrls,
-      .rs-capsule,
-      .chat-thinking
-    ) {
+    :where([data-surface="bubble"]) {
     --surface-bg: linear-gradient(
       145deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.78) 95%,
-          var(--accent) 5%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.72) 97%,
-          var(--accent) 3%
-        )
-        100%
+      var(--mat-glass-bubble-1) 0%,
+      var(--mat-glass-bubble-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-bubble);
     --surface-blur: blur(8px) saturate(155%);
@@ -168,17 +386,8 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  /* 1.4 inset：内嵌卡片、分段槽、搜索槽（零模糊，纯半透明衬底） */
   :where(html[data-material="glass"], html:not([data-material]))
-    :where(
-      [data-surface="inset"],
-      .rail-card .glass-card,
-      .sg-segmented,
-      .rail-tabs,
-      .side-search,
-      .glass-list-add,
-      .glass-mini-search
-    ) {
+    :where([data-surface="inset"]) {
     --surface-bg: rgba(15, 23, 42, 0.05);
     --surface-bg-solid: var(--surface-solid-inset);
     --surface-blur: none;
@@ -189,28 +398,9 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  /* 1.5 control：小按钮、药丸、右边缘把手、设置页卡片（零模糊，轻釉填充 + 细描边） */
   :where(html[data-material="glass"], html:not([data-material]))
-    :where(
-      [data-surface="control"],
-      .glass-pill,
-      .glass-newchat,
-      .glass-icon-btn,
-      .glass-mini-new,
-      .rail-tab,
-      .page-rows,
-      .sg-card,
-      .page-section > form,
-      .page
-        :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(
-          .border-dashed
-        ):not(.page-rows)
-    ) {
-    --surface-bg: color-mix(
-      in srgb,
-      rgb(var(--surface-tint-rgb) / 0.74) 95%,
-      var(--accent) 5%
-    );
+    :where([data-surface="control"]) {
+    --surface-bg: var(--mat-glass-control);
     --surface-bg-solid: var(--surface-solid-control);
     --surface-blur: none;
     --surface-border: rgba(255, 255, 255, 0.56);
@@ -220,34 +410,13 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  /* ── 2. 默认材质（glass · 深色） ────────────────────────────────────────────────────────── */
-
+  /* 2.2 默认材质（glass · 深色） */
   :where(html.dark[data-material="glass"], html.dark:not([data-material]))
-    :where(
-      [data-surface="panel"],
-      .glass-side-card,
-      .acct-card,
-      .acct-mini-card,
-      .glass-mini-card,
-      .rail-card,
-      .glass-composer,
-      .glass-seg,
-      .glass-search
-    ) {
+    :where([data-surface="panel"]) {
     --surface-bg: linear-gradient(
       145deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.78) 93%,
-          var(--accent) 7%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.72) 96%,
-          var(--accent) 4%
-        )
-        100%
+      var(--mat-glass-panel-1) 0%,
+      var(--mat-glass-panel-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-panel);
     --surface-blur: blur(20px) saturate(160%);
@@ -261,47 +430,11 @@
   }
 
   :where(html.dark[data-material="glass"], html.dark:not([data-material]))
-    :where(
-      [data-surface="elevated"],
-      .hk-drawer,
-      [data-slot="dropdown-menu-content"],
-      [data-slot="dropdown-menu-sub-content"],
-      [data-slot="context-menu-content"],
-      [data-slot="context-menu-sub-content"],
-      [data-slot="select-content"],
-      [data-slot="popover-content"],
-      [data-slot="combobox-content"],
-      [data-slot="dialog-content"]:not(.bg-transparent),
-      [data-slot="sheet-content"],
-      .model-popover,
-      .perm-popover,
-      .context-popover,
-      .chat-spotlight-panel,
-      .live-panel-src-pop,
-      .rail-lib,
-      .bm-menu,
-      .bm-manager,
-      .glass-toast,
-      .page-loader-card,
-      .sg-savebar,
-      .auth-card,
-      .update-banner,
-      .install-hint
-    ) {
+    :where([data-surface="elevated"]) {
     --surface-bg: linear-gradient(
       160deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.86) 94%,
-          var(--accent) 6%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.8) 97%,
-          var(--accent) 3%
-        )
-        100%
+      var(--mat-glass-elevated-1) 0%,
+      var(--mat-glass-elevated-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-elevated);
     --surface-blur: blur(12px) saturate(160%);
@@ -315,42 +448,11 @@
   }
 
   :where(html.dark[data-material="glass"], html.dark:not([data-material]))
-    :where(
-      [data-surface="bubble"],
-      .glass-main
-        [data-slot="bubble"]:not(.chat-bubble-bare)
-        > [data-slot="bubble-content"],
-      .jr-card,
-      .cf-card,
-      .gh-card,
-      .page-card,
-      .schedule-card,
-      .bot-exchange-card,
-      .chat-question,
-      .chat-work-steps,
-      .chat-draft-card,
-      .chat-history-notice,
-      .chat-history-more,
-      .to-card,
-      .hr-card,
-      .win-ctrls,
-      .rs-capsule,
-      .chat-thinking
-    ) {
+    :where([data-surface="bubble"]) {
     --surface-bg: linear-gradient(
       145deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.78) 94%,
-          var(--accent) 6%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.72) 97%,
-          var(--accent) 3%
-        )
-        100%
+      var(--mat-glass-bubble-1) 0%,
+      var(--mat-glass-bubble-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-bubble);
     --surface-blur: blur(8px) saturate(155%);
@@ -364,15 +466,7 @@
   }
 
   :where(html.dark[data-material="glass"], html.dark:not([data-material]))
-    :where(
-      [data-surface="inset"],
-      .rail-card .glass-card,
-      .sg-segmented,
-      .rail-tabs,
-      .side-search,
-      .glass-list-add,
-      .glass-mini-search
-    ) {
+    :where([data-surface="inset"]) {
     --surface-bg: rgba(255, 255, 255, 0.065);
     --surface-bg-solid: var(--surface-solid-inset);
     --surface-blur: none;
@@ -384,26 +478,8 @@
   }
 
   :where(html.dark[data-material="glass"], html.dark:not([data-material]))
-    :where(
-      [data-surface="control"],
-      .glass-pill,
-      .glass-newchat,
-      .glass-icon-btn,
-      .glass-mini-new,
-      .rail-tab,
-      .page-rows,
-      .sg-card,
-      .page-section > form,
-      .page
-        :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(
-          .border-dashed
-        ):not(.page-rows)
-    ) {
-    --surface-bg: color-mix(
-      in srgb,
-      rgb(var(--surface-tint-rgb) / 0.74) 94%,
-      var(--accent) 6%
-    );
+    :where([data-surface="control"]) {
+    --surface-bg: var(--mat-glass-control);
     --surface-bg-solid: var(--surface-solid-control);
     --surface-blur: none;
     --surface-border: rgba(255, 255, 255, 0.12);
@@ -413,34 +489,12 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  /* ── 3. 通透材质（clear · 浅色）：更轻薄显背景 + 顶部细腻高光 ──────────────────────────── */
-
-  :where(html[data-material="clear"])
-    :where(
-      [data-surface="panel"],
-      .glass-side-card,
-      .acct-card,
-      .acct-mini-card,
-      .glass-mini-card,
-      .rail-card,
-      .glass-composer,
-      .glass-seg,
-      .glass-search
-    ) {
+  /* 2.3 通透材质（clear · 浅色） */
+  :where(html[data-material="clear"]) :where([data-surface="panel"]) {
     --surface-bg: linear-gradient(
       145deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.66) 95%,
-          var(--accent) 5%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.6) 97%,
-          var(--accent) 3%
-        )
-        100%
+      var(--mat-clear-panel-1) 0%,
+      var(--mat-clear-panel-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-panel);
     --surface-blur: blur(16px) saturate(180%);
@@ -453,48 +507,11 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html[data-material="clear"])
-    :where(
-      [data-surface="elevated"],
-      .hk-drawer,
-      [data-slot="dropdown-menu-content"],
-      [data-slot="dropdown-menu-sub-content"],
-      [data-slot="context-menu-content"],
-      [data-slot="context-menu-sub-content"],
-      [data-slot="select-content"],
-      [data-slot="popover-content"],
-      [data-slot="combobox-content"],
-      [data-slot="dialog-content"]:not(.bg-transparent),
-      [data-slot="sheet-content"],
-      .model-popover,
-      .perm-popover,
-      .context-popover,
-      .chat-spotlight-panel,
-      .live-panel-src-pop,
-      .rail-lib,
-      .bm-menu,
-      .bm-manager,
-      .glass-toast,
-      .page-loader-card,
-      .sg-savebar,
-      .auth-card,
-      .update-banner,
-      .install-hint
-    ) {
+  :where(html[data-material="clear"]) :where([data-surface="elevated"]) {
     --surface-bg: linear-gradient(
       160deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.74) 95%,
-          var(--accent) 5%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.66) 97%,
-          var(--accent) 3%
-        )
-        100%
+      var(--mat-clear-elevated-1) 0%,
+      var(--mat-clear-elevated-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-elevated);
     --surface-blur: blur(12px) saturate(175%);
@@ -507,43 +524,11 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html[data-material="clear"])
-    :where(
-      [data-surface="bubble"],
-      .glass-main
-        [data-slot="bubble"]:not(.chat-bubble-bare)
-        > [data-slot="bubble-content"],
-      .jr-card,
-      .cf-card,
-      .gh-card,
-      .page-card,
-      .schedule-card,
-      .bot-exchange-card,
-      .chat-question,
-      .chat-work-steps,
-      .chat-draft-card,
-      .chat-history-notice,
-      .chat-history-more,
-      .to-card,
-      .hr-card,
-      .win-ctrls,
-      .rs-capsule,
-      .chat-thinking
-    ) {
+  :where(html[data-material="clear"]) :where([data-surface="bubble"]) {
     --surface-bg: linear-gradient(
       145deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.64) 95%,
-          var(--accent) 5%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.58) 97%,
-          var(--accent) 3%
-        )
-        100%
+      var(--mat-clear-bubble-1) 0%,
+      var(--mat-clear-bubble-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-bubble);
     --surface-blur: blur(6px) saturate(170%);
@@ -556,16 +541,7 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html[data-material="clear"])
-    :where(
-      [data-surface="inset"],
-      .rail-card .glass-card,
-      .sg-segmented,
-      .rail-tabs,
-      .side-search,
-      .glass-list-add,
-      .glass-mini-search
-    ) {
+  :where(html[data-material="clear"]) :where([data-surface="inset"]) {
     --surface-bg: rgba(255, 255, 255, 0.42);
     --surface-bg-solid: var(--surface-solid-inset);
     --surface-blur: none;
@@ -576,27 +552,8 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html[data-material="clear"])
-    :where(
-      [data-surface="control"],
-      .glass-pill,
-      .glass-newchat,
-      .glass-icon-btn,
-      .glass-mini-new,
-      .rail-tab,
-      .page-rows,
-      .sg-card,
-      .page-section > form,
-      .page
-        :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(
-          .border-dashed
-        ):not(.page-rows)
-    ) {
-    --surface-bg: color-mix(
-      in srgb,
-      rgb(var(--surface-tint-rgb) / 0.62) 95%,
-      var(--accent) 5%
-    );
+  :where(html[data-material="clear"]) :where([data-surface="control"]) {
+    --surface-bg: var(--mat-clear-control);
     --surface-bg-solid: var(--surface-solid-control);
     --surface-blur: none;
     --surface-border: rgba(255, 255, 255, 0.68);
@@ -606,34 +563,12 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  /* ── 4. 通透材质（clear · 深色） ────────────────────────────────────────────────────────── */
-
-  :where(html.dark[data-material="clear"])
-    :where(
-      [data-surface="panel"],
-      .glass-side-card,
-      .acct-card,
-      .acct-mini-card,
-      .glass-mini-card,
-      .rail-card,
-      .glass-composer,
-      .glass-seg,
-      .glass-search
-    ) {
+  /* 2.4 通透材质（clear · 深色） */
+  :where(html.dark[data-material="clear"]) :where([data-surface="panel"]) {
     --surface-bg: linear-gradient(
       145deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.68) 94%,
-          var(--accent) 6%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.62) 97%,
-          var(--accent) 3%
-        )
-        100%
+      var(--mat-clear-panel-1) 0%,
+      var(--mat-clear-panel-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-panel);
     --surface-blur: blur(16px) saturate(180%);
@@ -646,48 +581,11 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html.dark[data-material="clear"])
-    :where(
-      [data-surface="elevated"],
-      .hk-drawer,
-      [data-slot="dropdown-menu-content"],
-      [data-slot="dropdown-menu-sub-content"],
-      [data-slot="context-menu-content"],
-      [data-slot="context-menu-sub-content"],
-      [data-slot="select-content"],
-      [data-slot="popover-content"],
-      [data-slot="combobox-content"],
-      [data-slot="dialog-content"]:not(.bg-transparent),
-      [data-slot="sheet-content"],
-      .model-popover,
-      .perm-popover,
-      .context-popover,
-      .chat-spotlight-panel,
-      .live-panel-src-pop,
-      .rail-lib,
-      .bm-menu,
-      .bm-manager,
-      .glass-toast,
-      .page-loader-card,
-      .sg-savebar,
-      .auth-card,
-      .update-banner,
-      .install-hint
-    ) {
+  :where(html.dark[data-material="clear"]) :where([data-surface="elevated"]) {
     --surface-bg: linear-gradient(
       160deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.76) 94%,
-          var(--accent) 6%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.7) 97%,
-          var(--accent) 3%
-        )
-        100%
+      var(--mat-clear-elevated-1) 0%,
+      var(--mat-clear-elevated-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-elevated);
     --surface-blur: blur(12px) saturate(175%);
@@ -700,43 +598,11 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html.dark[data-material="clear"])
-    :where(
-      [data-surface="bubble"],
-      .glass-main
-        [data-slot="bubble"]:not(.chat-bubble-bare)
-        > [data-slot="bubble-content"],
-      .jr-card,
-      .cf-card,
-      .gh-card,
-      .page-card,
-      .schedule-card,
-      .bot-exchange-card,
-      .chat-question,
-      .chat-work-steps,
-      .chat-draft-card,
-      .chat-history-notice,
-      .chat-history-more,
-      .to-card,
-      .hr-card,
-      .win-ctrls,
-      .rs-capsule,
-      .chat-thinking
-    ) {
+  :where(html.dark[data-material="clear"]) :where([data-surface="bubble"]) {
     --surface-bg: linear-gradient(
       145deg,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.66) 94%,
-          var(--accent) 6%
-        )
-        0%,
-      color-mix(
-          in srgb,
-          rgb(var(--surface-tint-rgb) / 0.6) 97%,
-          var(--accent) 3%
-        )
-        100%
+      var(--mat-clear-bubble-1) 0%,
+      var(--mat-clear-bubble-2) 100%
     );
     --surface-bg-solid: var(--surface-solid-bubble);
     --surface-blur: blur(6px) saturate(170%);
@@ -749,16 +615,7 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html.dark[data-material="clear"])
-    :where(
-      [data-surface="inset"],
-      .rail-card .glass-card,
-      .sg-segmented,
-      .rail-tabs,
-      .side-search,
-      .glass-list-add,
-      .glass-mini-search
-    ) {
+  :where(html.dark[data-material="clear"]) :where([data-surface="inset"]) {
     --surface-bg: rgba(16, 23, 38, 0.42);
     --surface-bg-solid: var(--surface-solid-inset);
     --surface-blur: none;
@@ -769,27 +626,8 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html.dark[data-material="clear"])
-    :where(
-      [data-surface="control"],
-      .glass-pill,
-      .glass-newchat,
-      .glass-icon-btn,
-      .glass-mini-new,
-      .rail-tab,
-      .page-rows,
-      .sg-card,
-      .page-section > form,
-      .page
-        :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(
-          .border-dashed
-        ):not(.page-rows)
-    ) {
-    --surface-bg: color-mix(
-      in srgb,
-      rgb(var(--surface-tint-rgb) / 0.64) 94%,
-      var(--accent) 6%
-    );
+  :where(html.dark[data-material="clear"]) :where([data-surface="control"]) {
+    --surface-bg: var(--mat-clear-control);
     --surface-bg-solid: var(--surface-solid-control);
     --surface-blur: none;
     --surface-border: rgba(255, 255, 255, 0.16);
@@ -799,20 +637,8 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  /* ── 5. 实色材质（solid · 浅/深通用）：全站零模糊 + 清晰不透明实面 ────────────────────── */
-
-  :where(html[data-material="solid"])
-    :where(
-      [data-surface="panel"],
-      .glass-side-card,
-      .acct-card,
-      .acct-mini-card,
-      .glass-mini-card,
-      .rail-card,
-      .glass-composer,
-      .glass-seg,
-      .glass-search
-    ) {
+  /* 2.5 实色材质（solid · 浅/深通用）：全站零模糊 + 清晰不透明实面 */
+  :where(html[data-material="solid"]) :where([data-surface="panel"]) {
     --surface-bg: var(--surface-solid-panel);
     --surface-bg-solid: var(--surface-solid-panel);
     --surface-blur: none;
@@ -823,34 +649,7 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html[data-material="solid"])
-    :where(
-      [data-surface="elevated"],
-      .hk-drawer,
-      [data-slot="dropdown-menu-content"],
-      [data-slot="dropdown-menu-sub-content"],
-      [data-slot="context-menu-content"],
-      [data-slot="context-menu-sub-content"],
-      [data-slot="select-content"],
-      [data-slot="popover-content"],
-      [data-slot="combobox-content"],
-      [data-slot="dialog-content"]:not(.bg-transparent),
-      [data-slot="sheet-content"],
-      .model-popover,
-      .perm-popover,
-      .context-popover,
-      .chat-spotlight-panel,
-      .live-panel-src-pop,
-      .rail-lib,
-      .bm-menu,
-      .bm-manager,
-      .glass-toast,
-      .page-loader-card,
-      .sg-savebar,
-      .auth-card,
-      .update-banner,
-      .install-hint
-    ) {
+  :where(html[data-material="solid"]) :where([data-surface="elevated"]) {
     --surface-bg: var(--surface-solid-elevated);
     --surface-bg-solid: var(--surface-solid-elevated);
     --surface-blur: none;
@@ -861,29 +660,7 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html[data-material="solid"])
-    :where(
-      [data-surface="bubble"],
-      .glass-main
-        [data-slot="bubble"]:not(.chat-bubble-bare)
-        > [data-slot="bubble-content"],
-      .jr-card,
-      .cf-card,
-      .gh-card,
-      .page-card,
-      .schedule-card,
-      .bot-exchange-card,
-      .chat-question,
-      .chat-work-steps,
-      .chat-draft-card,
-      .chat-history-notice,
-      .chat-history-more,
-      .to-card,
-      .hr-card,
-      .win-ctrls,
-      .rs-capsule,
-      .chat-thinking
-    ) {
+  :where(html[data-material="solid"]) :where([data-surface="bubble"]) {
     --surface-bg: var(--surface-solid-bubble);
     --surface-bg-solid: var(--surface-solid-bubble);
     --surface-blur: none;
@@ -894,16 +671,7 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html[data-material="solid"])
-    :where(
-      [data-surface="inset"],
-      .rail-card .glass-card,
-      .sg-segmented,
-      .rail-tabs,
-      .side-search,
-      .glass-list-add,
-      .glass-mini-search
-    ) {
+  :where(html[data-material="solid"]) :where([data-surface="inset"]) {
     --surface-bg: var(--surface-solid-inset);
     --surface-bg-solid: var(--surface-solid-inset);
     --surface-blur: none;
@@ -914,22 +682,7 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  :where(html[data-material="solid"])
-    :where(
-      [data-surface="control"],
-      .glass-pill,
-      .glass-newchat,
-      .glass-icon-btn,
-      .glass-mini-new,
-      .rail-tab,
-      .page-rows,
-      .sg-card,
-      .page-section > form,
-      .page
-        :is(.rounded-lg, .rounded-xl, .rounded-md).border:not([data-slot]):not(
-          .border-dashed
-        ):not(.page-rows)
-    ) {
+  :where(html[data-material="solid"]) :where([data-surface="control"]) {
     --surface-bg: var(--surface-solid-control);
     --surface-bg-solid: var(--surface-solid-control);
     --surface-blur: none;
@@ -940,7 +693,7 @@
     --surface-ink-2: var(--ink-2);
   }
 
-  /* ── 6. bare 表面（透明无底无模糊，三档材质统一） ─────────────────────────────────────── */
+  /* ── 3. bare 表面（透明无底无模糊，三档材质统一） ─────────────────────────────────────── */
   :where(
     [data-surface="bare"],
     .chat-bubble-bare > [data-slot="bubble-content"],
@@ -1018,13 +771,10 @@ html
   color: var(--surface-ink);
 }
 
-/* bubble：聊天气泡、对话卡、状态胶囊、PC 窗口角托 */
+/* bubble：聊天气泡（BubbleContent 已直标 data-surface="bubble"）、对话卡、状态胶囊、PC 窗口角托 */
 html
   :is(
     [data-surface="bubble"],
-    .glass-main
-      [data-slot="bubble"]:not(.chat-bubble-bare)
-      > [data-slot="bubble-content"],
     .jr-card,
     .cf-card,
     .gh-card,
@@ -1183,7 +933,8 @@ html :is(.jr-card, .live-panel-body) .jr-card {
   [data-state="closed"],
   [data-leaving="true"]
 ),
-.page-loader-overlay[data-leaving="true"] .page-loader-card {
+.page-loader-overlay[data-leaving="true"] .page-loader-card,
+.glass-rail:is(.is-collapsed, [data-rail-motion="closing"]) > .rail-card {
   --surface-blur: none;
   backdrop-filter: none;
 }
@@ -1197,6 +948,11 @@ html :is(.jr-card, .live-panel-body) .jr-card {
   [data-ending-style]
 ) {
   animation: glass-hold var(--dur-3) step-end;
+}
+.glass-rail[data-rail-motion="opening"] > .rail-card {
+  animation:
+    rail-card-enter var(--dur-2) var(--ease-out),
+    glass-hold var(--dur-2) step-end;
 }
 :is(
   .model-popover,
@@ -1229,6 +985,7 @@ html :is(.jr-card, .live-panel-body) .jr-card {
     .bm-manager,
     [data-slot="sidebar"].hk-drawer
   )[data-open],
+  .glass-rail[data-rail-motion="opening"] > .rail-card,
   .glass-composer[data-morphing] {
     animation: none;
   }

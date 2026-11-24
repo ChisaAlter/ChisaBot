@@ -98,6 +98,8 @@ export function ComposerDock({
   pillRef.current = pill;
   const coarse = useCoarsePointer();
   const lastInsetRef = useRef<number | null>(null);
+  const appliedScrollPadRef = useRef<HTMLElement | null>(null);
+  const appliedBottomPillRef = useRef<HTMLElement | null>(null);
   const scheduleSyncRef = useRef<() => void>(() => {});
   const drag = useRef<{
     dir: DockDir;
@@ -143,9 +145,38 @@ export function ComposerDock({
       }
     }
     const nextInset = Math.max(0, Math.round(paneRect.bottom - top));
-    if (lastInsetRef.current === nextInset) return;
+    const scrollPad = pane.querySelector<HTMLElement>(".chat-scroll-pad");
+    const bottomPill = pane.querySelector<HTMLElement>(".chat-bottom-pill");
+    if (
+      lastInsetRef.current === nextInset &&
+      appliedScrollPadRef.current === scrollPad &&
+      appliedBottomPillRef.current === bottomPill
+    ) {
+      return;
+    }
     lastInsetRef.current = nextInset;
-    pane.style.setProperty("--chat-composer-h", `${nextInset}px`);
+    // 不在包裹 4,500+ 消息节点的 pane 上写继承型 --chat-composer-h（单次触发 ~200ms 全树 RecalcStyle）；
+    // 直接给 .chat-scroll-pad 写非继承 padding-bottom（只标脏 1 节点），给叶子按钮 .chat-bottom-pill 写 --chat-composer-h。
+    if (
+      appliedScrollPadRef.current &&
+      appliedScrollPadRef.current !== scrollPad
+    ) {
+      appliedScrollPadRef.current.style.removeProperty("padding-bottom");
+    }
+    if (scrollPad) {
+      scrollPad.style.paddingBottom = `calc(24px + ${nextInset}px)`;
+    }
+    appliedScrollPadRef.current = scrollPad;
+    if (
+      appliedBottomPillRef.current &&
+      appliedBottomPillRef.current !== bottomPill
+    ) {
+      appliedBottomPillRef.current.style.removeProperty("--chat-composer-h");
+    }
+    if (bottomPill) {
+      bottomPill.style.setProperty("--chat-composer-h", `${nextInset}px`);
+    }
+    appliedBottomPillRef.current = bottomPill;
   }, []);
 
   useExternalConnection(true, () => {
@@ -250,6 +281,10 @@ export function ComposerDock({
       ro?.disconnect();
       observed.clear();
       lastInsetRef.current = null;
+      appliedScrollPadRef.current?.style.removeProperty("padding-bottom");
+      appliedScrollPadRef.current = null;
+      appliedBottomPillRef.current?.style.removeProperty("--chat-composer-h");
+      appliedBottomPillRef.current = null;
       pane.style.removeProperty("--chat-composer-h");
     };
   });

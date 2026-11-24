@@ -9,8 +9,10 @@ import {
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  type AnimationEvent as ReactAnimationEvent,
   Component,
   type ErrorInfo,
+  memo,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -35,7 +37,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useExternalConnection, useWindowEvent } from "@/hooks";
+import { useExternalConnection, useTimeout, useWindowEvent } from "@/hooks";
 import { useCurrentBotChat } from "@/lib/agents/bot-chat-context";
 import { agentListQueryOptions } from "@/lib/agents/queries";
 import { dispatchComposerPrefill } from "@/lib/chat/quote-event";
@@ -76,7 +78,7 @@ import {
 } from "./rail-tasks-summary";
 
 const WIDTH_KEY = "chisabot-panel-rail-width";
-const MIN_WIDTH = 300;
+const MIN_WIDTH = 320;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 380;
 /** 常驻栏两侧的内边距合计：卡片宽度 = 栏宽 − 它（拖动期两格一起写）。 */
@@ -144,11 +146,14 @@ export function panelPresetBatch(
   return PANEL_PRESETS.slice(start, start + pageSize);
 }
 
+function clampRailWidth(raw: number): number | null {
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, raw)));
+}
+
 function storedWidth() {
   const raw = Number(readStoredPreference(WIDTH_KEY));
-  return Number.isFinite(raw) && raw >= MIN_WIDTH && raw <= MAX_WIDTH
-    ? raw
-    : DEFAULT_WIDTH;
+  return clampRailWidth(raw) ?? DEFAULT_WIDTH;
 }
 
 /**
@@ -209,11 +214,8 @@ export function PanelRail({ className }: { className?: string }) {
   useLayoutEffect(() => {
     const remembered = showRailFor(widthBot);
     const next =
-      remembered !== undefined &&
-      remembered >= MIN_WIDTH &&
-      remembered <= MAX_WIDTH
-        ? remembered
-        : storedWidth();
+      (remembered !== undefined ? clampRailWidth(remembered) : null) ??
+      storedWidth();
     liveWidth.current = next;
     setWidth(next);
   }, [widthBot]);
@@ -244,6 +246,38 @@ export function PanelRail({ className }: { className?: string }) {
   const sheetOpen = usePanelSheetOpen();
   const onScreen = useKeptVisible();
   const railVisible = (wide ? open : sheetOpen) && onScreen;
+  // 宽窗展开/收起改由单次布局落位 + 卡片纯 GPU 滑移完成（避免 260ms width/padding 逐帧挤压重排聊天区）。
+  const [railMotion, setRailMotion] = useState<"idle" | "opening" | "closing">(
+    "idle",
+  );
+  const [prevWideOpen, setPrevWideOpen] = useState({ wide, open });
+  if (prevWideOpen.wide !== wide || prevWideOpen.open !== open) {
+    const nextMotion: "idle" | "opening" | "closing" =
+      prevWideOpen.wide && wide && prevWideOpen.open !== open
+        ? open
+          ? "opening"
+          : "closing"
+        : "idle";
+    setPrevWideOpen({ wide, open });
+    if (railMotion !== nextMotion) setRailMotion(nextMotion);
+  }
+  useTimeout(
+    () => setRailMotion("idle"),
+    railMotion === "opening" ? 220 : railMotion === "closing" ? 170 : null,
+    `${railMotion}:${open}:${wide}`,
+  );
+  const handleCardAnimationEnd = useCallback(
+    (event: ReactAnimationEvent<HTMLElement>) => {
+      if (event.target !== event.currentTarget) return;
+      if (
+        event.animationName === "rail-card-enter" ||
+        event.animationName === "rail-card-exit"
+      ) {
+        setRailMotion("idle");
+      }
+    },
+    [],
+  );
   // 窄窗口（< 1280px）期间全程保持 body[data-has-narrow-rail]：以前绑在条件渲染的 .rail-tab.is-narrow 上，
   // 开关面板抽屉会反复卸载/重挂该属性，改写 [data-testid="chat-transcript"] 的 padding-right，
   // 抑制浏览器 overflow-anchor 并触发整列重折行与回跳下滑。
@@ -366,27 +400,25 @@ export function PanelRail({ className }: { className?: string }) {
   );
 
   if (!wide) {
-    // 窄窗口（< 1280px）：没有右侧栏的位置，面板改成右边缘把手 + 滑出的抽屉，入口一直在。
+    // 窄窗口（< 1280px）：没有右侧栏的位置，面板改成右边缘把手 + 滑出的抽屉，未展开时显示入口。
     return (
       <>
-        <ToggleTip label={"打开面板"} side="left">
-          <button
-            aria-controls={"chisabot-panel-sheet"}
-            aria-expanded={sheetOpen}
-            aria-hidden={sheetOpen || undefined}
-            aria-label={"打开面板"}
-            className="rail-tab is-narrow"
-            data-hidden={sheetOpen ? "true" : undefined}
-            data-surface="control"
-            inert={sheetOpen || undefined}
-            onClick={() => openPanelSheet("user")}
-            tabIndex={sheetOpen ? -1 : undefined}
-            type="button"
-          >
-            <IconLayoutSidebarRightExpand className="size-4" />
-            <span className="rail-tab-t">{"面板"}</span>
-          </button>
-        </ToggleTip>
+        {sheetOpen ? null : (
+          <ToggleTip label={"打开面板"} side="left">
+            <button
+              aria-controls={"chisabot-panel-sheet"}
+              aria-expanded={false}
+              aria-label={"打开面板"}
+              className="rail-tab is-narrow"
+              data-surface="control"
+              onClick={() => openPanelSheet("user")}
+              type="button"
+            >
+              <IconLayoutSidebarRightExpand className="size-4" />
+              <span className="rail-tab-t">{"面板"}</span>
+            </button>
+          </ToggleTip>
+        )}
         <Sheet
           onOpenChange={(next) =>
             next ? openPanelSheet("user") : closeSheet("user")
@@ -415,6 +447,8 @@ export function PanelRail({ className }: { className?: string }) {
     );
   }
 
+  const keepLayoutBox = open || railMotion === "closing";
+
   return (
     <>
       <PanelRailHandle open={open} />
@@ -427,13 +461,16 @@ export function PanelRail({ className }: { className?: string }) {
           !open && "is-collapsed",
           className,
         )}
+        data-rail-motion={railMotion !== "idle" ? railMotion : undefined}
         data-state={open ? "expanded" : "collapsed"}
         id="chisabot-panel-rail"
         inert={!open}
-        // Collapsed = zero width and no side padding; the inner column keeps its width, so it slides
-        // off the right edge (clipped by .glass-body) instead of reflowing while it narrows.
         ref={railRef}
-        style={open ? { width } : { width: 0, paddingLeft: 0, paddingRight: 0 }}
+        style={
+          keepLayoutBox
+            ? { width }
+            : { width: 0, paddingLeft: 0, paddingRight: 0 }
+        }
       >
         {/* biome-ignore lint/a11y/useSemanticElements: a draggable splitter has no native element. */}
         <div
@@ -473,6 +510,7 @@ export function PanelRail({ className }: { className?: string }) {
         <section
           className={PANEL_CARD_CLASS}
           data-surface="panel"
+          onAnimationEnd={handleCardAnimationEnd}
           ref={cardRef}
           style={{ width: cardWidth }}
         >
@@ -485,22 +523,19 @@ export function PanelRail({ className }: { className?: string }) {
 
 /**
  * 面板卡收起后留在右边缘的小把手（竖排「面板」）：收起的东西在它原来的位置留下痕迹，点它展开。
- * 常驻挂载并通过 data-hidden 驱动进退场滑移，避免开关瞬切。
+ * 仅在未展开时渲染，避免展开态在右边缘残留把手。
  */
 function PanelRailHandle({ open }: { open: boolean }) {
+  if (open) return null;
   return (
     <ToggleTip keys={PANEL_RAIL_HOTKEY_LABEL} label={"展开面板"} side="left">
       <button
         aria-controls={"chisabot-panel-rail"}
-        aria-expanded={open}
-        aria-hidden={open || undefined}
+        aria-expanded={false}
         aria-label={"展开面板"}
         className="rail-tab hidden xl:flex"
-        data-hidden={open ? "true" : undefined}
         data-surface="control"
-        inert={open || undefined}
         onClick={() => setPanelRailOpen(true)}
-        tabIndex={open ? -1 : undefined}
         type="button"
       >
         <IconLayoutSidebarRightExpand className="size-4" />
@@ -556,7 +591,7 @@ class PanelRailErrorBoundary extends Component<
   }
 }
 
-function PanelRailBody({
+const PanelRailBody = memo(function PanelRailBody({
   active,
   onCollapse,
   controlsId,
@@ -627,31 +662,32 @@ function PanelRailBody({
           tab={tab}
           tasksNeedsYou={tasksSummary.approvalCount > 0 && tab !== "tasks"}
         />
-        <span className="flex-1" />
-        {tab === "panels" && botId ? (
-          <RailAddPanelMenu
-            drawer={drawer}
-            onCloseDrawer={drawer ? onCollapse : undefined}
-          />
-        ) : null}
-        <span aria-hidden className="rail-head-div" />
-        <ToggleTip
-          keys={showHotkey ? PANEL_RAIL_HOTKEY_LABEL : undefined}
-          label={drawer ? "关闭面板" : "收起右栏"}
-          side="bottom"
-        >
-          <button
-            aria-controls={controlsId}
-            aria-expanded={true}
-            aria-label={drawer ? "关闭面板" : "收起右栏"}
-            data-testid={drawer ? "panel-sheet-close" : undefined}
-            className="rail-head-icon"
-            onClick={onCollapse}
-            type="button"
+        <div className="rail-head-actions">
+          {tab === "panels" && botId ? (
+            <RailAddPanelMenu
+              drawer={drawer}
+              onCloseDrawer={drawer ? onCollapse : undefined}
+            />
+          ) : null}
+          <span aria-hidden className="rail-head-div" />
+          <ToggleTip
+            keys={showHotkey ? PANEL_RAIL_HOTKEY_LABEL : undefined}
+            label={drawer ? "关闭面板" : "收起右栏"}
+            side="bottom"
           >
-            <IconLayoutSidebarRightCollapse className="size-[18px]" />
-          </button>
-        </ToggleTip>
+            <button
+              aria-controls={controlsId}
+              aria-expanded={true}
+              aria-label={drawer ? "关闭面板" : "收起右栏"}
+              className="rail-head-icon"
+              data-testid={drawer ? "panel-sheet-close" : "panel-rail-close"}
+              onClick={onCollapse}
+              type="button"
+            >
+              <IconLayoutSidebarRightCollapse className="size-[18px]" />
+            </button>
+          </ToggleTip>
+        </div>
       </header>
 
       <div
@@ -737,7 +773,7 @@ function PanelRailBody({
       ) : null}
     </>
   );
-}
+});
 
 /** 抽屉顶栏里能拿 Tab 焦点的控件（按 DOM 顺序取第一个）。 */
 export const PANEL_SHEET_HEAD_FOCUSABLE =
@@ -926,7 +962,12 @@ const TasksRailCard = lazyPart(
 
 function RailNote({ children }: { children: React.ReactNode }) {
   return (
-    <p className="glass-card p-4 text-muted-foreground text-sm" data-surface="inset">{children}</p>
+    <p
+      className="glass-card p-4 text-muted-foreground text-sm"
+      data-surface="inset"
+    >
+      {children}
+    </p>
   );
 }
 

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { WindowControls } from "@/components/layout/glass-topbar";
 import { useDesktopWindow } from "@/lib/desktop-window";
 
@@ -6,7 +7,7 @@ import { useDesktopWindow } from "@/lib/desktop-window";
  * 顶部一条 44px 透明拖动带 + 右上角窗口控制。有顶栏的页面由顶栏负责，这条带用 CSS 隐藏。
  * 浏览器里不渲染。
  */
-export function DesktopStrip() {
+export const DesktopStrip = memo(function DesktopStrip() {
   const desktop = useDesktopWindow();
   if (!desktop) return null;
   return (
@@ -18,7 +19,11 @@ export function DesktopStrip() {
         desktop.bridge.toggleMaximize();
       }}
     >
-      <WindowControls bridge={desktop.bridge} compact={desktop.compact} maximized={desktop.maximized} />
+      <WindowControls
+        bridge={desktop.bridge}
+        compact={desktop.compact}
+        maximized={desktop.maximized}
+      />
     </div>
   );
-}
+});

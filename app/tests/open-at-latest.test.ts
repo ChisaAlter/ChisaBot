@@ -9,7 +9,8 @@ import { join } from "node:path";
  * - 恢复期间和之后一小段时间由 SettleAtEnd 钉在底部，平滑滚动只给「刚发的」；
  * - 打开时读存储和接入同时开始，读到了就不再为「最后一句是机器人说的」再读一遍。
  */
-const src = (p: string) => readFileSync(join(import.meta.dir, "../src", p), "utf8");
+const src = (p: string) =>
+  readFileSync(join(import.meta.dir, "../src", p), "utf8");
 
 describe("打开对话落在最新一条", () => {
   const chat = src("components/channels/channel-chat.tsx");
@@ -36,7 +37,9 @@ describe("打开对话落在最新一条", () => {
     expect(chat).toMatch(
       /!\(\s*mountReadOk\.current &&\s*saysActivity\(agentRef\.current\.messages, initial\.text\)\s*\)/,
     );
-    expect(chat).toContain("if (initialActivity) settleInitial(initialActivity);");
+    expect(chat).toContain(
+      "if (initialActivity) settleInitial(initialActivity);",
+    );
   });
 
   test("SettleAtEnd 在滚动容器里，平滑滚动跳过恢复期", () => {
@@ -54,18 +57,26 @@ describe("打开对话落在最新一条", () => {
     expect(transcript).toContain(
       "useSmoothSendScroll(viewportRef, newestUserMessageId, opening)",
     );
-    // 钉底部用滚动容器自己的 scrollToEnd（同时把它切回「跟着底部」），不是直接改 scrollTop。
-    const settle = transcript.slice(transcript.indexOf("function SettleAtEnd"), transcript.indexOf("const FIRST_PAINT_STAGGER_COUNT"));
-    expect(settle).toContain('scrollToEnd({ behavior: "auto" })');
+    // 钉底部用滚动容器自己的 scrollToEnd({ behavior: "instant" })（同时切回「跟着底部」，且不改写内联 scrollBehavior），不是直接改 scrollTop。
+    const settle = transcript.slice(
+      transcript.indexOf("function SettleAtEnd"),
+      transcript.indexOf("const FIRST_PAINT_STAGGER_COUNT"),
+    );
+    expect(settle).toContain('scrollToEnd({ behavior: "instant" })');
     expect(settle).toContain("requestAnimationFrame");
-    for (const event of ['"wheel"', '"touchmove"', '"keydown"']) expect(settle).toContain(event);
+    for (const event of ['"wheel"', '"touchmove"', '"keydown"'])
+      expect(settle).toContain(event);
     // 高度变化（图片撑高）在 ResizeObserver 回调里当场回到底部，不等下一帧。
     expect(settle).toContain("new ResizeObserver(pinNow)");
   });
 
   test("离开对话时记下样子、切回来先画它；左栏的行当对话详情先用", () => {
-    expect(chat).toContain("rememberTranscript(threadId, agentRef.current.messages)");
+    expect(chat).toContain(
+      "rememberTranscript(threadId, agentRef.current.messages)",
+    );
     expect(chat).toContain("cachedTranscript(channel.threadId)");
-    expect(src("components/channels/channel-page.tsx")).toContain("placeholderData: () => channelFromRoster(queryClient, channelId)");
+    expect(src("components/channels/channel-page.tsx")).toContain(
+      "placeholderData: () => channelFromRoster(queryClient, channelId)",
+    );
   });
 });

@@ -1091,12 +1091,9 @@ html {
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* Right panel column: width + padding + opacity; the inner column keeps its width and slides out. */
+/* Right panel column: single-frame layout slot + pure GPU card glide (zero per-frame width reflow). */
 .glass-rail {
-  transition:
-    width var(--glass-collapse-ms) var(--glass-collapse-ease),
-    padding var(--glass-collapse-ms) var(--glass-collapse-ease),
-    opacity 0.2s ease;
+  contain: layout style;
 }
 .glass-rail.is-dragging {
   transition: none;
@@ -1105,11 +1102,46 @@ html {
   opacity: 0;
   pointer-events: none;
 }
+.glass-rail.is-collapsed:not([data-rail-motion="closing"]) {
+  visibility: hidden;
+}
+.glass-rail[data-rail-motion="closing"] {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  opacity: 1;
+  pointer-events: none;
+}
 .glass-rail.is-collapsed .glass-rail-handle {
   display: none;
 }
 .glass-rail-inner {
   flex: none;
+}
+@keyframes rail-card-enter {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes rail-card-exit {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+.glass-rail[data-rail-motion="closing"] > .rail-card {
+  animation: rail-card-exit var(--dur-exit) var(--ease-in) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1118,8 +1150,8 @@ html {
   .glass-shell [data-slot="sidebar-container"].glass-sidebar-container {
     transition-duration: 0s;
   }
-  .glass-rail {
-    transition: opacity 0.2s ease;
+  .glass-rail[data-rail-motion="closing"] > .rail-card {
+    animation: none;
   }
   .glass-icon-btn-ico {
     animation: glass-fade-in 0.15s ease-out;
@@ -3946,10 +3978,11 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 
 /* ---------- 面板栏 = 一张独立玻璃卡，头部在卡片里 ---------- */
 .rail-card { padding: 10px 10px 12px; gap: 10px; border-radius: var(--r-xl); overflow: hidden; }
-.rail-card .rail-head { height: 36px; padding: 0 0 0 8px; gap: 2px; }
+.rail-card .rail-head { height: 36px; padding: 0 2px; gap: 4px; min-width: 0; }
+.rail-head-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
 .rail-card .rail-head-t { font-size: 14px; }
 .rail-card .rail-head-btn { height: 30px; padding: 0 9px; font-size: 13px; }
-.rail-head-div { width: 1px; height: 16px; margin: 0 4px; background: var(--line-strong); flex: none; }
+.rail-head-div { width: 1px; height: 16px; margin: 0 3px; background: var(--line-strong); flex: none; }
 .rail-head-icon {
   width: 30px;
   height: 30px;
@@ -3969,7 +4002,7 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
 .dark .rail-card .glass-card { background: rgba(255, 255, 255, 0.035); }
 .rail-card .glass-rail-scroll { margin: 0 -4px; padding: 0 4px 2px; }
 .rail-card .rail-empty { margin: 0 2px; }
-/* 收起后：右边缘中间的小把手（竖排「面板」），在卡片收走之后再淡入。 */
+/* 收起后：右边缘中间的小把手（竖排「面板」），仅未展开时挂载，并在卡片收走后滑入（backwards 不锁 forwards 层）。 */
 .rail-tab {
   position: absolute;
   /* --edge-clip-r：恢复态窗口被拖得右缘出屏时越出工作区的量（lib/desktop-window.ts 写入），让位后仍贴可见边缘。 */
@@ -3989,10 +4022,9 @@ html[data-desktop] .glass-topbar { padding-right: calc(46px * 3 + 12px); }
   box-shadow: var(--shadow-1);
   color: var(--ink-2);
   outline: none;
-  animation: rail-tab-in var(--dur-2) var(--ease-out) 120ms both;
-  transition: background-color var(--dur-1) var(--ease-std), color var(--dur-1) var(--ease-std), width var(--dur-1) var(--ease-out), opacity var(--dur-exit) var(--ease-in), transform var(--dur-exit) var(--ease-in);
+  animation: rail-tab-in var(--dur-2) var(--ease-out) 120ms backwards;
+  transition: background-color var(--dur-1) var(--ease-std), color var(--dur-1) var(--ease-std), width var(--dur-1) var(--ease-out);
 }
-.rail-tab[data-hidden="true"] { opacity: 0; transform: translateX(10px); pointer-events: none; }
 .rail-tab:hover { background: var(--glass-3); color: var(--ink-1); width: 34px; }
 .rail-tab:focus-visible { box-shadow: 0 0 0 2px var(--focus); }
 .rail-tab-t { display: block; width: 1em; font-size: 12px; line-height: 1.25; word-break: break-all; text-align: center; }
@@ -4025,7 +4057,7 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rail-tab { animation: rail-tab-fade var(--dur-2) linear 120ms both; transition: background var(--dur-1), color var(--dur-1); }
+  .rail-tab { animation: rail-tab-fade var(--dur-2) linear 120ms backwards; transition: background var(--dur-1), color var(--dur-1); }
   .rail-tab:hover { width: 30px; }
   .side-search, .acct-row { transition: background var(--dur-1), border-color var(--dur-1); }
   .glass-bot-comp-dot { animation: none; }
@@ -4325,28 +4357,52 @@ html[data-phone] .rail-sheet[data-slot="sheet-content"] {
 .profile-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-2); }
 .profile-setup-overlay { background: rgba(40, 60, 100, 0.18); }
 
-/* ---------- 右栏「面板 | 计算机」(DESIGN.md §23) ---------- */
-.rail-tabs { position: relative; display: inline-flex; flex: none; width: max-content; padding: 3px; gap: 0; }
-.rail-tabs .rail-tabs-item { position: relative; z-index: 1; height: 28px; padding: 0 12px; gap: 5px; transition: color var(--dur-1) var(--ease-std), scale var(--dur-0) var(--ease-std); }
+/* ---------- 右栏「面板 | 任务 | 计算机」(DESIGN.md §23) ---------- */
+.rail-tabs {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 0 1 156px;
+  width: 100%;
+  max-width: 156px;
+  min-width: 0;
+  padding: 3px;
+  gap: 0;
+}
+.rail-tabs[data-count="3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex-basis: 206px;
+  max-width: 206px;
+}
+.rail-tabs .rail-tabs-item {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  gap: 4px;
+  justify-content: center;
+  white-space: nowrap;
+  transition: color var(--dur-1) var(--ease-std), scale var(--dur-0) var(--ease-std);
+}
 .rail-tabs .rail-tabs-item[aria-checked] { background: transparent; box-shadow: none; }
 .rail-tabs .rail-tabs-item[aria-checked="true"] { color: var(--ink-1); }
 .rail-tabs .rail-tabs-item[aria-checked]:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus); }
-/* 选中底块在两个标签之间滑动，而不是一闪而过。 */
+/* 选中底块在标签之间等分滑动，随容器弹性缩放严丝合缝。 */
 .rail-tabs-thumb {
-  position: absolute; top: 3px; bottom: 3px; left: 3px; width: 74px;
+  position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 2);
   border-radius: var(--r-pill); background: var(--glass-3); box-shadow: var(--shadow-1);
   transition: translate var(--dur-2) var(--ease-out);
 }
 .dark .rail-tabs-thumb { background: rgba(255, 255, 255, 0.12); }
-.rail-tabs .rail-tabs-item { flex: none; width: 74px; padding: 0 6px; justify-content: center; }
 .rail-tabs-dot { width: 7px; height: 7px; border-radius: 999px; background: #f59e0b; box-shadow: 0 0 0 2px var(--glass-3); }
-/* 2026-10-13「计算机3个字完犊子了」：标签固定 74px，图标+「计算机」+琥珀点超宽，字被挤成「计算 / 机」两行。
-   标签文字永不换行；「需要你」圆点浮在标签右上角，不占宽度（DESIGN.md §23）。 */
-.rail-tabs .rail-tabs-item { white-space: nowrap; }
-.rail-tabs .rail-tabs-dot { position: absolute; top: 4px; left: 19px; } /* 角标：压在显示器图标右上角，不碰文字 */
-/* 三段选项卡：标签和滑块一起收窄（上面 .rail-tabs .rail-tabs-item / .rail-tabs-thumb 的 74px 之后，不能再回低优先级）。 */
-.rail-tabs[data-count="3"] .rail-tabs-item,
-.rail-tabs[data-count="3"] .rail-tabs-thumb { width: 68px; }
+/* 角标浮在标签右上角，不占文字宽度（DESIGN.md §23）。 */
+.rail-tabs .rail-tabs-dot { position: absolute; top: 4px; right: 5px; }
+/* 三段选项卡：紧凑字号与图标保底不折行，且允许整组随窄卡弹性让位，绝不把右侧收起键挤出裁切。 */
+.rail-tabs[data-count="3"] .rail-tabs-item { padding: 0 4px; gap: 3px; font-size: 12.5px; }
+.rail-tabs[data-count="3"] .rail-tabs-item svg { width: 14px; height: 14px; flex: none; }
+.rail-tabs[data-count="3"] .rail-tabs-thumb { width: calc((100% - 6px) / 3); }
 .rail-tabs[data-tab="tasks"] .rail-tabs-thumb { translate: 100% 0; }
 .rail-tabs[data-tab="computer"] .rail-tabs-thumb { translate: 200% 0; }
 .rail-pane[data-active="true"] { animation: rail-pane-in var(--dur-2) var(--ease-out); }
@@ -9759,9 +9815,28 @@ html[data-theme-switching="1"] *::after {
   transition: none !important;
 }
 
-/* 窗口拖拽缩放期纯过渡抑制（严禁修改 backdrop-filter / --surface-blur / --glass-bg-opaque） */
-html[data-resizing] :is(.ch-collapse, .rail-tabs-thumb) {
+/* 窗口拖拽缩放与小窗横竖屏跨断点切换期纯过渡与重挂载并发入场动画抑制（严禁修改 backdrop-filter / --surface-blur / --glass-bg-opaque） */
+html[data-resizing] :is(
+  .ch-collapse,
+  .rail-tabs-thumb,
+  .rail-tab,
+  .chat-bottom-pill,
+  .glass-side-full,
+  .glass-mini
+) {
   transition: none;
+}
+html[data-resizing] :is(
+  .rail-tab,
+  .glass-rail[data-rail-motion] > .rail-card,
+  .rail-pane[data-active="true"],
+  .glass-icon-btn-ico,
+  .glass-side-full,
+  .glass-mini,
+  .ch-content-enter,
+  .ch-view-enter
+) {
+  animation: none;
 }
 
 /* 三级降级：prefers-reduced-motion / data-motion-rest="1" / data-perf="on" */
@@ -9795,9 +9870,6 @@ html[data-resizing] :is(.ch-collapse, .rail-tabs-thumb) {
   }
   button.chat-bottom-pill {
     transition: opacity var(--dur-1) linear, background-color var(--dur-1) linear;
-  }
-  .rail-tab[data-hidden="true"] {
-    transform: none;
   }
 }
 
@@ -9858,7 +9930,8 @@ html:is([data-perf="on"], [data-static-bg="on"]) :is(
   .cf-image-pending::before,
   .device-job-dot.is-running,
   .jr-product-ph.is-loading,
-  .chisabot-wallpaper-img-enter
+  .chisabot-wallpaper-img-enter,
+  .glass-rail[data-rail-motion] > .rail-card
 ) {
   animation: none;
 }

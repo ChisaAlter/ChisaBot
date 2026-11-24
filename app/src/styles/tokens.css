@@ -66,6 +66,78 @@
   initial-value: #1e293b;
 }
 
+/* ── 材质表面预合成色标（仅在 <html> 算一次 color-mix，子孙 240+ 气泡零重复求值） ── */
+@property --mat-glass-panel-1 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.78);
+}
+@property --mat-glass-panel-2 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.72);
+}
+@property --mat-glass-elevated-1 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.86);
+}
+@property --mat-glass-elevated-2 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.8);
+}
+@property --mat-glass-bubble-1 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.78);
+}
+@property --mat-glass-bubble-2 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.72);
+}
+@property --mat-glass-control {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.74);
+}
+@property --mat-clear-panel-1 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.66);
+}
+@property --mat-clear-panel-2 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.6);
+}
+@property --mat-clear-elevated-1 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.74);
+}
+@property --mat-clear-elevated-2 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.66);
+}
+@property --mat-clear-bubble-1 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.64);
+}
+@property --mat-clear-bubble-2 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.58);
+}
+@property --mat-clear-control {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.62);
+}
+
 /* ========================================================================================
  * 基础几何、动效、Ink 层、Accent & Semantic 层与默认主题（sky · 浅色）
  * ======================================================================================== */
@@ -223,6 +295,78 @@
   --surface-edge-rgb: 15 23 42;
   --surface-hl-top: rgba(255, 255, 255, 0.82);
   --surface-hl-ring: rgba(255, 255, 255, 0.48);
+
+  /* 浅色材质色标预合成（在 <html> 一次求值，自动响应 7 套主题与 customAccent） */
+  --mat-glass-panel-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.78) 94%,
+    var(--accent) 6%
+  );
+  --mat-glass-panel-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.72) 96%,
+    var(--accent) 4%
+  );
+  --mat-glass-elevated-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.86) 95%,
+    var(--accent) 5%
+  );
+  --mat-glass-elevated-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.8) 97%,
+    var(--accent) 3%
+  );
+  --mat-glass-bubble-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.78) 95%,
+    var(--accent) 5%
+  );
+  --mat-glass-bubble-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.72) 97%,
+    var(--accent) 3%
+  );
+  --mat-glass-control: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.74) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-panel-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.66) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-panel-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.6) 97%,
+    var(--accent) 3%
+  );
+  --mat-clear-elevated-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.74) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-elevated-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.66) 97%,
+    var(--accent) 3%
+  );
+  --mat-clear-bubble-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.64) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-bubble-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.58) 97%,
+    var(--accent) 3%
+  );
+  --mat-clear-control: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.62) 95%,
+    var(--accent) 5%
+  );
 
   /* 线条、交互洗底与焦点 */
   --line: rgba(15, 23, 42, 0.08);
@@ -420,6 +564,78 @@ html.dark {
   --surface-edge-rgb: 248 250 252;
   --surface-hl-top: rgba(255, 255, 255, 0.15);
   --surface-hl-ring: rgba(255, 255, 255, 0.08);
+
+  /* 深色材质色标预合成（在 <html> 一次求值，自动响应 7 套主题与 customAccent） */
+  --mat-glass-panel-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.78) 93%,
+    var(--accent) 7%
+  );
+  --mat-glass-panel-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.72) 96%,
+    var(--accent) 4%
+  );
+  --mat-glass-elevated-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.86) 94%,
+    var(--accent) 6%
+  );
+  --mat-glass-elevated-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.8) 97%,
+    var(--accent) 3%
+  );
+  --mat-glass-bubble-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.78) 94%,
+    var(--accent) 6%
+  );
+  --mat-glass-bubble-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.72) 97%,
+    var(--accent) 3%
+  );
+  --mat-glass-control: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.74) 94%,
+    var(--accent) 6%
+  );
+  --mat-clear-panel-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.68) 94%,
+    var(--accent) 6%
+  );
+  --mat-clear-panel-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.62) 97%,
+    var(--accent) 3%
+  );
+  --mat-clear-elevated-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.76) 94%,
+    var(--accent) 6%
+  );
+  --mat-clear-elevated-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.7) 97%,
+    var(--accent) 3%
+  );
+  --mat-clear-bubble-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.66) 94%,
+    var(--accent) 6%
+  );
+  --mat-clear-bubble-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.6) 97%,
+    var(--accent) 3%
+  );
+  --mat-clear-control: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.64) 94%,
+    var(--accent) 6%
+  );
 
   /* 线条与洗底 */
   --line: rgba(248, 250, 252, 0.08);

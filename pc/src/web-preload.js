@@ -21,16 +21,46 @@ function exposeWindowControls() {
     isMaximized: () => ipcRenderer.invoke("window:is-maximized"),
     onMaximizedChange(callback) {
       const listener = (_event, value) => callback(Boolean(value));
+      const stateListener = (_event, state) => {
+        if (state && typeof state.maximized === "boolean")
+          callback(state.maximized);
+      };
       ipcRenderer.on("window:maximized", listener);
-      return () => ipcRenderer.removeListener("window:maximized", listener);
+      ipcRenderer.on("window:state", stateListener);
+      return () => {
+        ipcRenderer.removeListener("window:maximized", listener);
+        ipcRenderer.removeListener("window:state", stateListener);
+      };
     },
     // 小窗模式（DESIGN.md §36）：手机比例的竖长小窗 ↔ 原来的大小和位置。
     toggleCompact: () => ipcRenderer.send("window:toggle-compact"),
     isCompact: () => ipcRenderer.invoke("window:is-compact"),
     onCompactChange(callback) {
       const listener = (_event, value) => callback(Boolean(value));
+      const stateListener = (_event, state) => {
+        if (state && typeof state.compact === "boolean")
+          callback(state.compact);
+      };
       ipcRenderer.on("window:compact", listener);
-      return () => ipcRenderer.removeListener("window:compact", listener);
+      ipcRenderer.on("window:state", stateListener);
+      return () => {
+        ipcRenderer.removeListener("window:compact", listener);
+        ipcRenderer.removeListener("window:state", stateListener);
+      };
+    },
+    onStateChange(callback) {
+      const listener = (_event, state) => {
+        if (!state || typeof state !== "object") return;
+        callback({
+          maximized:
+            typeof state.maximized === "boolean" ? state.maximized : undefined,
+          compact:
+            typeof state.compact === "boolean" ? state.compact : undefined,
+          transitioning: state.transitioning === true,
+        });
+      };
+      ipcRenderer.on("window:state", listener);
+      return () => ipcRenderer.removeListener("window:state", listener);
     },
   });
 }
@@ -40,7 +70,8 @@ if (isLocalPage) {
   const CHANNELS = new Set(["state:get", "paused:set", "chat:retry"]);
   contextBridge.exposeInMainWorld("chisa", {
     invoke(channel, payload) {
-      if (!CHANNELS.has(channel)) return Promise.reject(new Error(`未知操作 ${channel}`));
+      if (!CHANNELS.has(channel))
+        return Promise.reject(new Error(`未知操作 ${channel}`));
       return ipcRenderer.invoke(channel, payload);
     },
     onState(callback) {
@@ -68,8 +99,11 @@ if (isLocalPage) {
           autoUpdate: bool(patch?.autoUpdate),
           hardwareAcceleration: bool(patch?.hardwareAcceleration),
           spellcheck: bool(patch?.spellcheck),
-          timezone: typeof patch?.timezone === "string" ? patch.timezone : undefined,
-          allowedEgressDomains: Array.isArray(patch?.allowedEgressDomains) ? patch.allowedEgressDomains : undefined,
+          timezone:
+            typeof patch?.timezone === "string" ? patch.timezone : undefined,
+          allowedEgressDomains: Array.isArray(patch?.allowedEgressDomains)
+            ? patch.allowedEgressDomains
+            : undefined,
         }),
       checkUpdate: () => ipcRenderer.invoke("pc:check-update"),
       installUpdate: () => ipcRenderer.invoke("pc:install-update"),
@@ -100,7 +134,10 @@ if (isLocalPage) {
       const root = document.documentElement;
       const skyAttr = root.getAttribute("data-sky");
       const canvasAttr = root.getAttribute("data-canvas");
-      const sky = skyAttr === "live" || skyAttr === "time" || (skyAttr === null && canvasAttr === "sky");
+      const sky =
+        skyAttr === "live" ||
+        skyAttr === "time" ||
+        (skyAttr === null && canvasAttr === "sky");
       ipcRenderer
         .invoke("pc:appearance", {
           dark: root.classList.contains("dark"),
@@ -120,7 +157,13 @@ if (isLocalPage) {
       report();
       new MutationObserver(schedule).observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ["class", "data-theme", "data-material", "data-canvas", "data-sky"],
+        attributeFilter: [
+          "class",
+          "data-theme",
+          "data-material",
+          "data-canvas",
+          "data-sky",
+        ],
       });
     });
     window.addEventListener("storage", schedule);

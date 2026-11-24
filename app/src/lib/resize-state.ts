@@ -33,7 +33,7 @@ function setResizing(next: boolean) {
   }
 }
 
-function onResize() {
+function scheduleSettle(ms: number) {
   window.clearTimeout(settleTimer);
   settleTimer = window.setTimeout(() => {
     settleTimer = 0;
@@ -42,12 +42,30 @@ function onResize() {
       raf = 0;
     }
     setResizing(false);
-  }, RESIZE_SETTLE_MS);
+  }, ms);
+}
+
+function onResize() {
+  scheduleSettle(RESIZE_SETTLE_MS);
   if (resizing || raf) return;
   raf = window.requestAnimationFrame(() => {
     raf = 0;
     setResizing(true);
   });
+}
+
+/**
+ * 主动窗口几何切换（如 PC 小窗竖屏↔横屏）前同步预挂 `data-resizing`，
+ * 确保单次原子 `setBounds` 跨断点首帧即受过渡与动画抑制保护，不等晚一帧的 rAF。
+ */
+export function beginResizing(settleMs: number = RESIZE_SETTLE_MS): void {
+  if (typeof window === "undefined") return;
+  if (raf) {
+    window.cancelAnimationFrame(raf);
+    raf = 0;
+  }
+  setResizing(true);
+  scheduleSettle(Math.max(RESIZE_SETTLE_MS, settleMs));
 }
 
 /** 应用入口调用一次；重复调用无副作用。返回值用于测试里拆掉。 */

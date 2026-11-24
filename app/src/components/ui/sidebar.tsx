@@ -173,10 +173,7 @@ function SidebarProvider({
             ...style,
           } as React.CSSProperties
         }
-        className={cn(
-          "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar",
-          className,
-        )}
+        className={cn("group/sidebar-wrapper flex min-h-svh w-full", className)}
         {...props}
       >
         {children}
@@ -212,8 +209,9 @@ function Sidebar({
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
   // 返回键 / 浏览器返回先关抽屉（CB-098，lib/overlay-back.ts）。
-  useBackDismiss(!parked && isMobile && openMobile && collapsible !== "none", () =>
-    setOpenMobile(false),
+  useBackDismiss(
+    !parked && isMobile && openMobile && collapsible !== "none",
+    () => setOpenMobile(false),
   );
   // 桌面侧栏收起时拨 `<body data-has-collapsed-sidebar>`（§41 ③）：以前用
   // `.glass-shell:has([data-slot="sidebar"][data-state="collapsed"])`，每次侧栏 / 任何 data-slot 元素挂上卸下都要在外壳上重算 :has。
@@ -245,7 +243,11 @@ function Sidebar({
         onOpenChange={(next, details) => {
           if (parked) return;
           // CB-106 r2：输入法组字时的 Esc 是取消候选词，不关抽屉（360 宽左栏是抽屉）。
-          if (!next && details?.reason === "escape-key" && isImeEscape(details.event)) {
+          if (
+            !next &&
+            details?.reason === "escape-key" &&
+            isImeEscape(details.event)
+          ) {
             details.cancel?.();
             return;
           }

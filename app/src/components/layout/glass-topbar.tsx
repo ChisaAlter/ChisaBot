@@ -4,6 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   cloneElement,
   type FocusEvent,
+  memo,
   type MouseEvent,
   type PointerEvent,
   type ReactElement,
@@ -25,6 +26,8 @@ import { currentUserQueryOptions } from "@/lib/auth/queries";
 import {
   canCompact,
   type DesktopWindowBridge,
+  desktopWindow,
+  triggerCompactToggle,
   useDesktopWindow,
 } from "@/lib/desktop-window";
 import { usePendingActionCount } from "@/lib/pending-actions";
@@ -87,14 +90,26 @@ export type ShellScope = "app" | "settings" | "admin";
  * 搜索会话在左栏卡片顶部；左栏开关在左栏卡片右上角（收起时在 80px 列顶），和右栏「面板」开关对称（#374 回退，DESIGN.md §9.1）。
  * 手机顶栏：左 ☰ 打开抽屉（有待处理审批 / 问题 / 确认时带红点）｜ 右 搜索按钮（打开抽屉并聚焦抽屉顶部的搜索框）。
  */
-export function GlassTopBar({
-  scope = "app",
-}: {
-  scope?: ShellScope;
-}) {
+/**
+ * 顶栏右上角 PC 窗口按钮订阅层：把 `useDesktopWindow()` 下沉到这层，
+ * 切换小窗/最大化只重渲这 4 个按钮，避免整条 GlassTopBar（品牌字、WorkingCrewStrip 等）陪跑重渲。
+ */
+const TopBarWindowControls = memo(function TopBarWindowControls() {
+  const desktop = useDesktopWindow();
+  if (!desktop) return null;
+  return (
+    <WindowControls
+      bridge={desktop.bridge}
+      compact={desktop.compact}
+      maximized={desktop.maximized}
+    />
+  );
+});
+
+export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
   const sidebar = useOptionalSidebar();
   const mobile = Boolean(sidebar?.isMobile);
-  const desktop = useDesktopWindow();
+  const bridge = desktopWindow();
   const drawerLabel =
     scope === "app"
       ? "机器人列表"
@@ -110,20 +125,20 @@ export function GlassTopBar({
       // 左栏收起 / PC 标题按钮个数直接写在顶栏上，CSS 不用挂在整个外壳上的 :has()（流式输出时会触发整页样式重算）。
       data-sidebar={sidebar && !mobile ? sidebar.state : undefined}
       data-winctrls={
-        desktop
+        bridge
           ? // macOS 的关闭 / 最小化 / 最大化是系统红绿灯（左上），这里只剩「小窗模式」一个按钮。
-            desktop.bridge.platform === "darwin"
-            ? canCompact(desktop.bridge)
+            bridge.platform === "darwin"
+            ? canCompact(bridge)
               ? 1
               : 0
-            : canCompact(desktop.bridge)
+            : canCompact(bridge)
               ? 4
               : 3
           : undefined
       }
       // PC 无边框窗口：空白处双击 = 最大化 / 还原（拖动由 -webkit-app-region 交给系统）。
       onDoubleClick={
-        desktop
+        bridge
           ? (event) => {
               if (
                 (event.target as HTMLElement).closest(
@@ -131,7 +146,7 @@ export function GlassTopBar({
                 )
               )
                 return;
-              desktop.bridge.toggleMaximize();
+              bridge.toggleMaximize();
             }
           : undefined
       }
@@ -167,13 +182,7 @@ export function GlassTopBar({
       <div className="glass-topbar-end">
         {mobile ? <MobileSearchButton scope={scope} /> : null}
       </div>
-      {desktop ? (
-        <WindowControls
-          bridge={desktop.bridge}
-          compact={desktop.compact}
-          maximized={desktop.maximized}
-        />
-      ) : null}
+      {bridge ? <TopBarWindowControls /> : null}
     </header>
   );
 }
@@ -214,7 +223,7 @@ const COMPACT_KEYS = /Mac/.test(navigator.userAgent) ? "⌘⇧M" : "Ctrl+Shift+M
  * PC 无边框窗口右上角：Windows 11 传统标题按钮（46×40，贴在窗口右上角，无胶囊底）；关闭悬停 #c42b1c 红底白字。
  * 最左边是「小窗模式 / 恢复窗口」（DESIGN.md §36，PC 客户端支持时才有）；小窗里四个按钮收窄到 36px。
  */
-export function WindowControls({
+export const WindowControls = memo(function WindowControls({
   bridge,
   maximized,
   compact = false,
@@ -241,7 +250,7 @@ export function WindowControls({
           aria-label={compactLabel}
           aria-pressed={compact}
           className="win-ctrl is-compact-toggle"
-          onClick={() => bridge.toggleCompact?.()}
+          onClick={() => triggerCompactToggle(bridge)}
           title={`${compactLabel}（${COMPACT_KEYS}）`}
           type="button"
         >
@@ -387,7 +396,7 @@ export function WindowControls({
       )}
     </div>
   );
-}
+});
 
 /** The roster element the toggle points its `aria-controls` at. */
 export const ROSTER_ID = "chisabot-bot-list";
