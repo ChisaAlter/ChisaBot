@@ -34,10 +34,8 @@
     );
     --mat-panel-bg-hold: var(--mat-glass-panel-hold);
     --mat-panel-blur: blur(20px) saturate(160%);
-    --mat-panel-border: rgba(255, 255, 255, 0.56);
-    --mat-panel-hl:
-      inset 0 1px 0 rgba(255, 255, 255, 0.8),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+    --mat-panel-border: transparent;
+    --mat-panel-hl: inset 0 1px 0 rgba(255, 255, 255, 0.32);
     --mat-panel-shadow: var(--card-shadow);
 
     --mat-elevated-bg: linear-gradient(
@@ -47,10 +45,8 @@
     );
     --mat-elevated-bg-hold: var(--mat-glass-elevated-hold);
     --mat-elevated-blur: blur(12px) saturate(160%);
-    --mat-elevated-border: rgba(255, 255, 255, 0.64);
-    --mat-elevated-hl:
-      inset 0 1px 0 rgba(255, 255, 255, 0.84),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.48);
+    --mat-elevated-border: transparent;
+    --mat-elevated-hl: inset 0 1px 0 rgba(255, 255, 255, 0.4);
     --mat-elevated-shadow: var(--shadow-3);
 
     --mat-bubble-bg: linear-gradient(
@@ -59,10 +55,8 @@
       var(--mat-glass-bubble-2) 100%
     );
     --mat-bubble-blur: blur(8px) saturate(155%);
-    --mat-bubble-border: rgba(255, 255, 255, 0.58);
-    --mat-bubble-hl:
-      inset 0 1px 0 rgba(255, 255, 255, 0.78),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.36);
+    --mat-bubble-border: transparent;
+    --mat-bubble-hl: inset 0 1px 0 rgba(255, 255, 255, 0.28);
     --mat-bubble-shadow: var(--shadow-1);
 
     --mat-inset-bg: rgba(15, 23, 42, 0.05);
@@ -70,33 +64,27 @@
     --mat-inset-hl: none;
 
     --mat-control-bg: var(--mat-glass-control);
-    --mat-control-border: rgba(255, 255, 255, 0.56);
-    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+    --mat-control-border: transparent;
+    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.28);
     --mat-control-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
   }
 
   :where(html.dark[data-material="glass"], html.dark:not([data-material])) {
-    --mat-panel-border: rgba(255, 255, 255, 0.12);
-    --mat-panel-hl:
-      inset 0 1px 0 rgba(255, 255, 255, 0.14),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    --mat-panel-border: rgba(255, 255, 255, 0.08);
+    --mat-panel-hl: inset 0 1px 0 rgba(255, 255, 255, 0.1);
 
-    --mat-elevated-border: rgba(255, 255, 255, 0.14);
-    --mat-elevated-hl:
-      inset 0 1px 0 rgba(255, 255, 255, 0.16),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+    --mat-elevated-border: rgba(255, 255, 255, 0.1);
+    --mat-elevated-hl: inset 0 1px 0 rgba(255, 255, 255, 0.12);
 
-    --mat-bubble-border: rgba(255, 255, 255, 0.12);
-    --mat-bubble-hl:
-      inset 0 1px 0 rgba(255, 255, 255, 0.13),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+    --mat-bubble-border: rgba(255, 255, 255, 0.07);
+    --mat-bubble-hl: inset 0 1px 0 rgba(255, 255, 255, 0.09);
 
     --mat-inset-bg: rgba(255, 255, 255, 0.065);
     --mat-inset-border: var(--line);
     --mat-inset-hl: none;
 
-    --mat-control-border: rgba(255, 255, 255, 0.12);
-    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    --mat-control-border: rgba(255, 255, 255, 0.08);
+    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.09);
     --mat-control-shadow: 0 6px 18px rgba(0, 0, 0, 0.26);
   }
 
@@ -108,10 +96,8 @@
     );
     --mat-panel-bg-hold: var(--mat-clear-panel-hold);
     --mat-panel-blur: blur(16px) saturate(180%);
-    --mat-panel-border: rgba(255, 255, 255, 0.72);
-    --mat-panel-hl:
-      inset 0 1.5px 0 rgba(255, 255, 255, 0.92),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+    --mat-panel-border: transparent;
+    --mat-panel-hl: inset 0 1px 0 rgba(255, 255, 255, 0.42);
     --mat-panel-shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
 
     --mat-elevated-bg: linear-gradient(
@@ -121,10 +107,8 @@
     );
     --mat-elevated-bg-hold: var(--mat-clear-elevated-hold);
     --mat-elevated-blur: blur(12px) saturate(175%);
-    --mat-elevated-border: rgba(255, 255, 255, 0.76);
-    --mat-elevated-hl:
-      inset 0 1.5px 0 rgba(255, 255, 255, 0.94),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.52);
+    --mat-elevated-border: transparent;
+    --mat-elevated-hl: inset 0 1px 0 rgba(255, 255, 255, 0.48);
     --mat-elevated-shadow: var(--shadow-3);
 
     --mat-bubble-bg: linear-gradient(
@@ -133,64 +117,50 @@
       var(--mat-clear-bubble-2) 100%
     );
     --mat-bubble-blur: blur(6px) saturate(170%);
-    --mat-bubble-border: rgba(255, 255, 255, 0.68);
-    --mat-bubble-hl:
-      inset 0 1px 0 rgba(255, 255, 255, 0.88),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.44);
+    --mat-bubble-border: transparent;
+    --mat-bubble-hl: inset 0 1px 0 rgba(255, 255, 255, 0.36);
     --mat-bubble-shadow: 0 6px 20px rgba(15, 23, 42, 0.07);
 
     --mat-inset-bg: rgba(255, 255, 255, 0.42);
-    --mat-inset-border: rgba(255, 255, 255, 0.58);
-    --mat-inset-hl: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+    --mat-inset-border: rgba(15, 23, 42, 0.06);
+    --mat-inset-hl: inset 0 1px 0 rgba(255, 255, 255, 0.24);
 
     --mat-control-bg: var(--mat-clear-control);
-    --mat-control-border: rgba(255, 255, 255, 0.68);
-    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.84);
+    --mat-control-border: transparent;
+    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.36);
     --mat-control-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
   }
 
   :where(html.dark[data-material="clear"]) {
-    --mat-panel-border: rgba(255, 255, 255, 0.18);
-    --mat-panel-hl:
-      inset 0 1.5px 0 rgba(255, 255, 255, 0.22),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.11);
+    --mat-panel-border: rgba(255, 255, 255, 0.12);
+    --mat-panel-hl: inset 0 1px 0 rgba(255, 255, 255, 0.14);
     --mat-panel-shadow: 0 10px 32px rgba(0, 0, 0, 0.34);
 
-    --mat-elevated-border: rgba(255, 255, 255, 0.2);
-    --mat-elevated-hl:
-      inset 0 1.5px 0 rgba(255, 255, 255, 0.24),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+    --mat-elevated-border: rgba(255, 255, 255, 0.13);
+    --mat-elevated-hl: inset 0 1px 0 rgba(255, 255, 255, 0.16);
 
-    --mat-bubble-border: rgba(255, 255, 255, 0.18);
-    --mat-bubble-hl:
-      inset 0 1px 0 rgba(255, 255, 255, 0.2),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    --mat-bubble-border: rgba(255, 255, 255, 0.1);
+    --mat-bubble-hl: inset 0 1px 0 rgba(255, 255, 255, 0.12);
     --mat-bubble-shadow: var(--shadow-1);
 
     --mat-inset-bg: rgba(16, 23, 38, 0.42);
-    --mat-inset-border: rgba(255, 255, 255, 0.14);
-    --mat-inset-hl: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    --mat-inset-border: rgba(255, 255, 255, 0.11);
+    --mat-inset-hl: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 
-    --mat-control-border: rgba(255, 255, 255, 0.16);
-    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+    --mat-control-border: rgba(255, 255, 255, 0.11);
+    --mat-control-hl: inset 0 1px 0 rgba(255, 255, 255, 0.11);
     --mat-control-shadow: 0 6px 18px rgba(0, 0, 0, 0.26);
   }
 
   /* ── 0b. 主题质感边线 / 高光 / 阴影微调（位于 solid 之前，仅作用于 glass / clear） ──── */
   :where(html[data-theme="porcelain"]) {
-    --mat-panel-border: rgba(255, 255, 255, 0.78);
-    --mat-panel-hl:
-      inset 0 1.5px 0 var(--surface-hl-top),
-      inset 0 0 0 1px var(--surface-hl-ring);
-    --mat-elevated-border: rgba(255, 255, 255, 0.84);
-    --mat-elevated-hl:
-      inset 0 1.5px 0 var(--surface-hl-top),
-      inset 0 0 0 1px var(--surface-hl-ring);
-    --mat-bubble-border: rgba(255, 255, 255, 0.76);
-    --mat-bubble-hl:
-      inset 0 1px 0 var(--surface-hl-top),
-      inset 0 0 0 1px var(--surface-hl-ring);
-    --mat-control-border: rgba(255, 255, 255, 0.74);
+    --mat-panel-border: transparent;
+    --mat-panel-hl: inset 0 1px 0 var(--surface-hl-top);
+    --mat-elevated-border: transparent;
+    --mat-elevated-hl: inset 0 1px 0 var(--surface-hl-top);
+    --mat-bubble-border: transparent;
+    --mat-bubble-hl: inset 0 1px 0 var(--surface-hl-top);
+    --mat-control-border: transparent;
     --mat-control-hl: inset 0 1px 0 var(--surface-hl-top);
   }
 

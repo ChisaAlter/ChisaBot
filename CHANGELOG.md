@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.188 — 2026-11-25
+
+全端版本 `0.1.188`，Android `versionCode 368`：恢复默认 `glass`（磨砂）与 `clear`（通透）材质的无生硬白边、通透柔和磨砂质感，并同步 PC 端原生令牌与指纹。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `07964e288351b644`；无新增数据库迁移。
+
+- **无白边柔和磨砂质感恢复（`e3033865`）**：
+  - 去除浅色 `glass` / `clear` / `porcelain` 表面上的实体白框与 `inset 0 0 0 1px` 全圈白环（`materials.css`），仅保留轻柔顶部微光，并柔和化左栏选中行内环（`styles.css`）。
+  - 下调 `sky` / `pure` 画布下的预合成色标不透明度使背景与柔焦自然透出（`tokens.css`），并在 `html[data-canvas="wallpaper"]` 下自动加厚玻璃釉面保底对比度，全矩阵通过 WCAG AA（≥ 4.5:1）；同步更新 `pc/src/ui/skyglass-tokens.css` 并补充 `bubble-and-panel-surface.test.ts` 回归门禁。
+
 ## 0.1.187 — 2026-11-25
 
 全端版本 `0.1.187`，Android `versionCode 367`：新增精简模式、对话内 GitHub 与个人数据源连接卡片及本机 Antigravity 托管代理支持，落地全局 P0/P1 安全与运行时增强并打通 PC 安全自检与手动更新、群聊收敛交互与 MCP auto 模式 UI；同步合并 Claude 全站衬线与 DeepSeek DSH 主题（#586）、左右面板持底防跳变与气泡单通道（#587）、对话内连接续聊（#588）及 DSH 依赖升级修复（#584）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `b1398c68b9ffb62c`；无新增数据库迁移。

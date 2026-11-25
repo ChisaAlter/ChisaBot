@@ -105,3 +105,41 @@ test("面板与抽屉开合不叠加透明度淡入：rail-sheet 锁定 opacity:
   expect(sideFullBody).not.toContain("glass-fade-in");
   expect(miniBody).not.toContain("glass-fade-in");
 });
+
+test("默认 glass / clear 浅色表面去除生硬白边，保持通透柔和磨砂质感且壁纸画布自动保底加厚", () => {
+  for (const material of ["glass", "clear"] as const) {
+    const scope =
+      material === "glass"
+        ? ':where(html[data-material="glass"], html:not([data-material]))'
+        : ':where(html[data-material="clear"])';
+    const body = extractRuleBody(materialsCss, scope);
+    for (const role of ["panel", "elevated", "bubble", "control"] as const) {
+      expect(body).toMatch(new RegExp(`--mat-${role}-border:\\s*transparent;`));
+      const hlMatch = body.match(new RegExp(`--mat-${role}-hl:\\s*([^;]+);`));
+      expect(hlMatch).toBeTruthy();
+      expect(hlMatch?.[1] ?? "").not.toContain("inset 0 0 0 1px");
+    }
+  }
+
+  const rootBody = extractRuleBody(tokensCss, ":root");
+  for (const token of [
+    "--mat-glass-panel-1",
+    "--mat-glass-panel-2",
+    "--mat-glass-bubble-1",
+    "--mat-glass-bubble-2",
+  ]) {
+    const m = rootBody.match(
+      new RegExp(`${token}:\\s*color-mix\\([\\s\\S]*?\\/\\s*(0\\.\\d+)\\)`),
+    );
+    expect(m).toBeTruthy();
+    expect(Number(m?.[1])).toBeLessThanOrEqual(0.58);
+  }
+
+  const wallpaperBody = extractRuleBody(
+    tokensCss,
+    'html[data-canvas="wallpaper"]',
+  );
+  expect(wallpaperBody).toContain("--ink-4: var(--ink-3);");
+  expect(wallpaperBody).toContain("--mat-glass-panel-1:");
+  expect(wallpaperBody).toContain("--mat-clear-bubble-1:");
+});
