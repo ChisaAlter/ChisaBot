@@ -1,5 +1,10 @@
 ## Unreleased
 
+## 0.1.189 — 2026-11-25
+
+- 全端发版：`0.1.189`，Android `versionCode 369`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `c46c70aad9734565`；无新增数据库迁移。
+- **输入框语音输入统一接入后台 ASR 配置（#592）**：`/api/audio/transcriptions` 与 `/api/capabilities.transcription` 统一接入 `speechService`（沿用 `/admin/models` 语音设置 → `SPEECH_ASR_*` → `TRANSCRIPTION_*`），放宽 `/api/speech/asr` 空闲超时，保存语音设置后即时失效前端缓存；彻底移除浏览器 `Web Speech API`（`SpeechRecognition`）兜底路径，未配置服务端 ASR 时隐藏输入框语音按钮（`server/src/{dictation/routes.ts,app.ts,index.ts}` · `app/src/{lib/dictation/recording.ts,components/channels/composer/use-dictation.ts,components/settings/speech-settings.tsx}`）。
+
 ## 0.1.188 — 2026-11-25
 
 - 全端发版：`0.1.188`，Android `versionCode 368`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `07964e288351b644`；无新增数据库迁移。

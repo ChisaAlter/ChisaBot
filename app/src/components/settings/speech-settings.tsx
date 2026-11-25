@@ -38,6 +38,8 @@ import {
   testSpeechAsr,
   testSpeechTts,
 } from "@/lib/audio/speech";
+import { deploymentKeys } from "@/lib/deployment/queries";
+import { voiceKeys } from "@/lib/voice/call-client";
 
 /**
  * 语音服务（ASR / TTS）管理员配置区：挂载在 `/admin/models` 页面底部。
@@ -229,7 +231,13 @@ function SpeechSettingsCard({ current }: { current: SpeechSettingsView }) {
       });
       setDraft(draftFromView(saved));
       toast.success("语音服务设置已保存。");
-      await queryClient.invalidateQueries({ queryKey: speechKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: speechKeys.all }),
+        queryClient.invalidateQueries({ queryKey: voiceKeys.all }),
+        queryClient.invalidateQueries({
+          queryKey: deploymentKeys.capabilities(),
+        }),
+      ]);
     },
     { errorToast: (error) => error.message },
   );

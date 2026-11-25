@@ -6,12 +6,17 @@ import {
   dictationMediaType,
   MAX_DICTATION_BYTES,
 } from "../../../shared/dictation";
+import { SpeechServiceError } from "../audio/speech-service";
 import type { AppVariables } from "../auth/guards";
 import { TranscriptionError, type TranscriptionProvider } from "./provider";
 
+export type DictationService = TranscriptionProvider & {
+  isReady?: () => Promise<boolean> | boolean;
+};
+
 export function createDictationRoutes(
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
-  provider: TranscriptionProvider | undefined,
+  provider: DictationService | undefined,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
   const active = new Set<string>();
@@ -25,6 +30,14 @@ export function createDictationRoutes(
       }
       if (!provider)
         return context.json({ error: "Dictation is not configured." }, 503);
+      if (provider.isReady) {
+        const ready = await Promise.resolve(provider.isReady()).catch(
+          () => false,
+        );
+        if (!ready) {
+          return context.json({ error: "Dictation is not configured." }, 503);
+        }
+      }
       const actorId = context.var.actor.id;
       if (active.has(actorId) || active.size >= 8) {
         return context.json(
@@ -96,6 +109,9 @@ export function createDictationRoutes(
             },
             504,
           );
+        }
+        if (error instanceof SpeechServiceError) {
+          return context.json({ error: error.message }, error.status);
         }
         return context.json(
           {

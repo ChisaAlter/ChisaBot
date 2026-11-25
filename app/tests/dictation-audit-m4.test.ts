@@ -1,7 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import {
   DICTATION_NO_SPEECH_MESSAGE,
-  DICTATION_OFFLINE_MESSAGE,
   DICTATION_UPLOAD_NETWORK_MESSAGE,
   DICTATION_UPLOAD_OFFLINE_MESSAGE,
   DictationError,
@@ -10,8 +9,6 @@ import {
   MIC_DENIED_PC_MESSAGE,
   micDeniedMessage,
   micPlatform,
-  type Recording,
-  startSpeechRecognitionRecording,
   transcribeRecording,
 } from "@/lib/dictation/recording";
 import {
@@ -24,7 +21,6 @@ import {
  * re-transcribe an empty result, and a missing network must be named as such.
  */
 
-const BROWSER_SPEECH_MIME = "application/x-chisabot-speech";
 const realFetch = globalThis.fetch;
 const g = globalThis as unknown as { window?: unknown };
 const realWindow = g.window;
@@ -43,35 +39,6 @@ afterEach(() => {
 });
 
 const signal = () => new AbortController().signal;
-
-test("an empty browser-recognition result re-records on retry instead of re-reading it", async () => {
-  let recordings = 0;
-  const inserted: string[] = [];
-  const session = new DictationSession({
-    record: async () => {
-      recordings++;
-      const text = recordings === 1 ? "" : "你好";
-      return {
-        finish: async () => new Blob([text], { type: BROWSER_SPEECH_MIME }),
-        cancel() {},
-      };
-    },
-    transcribe: transcribeRecording,
-    onTranscript: (text) => inserted.push(text),
-  });
-  await session.start();
-  await session.finish();
-  expect(session.getSnapshot()).toMatchObject({
-    phase: "error",
-    canRetry: false,
-    error: DICTATION_NO_SPEECH_MESSAGE,
-  });
-  await session.retry();
-  expect(recordings).toBe(2);
-  expect(session.getSnapshot().phase).toBe("recording");
-  await session.finish();
-  expect(inserted).toEqual(["你好"]);
-});
 
 test("a server that heard nothing makes retry record again, not resend the same audio", async () => {
   let recordings = 0;
@@ -126,17 +93,6 @@ test("a network failure while uploading keeps the audio and retry uploads it aga
   expect(seen).toEqual([audio, audio]);
 });
 
-test("an empty browser result while offline says there is no network, not no speech", async () => {
-  setOnline(false);
-  const error = await transcribeRecording(
-    new Blob([""], { type: BROWSER_SPEECH_MIME }),
-    signal(),
-  ).catch((e: unknown) => e);
-  expect(error).toBeInstanceOf(DictationError);
-  expect((error as DictationError).message).toBe(DICTATION_OFFLINE_MESSAGE);
-  expect((error as DictationError).rerecord).toBe(true);
-});
-
 test("uploading while offline names the network and does not call the server", async () => {
   setOnline(false);
   let called = 0;
@@ -169,39 +125,8 @@ test("a fetch network error is reported in Chinese and keeps the audio retryable
   expect((error as DictationError).rerecord).toBe(false);
 });
 
-class FakeRecognition {
-  static last?: FakeRecognition;
-  lang = "";
-  continuous = false;
-  interimResults = false;
-  onresult: unknown = null;
-  onerror: ((event: { error?: string }) => void) | null = null;
-  onend: (() => void) | null = null;
-  constructor() {
-    FakeRecognition.last = this;
-  }
-  start() {}
-  stop() {}
-  abort() {}
-}
-
-async function recognitionError(code: string): Promise<string> {
-  g.window = { webkitSpeechRecognition: FakeRecognition };
-  const errors: Error[] = [];
-  const recording: Recording = await startSpeechRecognitionRecording((e) =>
-    errors.push(e),
-  );
-  FakeRecognition.last?.onerror?.({ error: code });
-  recording.cancel();
-  return errors[0]?.message ?? "";
-}
-
-test("browser recognition's network error says there is no network", async () => {
-  expect(await recognitionError("network")).toBe(DICTATION_OFFLINE_MESSAGE);
-});
-
 test("a denied microphone tells the user where to allow it", async () => {
-  expect(await recognitionError("not-allowed")).toBe(MIC_DENIED_MESSAGE);
+  expect(micDeniedMessage("browser")).toBe(MIC_DENIED_MESSAGE);
   expect(MIC_DENIED_MESSAGE).toContain("地址栏");
   expect(MIC_DENIED_MESSAGE).toContain("允许");
   const session = new DictationSession({
