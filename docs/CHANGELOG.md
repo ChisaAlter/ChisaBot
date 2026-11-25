@@ -1,7 +1,10 @@
 ## Unreleased
 
-- **移除聊天直连子代理入口、增强任务卡片续聊与补丁预览并修复子代理运行时缺陷（`feat/subagent-card-drop-direct-chat`，DESIGN §132）**：移除 `SubagentPickerChip`、`channel-chat.tsx` `@子代理` 直连与 `DirectSubagentRuntimeAgent`（定时任务/任务中心直派及 `subagent_*`/`agent_<slug>` 工具链保持不变）；增强 `LocalAgentCard` unified patch diff 预览、`needs_input` 追问表单与多轮续聊输入框，并修复 `AddProviderDialog` slug 冲突后缀、`guidanceText` 续聊引导、嵌套 `agent_subcall` `profile` 只收紧不放宽、PC 外部驱动伪造 `sess-<taskId>` 毒化及 `.asar` 下 `CHISABOT_SUBAGENT_CLI` 路径（`channel-chat.tsx` · `local-agent-card.tsx` · `agent-providers-page.tsx` · `local-agents/service.ts` · `pc/src/agent-runtime/{index,subagent-bridge}.js`）。
-- **用户电脑后台无感操控全链路与 `agent-desktop` 旁路驱动**：新增 `desktop_windows` / `desktop_snapshot` / `desktop_act` / `window_screenshot`（PC 端常驻 Windows UIA 10 类 Pattern 与 `PrintWindow` 离屏按窗截屏、macOS 无 `frontmost` 后台 AX 与 `screencapture -l`、`DesktopDriver` SPI 旁路对接本机 `agent-desktop` 并强制禁用 `--headed`；服务端 `desktop-snapshot-store.ts` 严格反解 `@<snapshotId>:eN` 与不可信标注、四层自保护、密码框脱敏及 `directionEpoch` 回合授权闭环；按 `hello.features` 向下兼容老客户端，更新桌面客户端后生效，无新增数据库迁移；`shared/devices.ts` · `pc/src/{accessibility-bridge,agent/*,main,headless}.js` · `server/src/{devices/*,computer/desktop-browser-bridge,index}.ts`）。
+## 0.1.190 — 2026-11-25
+
+- 全端发版：`0.1.190`，Android `versionCode 370`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `4315e3bde1bc9a04`；无新增数据库迁移。
+- **移除聊天直连子代理入口、增强任务卡片续聊与补丁预览并修复子代理运行时缺陷（#589，DESIGN §132）**：移除 `SubagentPickerChip`、`channel-chat.tsx` `@子代理` 直连与 `DirectSubagentRuntimeAgent`（定时任务/任务中心直派及 `subagent_*`/`agent_<slug>` 工具链保持不变）；增强 `LocalAgentCard` unified patch diff 预览、`needs_input` 追问表单与多轮续聊输入框，并修复 `AddProviderDialog` slug 冲突后缀、`guidanceText` 续聊引导、嵌套 `agent_subcall` `profile` 只收紧不放宽、PC 外部驱动伪造 `sess-<taskId>` 毒化及 `.asar` 下 `CHISABOT_SUBAGENT_CLI` 路径（`channel-chat.tsx` · `local-agent-card.tsx` · `agent-providers-page.tsx` · `local-agents/service.ts` · `pc/src/agent-runtime/{index,subagent-bridge}.js`）。
+- **用户电脑后台无感操控全链路与 `agent-desktop` 旁路驱动（#591）**：新增 `desktop_windows` / `desktop_snapshot` / `desktop_act` / `window_screenshot`（PC 端常驻 Windows UIA 10 类 Pattern 与 `PrintWindow` 离屏按窗截屏、macOS 无 `frontmost` 后台 AX 与 `screencapture -l`、`DesktopDriver` SPI 旁路对接本机 `agent-desktop` 并强制禁用 `--headed`；服务端 `desktop-snapshot-store.ts` 严格反解 `@<snapshotId>:eN` 与不可信标注、四层自保护、密码框脱敏及 `directionEpoch` 回合授权闭环；按 `hello.features` 向下兼容老客户端，更新桌面客户端后生效，无新增数据库迁移；`shared/devices.ts` · `pc/src/{accessibility-bridge,agent/*,main,headless}.js` · `server/src/{devices/*,computer/desktop-browser-bridge,index}.ts`）。
 
 ## 0.1.189 — 2026-11-25
 
