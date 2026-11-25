@@ -144,7 +144,7 @@ async function createSubagentBridge(options) {
   );
 
   // 若运行在 Electron app.asar 内，将 stdio 桥脚本提取到外部临时目录供外部 CLI 的 node 进程读取。
-  let scriptPath = MCP_STDIO_SCRIPT;
+  let scriptPath = options.mcpStdioScript || MCP_STDIO_SCRIPT;
   if (scriptPath.includes(".asar") && fs.existsSync(scriptPath)) {
     const extracted = path.join(tempDir, "subagent-mcp-stdio.js");
     fs.writeFileSync(extracted, fs.readFileSync(scriptPath, "utf8"), {
@@ -211,7 +211,7 @@ async function createSubagentBridge(options) {
     );
   }
 
-  const cliHint = `"${runner.command}" "${MCP_STDIO_SCRIPT}" --bridge-file "${bridgeFile}" --cli`;
+  const cliHint = `"${runner.command}" "${scriptPath}" --bridge-file "${bridgeFile}" --cli`;
 
   let closed = false;
   async function close() {
@@ -229,6 +229,7 @@ async function createSubagentBridge(options) {
     depth,
     maxDepth,
     bridgeFile,
+    scriptPath,
     claudeMcpConfigPath,
     acpMcpServers,
     codexConfigArgs,

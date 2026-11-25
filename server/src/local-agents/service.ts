@@ -41,6 +41,7 @@ import {
   ISOLATION_INFO,
   ISOLATIONS,
   type Isolation,
+  isAgentProfile,
   isInsideRoots,
   type LlmContentPart,
   type LlmMessage,
@@ -2292,6 +2293,13 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
               });
             }
             const subMode = params.mode === "async" ? "async" : "wait";
+            const parentProfile: AgentProfile = isAgentProfile(row.profile)
+              ? row.profile
+              : "readonly";
+            const requestedProfile = isAgentProfile(params.profile)
+              ? params.profile
+              : undefined;
+            const subProfile = narrowerProfile(parentProfile, requestedProfile);
             const outcome = await runSubagent({
               ownerUserId: row.owner_user_id,
               botId: row.agent_id,
@@ -2305,7 +2313,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
                 typeof params.cwd === "string" && params.cwd.trim()
                   ? params.cwd.trim()
                   : (row.cwd ?? undefined),
-              profile: row.profile as AgentProfile,
+              profile: subProfile,
               mode: subMode,
               parentTaskId: row.id,
               depth: parentDepth + 1,
@@ -3902,6 +3910,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       "Subagents & Configured Agent Providers (可调用的子代理与本地智能体)：",
       "- 当需要把代码检索、工程实现、重构修复、专项审查或独立子任务委派给已配置好的智能体时，优先使用 `subagent_run` 或对应的 `agent_<slug>` 专属工具。",
       "- 调用模式：`mode = 'wait'`（默认推荐用于分析、问答、中短耗时编程任务）会等待子代理执行完毕并在当前回合直接返回 `{ summary, diff, error }`，拿到结果后直接向用户汇报，无需再等后台消息；`mode = 'async'` 用于耗时较长的大型任务，会立即返回并在聊天里展示实时任务卡片，结束后作为 `⟦chisabot:local-agent-result:...⟧` 消息回到对话。",
+      "- 当对已完成的子代理任务追加修改、继续调查，或回答处于 `needs_input` 状态的子代理追问时，优先调用 `local_agent_continue`（传入原 `taskId` 或 `sessionId`）复用原有工作区与会话，不要重复新建任务丢失已有上下文和未应用改动。",
       "- 子代理看不到当前聊天上下文，调用时务必在 `task` 参数中写清楚完整背景、目标文件、约束条件与验收标准。",
       ...(instLines.length
         ? ["当前已授权在线的子代理实例：", ...instLines]

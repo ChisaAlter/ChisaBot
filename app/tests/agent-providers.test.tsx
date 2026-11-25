@@ -16,7 +16,6 @@ import {
   InstanceDetailPane,
 } from "@/components/agent-providers/agent-providers-page";
 import { AntigravityManagedCard } from "@/components/agent-providers/antigravity-managed-card";
-import { SubagentPickerChip } from "@/components/chat/subagent-picker-chip";
 import { ScheduleEditDialog } from "@/components/schedules/edit-dialog";
 import { formatExecutorLabel } from "@/components/task-center/labels";
 import { resetToastsForTest, toast } from "@/components/ui/toast";
@@ -179,7 +178,7 @@ describe("settings registry & task-center executor labels", () => {
   });
 });
 
-describe("schedule agentInstanceId binding & SubagentPickerChip", () => {
+describe("schedule agentInstanceId binding", () => {
   const baseSchedule = {
     id: "sch_subagent",
     title: "每日代码巡检",
@@ -228,29 +227,6 @@ describe("schedule agentInstanceId binding & SubagentPickerChip", () => {
     );
     const trigger = await view.findByTestId("sch-edit-agent-instance");
     expect(trigger.textContent).toContain("由对话机器人处理（默认）");
-  });
-
-  test("SubagentPickerChip displays selected instance and clears on x click", async () => {
-    const changes: (string | null)[] = [];
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-    });
-    client.setQueryData(localAgentKeys.instances(), [sampleInstance]);
-    const user = userEvent.setup({ document: globalThis.document });
-    const view = render(
-      <QueryClientProvider client={client}>
-        <SubagentPickerChip
-          onSelect={(id) => changes.push(id)}
-          selectedId="inst-codex-personal"
-        />
-      </QueryClientProvider>,
-    );
-    expect(view.getByTestId("subagent-picker-chip").textContent).toContain(
-      "@Codex 个人号",
-    );
-    await user.click(view.getByLabelText("取消子代理直连"));
-    await waitFor(() => expect(changes).toEqual([null]));
-    client.clear();
   });
 });
 

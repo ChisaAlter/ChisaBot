@@ -756,7 +756,7 @@ export function AgentProvidersPage() {
 
       <AddProviderDialog
         environmentId={activeEnvId}
-        existingCount={instances.length}
+        existingSlugs={instances.map((item) => item.slug)}
         onCreated={(created) => {
           setSelectedInstanceId(created.id);
           void invalidateAgentProviderQueries(queryClient, activeEnvId);
@@ -1865,17 +1865,33 @@ export function InstanceDetailPane({
   );
 }
 
+export function nextUniqueProviderSlug(
+  baseSlug: string,
+  existingSlugs: readonly string[],
+): string {
+  const taken = new Set(
+    existingSlugs.map((slug) => slug.trim().toLowerCase()).filter(Boolean),
+  );
+  const base = baseSlug.trim().toLowerCase();
+  if (!taken.has(base)) return baseSlug;
+  let suffix = 2;
+  while (taken.has(`${base}-${suffix}`)) {
+    suffix += 1;
+  }
+  return `${baseSlug}-${suffix}`;
+}
+
 function AddProviderDialog({
   open,
   onOpenChange,
   environmentId,
-  existingCount,
+  existingSlugs,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   environmentId: string;
-  existingCount: number;
+  existingSlugs: readonly string[];
   onCreated: (instance: AgentInstanceView) => void;
 }) {
   const [tab, setTab] = useState<"presets" | "acp">("presets");
@@ -1895,10 +1911,7 @@ function AddProviderDialog({
         environmentId,
         driver: preset.driver,
         name: preset.name,
-        slug:
-          existingCount > 0
-            ? `${preset.slug}-${existingCount + 1}`
-            : preset.slug,
+        slug: nextUniqueProviderSlug(preset.slug, existingSlugs),
         description: preset.description,
         enabled: true,
         exposeAsTool: true,
@@ -1922,7 +1935,7 @@ function AddProviderDialog({
         environmentId,
         driver: "acp",
         name: entry.name,
-        slug: entry.id,
+        slug: nextUniqueProviderSlug(entry.id, existingSlugs),
         description: entry.description,
         enabled: true,
         exposeAsTool: true,
