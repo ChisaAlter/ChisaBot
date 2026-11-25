@@ -2,10 +2,15 @@
 
 ## Unreleased
 
-- **移除聊天直连子代理入口、增强任务卡片续聊与补丁预览并修复子代理运行时缺陷（DESIGN §132）**：
+## 0.1.190 — 2026-11-25
+
+全端版本 `0.1.190`，Android `versionCode 370`：移除聊天直连子代理入口并增强任务卡片续聊与补丁预览（#589），上线后台无感电脑操控全链路与 `agent-desktop` 旁路驱动（#591）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `4315e3bde1bc9a04`；无新增数据库迁移。
+
+- **移除聊天直连子代理入口、增强任务卡片续聊与补丁预览并修复子代理运行时缺陷（#589，DESIGN §132）**：
   - 移除聊天输入框底栏 `SubagentPickerChip`、`@智能体` 直连路由与 `DirectSubagentRuntimeAgent`，聊天内统一由主机器人带完整上下文调用子代理工具（`subagent_*` / `agent_<slug>` / `local_agent_continue`），定时任务 `agentInstanceId` 与任务中心 `agent:<id>` 直派保持不变（无新增数据库迁移，无需手动操作）。
   - 增强 `LocalAgentCard` 任务卡片：支持展开查看 unified patch diff 预览、`needs_input` 交互式追问表单及已完成可续接卡片的多轮续聊输入；同步修复提供方弹窗 `slug` 冲突后缀、服务端 `guidanceText` 引导与嵌套 `agent_subcall` `profile` 只收紧不放宽校验、以及 PC 端外部驱动伪造 `sess-<taskId>` 毒化与 `.asar` 下 `CHISABOT_SUBAGENT_CLI` 路径问题。
-- **用户电脑后台无感操控全链路与 `agent-desktop` 旁路驱动**：新增 `desktop_windows` / `desktop_snapshot` / `desktop_act` / `window_screenshot` 能力（PC 端内置常驻 Windows UIA 10 类 Pattern 与 `PrintWindow` 离屏按窗截屏、macOS 无 `frontmost` 后台 AX 与 `screencapture -l`、`DesktopDriver` SPI 旁路接入本机 `agent-desktop` 且强制 headless；服务端 `DesktopSnapshotStore` `@<snapshotId>:eN` 反解与不可信内容标注、四层自保护黑名单、密码框禁止回读与 `directionEpoch` 回合授权闭环）。按 `hello.features` 向下兼容旧桌面客户端，更新桌面客户端后生效；无新增数据库迁移。
+- **用户电脑后台无感操控全链路与 `agent-desktop` 旁路驱动（#591）**：
+  - 新增 `desktop_windows` / `desktop_snapshot` / `desktop_act` / `window_screenshot` 能力（PC 端内置常驻 Windows UIA 10 类 Pattern 与 `PrintWindow` 离屏按窗截屏、macOS 无 `frontmost` 后台 AX 与 `screencapture -l`、`DesktopDriver` SPI 旁路接入本机 `agent-desktop` 且强制 headless；服务端 `DesktopSnapshotStore` `@<snapshotId>:eN` 反解与不可信内容标注、四层自保护黑名单、密码框禁止回读与 `directionEpoch` 回合授权闭环）。按 `hello.features` 向下兼容旧桌面客户端，更新桌面客户端后生效；无新增数据库迁移。
 
 ## 0.1.189 — 2026-11-25
 
