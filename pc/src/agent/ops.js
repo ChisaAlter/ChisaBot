@@ -626,6 +626,17 @@ function createOps(options = {}) {
   const platform = options.platform || process.platform;
   const hooks = options.hooks || {};
   const winHelper = options.winHelper || null;
+  let accessibilityBridgeInstance = options.accessibilityBridge || null;
+  function getAccessibilityBridge() {
+    if (!accessibilityBridgeInstance) {
+      const { createAccessibilityBridge } = require("../accessibility-bridge");
+      accessibilityBridgeInstance = createAccessibilityBridge({
+        platform,
+        winHelper,
+      });
+    }
+    return accessibilityBridgeInstance;
+  }
   const P = pathApi(platform);
   let memoryClipboard = "";
   const lockQueue = options.lockQueue || createPathLockQueue(platform);
@@ -1076,6 +1087,13 @@ function createOps(options = {}) {
     open,
     clipboard_read: clipboardRead,
     clipboard_write: clipboardWrite,
+    desktop_windows: (args, ctx) =>
+      getAccessibilityBridge().listWindows(args, ctx),
+    desktop_snapshot: (args, ctx) =>
+      getAccessibilityBridge().snapshot(args, ctx),
+    desktop_act: (args, ctx) => getAccessibilityBridge().act(args, ctx),
+    window_screenshot: (args, ctx) =>
+      getAccessibilityBridge().captureWindow(args, ctx),
     mcp_call: mcpCall,
     mcp_discover: mcpDiscover,
     ...Object.fromEntries(
@@ -1086,8 +1104,15 @@ function createOps(options = {}) {
   return {
     platform,
     /** 这个客户端支持的全部操作及扩展特性（hello.features），服务器据此判断旧客户端缺哪些。 */
-    features: [...new Set([...Object.keys(table), "mcp"])],
-    stopAll: (reason) => code.stopAll(reason),
+    features: [...new Set([...Object.keys(table), "mcp", "desktop_bg_v1"])],
+    get accessibilityBridge() {
+      return getAccessibilityBridge();
+    },
+    stopAll: (reason) => {
+      code.stopAll(reason);
+      accessibilityBridgeInstance?.authorizer?.revokeAll?.();
+      accessibilityBridgeInstance?.clearSnapshots?.();
+    },
     async run(operation, args, ctx = {}) {
       const fn = table[operation];
       if (!fn) throw new OpError(`不支持的操作：${operation}`);
