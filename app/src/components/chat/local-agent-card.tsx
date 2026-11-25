@@ -4,25 +4,38 @@ import {
   IconChevronDown,
   IconDeviceDesktop,
   IconGitMerge,
+  IconHelpCircle,
   IconLoader2,
   IconPlayerStopFilled,
+  IconSend,
   IconServer,
   IconShieldCheck,
   IconTerminal2,
   IconTrash,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { useLayoutEffect, useRef, useState } from "react";
-import { useTimeout } from "@/hooks";
+import {
+  type FormEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
-import { ContentEnter, SmoothCollapse } from "@/components/ui/motion-primitives";
+import {
+  ContentEnter,
+  SmoothCollapse,
+} from "@/components/ui/motion-primitives";
+import { useTimeout } from "@/hooks";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
 import { formatElapsed } from "@/lib/conversations/workers";
 import {
   decideDeviceApproval,
   localTaskQueryOptions,
   parseLocalAgentResult,
+  useAnswerLocalTask,
+  useContinueLocalTask,
   useLocalTaskAction,
   useThreadLocalTasks,
 } from "@/lib/local-agents";
@@ -34,6 +47,8 @@ import {
   LOCAL_AGENT_INFO,
   LOCAL_TASK_STATUS_ZH,
   type LocalAgentLine,
+  type LocalAgentPendingInput,
+  type LocalAgentQuestion,
   type LocalAgentTaskView,
   profileLine,
 } from "../../../../shared/local-agents";
@@ -121,6 +136,57 @@ function OutputLines({ lines }: { lines: LocalAgentLine[] }) {
   );
 }
 
+type PatchLineKind = "meta" | "hunk" | "add" | "del" | "ctx";
+
+function classifyPatchLine(line: string): PatchLineKind {
+  if (
+    line.startsWith("diff --git ") ||
+    line.startsWith("index ") ||
+    line.startsWith("--- ") ||
+    line.startsWith("+++ ")
+  ) {
+    return "meta";
+  }
+  if (line.startsWith("@@")) return "hunk";
+  if (line.startsWith("+")) return "add";
+  if (line.startsWith("-")) return "del";
+  return "ctx";
+}
+
+function PatchViewer({ patch }: { patch: string }) {
+  const lines = useMemo(() => {
+    const raw = patch.split("\n");
+    const counts = new Map<string, number>();
+    return raw.map((text) => {
+      const seen = (counts.get(text) ?? 0) + 1;
+      counts.set(text, seen);
+      return {
+        id: `${seen}:${text}`,
+        text,
+        kind: classifyPatchLine(text),
+      };
+    });
+  }, [patch]);
+
+  return (
+    <section
+      aria-label={"代码改动补丁"}
+      className="la-patch"
+      data-testid="local-agent-patch"
+    >
+      {lines.map((line) => (
+        <div
+          className={cn("la-patch-line", `is-${line.kind}`)}
+          data-kind={line.kind}
+          key={line.id}
+        >
+          {line.text || " "}
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function DiffBlock({
   task,
   threadId,
@@ -136,8 +202,10 @@ function DiffBlock({
     errorToast: (error) => `操作失败：${error.message}`,
   });
   const [all, setAll] = useState(false);
+  const [patchOpen, setPatchOpen] = useState(false);
   const diff = task.diff;
-  if (!diff?.files.length) return null;
+  if (!diff || (!diff.files.length && !diff.patch)) return null;
+  const patch = diff.patch?.trim() ? diff.patch : null;
   return (
     <div className="la-diff" data-testid="local-agent-diff">
       <div className="la-diff-head">
@@ -154,22 +222,24 @@ function DiffBlock({
                 : "已直接写入文件夹"}
         </span>
       </div>
-      <ul className="la-files">
-        {diff.files.slice(0, 6).map((file) => (
-          <li className="la-file" key={file.path}>
-            <span className={cn("la-file-status", `is-${file.status}`)}>
-              {file.status === "added"
-                ? "新"
-                : file.status === "deleted"
-                  ? "删"
-                  : "改"}
-            </span>
-            <span className="la-file-path">{file.path}</span>
-            <span className="la-plus">{`+${file.added}`}</span>
-            <span className="la-minus">{`−${file.removed}`}</span>
-          </li>
-        ))}
-      </ul>
+      {diff.files.length ? (
+        <ul className="la-files">
+          {diff.files.slice(0, 6).map((file) => (
+            <li className="la-file" key={file.path}>
+              <span className={cn("la-file-status", `is-${file.status}`)}>
+                {file.status === "added"
+                  ? "新"
+                  : file.status === "deleted"
+                    ? "删"
+                    : "改"}
+              </span>
+              <span className="la-file-path">{file.path}</span>
+              <span className="la-plus">{`+${file.added}`}</span>
+              <span className="la-minus">{`−${file.removed}`}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {diff.files.length > 6 ? (
         <>
           <SmoothCollapse open={all} unmountOnExit>
@@ -198,6 +268,26 @@ function DiffBlock({
             {all ? "收起" : `还有 ${diff.files.length - 6} 个文件`}
           </button>
         </>
+      ) : null}
+      {patch ? (
+        <div className="la-patch-wrap">
+          <button
+            aria-expanded={patchOpen}
+            className="worker-plan-toggle"
+            data-testid="local-agent-patch-toggle"
+            onClick={() => setPatchOpen((value) => !value)}
+            type="button"
+          >
+            <IconChevronDown
+              className={cn(
+                "size-3.5 transition-transform",
+                !patchOpen && "-rotate-90",
+              )}
+            />
+            {patchOpen ? "收起代码改动" : "查看代码改动"}
+          </button>
+          {patchOpen ? <PatchViewer patch={patch} /> : null}
+        </div>
       ) : null}
       {diff.pending ? (
         <div className="la-actions">
@@ -232,6 +322,255 @@ function DiffBlock({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function collectQuestionAnswer(
+  question: LocalAgentQuestion,
+  selected: readonly string[],
+  text: string,
+): string[] {
+  const trimmed = text.trim();
+  if (!question.options?.length) {
+    return trimmed ? [trimmed] : [];
+  }
+  const values = [...selected];
+  if (trimmed && !values.includes(trimmed)) {
+    values.push(trimmed);
+  }
+  return values;
+}
+
+function PendingInputForm({
+  taskId,
+  pendingInput,
+  threadId,
+}: {
+  taskId: string;
+  pendingInput: LocalAgentPendingInput;
+  threadId: string | null;
+}) {
+  const answerTask = useAnswerLocalTask(threadId);
+  const [selectedMap, setSelectedMap] = useState<Record<string, string[]>>({});
+  const [textMap, setTextMap] = useState<Record<string, string>>({});
+
+  const submit = useAsyncAction(
+    async (answers: Record<string, string[]>) => answerTask(taskId, answers),
+    { errorToast: (error) => `提交回答失败：${error.message}` },
+  );
+
+  const toggleOption = (question: LocalAgentQuestion, label: string) => {
+    setSelectedMap((prev) => {
+      const current = prev[question.id] ?? [];
+      if (question.allowMultiple) {
+        const next = current.includes(label)
+          ? current.filter((item) => item !== label)
+          : [...current, label];
+        return { ...prev, [question.id]: next };
+      }
+      const next = current.includes(label) ? [] : [label];
+      return { ...prev, [question.id]: next };
+    });
+  };
+
+  const canSubmit = pendingInput.questions.every((question) => {
+    if (question.required === false) return true;
+    const values = collectQuestionAnswer(
+      question,
+      selectedMap[question.id] ?? [],
+      textMap[question.id] ?? "",
+    );
+    return values.length > 0;
+  });
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit || submit.state === "pending") return;
+    const answers: Record<string, string[]> = {};
+    for (const question of pendingInput.questions) {
+      answers[question.id] = collectQuestionAnswer(
+        question,
+        selectedMap[question.id] ?? [],
+        textMap[question.id] ?? "",
+      );
+    }
+    void submit.run(answers);
+  };
+
+  return (
+    <form
+      className="la-input-form"
+      data-testid="local-agent-input-form"
+      onSubmit={handleSubmit}
+    >
+      <div className="la-input-head">
+        <IconHelpCircle className="size-4 flex-none" />
+        <span>{"子代理需要你补充信息后继续"}</span>
+      </div>
+      {pendingInput.questions.map((question) => {
+        const selected = selectedMap[question.id] ?? [];
+        const text = textMap[question.id] ?? "";
+        const hasOptions = Boolean(question.options?.length);
+        return (
+          <div className="la-input-q" key={question.id}>
+            {question.header ? (
+              <div className="la-input-q-header">{question.header}</div>
+            ) : null}
+            <div className="la-input-q-text">{question.question}</div>
+            {hasOptions ? (
+              <div className="la-input-opts">
+                {question.options?.map((option) => {
+                  const active = selected.includes(option.label);
+                  return (
+                    <button
+                      aria-pressed={active}
+                      className={cn("la-input-opt", active && "is-selected")}
+                      key={option.label}
+                      onClick={() => toggleOption(question, option.label)}
+                      type="button"
+                    >
+                      <span>{option.label}</span>
+                      {option.description ? (
+                        <span className="la-input-opt-desc">
+                          {option.description}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            <input
+              aria-label={question.header || question.question}
+              className="la-input-text"
+              data-testid={`local-agent-input-field-${question.id}`}
+              disabled={submit.state === "pending"}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setTextMap((prev) => ({ ...prev, [question.id]: value }));
+              }}
+              placeholder={
+                hasOptions ? "或输入自定义补充说明…" : "请输入你的回答…"
+              }
+              type="text"
+              value={text}
+            />
+          </div>
+        );
+      })}
+      <div className="la-input-actions">
+        <Button
+          data-testid="local-agent-input-submit"
+          disabled={!canSubmit || submit.state === "pending"}
+          feedback={{
+            pending: "提交中…",
+            success: "已提交",
+            error: "提交失败",
+          }}
+          size="sm"
+          state={submit.state}
+          type="submit"
+        >
+          {"提交回答"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function PendingInputBar({
+  task,
+  threadId,
+}: {
+  task: LocalAgentTaskView;
+  threadId: string | null;
+}) {
+  if (task.status !== "needs_input" || !task.pendingInput?.questions.length) {
+    return null;
+  }
+  return (
+    <PendingInputForm
+      key={task.pendingInput.reqId}
+      pendingInput={task.pendingInput}
+      taskId={task.id}
+      threadId={threadId}
+    />
+  );
+}
+
+function ContinueBar({
+  task,
+  threadId,
+}: {
+  task: LocalAgentTaskView;
+  threadId: string | null;
+}) {
+  const continueTask = useContinueLocalTask(threadId);
+  const [prompt, setPrompt] = useState("");
+  const submit = useAsyncAction(
+    async (text: string) =>
+      continueTask(task.id, { prompt: text, mode: "async" }),
+    { errorToast: (error) => `继续执行失败：${error.message}` },
+  );
+
+  const active = ACTIVE_LOCAL_TASK.includes(task.status);
+  if (active || task.continuable === false || !task.sessionId) {
+    return null;
+  }
+
+  const trimmed = prompt.trim();
+  const triggerSubmit = () => {
+    if (!trimmed || submit.state === "pending") return;
+    void submit.run(trimmed).then((outcome) => {
+      if (outcome) setPrompt("");
+    });
+  };
+
+  return (
+    <form
+      className="la-continue"
+      data-testid="local-agent-continue-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        triggerSubmit();
+      }}
+    >
+      <textarea
+        aria-label={"继续追问指令"}
+        className="la-continue-input"
+        data-testid="local-agent-continue-input"
+        disabled={submit.state === "pending"}
+        onChange={(event) => setPrompt(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (
+            event.key === "Enter" &&
+            !event.shiftKey &&
+            !event.nativeEvent.isComposing
+          ) {
+            event.preventDefault();
+            triggerSubmit();
+          }
+        }}
+        placeholder={"补充后续指令，在原上下文继续执行…"}
+        rows={1}
+        value={prompt}
+      />
+      <Button
+        data-testid="local-agent-continue-submit"
+        disabled={!trimmed || submit.state === "pending"}
+        feedback={{
+          pending: "继续中…",
+          success: "已继续",
+          error: "续接失败",
+        }}
+        size="sm"
+        state={submit.state}
+        type="submit"
+      >
+        <IconSend className="size-3.5" />
+        {"继续执行"}
+      </Button>
+    </form>
   );
 }
 
@@ -403,10 +742,18 @@ function LocalAgentCardBody({
         <span
           className={cn(
             "worker-icon",
-            active ? "is-running" : ok ? "is-done" : "is-failed",
+            task.status === "needs_input"
+              ? "is-waiting"
+              : active
+                ? "is-running"
+                : ok
+                  ? "is-done"
+                  : "is-failed",
           )}
         >
-          {active ? (
+          {task.status === "needs_input" ? (
+            <IconHelpCircle className="size-4" />
+          ) : active ? (
             <IconLoader2 className="size-4" />
           ) : ok ? (
             <IconCheck className="size-3.5" stroke={2.5} />
@@ -455,6 +802,7 @@ function LocalAgentCardBody({
             : task.error || LOCAL_TASK_STATUS_ZH[task.status]}
       </div>
       <ApprovalBar task={task} />
+      <PendingInputBar task={task} threadId={threadId} />
       <div className="worker-plan-wrap">
         <button
           aria-expanded={outputOpen}
@@ -492,6 +840,7 @@ function LocalAgentCardBody({
         <div className="la-summary">{task.summary}</div>
       ) : null}
       <DiffBlock task={task} threadId={threadId} />
+      <ContinueBar task={task} threadId={threadId} />
       {active ? (
         <div className="worker-actions">
           <Button

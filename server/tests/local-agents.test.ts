@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { firstValueFrom, toArray } from "rxjs";
 import {
   AGENT_DRIVER_SPECS,
   AGENT_PROVIDER_PRESETS,
@@ -21,7 +20,6 @@ import {
   FALLBACK_ACP_REGISTRY,
   listAcpRegistryEntries,
 } from "../src/local-agents/acp-registry";
-import { DirectSubagentRuntimeAgent } from "../src/local-agents/direct-agent";
 import {
   buildServerDeviceRecord,
   parseEnvServerRoots,
@@ -804,78 +802,5 @@ describe("agent providers & subagent orchestration (unit)", () => {
     const rec = buildServerDeviceRecord("u_admin", ["/srv/ws_a"]);
     expect(rec.id).toBe("server");
     expect(rec.allowedRoots).toEqual(["/srv/ws_a"]);
-  });
-
-  test("DirectSubagentRuntimeAgent emits AG-UI tool events in both async and wait modes", async () => {
-    const calls: Array<Record<string, unknown>> = [];
-    const mockLocalAgents = {
-      runSubagent: async (input: Record<string, unknown>) => {
-        calls.push(input);
-        return {
-          timedOut: false,
-          task: {
-            id: "task_direct_1",
-            deviceId: "server",
-            deviceName: "服务器本机",
-            agent: "codex",
-            instanceId: "inst_1",
-            instanceName: "Codex (个人号)",
-            title: "检查代码",
-            profile: "workspace",
-            isolation: "worktree",
-            network: true,
-            cwd: "/srv/ws",
-            status: input.mode === "wait" ? "done" : "running",
-            step: "完成",
-            summary: input.mode === "wait" ? "已检查无误" : null,
-            diff: null,
-            error: null,
-          },
-        };
-      },
-    };
-    const agent = new DirectSubagentRuntimeAgent({
-      ownerUserId: "u1",
-      botId: "b1",
-      botName: "Chisa",
-      instanceRef: "inst_1",
-      localAgents: mockLocalAgents as never,
-    });
-
-    const asyncEvents = await firstValueFrom(
-      agent
-        .run({
-          threadId: "th_1",
-          runId: "run_1",
-          messages: [{ id: "m1", role: "user", content: "帮我检查一下代码" }],
-          tools: [],
-          context: [],
-          forwardedProps: {},
-        })
-        .pipe(toArray()),
-    );
-    expect(calls[0]?.mode).toBe("async");
-    expect(asyncEvents.some((e) => e.type === "TOOL_CALL_START")).toBe(true);
-    expect(asyncEvents.some((e) => e.type === "TOOL_CALL_RESULT")).toBe(true);
-    expect(asyncEvents.some((e) => e.type === "RUN_FINISHED")).toBe(true);
-
-    const waitEvents = await firstValueFrom(
-      agent
-        .run({
-          threadId: "th_1",
-          runId: "run_2",
-          messages: [{ id: "m2", role: "user", content: "巡检仓库" }],
-          tools: [],
-          context: [],
-          forwardedProps: { subagentWait: true },
-        })
-        .pipe(toArray()),
-    );
-    expect(calls[1]?.mode).toBe("wait");
-    const textDelta = waitEvents
-      .filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
-      .map((e) => (e as { delta?: string }).delta ?? "")
-      .join("");
-    expect(textDelta).toContain("已检查无误");
   });
 });

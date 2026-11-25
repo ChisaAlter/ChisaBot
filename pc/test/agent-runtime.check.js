@@ -487,9 +487,14 @@ process.stdin.on("data", (chunk) => {
   while (!sent.some((m) => m.type === "agent_done" && m.taskId === "task-acp-1") && Date.now() - t0 < 15_000) {
     await new Promise((r) => setTimeout(r, 40));
   }
+  const started = sent.find((m) => m.type === "agent_started" && m.taskId === "task-acp-1");
+  assert.ok(started);
+  assert.equal(started.sessionId, null);
   const done = sent.find((m) => m.type === "agent_done" && m.taskId === "task-acp-1");
   assert.ok(done, JSON.stringify(sent.slice(-4)));
   assert.equal(done.ok, true, JSON.stringify(done));
+  assert.equal(done.sessionId, "sess_1");
+  assert.equal(done.continuable, true);
   assert.match(done.summary, /codebuddy/);
   assert.equal(fs.readFileSync(path.join(dir, "README.md"), "utf8"), "hello acp\n");
 
@@ -1659,6 +1664,460 @@ if (args[0] === "acp" && args[1] === "--login") {
   } finally {
     runtime.stopAll();
     fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("sessionId & continuable contract: external drivers avoid fake sess-<taskId>, resumable drivers propagate real IDs, builtin keeps sess-<taskId>", async () => {
+  const win = process.platform === "win32";
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cbla-sess-contract-"));
+  const workDir = path.join(tmpRoot, "workspace");
+  const binDir = path.join(tmpRoot, "bin");
+  const dataDir = path.join(tmpRoot, "data");
+  fs.mkdirSync(workDir, { recursive: true });
+  fs.mkdirSync(binDir, { recursive: true });
+
+  const makeMockCli = (name, scriptBody) => {
+    const jsPath = path.join(binDir, `${name}.js`);
+    fs.writeFileSync(jsPath, `"use strict";\n${scriptBody}\n`);
+    const wrapperPath = path.join(binDir, win ? `${name}.cmd` : name);
+    if (win) {
+      fs.writeFileSync(
+        wrapperPath,
+        `@echo off\r\n"${process.execPath}" "${jsPath}" %*\r\n`,
+      );
+    } else {
+      fs.writeFileSync(
+        wrapperPath,
+        `#!/bin/sh\nexec "${process.execPath}" "${jsPath}" "$@"\n`,
+        { mode: 0o755 },
+      );
+    }
+    return wrapperPath;
+  };
+
+  const agyArgLog = path.join(tmpRoot, "agy-args.json");
+  const mockAgy = makeMockCli(
+    "mock-agy-cli",
+    `const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(agyArgLog)}, JSON.stringify(process.argv.slice(2)));
+process.stdout.write("antigravity cli fallback ok\\n");`,
+  );
+
+  const claudeArgLog = path.join(tmpRoot, "claude-args.json");
+  const mockClaude = makeMockCli(
+    "mock-claude-cli",
+    `const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(claudeArgLog)}, JSON.stringify(process.argv.slice(2)));
+console.log(JSON.stringify({ type: "system", subtype: "init", model: "mock-claude", session_id: "claude-real-001" }));
+console.log(JSON.stringify({ type: "result", subtype: "success", result: "claude ok", num_turns: 1 }));`,
+  );
+
+  const mockCodex = makeMockCli(
+    "mock-codex-cli",
+    `console.log(JSON.stringify({ type: "thread.started", thread_id: "thr_real_002" }));
+console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "codex ok" } }));`,
+  );
+
+  const mockCustom = makeMockCli(
+    "mock-custom-cli",
+    `process.stdout.write("custom ok\\n");`,
+  );
+
+  const sent = [];
+  let runtime;
+  runtime = createAgentRuntime({
+    send: (m) => {
+      sent.push(m);
+      if (m.type === "agent_llm") {
+        setImmediate(() => {
+          if (m.taskId === "task-builtin-fail-1") {
+            runtime.handle({
+              type: "agent_llm_result",
+              taskId: m.taskId,
+              reqId: m.reqId,
+              ok: false,
+              error: "mock llm failure",
+            });
+            return;
+          }
+          runtime.handle({
+            type: "agent_llm_result",
+            taskId: m.taskId,
+            reqId: m.reqId,
+            ok: true,
+            content: [{ type: "text", text: "builtin ok" }],
+          });
+        });
+      }
+      return true;
+    },
+    antigravityOptions: {
+      customEnv: { ...process.env, CHISABOT_AGENT_DATA_DIR: dataDir },
+    },
+  });
+
+  const waitDone = async (taskId, fromIdx) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15_000) {
+      const hit = sent
+        .slice(fromIdx)
+        .find((m) => m.type === "agent_done" && m.taskId === taskId);
+      if (hit) return hit;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`timeout waiting for agent_done(${taskId})`);
+  };
+
+  try {
+    // 1. Antigravity CLI 回退（--output-format text 无真 sessionId）：绝不伪造 sess-<taskId>，且 continuable: false
+    const idx1 = sent.length;
+    runtime.handle({
+      type: "agent_run",
+      taskId: "task-agy-cli-1",
+      agent: "antigravity",
+      prompt: "hello agy cli",
+      cwd: workDir,
+      profile: "workspace",
+      isolation: "none",
+      network: true,
+      roots: [workDir],
+      skipPermissions: false,
+      timeoutMs: 15_000,
+      instance: {
+        id: "inst-agy-cli",
+        slug: "agy-cli",
+        driver: "antigravity",
+        config: { commandPath: mockAgy, protocolMode: "cli" },
+        env: { CHISABOT_AGENT_DATA_DIR: dataDir },
+      },
+    });
+    const agyDone = await waitDone("task-agy-cli-1", idx1);
+    const agyStarted = sent
+      .slice(idx1)
+      .find((m) => m.type === "agent_started" && m.taskId === "task-agy-cli-1");
+    assert.equal(agyStarted?.sessionId, null);
+    assert.equal(agyDone.ok, true, JSON.stringify(agyDone));
+    assert.equal(agyDone.sessionId, null);
+    assert.equal(agyDone.continuable, false);
+
+    // 即使上层误传旧的伪造 sess-<taskId>，也不得传给 agy --resume 且仍上报 sessionId: null, continuable: false
+    const idx1b = sent.length;
+    runtime.handle({
+      type: "agent_continue",
+      taskId: "task-agy-cli-1",
+      sessionId: "sess-task-agy-cli-1",
+      agent: "antigravity",
+      prompt: "follow up without real id",
+      cwd: workDir,
+      profile: "workspace",
+      isolation: "none",
+      network: true,
+      roots: [workDir],
+      skipPermissions: false,
+      timeoutMs: 15_000,
+      instance: {
+        id: "inst-agy-cli",
+        slug: "agy-cli",
+        driver: "antigravity",
+        config: { commandPath: mockAgy, protocolMode: "cli" },
+        env: { CHISABOT_AGENT_DATA_DIR: dataDir },
+      },
+    });
+    const agyContinueDone = await waitDone("task-agy-cli-1", idx1b);
+    const agyContinueStarted = sent
+      .slice(idx1b)
+      .find((m) => m.type === "agent_started" && m.taskId === "task-agy-cli-1");
+    const agyArgv = JSON.parse(fs.readFileSync(agyArgLog, "utf8"));
+    assert.equal(agyContinueStarted?.sessionId, null);
+    assert.equal(agyArgv.includes("--resume"), false);
+    assert.equal(agyContinueDone.ok, true, JSON.stringify(agyContinueDone));
+    assert.equal(agyContinueDone.sessionId, null);
+    assert.equal(agyContinueDone.continuable, false);
+
+    // 2. Claude CLI 返回真 session_id -> 上报真 ID 且 continuable: true，续接时携带 --resume
+    const idx2 = sent.length;
+    runtime.handle({
+      type: "agent_run",
+      taskId: "task-claude-real-1",
+      agent: "claude",
+      prompt: "hello claude",
+      cwd: workDir,
+      profile: "workspace",
+      isolation: "none",
+      network: true,
+      roots: [workDir],
+      skipPermissions: false,
+      timeoutMs: 15_000,
+      instance: {
+        id: "inst-claude",
+        slug: "claude-1",
+        driver: "claude",
+        config: { commandPath: mockClaude },
+        env: {},
+      },
+    });
+    const claudeDone = await waitDone("task-claude-real-1", idx2);
+    const claudeStarted = sent
+      .slice(idx2)
+      .find((m) => m.type === "agent_started" && m.taskId === "task-claude-real-1");
+    assert.equal(claudeStarted?.sessionId, null);
+    assert.equal(claudeDone.ok, true, JSON.stringify(claudeDone));
+    assert.equal(claudeDone.sessionId, "claude-real-001");
+    assert.equal(claudeDone.continuable, true);
+
+    const idx2b = sent.length;
+    runtime.handle({
+      type: "agent_continue",
+      taskId: "task-claude-real-1",
+      sessionId: "claude-real-001",
+      agent: "claude",
+      prompt: "continue claude",
+      cwd: workDir,
+      profile: "workspace",
+      isolation: "none",
+      network: true,
+      roots: [workDir],
+      skipPermissions: false,
+      timeoutMs: 15_000,
+      instance: {
+        id: "inst-claude",
+        slug: "claude-1",
+        driver: "claude",
+        config: { commandPath: mockClaude },
+        env: {},
+      },
+    });
+    const claudeContDone = await waitDone("task-claude-real-1", idx2b);
+    const claudeContStarted = sent
+      .slice(idx2b)
+      .find((m) => m.type === "agent_started" && m.taskId === "task-claude-real-1");
+    const claudeArgv = JSON.parse(fs.readFileSync(claudeArgLog, "utf8"));
+    assert.equal(claudeContStarted?.sessionId, "claude-real-001");
+    const resumeIdx = claudeArgv.indexOf("--resume");
+    assert.ok(resumeIdx >= 0 && claudeArgv[resumeIdx + 1] === "claude-real-001");
+    assert.equal(claudeContDone.sessionId, "claude-real-001");
+    assert.equal(claudeContDone.continuable, true);
+
+    // 3. Codex CLI 返回真 thread_id -> 上报该真 ID 且 continuable: true
+    const idx3 = sent.length;
+    runtime.handle({
+      type: "agent_run",
+      taskId: "task-codex-real-1",
+      agent: "codex",
+      prompt: "hello codex",
+      cwd: workDir,
+      profile: "workspace",
+      isolation: "none",
+      network: true,
+      roots: [workDir],
+      skipPermissions: false,
+      timeoutMs: 15_000,
+      instance: {
+        id: "inst-codex",
+        slug: "codex-1",
+        driver: "codex",
+        config: { commandPath: mockCodex },
+        env: {},
+      },
+    });
+    const codexDone = await waitDone("task-codex-real-1", idx3);
+    const codexStarted = sent
+      .slice(idx3)
+      .find((m) => m.type === "agent_started" && m.taskId === "task-codex-real-1");
+    assert.equal(codexStarted?.sessionId, null);
+    assert.equal(codexDone.ok, true, JSON.stringify(codexDone));
+    assert.equal(codexDone.sessionId, "thr_real_002");
+    assert.equal(codexDone.continuable, true);
+
+    // 4. 不支持 --resume 的外部驱动（如 custom）-> sessionId: null, continuable: false
+    const idx4 = sent.length;
+    runtime.handle({
+      type: "agent_run",
+      taskId: "task-custom-1",
+      agent: "custom",
+      prompt: "hello custom",
+      cwd: workDir,
+      profile: "workspace",
+      isolation: "none",
+      network: true,
+      roots: [workDir],
+      skipPermissions: false,
+      timeoutMs: 15_000,
+      instance: {
+        id: "inst-custom",
+        slug: "custom-1",
+        driver: "custom",
+        config: { commandPath: mockCustom },
+        env: {},
+      },
+    });
+    const customDone = await waitDone("task-custom-1", idx4);
+    const customStarted = sent
+      .slice(idx4)
+      .find((m) => m.type === "agent_started" && m.taskId === "task-custom-1");
+    assert.equal(customStarted?.sessionId, null);
+    assert.equal(customDone.ok, true, JSON.stringify(customDone));
+    assert.equal(customDone.sessionId, null);
+    assert.equal(customDone.continuable, false);
+
+    // 5. 外部驱动失败分支（catch）也不得泄漏伪造 sess-<taskId>
+    const idx5 = sent.length;
+    runtime.handle({
+      type: "agent_run",
+      taskId: "task-claude-fail-1",
+      agent: "claude",
+      prompt: "fail missing bin",
+      cwd: workDir,
+      profile: "workspace",
+      isolation: "none",
+      network: true,
+      roots: [workDir],
+      skipPermissions: false,
+      timeoutMs: 15_000,
+      instance: {
+        id: "inst-claude-missing",
+        slug: "claude-missing",
+        driver: "claude",
+        config: { commandPath: path.join(tmpRoot, "does-not-exist-claude") },
+        env: {
+          PATH: "",
+          Path: "",
+          USERPROFILE: tmpRoot,
+          HOME: tmpRoot,
+        },
+      },
+    });
+    const failDone = await waitDone("task-claude-fail-1", idx5);
+    assert.equal(failDone.ok, false);
+    assert.match(failDone.error || "", /没有找到可执行文件/);
+    assert.equal(failDone.sessionId, null);
+    assert.equal(failDone.continuable, false);
+
+    // 6. builtin 驱动保持 sess-<taskId> 与 continuable: true（含成功与启动后失败）
+    const idx6 = sent.length;
+    runtime.handle({
+      type: "agent_run",
+      taskId: "task-builtin-keep-1",
+      agent: "builtin",
+      prompt: "hello builtin",
+      cwd: workDir,
+      profile: "workspace",
+      isolation: "none",
+      network: true,
+      roots: [workDir],
+      skipPermissions: false,
+      builtinModel: { kind: "server" },
+      timeoutMs: 15_000,
+    });
+    const builtinDone = await waitDone("task-builtin-keep-1", idx6);
+    const builtinStarted = sent
+      .slice(idx6)
+      .find((m) => m.type === "agent_started" && m.taskId === "task-builtin-keep-1");
+    assert.equal(builtinStarted?.sessionId, "sess-task-builtin-keep-1");
+    assert.equal(builtinDone.ok, true, JSON.stringify(builtinDone));
+    assert.equal(builtinDone.sessionId, "sess-task-builtin-keep-1");
+    assert.equal(builtinDone.continuable, true);
+
+    const idx6b = sent.length;
+    runtime.handle({
+      type: "agent_run",
+      taskId: "task-builtin-fail-1",
+      agent: "builtin",
+      prompt: "fail builtin after start",
+      cwd: workDir,
+      profile: "workspace",
+      isolation: "none",
+      network: true,
+      roots: [workDir],
+      skipPermissions: false,
+      builtinModel: { kind: "server" },
+      timeoutMs: 15_000,
+    });
+    const builtinFailDone = await waitDone("task-builtin-fail-1", idx6b);
+    assert.equal(builtinFailDone.ok, false);
+    assert.equal(builtinFailDone.sessionId, "sess-task-builtin-fail-1");
+    assert.equal(builtinFailDone.continuable, true);
+  } finally {
+    runtime.stopAll();
+    await runtime.cleanupSessions();
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("subagent-bridge: extracted asar scriptPath is shared consistently across mcpConfig, ACP, Codex, and CHISABOT_SUBAGENT_CLI", async () => {
+  const {
+    createSubagentBridge,
+    MCP_STDIO_SCRIPT,
+  } = require("../src/agent-runtime/subagent-bridge");
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cbla-asar-bridge-"));
+  const fakeAsarDir = path.join(tmpRoot, "app.asar");
+  const fakeAsarScript = path.join(fakeAsarDir, "subagent-mcp-stdio.js");
+  fs.mkdirSync(fakeAsarDir, { recursive: true });
+  const originalContent = fs.readFileSync(MCP_STDIO_SCRIPT, "utf8");
+  fs.writeFileSync(fakeAsarScript, originalContent, "utf8");
+
+  let asarBridge = null;
+  let defaultBridge = null;
+  try {
+    asarBridge = await createSubagentBridge({
+      taskId: "t-asar-bridge",
+      depth: 0,
+      maxDepth: 2,
+      mcpStdioScript: fakeAsarScript,
+      onSubcall: async () => ({}),
+    });
+    assert.ok(asarBridge);
+    assert.equal(asarBridge.scriptPath.includes(".asar"), false);
+    assert.notEqual(asarBridge.scriptPath, fakeAsarScript);
+    assert.equal(fs.readFileSync(asarBridge.scriptPath, "utf8"), originalContent);
+
+    const claudeCfg = JSON.parse(
+      fs.readFileSync(asarBridge.claudeMcpConfigPath, "utf8"),
+    );
+    const claudeScriptArg = claudeCfg.mcpServers.chisabot_subagents.args[0];
+    assert.equal(claudeScriptArg, asarBridge.scriptPath);
+    assert.equal(asarBridge.acpMcpServers[0].args[0], asarBridge.scriptPath);
+    assert.ok(
+      asarBridge.codexConfigArgs.some((arg) =>
+        arg.includes(JSON.stringify(asarBridge.scriptPath)),
+      ),
+    );
+    assert.equal(
+      asarBridge.codexConfigArgs.some((arg) => arg.includes(".asar")),
+      false,
+    );
+    assert.ok(
+      asarBridge.env.CHISABOT_SUBAGENT_CLI.includes(`"${asarBridge.scriptPath}"`),
+      `expected CHISABOT_SUBAGENT_CLI to use extracted scriptPath: ${asarBridge.env.CHISABOT_SUBAGENT_CLI}`,
+    );
+    assert.equal(
+      asarBridge.env.CHISABOT_SUBAGENT_CLI.includes(".asar"),
+      false,
+    );
+
+    defaultBridge = await createSubagentBridge({
+      taskId: "t-default-bridge",
+      depth: 0,
+      maxDepth: 2,
+      onSubcall: async () => ({}),
+    });
+    assert.ok(defaultBridge);
+    const defaultClaudeCfg = JSON.parse(
+      fs.readFileSync(defaultBridge.claudeMcpConfigPath, "utf8"),
+    );
+    assert.equal(
+      defaultClaudeCfg.mcpServers.chisabot_subagents.args[0],
+      defaultBridge.scriptPath,
+    );
+    assert.ok(
+      defaultBridge.env.CHISABOT_SUBAGENT_CLI.includes(
+        `"${defaultBridge.scriptPath}"`,
+      ),
+    );
+  } finally {
+    if (asarBridge) await asarBridge.close();
+    if (defaultBridge) await defaultBridge.close();
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 

@@ -307,7 +307,6 @@ import { createImService, type ImService, imConnectionOf } from "./im/service";
 import { createLinkPreviews } from "./link-preview/service";
 import { createLivePanelService } from "./live-panels/service";
 import { createLivePanelStore } from "./live-panels/store";
-import { DirectSubagentRuntimeAgent } from "./local-agents/direct-agent";
 import {
   createLocalAgentService,
   type LocalAgentService,
@@ -4405,33 +4404,6 @@ const conversationRuntime = mountConversationRuntime(
     },
     localBackend,
     checkQuota: ({ id, isAdmin }) => quotaService.checkAdmission(id, isAdmin),
-    overrideAgent: async (actorId, botId, input) => {
-      if (!localAgents) return null;
-      const props = input.forwardedProps as
-        | { subagentInstanceId?: unknown; subagentCwd?: unknown }
-        | undefined;
-      const instanceRef =
-        typeof props?.subagentInstanceId === "string"
-          ? props.subagentInstanceId.trim()
-          : "";
-      if (!instanceRef) return null;
-      const botName = await agentProfileStore
-        .get(await actorFor(actorId), botId)
-        .then((profile) => profile?.name ?? null)
-        .catch(() => null);
-      const cwd =
-        typeof props?.subagentCwd === "string" && props.subagentCwd.trim()
-          ? props.subagentCwd.trim()
-          : undefined;
-      return new DirectSubagentRuntimeAgent({
-        ownerUserId: actorId,
-        botId,
-        botName,
-        instanceRef,
-        cwd,
-        localAgents,
-      });
-    },
   },
 );
 

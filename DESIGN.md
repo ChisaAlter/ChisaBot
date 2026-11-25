@@ -2918,7 +2918,7 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
 
 - **双栏提供方中心与多账号隔离**：在「设置 → 智能体提供方」按运行环境（`server` 服务器本机受控工作区或已配对电脑节点）管理智能体实例，内置 Codex、Claude Code、Antigravity（`agy` / `agy_acp_server` 自动探测与 Windows 代理协议修正）、通用 ACP（支持官方 ACP Registry 在线检索与离线兜底）、OpenCode、Gemini CLI、Aider、自定义命令及内置循环。Codex 与 Claude 支持影子 Home（通过 Windows Junction / POSIX Symlink 共享技能与缓存目录，按实例独立隔离 `auth.json`）；敏感环境变量经 AES-GCM 加密入库，前端脱敏回显。
 - **双模子代理工具与按 Bot 独立授权**：机器人管理弹窗新增「子代理」页签（允许全部已启用实例 / 勾选指定实例 / 禁止调用，可选暴露具名工具 `agent_<slug>`）。`subagent_run` 与 `agent_<slug>` 同时支持 `mode: "wait"`（阻塞等待终态直接向当前回合返回摘要与 Diff，抑制收件箱二次回流）与 `mode: "async"`（立即返回 `taskId` 渲染实时卡片，完成后经收件箱回流）。
-- **聊天直连唤起、嵌套互调与自动化联动**：私聊输入框提供 `SubagentPickerChip` 胶囊与 `@智能体名` 点名，经 `DirectSubagentRuntimeAgent` 原地发射 AG-UI 工具卡片；运行时按任务启动绑定 `127.0.0.1` 随机端口与一次性令牌的本地 MCP 子代理桥（带 `maxDepth` 深度上限保护）；任务中心支持 `executor = "agent:<id>"`，定时任务支持绑定 `agentInstanceId` 到期直接派发。
+- **主机器人子代理调用、嵌套互调与自动化联动**：聊天内统一由主机器人通过子代理工具（`subagent_*` / `agent_<slug>` / `local_agent_continue`）调用智能体，并在任务卡片内审阅进度、差异与续聊；运行时按任务启动绑定 `127.0.0.1` 随机端口与一次性令牌的本地 MCP 子代理桥（带 `maxDepth` 深度上限保护）；任务中心支持 `executor = "agent:<id>"`，定时任务支持绑定 `agentInstanceId` 到期直接派发。
 - **服务器本机访问开关（memberAccess，默认关）**：`SERVER_ENVIRONMENT_ID`（`server`）涉及的所有读、播种、授权与执行路径统一过纯函数 `canUseServerHost(actor, memberAccess)`——管理员恒可，普通用户仅当部署级开关开着时可。开关存在服务器环境自己的设置行（`chisabot_device_agent_settings.member_access`），管理员在「设置 → 智能体提供方」服务器本机环境的边界面板里改（该路由本就只放管理员写）。关闭时普通用户：环境/实例列表不出现 `server`、不自动播种、`PUT grants` 不能把服务器实例挂给 Bot（同时校验 botId 是本人可访问的 Bot）、`start`/`runSubagent`/`continueTask`/`dispatchQueued` 恢复队列在每个执行入口按当前开关再判一次（不信任授权时的快照）。服务器环境的工作区/提供方配置写仍只管理员。
 
 ## 133. 动态布局与弹窗状态稳定性（2026-11-14）

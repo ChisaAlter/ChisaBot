@@ -160,6 +160,81 @@ export function useLocalTaskAction(threadId: string | null | undefined) {
   );
 }
 
+export type ContinueLocalTaskInput = {
+  prompt?: string;
+  answers?: Record<string, string | string[]>;
+  mode?: "wait" | "async";
+  waitTimeoutMs?: number;
+};
+
+export type ContinueLocalTaskResult = {
+  task: LocalAgentTaskView;
+  timedOut?: boolean;
+};
+
+/** 同上下文多轮续接（POST /api/local-agents/tasks/:id/continue）。完成后刷新线程与任务缓存。 */
+export function useContinueLocalTask(threadId: string | null | undefined) {
+  const queryClient = useQueryClient();
+  return useCallback(
+    async (
+      taskId: string,
+      input: ContinueLocalTaskInput,
+    ): Promise<ContinueLocalTaskResult> => {
+      const response = await client(
+        `/api/local-agents/tasks/${encodeURIComponent(taskId)}/continue`,
+        {
+          method: "POST",
+          body: input,
+          fallback: FALLBACK,
+          ...(input.mode === "wait" ? { timeoutMs: 185_000 } : {}),
+        },
+      );
+      const result = (await response.json()) as ContinueLocalTaskResult;
+      if (threadId) {
+        await queryClient.invalidateQueries({
+          queryKey: localAgentKeys.thread(threadId),
+        });
+      }
+      await queryClient.invalidateQueries({
+        queryKey: localAgentKeys.task(taskId),
+      });
+      return result;
+    },
+    [threadId, queryClient],
+  );
+}
+
+/** 提交 needs_input 结构化追问回答（POST /api/local-agents/tasks/:id/answer）。完成后刷新线程与任务缓存。 */
+export function useAnswerLocalTask(threadId: string | null | undefined) {
+  const queryClient = useQueryClient();
+  return useCallback(
+    async (
+      taskId: string,
+      answers: Record<string, string | string[]>,
+    ): Promise<LocalAgentTaskView> => {
+      const task = await client<LocalAgentTaskView>(
+        `/api/local-agents/tasks/${encodeURIComponent(taskId)}/answer`,
+        "task",
+        {
+          method: "POST",
+          body: { answers },
+          fallback: FALLBACK,
+        },
+      );
+      if (threadId) {
+        await queryClient.invalidateQueries({
+          queryKey: localAgentKeys.thread(threadId),
+        });
+      }
+      await queryClient.invalidateQueries({
+        queryKey: localAgentKeys.task(taskId),
+      });
+      return task;
+    },
+    [threadId, queryClient],
+  );
+}
+
 export type DeviceAgentState = {
   settings: DeviceAgentSettings;
   effectiveRoots: string[];

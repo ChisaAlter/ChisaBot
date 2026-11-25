@@ -77,6 +77,25 @@ const LINE_CAP = 2000;
 const MAX_RETAINED_SESSIONS = 16;
 const DEFAULT_SESSION_TTL_MS = 30 * 60_000;
 
+/** 支持通过真实外部会话 ID 续接上下文的外部驱动（builtin 走内存 builtinMessages，其余如 opencode/gemini/aider/custom 不支持 --resume）。 */
+const RESUMABLE_EXTERNAL_DRIVERS = new Set([
+  "claude",
+  "codex",
+  "antigravity",
+  "acp",
+]);
+
+function isSyntheticSessionId(sessionId, taskId) {
+  if (typeof sessionId !== "string") return false;
+  return sessionId === `sess-${taskId}` || sessionId.startsWith("sess-");
+}
+
+function normalizeExternalSessionId(raw, taskId) {
+  const normalized = normalizeResumeSessionId(raw);
+  if (!normalized || isSyntheticSessionId(normalized, taskId)) return null;
+  return normalized;
+}
+
 function lineSplitter(onLine) {
   let buffer = "";
   return {
@@ -748,6 +767,10 @@ function createAgentRuntime(options) {
         ...(step ? { step: String(step).slice(0, 200) } : {}),
       });
     };
+    const inst = message.instance || null;
+    const driver = inst?.driver || message.agent;
+    const isBuiltin = driver === "builtin";
+    const supportsExternalResume = RESUMABLE_EXTERNAL_DRIVERS.has(driver);
     const previousSession = isContinue ? sessions.get(taskId) || null : null;
     let resumeSessionId = null;
     let prep = previousSession?.prep || null;
@@ -759,10 +782,15 @@ function createAgentRuntime(options) {
         message.sessionId !== undefined && message.sessionId !== null
           ? assertValidResumeSessionId(message.sessionId)
           : null;
-      resumeSessionId =
+      const rawResumeSessionId =
         validatedInputSessionId ||
         normalizeResumeSessionId(previousSession?.sessionId) ||
         null;
+      resumeSessionId = isBuiltin
+        ? rawResumeSessionId
+        : supportsExternalResume
+          ? normalizeExternalSessionId(rawResumeSessionId, taskId)
+          : null;
       if (options.isPaused?.())
         throw new Error("这台电脑已紧急停止，拒绝启动本地 agent。");
       // 本机再检查一次：工作目录要在工作区文件夹里（完全访问除外）。
@@ -854,8 +882,6 @@ function createAgentRuntime(options) {
         for (const note of prep.notes) emit("status", note);
       }
 
-      const inst = message.instance || null;
-      const driver = inst?.driver || message.agent;
       const cfg = inst?.config || {};
       const instEnv = inst?.env || {};
 
@@ -922,13 +948,15 @@ function createAgentRuntime(options) {
         }
       };
 
-      const activeSessionId = resumeSessionId || `sess-${taskId}`;
+      const startedSessionId = isBuiltin
+        ? resumeSessionId || `sess-${taskId}`
+        : resumeSessionId;
       started = true;
       out({
         type: "agent_started",
         taskId,
         workdir: prep.workdir,
-        sessionId: activeSessionId,
+        sessionId: startedSessionId,
       });
       emit(
         "status",
@@ -991,7 +1019,7 @@ function createAgentRuntime(options) {
             exitCode: 0,
             summary: outcome.summary,
             isError: false,
-            sessionId: activeSessionId,
+            sessionId: startedSessionId,
           };
         } finally {
           clearTimeout(timer);
@@ -1079,15 +1107,28 @@ function createAgentRuntime(options) {
       emit("status", "正在统计改动", "正在统计改动");
       const diff = await sandbox.diff(prep).catch(() => null);
       if (diff?.pending && diff.files.length) prepared.set(taskId, prep);
-      const finalSessionId =
-        normalizeResumeSessionId(result.sessionId) || activeSessionId;
-      sessions.set(taskId, {
-        prep,
-        sessionId: finalSessionId,
-        builtinMessages: nextBuiltinMessages,
-        lastUsedAt: Date.now(),
-      });
-      pruneSessions();
+      const finalSessionId = isBuiltin
+        ? normalizeResumeSessionId(result.sessionId) || startedSessionId
+        : supportsExternalResume
+          ? normalizeExternalSessionId(result.sessionId, taskId) ||
+            normalizeExternalSessionId(resumeSessionId, taskId) ||
+            null
+          : null;
+      const continuable = isBuiltin || Boolean(finalSessionId);
+      if (continuable) {
+        sessions.set(taskId, {
+          prep,
+          sessionId: finalSessionId,
+          builtinMessages: nextBuiltinMessages,
+          lastUsedAt: Date.now(),
+        });
+        pruneSessions();
+      } else {
+        sessions.delete(taskId);
+        if (prep && prepared.get(taskId) !== prep) {
+          await prep.cleanup().catch(() => {});
+        }
+      }
       out({
         type: "agent_done",
         taskId,
@@ -1096,7 +1137,7 @@ function createAgentRuntime(options) {
         summary: String(result.summary || "").slice(0, 8000),
         diff,
         sessionId: finalSessionId,
-        continuable: true,
+        continuable,
         ...(result.isError
           ? {
               error: (
@@ -1117,21 +1158,34 @@ function createAgentRuntime(options) {
       let diff = null;
       let continuable = false;
       const stopped = controller.signal.aborted && reason !== "超时，已停止。";
+      const fallbackSessionId = isBuiltin
+        ? resumeSessionId || `sess-${taskId}`
+        : supportsExternalResume
+          ? normalizeExternalSessionId(resumeSessionId, taskId)
+          : null;
+      const canRetainSession = isBuiltin || Boolean(fallbackSessionId);
       if (prep) {
         if (!started && !reusedPrep) {
           await prep.cleanup().catch(() => {});
         } else {
           diff = stopped ? null : await sandbox.diff(prep).catch(() => null);
           if (diff?.pending && diff.files.length) prepared.set(taskId, prep);
-          // 暂停或失败时同样保留 worktree / session 供显式 continue 续接（不丢失已有上下文与文件）。
-          sessions.set(taskId, {
-            prep,
-            sessionId: resumeSessionId || `sess-${taskId}`,
-            builtinMessages: previousSession?.builtinMessages || null,
-            lastUsedAt: Date.now(),
-          });
-          pruneSessions();
-          continuable = true;
+          if (canRetainSession) {
+            // 暂停或失败时保留可续接的 worktree / session 供显式 continue 续接（不丢失已有上下文与文件）。
+            sessions.set(taskId, {
+              prep,
+              sessionId: fallbackSessionId,
+              builtinMessages: previousSession?.builtinMessages || null,
+              lastUsedAt: Date.now(),
+            });
+            pruneSessions();
+            continuable = true;
+          } else {
+            sessions.delete(taskId);
+            if (prepared.get(taskId) !== prep) {
+              await prep.cleanup().catch(() => {});
+            }
+          }
         }
       }
       out({
@@ -1141,7 +1195,7 @@ function createAgentRuntime(options) {
         error: reason.slice(0, 1200),
         diff,
         stopped,
-        sessionId: resumeSessionId || `sess-${taskId}`,
+        sessionId: fallbackSessionId,
         continuable,
       });
     } finally {
