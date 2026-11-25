@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Claude 全站衬线字体与 DeepSeek（DSH 超椭圆）主题深度重构（DESIGN.md §155）**：
+  - 将 `claude` 主题的 `--font` 与 `--font-claude-serif` 统一为 `Georgia / Charter / Iowan Old Style / Cambria / Noto Serif SC / Songti SC` 衬线栈，并将 `styles.css` 失效选择器替换为全站标题（`.ph-title` / `.page-title` / `.ap-title` / `h1..h3`）、聊天气泡（`[data-slot="bubble-content"]`）与 Claude 主题卡标题；将 `deepseek` 主题对标官方 DSH（`@deepseek-ai/dsh-client-ui-theme`）规范重构为 `16px/20px` 圆角、`superellipse(1.5)` 超椭圆、`0.5px` 发丝边、`neutral-bluish` 冷蓝灰层次（`#4176e6` / `#5686fe`）与蓝青紫纯画布静谧光晕。PC 外壳指纹 `7314f9105596bec5` 不变，客户端代码指纹同步更新为 `e3fec6689d6c030b`。
+
 ## 0.1.186 — 2026-11-24
 
 全端版本 `0.1.186`，Android `versionCode 366`：升级六套深度定制主题体系（DESIGN.md §155），修复自定义面板内容溢出边框、底部拖条压字与环形图低对比度缺陷，并接入 GPU 合成层 `View Transitions` 原子交叉淡入提升深浅色切换丝滑度。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `5904bcbcb0e58752`；无新增数据库迁移。
