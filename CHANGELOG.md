@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **左右面板弹出透明度跳变与聊天气泡材质统一**：
+  - 在 `tokens.css` / `materials.css` 新增不继承表面变量 `--surface-bg-hold` 与预合成 hold 色标（`--mat-{glass,clear}-{panel,elevated}-hold`），`glass-hold` 及入退场剥离模糊期间同步补厚底色而不影响遮罩层；移除宽屏左栏 `glass-fade-in`、宽屏右栏 `rail-card-enter`/`rail-card-exit` `opacity: 0` 淡入，并让窄屏右栏抽屉 `.rail-sheet` 与 `.hk-drawer` 保持 `opacity: 1` 纯位平滑入出。
+  - 移除 `styles.css` 中残留的 AI 气泡 `--glass-strong` 覆写与用户气泡悬空 `--glass-user` 覆写并统一内边距，使双方气泡一致走 `[data-surface="bubble"]` 单通道（补齐 `bubble-and-panel-surface.test.ts` 回归守卫；无需数据库迁移，端侧刷新即生效）。
 - **Claude 全站衬线字体与 DeepSeek（DSH 超椭圆）主题深度重构（DESIGN.md §155）**：
   - 将 `claude` 主题的 `--font` 与 `--font-claude-serif` 统一为 `Georgia / Charter / Iowan Old Style / Cambria / Noto Serif SC / Songti SC` 衬线栈，并将 `styles.css` 失效选择器替换为全站标题（`.ph-title` / `.page-title` / `.ap-title` / `h1..h3`）、聊天气泡（`[data-slot="bubble-content"]`）与 Claude 主题卡标题；将 `deepseek` 主题对标官方 DSH（`@deepseek-ai/dsh-client-ui-theme`）规范重构为 `16px/20px` 圆角、`superellipse(1.5)` 超椭圆、`0.5px` 发丝边、`neutral-bluish` 冷蓝灰层次（`#4176e6` / `#5686fe`）与蓝青紫纯画布静谧光晕。PC 外壳指纹 `7314f9105596bec5` 不变，客户端代码指纹同步更新为 `e3fec6689d6c030b`。
 

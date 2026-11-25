@@ -1,5 +1,6 @@
 ## Unreleased
 
+- **左右面板弹出透明度跳变与聊天气泡材质统一**：在 `tokens.css` / `materials.css` 新增 `--surface-bg-hold` 与 `--mat-*-hold` 预合成色标，使 `glass-hold` 剥离模糊期间自动补厚底色（不影响遮罩层）；移除 `.glass-side-full`/`.glass-mini`、`rail-card-enter`/`rail-card-exit` 与 `.rail-sheet` 的 `opacity: 0` 淡入；删除 `styles.css` 对用户/AI 气泡的 `--glass-user`/`--glass-strong` 残留覆写并统一 `padding: 12px 16px;`，使双方一致走 `[data-surface="bubble"]` 单通道，新增 `bubble-and-panel-surface.test.ts` 回归守卫（`styles/{tokens,materials}.css` · `styles.css` · `bubble-and-panel-surface.test.ts`）。
 - **Claude 全站衬线字体与 DeepSeek（DSH）主题重构（DESIGN §155）**：为 `claude` 补齐 `--font` 与真实页面标题/气泡衬线覆盖；按官方 DSH 设计语言（`16px/20px`、`superellipse(1.5)`、`0.5px` 发丝边、`neutral-bluish` 与纯画布蓝青紫光晕）重构 `deepseek` 浅深双版并同步 PC `skyglass-tokens.css` 与 `shell-fingerprint.json`（外壳 `7314f9105596bec5` 不变，`clientHash` 更新为 `e3fec6689d6c030b`）。
 
 ## 0.1.186 — 2026-11-24
