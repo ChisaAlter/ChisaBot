@@ -1,5 +1,10 @@
 ## Unreleased
 
+## 0.1.188 — 2026-11-25
+
+- 全端发版：`0.1.188`，Android `versionCode 368`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `07964e288351b644`；无新增数据库迁移。
+- **无白边柔和磨砂质感恢复（`e3033865`）**：去除浅色 `glass` / `clear` / `porcelain` 表面实体白框与双层全圈白环，改用透明占位边框与轻柔顶部单线微光并柔和左栏选中行高光；下调 `sky`/`pure` 画布预合成表面不透明度恢复通透磨砂感，在 `html[data-canvas="wallpaper"]` 自动加厚釉面守住全矩阵 WCAG AA ≥ 4.5:1；同步 PC `skyglass-tokens.css` 并补充回归测试（`styles/{tokens,materials}.css` · `styles.css` · `bubble-and-panel-surface.test.ts` · `pc/src/ui/skyglass-tokens.css`）。
+
 ## 0.1.187 — 2026-11-25
 
 - 全端发版：`0.1.187`，Android `versionCode 367`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `b1398c68b9ffb62c`；无新增数据库迁移。
