@@ -326,6 +326,66 @@ function createConfig({ dir, safeStorage }) {
     notifyChange();
   }
 
+  async function securityAudit(opts = {}) {
+    const targetPlatform = opts?.platform || process.platform;
+    const isWin = targetPlatform === "win32";
+    const targets = [
+      { name: "config.json", filePath: file },
+      { name: "audit.jsonl", filePath: auditFile },
+    ];
+    const files = await Promise.all(
+      targets.map(async ({ name, filePath }) => {
+        try {
+          const st = await fsp.lstat(filePath);
+          const isSymlink = st.isSymbolicLink();
+          const isRegular = st.isFile();
+          const mode = Number(st.mode) & 0o777;
+          const secure = isWin
+            ? !isSymlink && isRegular
+            : !isSymlink && isRegular && mode === 0o600;
+          return {
+            name,
+            exists: true,
+            mode,
+            secure,
+            isSymlink,
+          };
+        } catch (err) {
+          if (err?.code === "ENOENT") {
+            return {
+              name,
+              exists: false,
+              mode: null,
+              secure: true,
+              isSymlink: false,
+            };
+          }
+          return {
+            name,
+            exists: false,
+            mode: null,
+            secure: false,
+            isSymlink: false,
+          };
+        }
+      }),
+    );
+    return {
+      platform: targetPlatform,
+      tokenProtected: !!data.tokenEnc,
+      encryptionBackend: encryptionBackend(),
+      files,
+    };
+  }
+
+  async function hardenPermissions(opts = {}) {
+    const targetPlatform = opts?.platform || process.platform;
+    await hardenFilePermissions(dir, 0o700, { platform: targetPlatform });
+    await hardenFilePermissions(file, 0o600, { platform: targetPlatform });
+    await hardenFilePermissions(auditFile, 0o600, { platform: targetPlatform });
+    return securityAudit({ platform: targetPlatform });
+  }
+
   return {
     get: () => ({ ...data }),
     /** 内部只读访问当前配置对象（避免热路径整对象浅拷贝；调用方严禁修改返回对象）。 */
@@ -372,6 +432,8 @@ function createConfig({ dir, safeStorage }) {
     tokenProtected: () => !!data.tokenEnc,
     encryptionAvailable,
     encryptionBackend,
+    securityAudit,
+    hardenPermissions,
     appendAudit(entry) {
       try {
         const line = JSON.stringify(entry);

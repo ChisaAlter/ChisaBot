@@ -420,6 +420,11 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
     reason:
       "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
   },
+  "GET /api/local-agents/environments/:id/antigravity/runtime": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
   "GET /api/local-agents/environments/:id/settings": {
     access: "user",
     reason:
@@ -431,6 +436,11 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
       "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
   },
   "GET /api/local-agents/instances/:id": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "GET /api/local-agents/instances/:id/antigravity/login": {
     access: "user",
     reason:
       "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
@@ -818,12 +828,42 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
     reason:
       "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
   },
+  "POST /api/local-agents/environments/:id/antigravity/install": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/environments/:id/antigravity/install/cancel": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
   "POST /api/local-agents/environments/:id/probe-all": {
     access: "user",
     reason:
       "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
   },
   "POST /api/local-agents/instances": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/instances/:id/antigravity/login": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/instances/:id/antigravity/login/cancel": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/instances/:id/antigravity/login/submit": {
+    access: "user",
+    reason:
+      "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",
+  },
+  "POST /api/local-agents/instances/:id/antigravity/logout": {
     access: "user",
     reason:
       "per-environment authorization: paired user devices are scoped to actor; server-host access gated by canUseServerHost (local-agents-server-host.test.ts)",

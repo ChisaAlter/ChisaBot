@@ -50,9 +50,15 @@ import {
   deleteAppPackage,
   disableAppPackage,
   exportAppPackage,
+  formatMcpTransportLabel,
   importAppPackage,
   installAppPackage,
+  isMcpTransportMode,
+  MCP_TRANSPORT_LABELS,
+  MCP_TRANSPORT_MODES,
+  type McpTransportMode,
   mcpEnhancementQueryOptions,
+  normalizeMcpTransportMode,
   rollbackAppPackage,
   startAppPackageOAuth,
   updateAppPackageConfig,
@@ -302,7 +308,11 @@ export function AppPackagesPanel({ settingItem }: { settingItem?: string }) {
         settingItem={settingItem}
         title="AI 自研微应用与 MCP 包"
       >
-        <div className="space-y-3" data-testid="app-packages-panel" id="app-packages">
+        <div
+          className="space-y-3"
+          data-testid="app-packages-panel"
+          id="app-packages"
+        >
           {appsQuery.isPending ? (
             <PageSkeleton rows={2} />
           ) : appsQuery.error ? (
@@ -311,7 +321,9 @@ export function AppPackagesPanel({ settingItem }: { settingItem?: string }) {
             </p>
           ) : apps.length === 0 ? (
             <PageEmpty>
-              {"暂无自研微应用。你可以在对话中让 AI 编写后端微应用并提交草稿，或点击右上角导入单 JSON 包。"}
+              {
+                "暂无自研微应用。你可以在对话中让 AI 编写后端微应用并提交草稿，或点击右上角导入单 JSON 包。"
+              }
             </PageEmpty>
           ) : (
             <div className="space-y-3">
@@ -455,7 +467,9 @@ export function AppPackagesPanel({ settingItem }: { settingItem?: string }) {
                 : "加载源码审阅信息…"}
             </DialogTitle>
             <DialogDescription>
-              {"核对运行时、网络权限声明、SHA-256 摘要与完整源码；批准安装将把执行权严格锚定到当前摘要。"}
+              {
+                "核对运行时、网络权限声明、SHA-256 摘要与完整源码；批准安装将把执行权严格锚定到当前摘要。"
+              }
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="max-h-[65vh] overflow-y-auto space-y-4">
@@ -469,7 +483,9 @@ export function AppPackagesPanel({ settingItem }: { settingItem?: string }) {
               <>
                 <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-xs">
                   <div>
-                    <span className="text-muted-foreground">{"完整 SHA-256 摘要："}</span>
+                    <span className="text-muted-foreground">
+                      {"完整 SHA-256 摘要："}
+                    </span>
                     <span className="break-all font-mono">
                       {detailQuery.data.currentDigest}
                     </span>
@@ -481,12 +497,14 @@ export function AppPackagesPanel({ settingItem }: { settingItem?: string }) {
                       {detailQuery.data.runtime.kind === "node-stdio"
                         ? ` · 入口 ${detailQuery.data.runtime.entry} · 内存上限 ${detailQuery.data.runtime.memoryLimitMb ?? 128} MiB`
                         : detailQuery.data.runtime.kind === "remote-mcp"
-                          ? ` · ${detailQuery.data.runtime.url} (${detailQuery.data.runtime.transport})`
+                          ? ` · ${detailQuery.data.runtime.url} (${formatMcpTransportLabel(detailQuery.data.runtime.transport)})`
                           : ""}
                     </span>
                   </div>
                   <div>
-                    <span className="text-muted-foreground">{"声明网络源："}</span>
+                    <span className="text-muted-foreground">
+                      {"声明网络源："}
+                    </span>
                     <span>
                       {detailQuery.data.permissions.network.length > 0
                         ? detailQuery.data.permissions.network.join("、")
@@ -578,7 +596,9 @@ export function AppPackagesPanel({ settingItem }: { settingItem?: string }) {
               {configApp ? `配置与 OAuth · ${configApp.name["zh-CN"]}` : "配置"}
             </DialogTitle>
             <DialogDescription>
-              {"所有密钥与 OAuth 令牌均使用 AES-256-GCM 加密封存于服务端，绝不会随脱敏包导出，也不会泄露给普通进程环境变量。"}
+              {
+                "所有密钥与 OAuth 令牌均使用 AES-256-GCM 加密封存于服务端，绝不会随脱敏包导出，也不会泄露给普通进程环境变量。"
+              }
             </DialogDescription>
           </DialogHeader>
           {configApp ? (
@@ -695,8 +715,7 @@ export function AppPackagesPanel({ settingItem }: { settingItem?: string }) {
                           id: configApp.id,
                           ...(oauthTokenDraft.accessToken.trim()
                             ? {
-                                accessToken:
-                                  oauthTokenDraft.accessToken.trim(),
+                                accessToken: oauthTokenDraft.accessToken.trim(),
                               }
                             : {}),
                           ...(oauthTokenDraft.refreshToken.trim()
@@ -762,10 +781,14 @@ export function AppPackagesPanel({ settingItem }: { settingItem?: string }) {
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>
-              {historyApp ? `不可变版本栈 · ${historyApp.name["zh-CN"]}` : "版本"}
+              {historyApp
+                ? `不可变版本栈 · ${historyApp.name["zh-CN"]}`
+                : "版本"}
             </DialogTitle>
             <DialogDescription>
-              {"每个版本均按 SHA-256 摘要不可变存储，可一键回滚到任意历史版本。"}
+              {
+                "每个版本均按 SHA-256 摘要不可变存储，可一键回滚到任意历史版本。"
+              }
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="max-h-[60vh] overflow-y-auto space-y-2">
@@ -836,9 +859,13 @@ export function AppPackagesPanel({ settingItem }: { settingItem?: string }) {
       <Dialog onOpenChange={setImportOpen} open={importOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{"导入单 JSON 微应用包（chisabot-app/v1）"}</DialogTitle>
+            <DialogTitle>
+              {"导入单 JSON 微应用包（chisabot-app/v1）"}
+            </DialogTitle>
             <DialogDescription>
-              {"导入后仅落入草稿区，绝不会自动执行代码。你可以先预检静态安全项与 SHA-256 摘要，再导入并审阅安装。"}
+              {
+                "导入后仅落入草稿区，绝不会自动执行代码。你可以先预检静态安全项与 SHA-256 摘要，再导入并审阅安装。"
+              }
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-3">
@@ -925,7 +952,7 @@ export function AppPackagesPanel({ settingItem }: { settingItem?: string }) {
 
 /**
  * 单个远端 MCP 连接器的高级增强设置卡片（挂载于 `/admin/plugins/$key`）：
- * - 传输协议切换（Streamable HTTP / SSE）；
+ * - 传输协议切换（自动降级 / Streamable HTTP / SSE）；
  * - 自定义指令 `customInstructions`；
  * - 单工具级启停开关（`disabledTools[]`）；
  * - 加密自定义 Header；
@@ -941,14 +968,23 @@ export function McpEnhancementsCard({
   const queryClient = useQueryClient();
   const enhancementQuery = useQuery(mcpEnhancementQueryOptions(serverId));
 
-  const [transportDraft, setTransportDraft] = useState<
-    "streamable-http" | "sse" | null
-  >(null);
+  const [prevServerId, setPrevServerId] = useState(serverId);
+  const [transportDraft, setTransportDraft] = useState<McpTransportMode | null>(
+    null,
+  );
   const [instructionsDraft, setInstructionsDraft] = useState<string | null>(
     null,
   );
   const [headerKey, setHeaderKey] = useState("");
   const [headerVal, setHeaderVal] = useState("");
+
+  if (prevServerId !== serverId) {
+    setPrevServerId(serverId);
+    setTransportDraft(null);
+    setInstructionsDraft(null);
+    setHeaderKey("");
+    setHeaderVal("");
+  }
 
   const saveMutation = useMutation({
     mutationFn: (patch: Parameters<typeof updateMcpEnhancement>[1]) =>
@@ -970,13 +1006,15 @@ export function McpEnhancementsCard({
   const data = enhancementQuery.data;
   if (enhancementQuery.isPending || !data) return null;
 
-  const activeTransport = transportDraft ?? data.transport;
+  const activeTransport = normalizeMcpTransportMode(
+    transportDraft ?? data.transport,
+  );
   const activeInstructions = instructionsDraft ?? data.customInstructions;
   const disabledSet = new Set(data.disabledTools);
 
   return (
     <PageSection
-      description="配置 SSE / Streamable HTTP 传输、连接器专属提示词、单工具级启停开关、加密自定义 Header，并查看 mcp-last-good 降级保护状态。"
+      description="配置自动协商（优先 Streamable HTTP，兼容降级 SSE）/ Streamable HTTP / SSE 传输、连接器专属提示词、单工具级启停开关、加密自定义 Header，并查看 mcp-last-good 降级保护状态。"
       title="MCP 高级增强与降级保护"
     >
       <div className="space-y-4 rounded-xl border border-border/70 bg-card/60 p-4">
@@ -1001,26 +1039,27 @@ export function McpEnhancementsCard({
             <FieldLabel>{"远端传输协议"}</FieldLabel>
             <Select
               onValueChange={(value) => {
-                if (value === "streamable-http" || value === "sse") {
+                if (isMcpTransportMode(value)) {
                   setTransportDraft(value);
                 }
               }}
               value={activeTransport}
             >
-              <SelectTrigger>
+              <SelectTrigger data-testid="mcp-transport-select">
                 <SelectValue>
-                  {activeTransport === "sse"
-                    ? "SSE（Server-Sent Events）"
-                    : "Streamable HTTP"}
+                  {MCP_TRANSPORT_LABELS[activeTransport]}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="streamable-http">
-                  {"Streamable HTTP（推荐）"}
-                </SelectItem>
-                <SelectItem value="sse">
-                  {"SSE（Server-Sent Events）"}
-                </SelectItem>
+                {MCP_TRANSPORT_MODES.map((mode) => (
+                  <SelectItem
+                    data-testid={`mcp-transport-option-${mode}`}
+                    key={mode}
+                    value={mode}
+                  >
+                    {MCP_TRANSPORT_LABELS[mode]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </Field>

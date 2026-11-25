@@ -2153,6 +2153,7 @@ function webLocalState() {
     /** 需要用户点「重新登记这台电脑」（没登记 / 令牌无效 / 被撤销）。 */
     needsEnroll: needsEnroll(),
     tokenProtected: config.tokenProtected(),
+    encryptionBackend: config.encryptionBackend(),
     localPaused: local.localPaused,
     forceLocalApproval: local.forceLocalApproval,
     autoStart: local.autoStart,
@@ -2785,9 +2786,23 @@ function registerIpc() {
     return next;
   });
   // 网页只能把独立更新进度/就绪窗口叫出来；立即重启要在那个窗口里由本人点。
+  // 若当前为手动下载安装降级态（status=available/error 且 manualInstall=true），直接打开手动下载页。
   handleWeb("pc:install-update", () => {
     dismissedDownloadVersion = "";
+    if (
+      updater?.state.manualInstall &&
+      (updater?.state.status === "available" ||
+        updater?.state.status === "error")
+    ) {
+      return openManualUpdateDownload();
+    }
     return openUpdateWindow({ focus: true });
+  });
+  handleWeb("pc:security-audit", () => config.securityAudit());
+  handleWeb("pc:harden-permissions", async () => {
+    const audit = await config.hardenPermissions();
+    broadcast();
+    return audit;
   });
   handleWeb("pc:focus-window", () => {
     focusMainWindow(windows.chat);

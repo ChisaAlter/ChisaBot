@@ -601,9 +601,13 @@ export function validateChisaAppPackage(
       } else {
         // 对 base64 编码的文本/源码文件同样执行硬编码密钥扫描，防止通过 base64 绕过静态检测
         const ext = posix.extname(pathCheck.path).slice(1).toLowerCase();
-        const isKnownBinaryImage = ["png", "jpg", "jpeg", "webp", "gif"].includes(
-          ext,
-        );
+        const isKnownBinaryImage = [
+          "png",
+          "jpg",
+          "jpeg",
+          "webp",
+          "gif",
+        ].includes(ext);
         if (!isKnownBinaryImage && !buf.includes(0)) {
           checkEmbeddedSecretsInText(
             buf.toString("utf8"),
@@ -692,7 +696,8 @@ export function validateChisaAppPackage(
     issues.push({
       path: "runtime",
       code: "invalid_runtime",
-      message: "runtime 必须声明 kind（node-stdio / remote-mcp / skills-only）。",
+      message:
+        "runtime 必须声明 kind（node-stdio / remote-mcp / skills-only）。",
       severity: "error",
     });
   } else if (rawRuntime.kind === "node-stdio") {
@@ -774,14 +779,16 @@ export function validateChisaAppPackage(
     const transport =
       rawRuntime.transport === undefined
         ? "streamable-http"
-        : rawRuntime.transport === "streamable-http" ||
+        : rawRuntime.transport === "auto" ||
+            rawRuntime.transport === "streamable-http" ||
             rawRuntime.transport === "sse"
           ? rawRuntime.transport
           : (() => {
               issues.push({
                 path: "runtime.transport",
                 code: "invalid_transport",
-                message: "remote-mcp transport 仅支持 streamable-http 或 sse。",
+                message:
+                  "remote-mcp transport 仅支持 auto、streamable-http 或 sse。",
                 severity: "error",
               });
               return "streamable-http" as const;
@@ -1151,7 +1158,8 @@ export function validateChisaAppPackage(
         issues.push({
           path: "permissions.workspace",
           code: "invalid_workspace_permission",
-          message: 'permissions.workspace 必须为 "none"（沙箱不共享宿主工作区）。',
+          message:
+            'permissions.workspace 必须为 "none"（沙箱不共享宿主工作区）。',
           severity: "error",
         });
       }
@@ -1428,7 +1436,9 @@ export function stripSecretsForExport(pkg: ChisaAppPackage): ChisaAppPackage {
       : pkg.oauth.type === "bearer"
         ? {
             type: "bearer",
-            ...(pkg.oauth.headerName ? { headerName: pkg.oauth.headerName } : {}),
+            ...(pkg.oauth.headerName
+              ? { headerName: pkg.oauth.headerName }
+              : {}),
           }
         : {
             type: "api-key",
@@ -1620,7 +1630,9 @@ type PgRevisionRow = {
 };
 
 function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+  return value instanceof Date
+    ? value.toISOString()
+    : new Date(value).toISOString();
 }
 
 function parseJsonColumn<T>(value: unknown): T {

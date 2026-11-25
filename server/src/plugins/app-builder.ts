@@ -63,7 +63,7 @@ export const APP_DEVELOPMENT_GUIDE_MD = `# ChisaBot 微应用 / MCP 插件包开
 - \`name\` / \`description\`: 字符串或 \`{ "en": "...", "zh-CN": "..." }\`
 - \`runtime\`:
   - \`{ "kind": "node-stdio", "entry": "index.mjs", "memoryLimitMb": 128, "timeoutMs": 30000 }\`
-  - \`{ "kind": "remote-mcp", "url": "https://example.com/mcp", "transport": "streamable-http" | "sse" }\`
+  - \`{ "kind": "remote-mcp", "url": "https://example.com/mcp", "transport": "auto" | "streamable-http" | "sse" }\`
   - \`{ "kind": "skills-only" }\`
 - \`files\`: \`[{ "path": "index.mjs", "encoding": "utf8" | "base64", "content": "..." }]\`（仅允许安全相对 POSIX 路径，禁 \`..\` / 绝对路径 / \`.env\` / 密钥文件，总大小 ≤ 2 MiB）
 - \`configSchema\`: \`[{ "key": "API_BASE", "name": "接口地址", "secret": false, "required": false }]\`（禁止占用 \`NODE_*\` / \`LD_*\` / \`PATH\` / \`CHISABOT_*\` 等宿主保留环境变量；\`secret: true\` 禁止填 \`defaultValue\`）
@@ -102,13 +102,15 @@ export const APP_DEVELOPMENT_GUIDE_MD = `# ChisaBot 微应用 / MCP 插件包开
 \`\`\`
 `;
 
-function parsePackageInput(raw: unknown): {
-  ok: true;
-  value: unknown;
-} | {
-  ok: false;
-  error: string;
-} {
+function parsePackageInput(raw: unknown):
+  | {
+      ok: true;
+      value: unknown;
+    }
+  | {
+      ok: false;
+      error: string;
+    } {
   if (typeof raw === "string") {
     const trimmed = raw.trim();
     if (!trimmed) return { ok: false, error: "package JSON 字符串不能为空。" };
@@ -599,9 +601,13 @@ export function createAppBuilderRoutes(
         return context.json({ error: parsed.error }, 400);
       }
       try {
-        const result = await store.submitDraft(parsed.value, actorLabel(context), {
-          isAdmin: true,
-        });
+        const result = await store.submitDraft(
+          parsed.value,
+          actorLabel(context),
+          {
+            isAdmin: true,
+          },
+        );
         await runner.closeSession(result.summary.id);
         return context.json(
           { app: result.summary, isUpdate: result.isUpdate },
@@ -752,8 +758,7 @@ export function createAppBuilderRoutes(
           refreshToken,
           tokenType,
           expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-          scope:
-            typeof payload.scope === "string" ? payload.scope : undefined,
+          scope: typeof payload.scope === "string" ? payload.scope : undefined,
         },
         state.userId,
       );
@@ -1026,7 +1031,10 @@ export function createAppBuilderRoutes(
         params.set(k, v);
       }
       authUrl.search = params.toString();
-      return context.json({ authorizationUrl: authUrl.toString(), redirectUri });
+      return context.json({
+        authorizationUrl: authUrl.toString(),
+        redirectUri,
+      });
     } catch (error) {
       if (error instanceof AppPackageError) {
         return context.json(
@@ -1101,12 +1109,9 @@ export function createAppBuilderRoutes(
       const appId = context.req.param("id");
       try {
         await runner.closeSession(appId);
-        const app = await store.rollback(
-          appId,
-          digest,
-          actorLabel(context),
-          { approve: body?.approve === true },
-        );
+        const app = await store.rollback(appId, digest, actorLabel(context), {
+          approve: body?.approve === true,
+        });
         return context.json({ app });
       } catch (error) {
         if (error instanceof AppPackageError) {

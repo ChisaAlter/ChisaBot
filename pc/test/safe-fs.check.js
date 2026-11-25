@@ -378,6 +378,84 @@ test("config.js excludes Linux basic_text for new tokens while preserving legacy
   });
 });
 
+test("config.js securityAudit and hardenPermissions inspect and converge dir/config/audit permissions", async () => {
+  await withTempDirAsync("cb-config-audit-", async (dir) => {
+    const dpapiLikeStorage = {
+      isEncryptionAvailable: () => true,
+      encryptString: (s) => Buffer.from(`enc:${s}`, "utf8"),
+      decryptString: (b) => b.toString("utf8").replace(/^enc:/, ""),
+    };
+    const cfg = createConfig({ dir, safeStorage: dpapiLikeStorage });
+
+    // Before writing config/audit, missing files report exists=false, secure=true.
+    const initialAudit = await cfg.securityAudit();
+    assert.equal(initialAudit.platform, process.platform);
+    assert.equal(initialAudit.tokenProtected, false);
+    assert.equal(
+      initialAudit.encryptionBackend,
+      process.platform === "win32"
+        ? "dpapi"
+        : process.platform === "darwin"
+          ? "keychain"
+          : "keyring",
+    );
+    assert.deepEqual(
+      initialAudit.files.map((f) => ({
+        name: f.name,
+        exists: f.exists,
+        secure: f.secure,
+        isSymlink: f.isSymlink,
+      })),
+      [
+        { name: "config.json", exists: false, secure: true, isSymlink: false },
+        { name: "audit.jsonl", exists: false, secure: true, isSymlink: false },
+      ],
+    );
+
+    // Write token + audit entry so both files exist.
+    cfg.setToken("tok_audit_test");
+    cfg.appendAudit({ ts: 2, op: "audit_check" });
+    await cfg.flushAudit();
+
+    const winAudit = await cfg.securityAudit({ platform: "win32" });
+    assert.equal(winAudit.platform, "win32");
+    assert.equal(winAudit.tokenProtected, true);
+    assert.equal(winAudit.files.length, 2);
+    for (const fileInfo of winAudit.files) {
+      assert.equal(fileInfo.exists, true);
+      assert.equal(fileInfo.isSymlink, false);
+      assert.equal(fileInfo.secure, true);
+      assert.equal(typeof fileInfo.mode, "number");
+    }
+
+    const hardenedWin = await cfg.hardenPermissions({ platform: "win32" });
+    assert.equal(hardenedWin.tokenProtected, true);
+    assert.equal(
+      hardenedWin.files.every((f) => f.secure),
+      true,
+    );
+
+    if (process.platform !== "win32") {
+      fs.chmodSync(dir, 0o755);
+      fs.chmodSync(path.join(dir, "config.json"), 0o644);
+      fs.chmodSync(path.join(dir, "audit.jsonl"), 0o644);
+
+      const weakAudit = await cfg.securityAudit({ platform: "linux" });
+      assert.equal(weakAudit.files[0].mode, 0o644);
+      assert.equal(weakAudit.files[0].secure, false);
+      assert.equal(weakAudit.files[1].mode, 0o644);
+      assert.equal(weakAudit.files[1].secure, false);
+
+      const fixedAudit = await cfg.hardenPermissions({ platform: "linux" });
+      assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+      assert.equal(fixedAudit.files[0].mode, 0o600);
+      assert.equal(fixedAudit.files[0].secure, true);
+      assert.equal(fixedAudit.files[1].mode, 0o600);
+      assert.equal(fixedAudit.files[1].secure, true);
+    }
+  });
+});
+
 test("atomicChunkedDownload retries transient rename errors and cleans temp files on failure", async () => {
   await withTempDirAsync("cb-dl-retry-", async (dir) => {
     const dest = path.join(dir, "bundle.bin");

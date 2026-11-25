@@ -1,9 +1,15 @@
-import { IconRefresh, IconSparkles, IconX } from "@tabler/icons-react";
+import {
+  IconDownload,
+  IconRefresh,
+  IconSparkles,
+  IconX,
+} from "@tabler/icons-react";
+import { useState } from "react";
 import { confirmDialog } from "@/components/ui/confirm";
 import { useExternalConnection } from "@/hooks";
 import { refreshWouldInterrupt } from "@/lib/activity";
 import { DURATION_MS, usePresenceMount, useRetainedValue } from "@/lib/motion";
-import { usePcLocal } from "@/lib/pc-bridge";
+import { pcBridge, usePcLocal } from "@/lib/pc-bridge";
 import { presenceRef } from "@/lib/presence-flag";
 import { useNewVersion } from "@/lib/version";
 
@@ -15,7 +21,8 @@ export const UPDATE_AUTO_RELOAD_MS = 15_000;
  *
  * 顶部居中的一枚玻璃胶囊（L3），只在服务器上的构建号和这页打包时的不一样时出现；可以关掉，同一个
  * 版本关掉后不再出现。与 PC 客户端更新互斥：当 PC 客户端正在下载或已准备好桌面端更新时，不展示网页刷新条、
- * 也不自动刷新，避免网页刷新与客户端重装/更新同时触发。
+ * 也不自动刷新，避免网页刷新与客户端重装/更新同时触发；当 PC 端降级为手动安装
+ * （`status === "available" && manualInstall === true`）时，展示桌面端手动下载安装入口并调用 `bridge.installUpdate()`。
  *
  * 自动刷新：页面可能一直开着没人点，横幅出现期间每 {@link UPDATE_AUTO_RELOAD_MS} 问一次
  * `refreshWouldInterrupt()`——返回 null = 刷新无损（机器人没在回复、输入框上没挂没发出去的附件、
@@ -25,35 +32,62 @@ export const UPDATE_AUTO_RELOAD_MS = 15_000;
  * 自动刷新一并取消。
  */
 
-export function UpdateBanner(
-  {
-    bundled,
-    pollMs,
-    autoReloadMs = UPDATE_AUTO_RELOAD_MS,
-    reload,
-  }: {
-    bundled?: string;
-    pollMs?: number;
-    /** 自动刷新的轮询间隔（测试可调小）。 */
-    autoReloadMs?: number;
-    /** 测试注入；默认 window.location.reload。 */
-    reload?: () => void;
-  } = {},
-) {
+type BannerPayload =
+  | { kind: "manual"; version: string; key: string }
+  | { kind: "web"; version: string };
+
+export function UpdateBanner({
+  bundled,
+  pollMs,
+  autoReloadMs = UPDATE_AUTO_RELOAD_MS,
+  reload,
+}: {
+  bundled?: string;
+  pollMs?: number;
+  /** 自动刷新的轮询间隔（测试可调小）。 */
+  autoReloadMs?: number;
+  /** 测试注入；默认 window.location.reload。 */
+  reload?: () => void;
+} = {}) {
   const { available, dismiss } = useNewVersion({ bundled, pollMs });
   const [pcLocal] = usePcLocal();
+  const bridge = pcBridge();
+  const [dismissedManualKey, setDismissedManualKey] = useState<string | null>(
+    null,
+  );
+
+  const manualVersion =
+    pcLocal?.update?.status === "available" &&
+    pcLocal.update.manualInstall === true
+      ? (pcLocal.update.version?.trim() ?? "")
+      : null;
+  const manualKey =
+    manualVersion !== null ? manualVersion || "__manual__" : null;
+  const manualVisible = Boolean(manualKey && manualKey !== dismissedManualKey);
+
   const pcUpdateActive =
-    pcLocal?.update?.status === "downloading" || pcLocal?.update?.status === "downloaded";
+    pcLocal?.update?.status === "downloading" ||
+    pcLocal?.update?.status === "downloaded";
   const doReload = reload ?? (() => window.location.reload());
 
-  const visible = Boolean(available && !pcUpdateActive);
+  const webVisible = Boolean(
+    available && !pcUpdateActive && manualKey === null,
+  );
+  const payload: BannerPayload | null =
+    manualVisible && manualKey !== null
+      ? { kind: "manual", version: manualVersion ?? "", key: manualKey }
+      : webVisible && available
+        ? { kind: "web", version: available.version }
+        : null;
+
+  const visible = Boolean(payload);
   const { mounted, onExited } = usePresenceMount(visible, DURATION_MS.exit);
-  const retainedAvailable = useRetainedValue(available);
+  const retained = useRetainedValue(payload);
 
   // 自动换到新构建：只在无损（refreshWouldInterrupt() === null）时刷新，有损就等下一轮。
   // 点 ✕ 关掉 / PC 客户端更新在进行时这条连接断开，计时器随之清掉。
   useExternalConnection(
-    visible ? `auto-reload\0${autoReloadMs}` : false,
+    webVisible ? `auto-reload\0${autoReloadMs}` : false,
     () => {
       const timer = window.setInterval(() => {
         if (refreshWouldInterrupt() !== null) return;
@@ -63,7 +97,7 @@ export function UpdateBanner(
       return () => window.clearInterval(timer);
     },
   );
-  if (!mounted || !retainedAvailable) return null;
+  if (!mounted || !retained) return null;
 
   async function refresh() {
     const blocker = refreshWouldInterrupt();
@@ -93,6 +127,15 @@ export function UpdateBanner(
     doReload();
   }
 
+  const isManual = retained.kind === "manual";
+  const manualVersionLabel =
+    isManual && retained.version
+      ? `v${retained.version.replace(/^v/i, "")}`
+      : "";
+  const manualText = manualVersionLabel
+    ? `有新版本 ${manualVersionLabel} 可手动下载安装`
+    : "有新版本可手动下载安装";
+
   return (
     <div
       className="update-banner"
@@ -106,15 +149,56 @@ export function UpdateBanner(
       role="status"
       aria-live="polite"
     >
-      <button className="update-banner-main" onClick={() => void refresh()} type="button">
-        <IconSparkles aria-hidden className="update-banner-ic size-4 shrink-0" />
-        <span className="update-banner-t">{"有新版本，点此刷新"}</span>
-        <span className="update-banner-v">{retainedAvailable.version}</span>
-        <IconRefresh aria-hidden className="size-4 shrink-0" />
-      </button>
-      <button aria-label={"关闭新版本提示"} className="update-banner-x" onClick={dismiss} type="button">
-        <IconX className="size-3.5" />
-      </button>
+      {isManual ? (
+        <>
+          <button
+            className="update-banner-main"
+            onClick={() => {
+              void bridge?.installUpdate?.();
+            }}
+            type="button"
+          >
+            <IconSparkles
+              aria-hidden
+              className="update-banner-ic size-4 shrink-0"
+            />
+            <span className="update-banner-t">{manualText}</span>
+            <IconDownload aria-hidden className="size-4 shrink-0" />
+          </button>
+          <button
+            aria-label={"关闭新版本提示"}
+            className="update-banner-x"
+            onClick={() => setDismissedManualKey(retained.key)}
+            type="button"
+          >
+            <IconX className="size-3.5" />
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            className="update-banner-main"
+            onClick={() => void refresh()}
+            type="button"
+          >
+            <IconSparkles
+              aria-hidden
+              className="update-banner-ic size-4 shrink-0"
+            />
+            <span className="update-banner-t">{"有新版本，点此刷新"}</span>
+            <span className="update-banner-v">{retained.version}</span>
+            <IconRefresh aria-hidden className="size-4 shrink-0" />
+          </button>
+          <button
+            aria-label={"关闭新版本提示"}
+            className="update-banner-x"
+            onClick={dismiss}
+            type="button"
+          >
+            <IconX className="size-3.5" />
+          </button>
+        </>
+      )}
     </div>
   );
 }

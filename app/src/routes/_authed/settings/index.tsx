@@ -10,6 +10,7 @@ import { AppearancePreferences } from "@/components/settings/appearance-preferen
 import { BusySendModePreference } from "@/components/settings/busy-send-mode-preference";
 import { NotificationSettingsSection } from "@/components/settings/notification-settings";
 import { PrivacyMaskPreference } from "@/components/settings/privacy-mask-preference";
+import { SecurityAuditCard } from "@/components/settings/security-audit-card";
 import { SimpleModePreference } from "@/components/settings/simple-mode-preference";
 import { StandingInstructions } from "@/components/settings/standing-instructions";
 import { Button } from "@/components/ui/button";
@@ -45,7 +46,9 @@ function RouteComponent() {
     >
       <AppearancePreferences />
       <PageSection
-        description={"精简双栏界面、回复发送行为与屏幕敏感信息遮罩，保存在此浏览器。"}
+        description={
+          "精简双栏界面、回复发送行为与屏幕敏感信息遮罩，保存在此浏览器。"
+        }
         title={"对话与隐私"}
       >
         <PageRows>
@@ -58,6 +61,7 @@ function RouteComponent() {
       </PageSection>
       <StandingInstructions />
       <NotificationSettingsSection />
+      <SecurityAuditCard />
       {/* 快捷键只读、不可改，收进一行，点开看全部（2026-10-12 精简）。 */}
       <PageSection description={"在 ChisaBot 任意位置可用。"} title={"快捷键"}>
         <PageRows>

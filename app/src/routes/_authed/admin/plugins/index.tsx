@@ -10,12 +10,13 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import * as React from "react";
-import { sendPromptToChat } from "@/lib/chat/quote-event";
 import {
   PageEmpty,
   PageRows,
   PageSection,
-  PageShell, PageSkeleton } from "@/components/layout/page-shell";
+  PageShell,
+  PageSkeleton,
+} from "@/components/layout/page-shell";
 import { RowMark } from "@/components/layout/row-mark";
 import { AppPackagesPanel } from "@/components/settings/app-packages-panel";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,7 @@ import {
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "@/components/ui/toast";
+import { sendPromptToChat } from "@/lib/chat/quote-event";
 import { storeMcpToken } from "@/lib/credentials/mutations";
 import { pluginSummary, pluginTitle } from "@/lib/plugins/catalogue-zh";
 import { addCustomServerMutationOptions } from "@/lib/plugins/mutations";
@@ -154,247 +156,264 @@ function RouteComponent() {
         }
         title={"插件"}
       >
-      {/* Pending, error, empty, rows — pending first, so no sentence asserts anything mid-fetch. */}
-      {plugins.isPending ? <PageSkeleton /> : plugins.error ? (
-        <p className="mt-12 text-destructive text-sm" role="alert">
-          {"插件无法加载。"}
-        </p>
-      ) : (
-        <>
-          <PageSection
-            description={
-              "已经添加的插件。点开可以填配置、选择哪些机器人能用。"
-            }
-            settingItem="plugins.custom-mcp"
-            title={"已连接"}
-          >
-            {plugins.data?.servers.length === 0 ? (
-              <PageEmpty>{"尚未连接任何内容。所有可用内容如下。"}</PageEmpty>
-            ) : (
+        {/* Pending, error, empty, rows — pending first, so no sentence asserts anything mid-fetch. */}
+        {plugins.isPending ? (
+          <PageSkeleton />
+        ) : plugins.error ? (
+          <p className="mt-12 text-destructive text-sm" role="alert">
+            {"插件无法加载。"}
+          </p>
+        ) : (
+          <>
+            <PageSection
+              description={
+                "已经添加的插件。点开可以填配置、选择哪些机器人能用。"
+              }
+              settingItem="plugins.custom-mcp"
+              title={"已连接"}
+            >
+              {plugins.data?.servers.length === 0 ? (
+                <PageEmpty>{"尚未连接任何内容。所有可用内容如下。"}</PageEmpty>
+              ) : (
+                <PageRows>
+                  {plugins.data?.servers.map((server, index) => {
+                    const Mark = markFor(server.id);
+                    return (
+                      <React.Fragment key={server.id}>
+                        {/*
+                         * A real link with no children. `useRender` merges props, and children passed
+                         * here replace the row's own — the media, content and actions all vanish and
+                         * the row draws empty. Its accessible name comes from the title inside it.
+                         */}
+                        <Item
+                          data-testid={`plugin-${server.id}`}
+                          render={
+                            <Link
+                              params={{ key: server.id }}
+                              to="/admin/plugins/$key"
+                            />
+                          }
+                          size="sm"
+                        >
+                          <RowMark>
+                            <Mark className="size-4" />
+                          </RowMark>
+                          <ItemContent>
+                            <ItemTitle>
+                              {pluginTitle(server.id, server.title)}
+                            </ItemTitle>
+                            {/*
+                             * The vendor's last failure takes the description's place when there is
+                             * one. A server with no tools and no explanation reads as a server that
+                             * offers nothing, which sends somebody looking in the wrong place.
+                             */}
+                            <ItemDescription
+                              className={
+                                server.lastError
+                                  ? "text-destructive"
+                                  : undefined
+                              }
+                            >
+                              {server.lastError ??
+                                pluginSummary(server.id, server.summary)}
+                            </ItemDescription>
+                          </ItemContent>
+                          <ItemActions>
+                            <span className="text-muted-foreground text-xs">
+                              {summaryFor(
+                                server,
+                                authByKey.get(server.id),
+                                connected.has(server.id),
+                              )}
+                            </span>
+                            <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                          </ItemActions>
+                        </Item>
+                        {index !== (plugins.data?.servers.length ?? 0) - 1 && (
+                          <Separator />
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </PageRows>
+              )}
+            </PageSection>
+
+            <PageSection
+              description={"可以直接添加的官方服务。点开即可添加。"}
+              title={"探索插件"}
+            >
+              {explore.length === 0 ? (
+                <PageEmpty>{"目录中的所有内容均已连接。"}</PageEmpty>
+              ) : (
+                <PageRows>
+                  {explore.map((entry: CatalogueItem, index) => {
+                    const Mark = markFor(entry.key);
+                    return (
+                      <React.Fragment key={entry.key}>
+                        <Item
+                          data-testid={`plugin-${entry.key}`}
+                          render={
+                            <Link
+                              params={{ key: entry.key }}
+                              to="/admin/plugins/$key"
+                            />
+                          }
+                          size="sm"
+                        >
+                          <RowMark>
+                            <Mark className="size-4" />
+                          </RowMark>
+                          <ItemContent>
+                            <ItemTitle>
+                              {pluginTitle(entry.key, entry.title)}
+                            </ItemTitle>
+                            <ItemDescription>
+                              {pluginSummary(entry.key, entry.summary)}
+                            </ItemDescription>
+                          </ItemContent>
+                          <ItemActions>
+                            <span className="text-muted-foreground text-xs">
+                              {"未添加"}
+                            </span>
+                            <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                          </ItemActions>
+                        </Item>
+                        {index !== explore.length - 1 && <Separator />}
+                      </React.Fragment>
+                    );
+                  })}
+                </PageRows>
+              )}
+            </PageSection>
+
+            <PageSection
+              description={
+                "高德、滴滴、12306、小红书等国内服务的接入目录（官方优先，未逐个审查）。"
+              }
+              title={"国内应用"}
+            >
               <PageRows>
-                {plugins.data?.servers.map((server, index) => {
-                  const Mark = markFor(server.id);
-                  return (
-                    <React.Fragment key={server.id}>
-                      {/*
-                       * A real link with no children. `useRender` merges props, and children passed
-                       * here replace the row's own — the media, content and actions all vanish and
-                       * the row draws empty. Its accessible name comes from the title inside it.
-                       */}
-                      <Item
-                        data-testid={`plugin-${server.id}`}
-                        render={
-                          <Link
-                            params={{ key: server.id }}
-                            to="/admin/plugins/$key"
-                          />
-                        }
-                        size="sm"
-                      >
-                        <RowMark>
-                          <Mark className="size-4" />
-                        </RowMark>
-                        <ItemContent>
-                          <ItemTitle>{pluginTitle(server.id, server.title)}</ItemTitle>
-                          {/*
-                           * The vendor's last failure takes the description's place when there is
-                           * one. A server with no tools and no explanation reads as a server that
-                           * offers nothing, which sends somebody looking in the wrong place.
-                           */}
-                          <ItemDescription
-                            className={
-                              server.lastError ? "text-destructive" : undefined
-                            }
-                          >
-                            {server.lastError ?? pluginSummary(server.id, server.summary)}
-                          </ItemDescription>
-                        </ItemContent>
-                        <ItemActions>
-                          <span className="text-muted-foreground text-xs">
-                            {summaryFor(
-                              server,
-                              authByKey.get(server.id),
-                              connected.has(server.id),
-                            )}
-                          </span>
-                          <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                        </ItemActions>
-                      </Item>
-                      {index !== (plugins.data?.servers.length ?? 0) - 1 && (
-                        <Separator />
-                      )}
-                    </React.Fragment>
-                  );
-                })}
-              </PageRows>
-            )}
-          </PageSection>
-
-          <PageSection
-            description={"可以直接添加的官方服务。点开即可添加。"}
-            title={"探索插件"}
-          >
-            {explore.length === 0 ? (
-              <PageEmpty>{"目录中的所有内容均已连接。"}</PageEmpty>
-            ) : (
-              <PageRows>
-                {explore.map((entry: CatalogueItem, index) => {
-                  const Mark = markFor(entry.key);
-                  return (
-                    <React.Fragment key={entry.key}>
-                      <Item
-                        data-testid={`plugin-${entry.key}`}
-                        render={
-                          <Link
-                            params={{ key: entry.key }}
-                            to="/admin/plugins/$key"
-                          />
-                        }
-                        size="sm"
-                      >
-                        <RowMark>
-                          <Mark className="size-4" />
-                        </RowMark>
-                        <ItemContent>
-                          <ItemTitle>{pluginTitle(entry.key, entry.title)}</ItemTitle>
-                          <ItemDescription>{pluginSummary(entry.key, entry.summary)}</ItemDescription>
-                        </ItemContent>
-                        <ItemActions>
-                          <span className="text-muted-foreground text-xs">
-                            {"未添加"}
-                          </span>
-                          <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                        </ItemActions>
-                      </Item>
-                      {index !== explore.length - 1 && <Separator />}
-                    </React.Fragment>
-                  );
-                })}
-              </PageRows>
-            )}
-          </PageSection>
-
-          <PageSection
-            description={
-              "高德、滴滴、12306、小红书等国内服务的接入目录（官方优先，未逐个审查）。"
-            }
-            title={"国内应用"}
-          >
-            <PageRows>
-              <Item
-                data-testid="plugin-china-directory"
-                render={<Link to="/admin/plugins/directory" />}
-                size="sm"
-              >
-                <RowMark>
-                  <IconPlug className="size-4" />
-                </RowMark>
-                <ItemContent>
-                  <ItemTitle>{"浏览国内应用目录"}</ItemTitle>
-                  <ItemDescription>
-                    {"200+ 条目：已收录的一键添加，官方端点走自定义 MCP，stdio 包在配对电脑上由机器人拉起，暂无 MCP 的给官方 API 文档。"}
-                  </ItemDescription>
-                </ItemContent>
-                <ItemActions>
-                  <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                </ItemActions>
-              </Item>
-            </PageRows>
-          </PageSection>
-
-          <PageSection
-            description={"通过 Composio 接入的更多应用（未逐个审查）。"}
-            title={"更多应用"}
-          >
-            <PageRows>
-              {/*
-               * The row states the setting rather than hiding the feature. A deployment with no
-               * Composio key still says that Composio is a thing this build can do and names the
-               * variable that turns it on — a section that simply vanished would leave an
-               * administrator with nothing to search for, and nothing to tell them the handful of
-               * connectors above is not the whole story.
-               */}
-              {plugins.data?.composioConfigured ? (
                 <Item
-                  data-testid="plugin-composio"
-                  render={<Link to="/admin/plugins/composio" />}
+                  data-testid="plugin-china-directory"
+                  render={<Link to="/admin/plugins/directory" />}
                   size="sm"
                 >
                   <RowMark>
                     <IconPlug className="size-4" />
                   </RowMark>
                   <ItemContent>
-                    <ItemTitle>{"浏览 Composio"}</ItemTitle>
+                    <ItemTitle>{"浏览国内应用目录"}</ItemTitle>
                     <ItemDescription>
-                      {"几百个应用，由询问者访问。每人连接自己的账号。"}
+                      {
+                        "200+ 条目：已收录的一键添加，官方端点走自定义 MCP，stdio 包在配对电脑上由机器人拉起，暂无 MCP 的给官方 API 文档。"
+                      }
                     </ItemDescription>
                   </ItemContent>
                   <ItemActions>
                     <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
                   </ItemActions>
                 </Item>
-              ) : (
-                /* No chevron and no link: the row goes nowhere, because there is nowhere to go
+              </PageRows>
+            </PageSection>
+
+            <PageSection
+              description={"通过 Composio 接入的更多应用（未逐个审查）。"}
+              title={"更多应用"}
+            >
+              <PageRows>
+                {/*
+                 * The row states the setting rather than hiding the feature. A deployment with no
+                 * Composio key still says that Composio is a thing this build can do and names the
+                 * variable that turns it on — a section that simply vanished would leave an
+                 * administrator with nothing to search for, and nothing to tell them the handful of
+                 * connectors above is not the whole story.
+                 */}
+                {plugins.data?.composioConfigured ? (
+                  <Item
+                    data-testid="plugin-composio"
+                    render={<Link to="/admin/plugins/composio" />}
+                    size="sm"
+                  >
+                    <RowMark>
+                      <IconPlug className="size-4" />
+                    </RowMark>
+                    <ItemContent>
+                      <ItemTitle>{"浏览 Composio"}</ItemTitle>
+                      <ItemDescription>
+                        {"几百个应用，由询问者访问。每人连接自己的账号。"}
+                      </ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                    </ItemActions>
+                  </Item>
+                ) : (
+                  /* No chevron and no link: the row goes nowhere, because there is nowhere to go
                    until the key is set. */
-                <Item data-testid="plugin-composio" size="sm">
+                  <Item data-testid="plugin-composio" size="sm">
+                    <RowMark>
+                      <IconPlug className="size-4" />
+                    </RowMark>
+                    <ItemContent>
+                      <ItemTitle>{"Composio"}</ItemTitle>
+                      <ItemDescription>
+                        {"填入 Composio 密钥后才能浏览它的工具目录。"}
+                      </ItemDescription>
+                    </ItemContent>
+                  </Item>
+                )}
+              </PageRows>
+            </PageSection>
+
+            <AppPackagesPanel settingItem="plugins.app-packages" />
+
+            <PageSection
+              description={
+                "无需暴露公网 HTTP 端口，直接通过已配对的 PC 客户端在本地电脑上拉起 npx / uvx stdio MCP 工具。"
+              }
+              settingItem="plugins.local-stdio-mcp"
+              title={"本地电脑 stdio MCP 桥接"}
+            >
+              <PageRows>
+                <Item data-testid="plugin-local-stdio-mcp" size="sm">
                   <RowMark>
-                    <IconPlug className="size-4" />
+                    <IconDeviceDesktop className="size-4" />
                   </RowMark>
                   <ItemContent>
-                    <ItemTitle>{"Composio"}</ItemTitle>
+                    <ItemTitle>
+                      {"device_mcp_call · 本地电脑 MCP 直连"}
+                    </ItemTitle>
                     <ItemDescription>
                       {
-                        "填入 Composio 密钥后才能浏览它的工具目录。"
+                        "配对电脑客户端后，机器人可直接调用本地文件系统（@modelcontextprotocol/server-filesystem）、本地浏览器（@playwright/mcp）或任意自定义 stdio MCP。"
                       }
                     </ItemDescription>
                   </ItemContent>
+                  <ItemActions className="shrink-0">
+                    <Button
+                      data-testid="try-local-stdio-mcp-btn"
+                      onClick={() =>
+                        sendPromptToChat(
+                          navigate,
+                          "请使用 device_mcp_call 列出我本地电脑 MCP 服务器提供的工具（例如 npx -y @modelcontextprotocol/server-filesystem）",
+                          "本地 stdio MCP 桥接",
+                        )
+                      }
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <IconMessageReply className="size-3.5" />
+                      {"去对话调用"}
+                    </Button>
+                  </ItemActions>
                 </Item>
-              )}
-            </PageRows>
-          </PageSection>
-
-          <AppPackagesPanel settingItem="plugins.app-packages" />
-
-          <PageSection
-            description={"无需暴露公网 HTTP 端口，直接通过已配对的 PC 客户端在本地电脑上拉起 npx / uvx stdio MCP 工具。"}
-            settingItem="plugins.local-stdio-mcp"
-            title={"本地电脑 stdio MCP 桥接"}
-          >
-            <PageRows>
-              <Item data-testid="plugin-local-stdio-mcp" size="sm">
-                <RowMark>
-                  <IconDeviceDesktop className="size-4" />
-                </RowMark>
-                <ItemContent>
-                  <ItemTitle>{"device_mcp_call · 本地电脑 MCP 直连"}</ItemTitle>
-                  <ItemDescription>
-                    {"配对电脑客户端后，机器人可直接调用本地文件系统（@modelcontextprotocol/server-filesystem）、本地浏览器（@playwright/mcp）或任意自定义 stdio MCP。"}
-                  </ItemDescription>
-                </ItemContent>
-                <ItemActions className="shrink-0">
-                  <Button
-                    data-testid="try-local-stdio-mcp-btn"
-                    onClick={() =>
-                      sendPromptToChat(
-                        navigate,
-                        "请使用 device_mcp_call 列出我本地电脑 MCP 服务器提供的工具（例如 npx -y @modelcontextprotocol/server-filesystem）",
-                        "本地 stdio MCP 桥接",
-                      )
-                    }
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    <IconMessageReply className="size-3.5" />
-                    {"去对话调用"}
-                  </Button>
-                </ItemActions>
-              </Item>
-            </PageRows>
-          </PageSection>
-        </>
-      )}
-    </PageShell>
+              </PageRows>
+            </PageSection>
+          </>
+        )}
+      </PageShell>
     </>
   );
 }
@@ -460,11 +479,16 @@ function CustomMcpDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="im-dialog max-w-lg" data-testid="custom-mcp-dialog">
+      <DialogContent
+        className="im-dialog max-w-lg"
+        data-testid="custom-mcp-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{"添加自定义 HTTP MCP 服务器"}</DialogTitle>
           <DialogDescription>
-            {"填入遵循 Model Context Protocol (Streamable HTTP) 的远程服务器地址。如果是本地 npx / uvx 命令行 MCP，无需在此添加，直接在对话中让机器人调用 device_mcp_call 即可。"}
+            {
+              "填入遵循 Model Context Protocol (Streamable HTTP / SSE) 的远程服务器地址。如果是本地 npx / uvx 命令行 MCP，无需在此添加，直接在对话中让机器人调用 device_mcp_call 即可。"
+            }
           </DialogDescription>
         </DialogHeader>
         <form className="flex flex-col" onSubmit={(e) => void handleSubmit(e)}>

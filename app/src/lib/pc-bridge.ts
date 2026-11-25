@@ -27,6 +27,8 @@ export type PcLocalState = {
   /** 节点这次连接走的路线：「直连」或「HTTP 代理 127.0.0.1:7890」（0.1.6 起，系统代理）。 */
   networkRoute?: string;
   tokenProtected: boolean;
+  /** 本机令牌加密后端（如 dpapi / keychain / keyring / basic_text / none）。 */
+  encryptionBackend?: string;
   localPaused: boolean;
   forceLocalApproval: boolean;
   autoStart: boolean;
@@ -47,7 +49,15 @@ export type PcUpdateState = {
   /** 打包后的安装版才能自动更新；开发运行 / 免安装版为 false。 */
   supported: boolean;
   /** verifying：下载好了，正在校验更新包签名（docs/pc-update-signing.md），通过才变成 downloaded。 */
-  status: "idle" | "checking" | "available" | "downloading" | "verifying" | "downloaded" | "none" | "error";
+  status:
+    | "idle"
+    | "checking"
+    | "available"
+    | "downloading"
+    | "verifying"
+    | "downloaded"
+    | "none"
+    | "error";
   /** 发现 / 下载好的新版本号。 */
   version?: string;
   /** 下载进度 0–100。 */
@@ -60,10 +70,34 @@ export type PcUpdateState = {
   feedUrl?: string;
   /** 检查通过的源上版本比本机还低 = 源已失效（遗弃 / 手改残留）。url 是被判定失效的那个源。 */
   feedStale?: { url: string; version: string };
+  /** 自动更新受限或签名校验降级时为 true，需引导用户手动下载安装。 */
+  manualInstall?: boolean;
+};
+
+export type PcSecurityAuditFile = {
+  name: "config.json" | "audit.jsonl";
+  exists: boolean;
+  mode: number | null;
+  secure: boolean;
+  isSymlink: boolean;
+};
+
+export type PcSecurityAudit = {
+  platform: string;
+  tokenProtected: boolean;
+  encryptionBackend: string;
+  files: PcSecurityAuditFile[];
 };
 
 export type PcLocalPatch = Partial<
-  Pick<PcLocalState, "localPaused" | "forceLocalApproval" | "autoStart" | "startHidden" | "autoUpdate">
+  Pick<
+    PcLocalState,
+    | "localPaused"
+    | "forceLocalApproval"
+    | "autoStart"
+    | "startHidden"
+    | "autoUpdate"
+  >
 >;
 
 export type PcDeepLink =
@@ -84,7 +118,11 @@ export type PcBridge = {
    */
   enroll?(): Promise<{ status: string; message: string; state: PcLocalState }>;
   /** 跳过重连等待，立刻重新连接服务器（没登记时先补登记；0.1.6 起）。 */
-  reconnect?(): Promise<{ status: string; message: string; state: PcLocalState }>;
+  reconnect?(): Promise<{
+    status: string;
+    message: string;
+    state: PcLocalState;
+  }>;
   /** 立即检查更新（返回最新的更新状态）。 */
   checkUpdate?(): Promise<PcUpdateState>;
   /** 新版本已下载时，退出并安装（会先在本机弹确认窗）。 */
@@ -97,6 +135,10 @@ export type PcBridge = {
   diagnosticsExport?(): Promise<Record<string, unknown>>;
   /** 列出本机发现的 Chrome / Edge 浏览器配置列表。 */
   browserProfiles?(): Promise<Array<Record<string, unknown>>>;
+  /** 本机安全自检（配置目录与敏感文件权限、令牌加密后端）。 */
+  securityAudit?(): Promise<PcSecurityAudit>;
+  /** 一键收敛本机配置目录与 config.json / audit.jsonl 权限。 */
+  hardenPermissions?(): Promise<PcSecurityAudit>;
   /** 监听主进程转发的 chisabot:// 深链导航事件。 */
   onDeepLink?(callback: (link: PcDeepLink) => void): () => void;
   onChange(callback: () => void): () => void;
@@ -109,11 +151,16 @@ declare global {
 }
 
 export function pcBridge(): PcBridge | null {
-  return typeof window !== "undefined" && window.chisabotPC ? window.chisabotPC : null;
+  return typeof window !== "undefined" && window.chisabotPC
+    ? window.chisabotPC
+    : null;
 }
 
 /** 在 PC 客户端里返回本机状态（随托盘 / 节点状态变化刷新）；在浏览器里始终是 null。 */
-export function usePcLocal(): [PcLocalState | null, (next: PcLocalState) => void] {
+export function usePcLocal(): [
+  PcLocalState | null,
+  (next: PcLocalState) => void,
+] {
   const [state, setState] = useState<PcLocalState | null>(null);
   const bridge = pcBridge();
   useExternalConnection(objectConnectionKey(bridge), (_key, signal) => {

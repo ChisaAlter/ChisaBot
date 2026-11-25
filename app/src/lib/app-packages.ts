@@ -1,23 +1,25 @@
 import { queryOptions } from "@tanstack/react-query";
 import { client, tryClient } from "@/lib/client";
-import type {
-  AppPackageDetail,
-  AppPackageRevisionSummary,
-  AppPackageSummary,
-  AppPackageValidationResult,
-  ChisaAppPackage,
-  ExecutionNodeHealthResult,
-  ExecutionNodeInput,
-  ExecutionNodesListResponse,
-  ExecutionNodeView,
-  McpServerEnhancementPatch,
-  McpServerEnhancementView,
+import {
+  type AppPackageDetail,
+  type AppPackageRevisionSummary,
+  type AppPackageSummary,
+  type AppPackageValidationResult,
+  type ChisaAppPackage,
+  type ExecutionNodeHealthResult,
+  type ExecutionNodeInput,
+  type ExecutionNodesListResponse,
+  type ExecutionNodeView,
+  MCP_TRANSPORT_MODES,
+  type McpServerEnhancementPatch,
+  type McpServerEnhancementView,
+  type McpTransportMode,
 } from "../../../shared/app-packages";
 
 /**
  * Wave 8 前端数据访问层：
  * - `/api/apps/*`：AI 自研微应用 / MCP 插件包（草稿审阅、安装授权、配置、OAuth、版本回滚、脱敏导入导出）；
- * - `/api/mcp-enhancements/*`：远端 MCP 增强（SSE / 加密 Header / OAuth2 / 自定义指令 / 单工具开关 / mcp-last-good）；
+ * - `/api/mcp-enhancements/*`：远端 MCP 增强（自动协商 / Streamable HTTP / SSE / 加密 Header / OAuth2 / 自定义指令 / 单工具开关 / mcp-last-good）；
  * - `/api/admin/execution-nodes/*`：远程执行节点可视化热配置、连通性探活与一键热切换。
  *
  * 全部请求统一走 `@/lib/client`，严禁裸 fetch。
@@ -35,14 +37,39 @@ export type {
   ExecutionNodeView,
   McpServerEnhancementPatch,
   McpServerEnhancementView,
+  McpTransportMode,
 };
+export { MCP_TRANSPORT_MODES };
+
+export const MCP_TRANSPORT_LABELS: Record<McpTransportMode, string> = {
+  auto: "自动（优先 Streamable HTTP，兼容降级 SSE）",
+  "streamable-http": "Streamable HTTP（推荐）",
+  sse: "SSE（Server-Sent Events）",
+};
+
+export function isMcpTransportMode(value: unknown): value is McpTransportMode {
+  return (
+    typeof value === "string" &&
+    (MCP_TRANSPORT_MODES as readonly string[]).includes(value)
+  );
+}
+
+export function normalizeMcpTransportMode(
+  value: unknown,
+  fallback: McpTransportMode = "streamable-http",
+): McpTransportMode {
+  return isMcpTransportMode(value) ? value : fallback;
+}
+
+export function formatMcpTransportLabel(value: unknown): string {
+  return MCP_TRANSPORT_LABELS[normalizeMcpTransportMode(value)];
+}
 
 export const appPackagesKeys = {
   all: ["app-packages"] as const,
   detail: (id: string) => ["app-packages", "detail", id] as const,
   revisions: (id: string) => ["app-packages", "revisions", id] as const,
-  mcpEnhancement: (serverId: string) =>
-    ["mcp-enhancements", serverId] as const,
+  mcpEnhancement: (serverId: string) => ["mcp-enhancements", serverId] as const,
   executionNodes: ["execution-nodes"] as const,
 };
 
@@ -77,11 +104,15 @@ export const appPackageDetailQueryOptions = (appId: string, enabled = true) =>
 export function validateAppPackage(
   pkg: unknown,
 ): Promise<AppPackageValidationResult> {
-  return client<AppPackageValidationResult>("/api/apps/validate", "validation", {
-    method: "POST",
-    body: { package: pkg },
-    fallback: "应用包静态安全预检失败",
-  });
+  return client<AppPackageValidationResult>(
+    "/api/apps/validate",
+    "validation",
+    {
+      method: "POST",
+      body: { package: pkg },
+      fallback: "应用包静态安全预检失败",
+    },
+  );
 }
 
 export async function importAppPackage(
@@ -271,15 +302,19 @@ export const mcpEnhancementQueryOptions = (serverId: string, enabled = true) =>
       const body = (await response.json().catch(() => null)) as {
         enhancement?: McpServerEnhancementView;
       } | null;
-      return body?.enhancement ?? null;
+      if (!body?.enhancement) return null;
+      return {
+        ...body.enhancement,
+        transport: normalizeMcpTransportMode(body.enhancement.transport),
+      };
     },
   });
 
-export function updateMcpEnhancement(
+export async function updateMcpEnhancement(
   serverId: string,
   patch: McpServerEnhancementPatch,
 ): Promise<McpServerEnhancementView> {
-  return client<McpServerEnhancementView>(
+  const enhancement = await client<McpServerEnhancementView>(
     `/api/mcp-enhancements/${encodeURIComponent(serverId)}`,
     "enhancement",
     {
@@ -288,6 +323,10 @@ export function updateMcpEnhancement(
       fallback: "保存远端 MCP 增强配置失败",
     },
   );
+  return {
+    ...enhancement,
+    transport: normalizeMcpTransportMode(enhancement.transport),
+  };
 }
 
 // ── 远程执行节点可视化热切换 ──────────────────────────────────────────────

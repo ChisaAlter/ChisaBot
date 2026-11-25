@@ -116,6 +116,8 @@ if (isLocalPage) {
       consumeDeepLink: () => ipcRenderer.invoke("pc:consume-deep-link"),
       diagnosticsExport: () => ipcRenderer.invoke("pc:diagnostics-export"),
       browserProfiles: () => ipcRenderer.invoke("pc:browser-profiles"),
+      securityAudit: () => ipcRenderer.invoke("pc:security-audit"),
+      hardenPermissions: () => ipcRenderer.invoke("pc:harden-permissions"),
       onDeepLink(callback) {
         const listener = (_event, link) => callback(link);
         ipcRenderer.on("pc:deep-link", listener);
