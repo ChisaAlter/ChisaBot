@@ -76,72 +76,72 @@
 @property --mat-glass-panel-1 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.78);
+  initial-value: rgba(255, 255, 255, 0.52);
 }
 @property --mat-glass-panel-2 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.72);
+  initial-value: rgba(255, 255, 255, 0.42);
 }
 @property --mat-glass-elevated-1 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.86);
+  initial-value: rgba(255, 255, 255, 0.68);
 }
 @property --mat-glass-elevated-2 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.8);
+  initial-value: rgba(255, 255, 255, 0.6);
 }
 @property --mat-glass-bubble-1 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.78);
+  initial-value: rgba(255, 255, 255, 0.54);
 }
 @property --mat-glass-bubble-2 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.72);
+  initial-value: rgba(255, 255, 255, 0.46);
 }
 @property --mat-glass-control {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.74);
+  initial-value: rgba(255, 255, 255, 0.5);
 }
 @property --mat-clear-panel-1 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.66);
+  initial-value: rgba(255, 255, 255, 0.38);
 }
 @property --mat-clear-panel-2 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.6);
+  initial-value: rgba(255, 255, 255, 0.3);
 }
 @property --mat-clear-elevated-1 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.74);
+  initial-value: rgba(255, 255, 255, 0.54);
 }
 @property --mat-clear-elevated-2 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.66);
+  initial-value: rgba(255, 255, 255, 0.46);
 }
 @property --mat-clear-bubble-1 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.64);
+  initial-value: rgba(255, 255, 255, 0.4);
 }
 @property --mat-clear-bubble-2 {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.58);
+  initial-value: rgba(255, 255, 255, 0.32);
 }
 @property --mat-clear-control {
   syntax: "<color>";
   inherits: true;
-  initial-value: rgba(255, 255, 255, 0.62);
+  initial-value: rgba(255, 255, 255, 0.38);
 }
 @property --mat-glass-panel-hold {
   syntax: "<color>";
@@ -319,79 +319,79 @@
   --surface-solid-inset: #e5eef8;
   --surface-solid-control: #ecf3fb;
   --surface-edge-rgb: 15 23 42;
-  --surface-hl-top: rgba(255, 255, 255, 0.82);
-  --surface-hl-ring: rgba(255, 255, 255, 0.48);
+  --surface-hl-top: rgba(255, 255, 255, 0.36);
+  --surface-hl-ring: rgba(255, 255, 255, 0.12);
 
   /* 浅色材质色标预合成（在 <html> 一次求值，自动响应 6 套主题与 customAccent） */
   --mat-glass-panel-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.78) 94%,
-    var(--accent) 6%
+    rgb(var(--surface-tint-rgb) / 0.52) 97%,
+    var(--accent) 3%
   );
   --mat-glass-panel-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.72) 96%,
-    var(--accent) 4%
+    rgb(var(--surface-tint-rgb) / 0.42) 98%,
+    var(--accent) 2%
   );
   --mat-glass-elevated-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.86) 95%,
-    var(--accent) 5%
+    rgb(var(--surface-tint-rgb) / 0.68) 97%,
+    var(--accent) 3%
   );
   --mat-glass-elevated-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.8) 97%,
-    var(--accent) 3%
+    rgb(var(--surface-tint-rgb) / 0.6) 98%,
+    var(--accent) 2%
   );
   --mat-glass-bubble-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.78) 95%,
-    var(--accent) 5%
+    rgb(var(--surface-tint-rgb) / 0.54) 97%,
+    var(--accent) 3%
   );
   --mat-glass-bubble-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.72) 97%,
-    var(--accent) 3%
+    rgb(var(--surface-tint-rgb) / 0.46) 98%,
+    var(--accent) 2%
   );
   --mat-glass-control: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.74) 95%,
-    var(--accent) 5%
+    rgb(var(--surface-tint-rgb) / 0.5) 97%,
+    var(--accent) 3%
   );
   --mat-clear-panel-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.66) 95%,
-    var(--accent) 5%
+    rgb(var(--surface-tint-rgb) / 0.38) 97%,
+    var(--accent) 3%
   );
   --mat-clear-panel-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.6) 97%,
-    var(--accent) 3%
+    rgb(var(--surface-tint-rgb) / 0.3) 98%,
+    var(--accent) 2%
   );
   --mat-clear-elevated-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.74) 95%,
-    var(--accent) 5%
+    rgb(var(--surface-tint-rgb) / 0.54) 97%,
+    var(--accent) 3%
   );
   --mat-clear-elevated-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.66) 97%,
-    var(--accent) 3%
+    rgb(var(--surface-tint-rgb) / 0.46) 98%,
+    var(--accent) 2%
   );
   --mat-clear-bubble-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.64) 95%,
-    var(--accent) 5%
+    rgb(var(--surface-tint-rgb) / 0.4) 97%,
+    var(--accent) 3%
   );
   --mat-clear-bubble-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.58) 97%,
-    var(--accent) 3%
+    rgb(var(--surface-tint-rgb) / 0.32) 98%,
+    var(--accent) 2%
   );
   --mat-clear-control: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.62) 95%,
-    var(--accent) 5%
+    rgb(var(--surface-tint-rgb) / 0.38) 97%,
+    var(--accent) 3%
   );
   --mat-glass-panel-hold: color-mix(
     in srgb,
@@ -614,73 +614,73 @@ html.dark {
   /* 深色材质色标预合成（在 <html> 一次求值，自动响应 6 套主题与 customAccent） */
   --mat-glass-panel-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.78) 93%,
-    var(--accent) 7%
+    rgb(var(--surface-tint-rgb) / 0.56) 96%,
+    var(--accent) 4%
   );
   --mat-glass-panel-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.72) 96%,
-    var(--accent) 4%
+    rgb(var(--surface-tint-rgb) / 0.48) 98%,
+    var(--accent) 2%
   );
   --mat-glass-elevated-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.86) 94%,
-    var(--accent) 6%
+    rgb(var(--surface-tint-rgb) / 0.7) 96%,
+    var(--accent) 4%
   );
   --mat-glass-elevated-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.8) 97%,
-    var(--accent) 3%
+    rgb(var(--surface-tint-rgb) / 0.62) 98%,
+    var(--accent) 2%
   );
   --mat-glass-bubble-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.78) 94%,
-    var(--accent) 6%
+    rgb(var(--surface-tint-rgb) / 0.58) 96%,
+    var(--accent) 4%
   );
   --mat-glass-bubble-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.72) 97%,
-    var(--accent) 3%
+    rgb(var(--surface-tint-rgb) / 0.5) 98%,
+    var(--accent) 2%
   );
   --mat-glass-control: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.74) 94%,
-    var(--accent) 6%
+    rgb(var(--surface-tint-rgb) / 0.52) 96%,
+    var(--accent) 4%
   );
   --mat-clear-panel-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.68) 94%,
-    var(--accent) 6%
+    rgb(var(--surface-tint-rgb) / 0.42) 96%,
+    var(--accent) 4%
   );
   --mat-clear-panel-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.62) 97%,
-    var(--accent) 3%
+    rgb(var(--surface-tint-rgb) / 0.34) 98%,
+    var(--accent) 2%
   );
   --mat-clear-elevated-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.76) 94%,
-    var(--accent) 6%
+    rgb(var(--surface-tint-rgb) / 0.56) 96%,
+    var(--accent) 4%
   );
   --mat-clear-elevated-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.7) 97%,
-    var(--accent) 3%
+    rgb(var(--surface-tint-rgb) / 0.48) 98%,
+    var(--accent) 2%
   );
   --mat-clear-bubble-1: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.66) 94%,
-    var(--accent) 6%
+    rgb(var(--surface-tint-rgb) / 0.44) 96%,
+    var(--accent) 4%
   );
   --mat-clear-bubble-2: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.6) 97%,
-    var(--accent) 3%
+    rgb(var(--surface-tint-rgb) / 0.36) 98%,
+    var(--accent) 2%
   );
   --mat-clear-control: color-mix(
     in srgb,
-    rgb(var(--surface-tint-rgb) / 0.64) 94%,
-    var(--accent) 6%
+    rgb(var(--surface-tint-rgb) / 0.4) 96%,
+    var(--accent) 4%
   );
   --mat-glass-panel-hold: color-mix(
     in srgb,
@@ -915,8 +915,8 @@ html[data-theme="porcelain"] {
   --surface-solid-bubble: #f7f9fd;
   --surface-solid-inset: #e6ecf7;
   --surface-solid-control: #edf1f9;
-  --surface-hl-top: rgba(255, 255, 255, 0.92);
-  --surface-hl-ring: rgba(255, 255, 255, 0.62);
+  --surface-hl-top: rgba(255, 255, 255, 0.42);
+  --surface-hl-ring: rgba(255, 255, 255, 0.14);
   --chart-1: #93c5fd;
   --chart-2: #60a5fa;
   --chart-3: #2563eb;
@@ -1299,9 +1299,79 @@ html.dark[data-theme="cossui"] {
   --chart-5: #52525b;
 }
 
-/* 壁纸模式下最淡辅助字自动抬高一级，守住全壁纸可读性 */
+/* 壁纸模式下最淡辅助字自动抬高一级，同时加厚玻璃釉面保底对比度，守住全壁纸可读性 */
 html[data-canvas="wallpaper"] {
   --ink-4: var(--ink-3);
+  --mat-glass-panel-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.74) 95%,
+    var(--accent) 5%
+  );
+  --mat-glass-panel-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.68) 97%,
+    var(--accent) 3%
+  );
+  --mat-glass-elevated-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.82) 95%,
+    var(--accent) 5%
+  );
+  --mat-glass-elevated-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.76) 97%,
+    var(--accent) 3%
+  );
+  --mat-glass-bubble-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.74) 95%,
+    var(--accent) 5%
+  );
+  --mat-glass-bubble-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.68) 97%,
+    var(--accent) 3%
+  );
+  --mat-glass-control: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.7) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-panel-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.68) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-panel-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.62) 97%,
+    var(--accent) 3%
+  );
+  --mat-clear-elevated-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.76) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-elevated-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.68) 97%,
+    var(--accent) 3%
+  );
+  --mat-clear-bubble-1: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.66) 95%,
+    var(--accent) 5%
+  );
+  --mat-clear-bubble-2: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.6) 97%,
+    var(--accent) 3%
+  );
+  --mat-clear-control: color-mix(
+    in srgb,
+    rgb(var(--surface-tint-rgb) / 0.64) 95%,
+    var(--accent) 5%
+  );
 }
 
 /* ==========================================================================================
