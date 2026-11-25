@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import { MAX_DICTATION_BYTES } from "../../shared/dictation";
+import { SpeechServiceError } from "../src/audio/speech-service";
 import type { AppVariables } from "../src/auth/guards";
 import { createDictationRoutes } from "../src/dictation/routes";
 
@@ -127,4 +128,89 @@ test("limits simultaneous requests and releases the slot after failure", async (
   gate.reject(new Error("network unavailable"));
   expect((await first).status).toBe(502);
   expect((await app.request("/transcriptions", recording())).status).toBe(502);
+});
+test("reflects dynamic isReady toggling without occupying concurrency slots", async () => {
+  let ready = false;
+  let calls = 0;
+  const multiUser: MiddlewareHandler<{ Variables: AppVariables }> = async (
+    context,
+    next,
+  ) => {
+    const id = context.req.header("x-test-actor") ?? "user-1";
+    context.set("actor", {
+      id,
+      email: `${id}@example.com`,
+      role: "user",
+    });
+    await next();
+  };
+  const app = createDictationRoutes(multiUser, {
+    isReady: async () => {
+      await Promise.resolve();
+      return ready;
+    },
+    transcribe: async () => {
+      calls += 1;
+      return "Dynamic ready";
+    },
+  });
+
+  const unreadyStatuses = await Promise.all(
+    Array.from({ length: 10 }, async (_, index) => {
+      const req = recording();
+      const response = await app.request("/transcriptions", {
+        ...req,
+        headers: { ...req.headers, "x-test-actor": `actor-${index}` },
+      });
+      return response.status;
+    }),
+  );
+  expect(unreadyStatuses).toEqual(Array(10).fill(503));
+  expect(calls).toBe(0);
+
+  ready = true;
+  const ok = await app.request("/transcriptions", recording());
+  expect(ok.status).toBe(200);
+  expect(await ok.json()).toEqual({ text: "Dynamic ready" });
+  expect(calls).toBe(1);
+
+  const throwingApp = createDictationRoutes(user, {
+    isReady: async () => {
+      throw new Error("db down");
+    },
+    transcribe: async () => "never",
+  });
+  expect(
+    (await throwingApp.request("/transcriptions", recording())).status,
+  ).toBe(503);
+});
+test("forwards SpeechServiceError status and safe message", async () => {
+  let nextError = new SpeechServiceError(
+    "not-configured",
+    "语音识别服务尚未配置，请联系管理员配置 ASR 服务。",
+    503,
+  );
+  const app = createDictationRoutes(user, {
+    isReady: () => true,
+    transcribe: async () => {
+      throw nextError;
+    },
+  });
+
+  const notConfigured = await app.request("/transcriptions", recording());
+  expect(notConfigured.status).toBe(503);
+  expect(await notConfigured.json()).toEqual({
+    error: "语音识别服务尚未配置，请联系管理员配置 ASR 服务。",
+  });
+
+  nextError = new SpeechServiceError(
+    "unsupported-media-type",
+    "不支持的音频格式。",
+    415,
+  );
+  const unsupported = await app.request("/transcriptions", recording());
+  expect(unsupported.status).toBe(415);
+  expect(await unsupported.json()).toEqual({
+    error: "不支持的音频格式。",
+  });
 });

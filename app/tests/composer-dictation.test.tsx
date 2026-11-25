@@ -140,3 +140,37 @@ for (const variant of ["compact", "default"] as const) {
     });
   }
 }
+
+for (const variant of ["compact", "default"] as const) {
+  for (const capabilities of [
+    { generativeUi: true, transcription: false },
+    { generativeUi: true },
+  ] as const) {
+    test(`${variant} dictation: hides mic button when server transcription is ${"transcription" in capabilities ? "false" : "omitted"}, even with webkitSpeechRecognition`, () => {
+      window.localStorage.removeItem("chisabot.composer-expanded");
+      queryClient.setQueryData(deploymentKeys.capabilities(), capabilities);
+      const supported = spyOn(recording, "recordingSupported").mockReturnValue(
+        true,
+      );
+      const w = window as unknown as { webkitSpeechRecognition?: unknown };
+      const hadRecognition = "webkitSpeechRecognition" in w;
+      const previousRecognition = w.webkitSpeechRecognition;
+      w.webkitSpeechRecognition = function FakeSpeechRecognition() {};
+      try {
+        const view = render(<Composer compact={variant === "compact"} />);
+        const expand = view.queryByRole("button", { name: "展开输入框选项" });
+        if (expand) fireEvent.click(expand);
+        expect(view.queryByRole("button", { name: "语音输入" })).toBeNull();
+      } finally {
+        cleanup();
+        window.localStorage.removeItem("chisabot.composer-expanded");
+        supported.mockRestore();
+        if (hadRecognition) {
+          w.webkitSpeechRecognition = previousRecognition;
+        } else {
+          delete w.webkitSpeechRecognition;
+        }
+      }
+    });
+  }
+}

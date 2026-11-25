@@ -6249,6 +6249,18 @@ const app = createApp(
     primaryAgentService,
     quotaService,
     demonstrationStore,
+    dictation: {
+      isReady: async () => (await speechService.statusView()).asrReady,
+      transcribe: async (file, signal) => {
+        const result = await speechService.transcribeAudio({
+          data: file,
+          mimeType: file.type,
+          fileName: file.name,
+          signal,
+        });
+        return result.text;
+      },
+    },
     ...(gatewaySecret
       ? {
           singleUserGuard: createGatewayRequireUser(
@@ -6611,7 +6623,10 @@ serve<SocketData>({
       );
     }
     const url = new URL(request.url);
-    if (url.pathname === "/api/audio/transcriptions") {
+    if (
+      url.pathname === "/api/audio/transcriptions" ||
+      url.pathname === "/api/speech/asr"
+    ) {
       server.timeout(request, DICTATION_HTTP_IDLE_SECONDS);
     }
     // 计算机工具（打开网页、执行命令、接管）常常超过 Bun 默认的 10 秒空闲超时，被切断后用户看到

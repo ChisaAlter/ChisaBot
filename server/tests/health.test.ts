@@ -104,6 +104,83 @@ describe("runtime capabilities", () => {
     expect(response.status).toBe(200);
     expect((await response.json()).generativeUi).toBe(false);
   });
+
+  test("dynamically reflects dictation readiness with Cache-Control: no-store and no secrets", async () => {
+    let ready = false;
+    const args: unknown[] = Array.from({ length: createApp.length });
+    args[0] = loadConfig(
+      testEnvironment({
+        TRANSCRIPTION_PROVIDER: "openai-compatible",
+        TRANSCRIPTION_BASE_URL: "https://speech.private.example/v1",
+        TRANSCRIPTION_MODEL: "private-speech-model",
+        TRANSCRIPTION_API_KEY: "private-speech-key",
+      }),
+    );
+    args[createApp.length] = {
+      dictation: {
+        isReady: async () => ready,
+        transcribe: async () => "ok",
+      },
+    };
+    const dynamicApp = createApp(...(args as Parameters<typeof createApp>));
+
+    const offResponse = await dynamicApp.request(
+      "http://chisabot.local/api/capabilities",
+    );
+    expect(offResponse.status).toBe(200);
+    expect(offResponse.headers.get("cache-control")).toBe("no-store");
+    const offBody = await offResponse.text();
+    const offParsed = JSON.parse(offBody) as Record<string, unknown>;
+    expect(offParsed.transcription).toBe(false);
+    expect(Object.keys(offParsed)).toEqual([
+      "mode",
+      "durableHistory",
+      "learning",
+      "generativeUi",
+      "replySources",
+      "accountsUi",
+      "extras",
+      "transcription",
+      "authProviders",
+    ]);
+    expect(offBody).not.toContain("private");
+
+    ready = true;
+    const onResponse = await dynamicApp.request(
+      "http://chisabot.local/api/capabilities",
+    );
+    expect(onResponse.status).toBe(200);
+    expect(onResponse.headers.get("cache-control")).toBe("no-store");
+    const onBody = await onResponse.text();
+    expect(
+      (JSON.parse(onBody) as { transcription: boolean }).transcription,
+    ).toBe(true);
+    expect(onBody).not.toContain("private");
+
+    const errorArgs: unknown[] = Array.from({ length: createApp.length });
+    errorArgs[0] = loadConfig(testEnvironment());
+    errorArgs[createApp.length] = {
+      dictation: {
+        isReady: async () => {
+          throw new Error("secret-speech-token");
+        },
+        transcribe: async () => "ok",
+      },
+    };
+    const failingApp = createApp(
+      ...(errorArgs as Parameters<typeof createApp>),
+    );
+    const failResponse = await failingApp.request(
+      "http://chisabot.local/api/capabilities",
+    );
+    expect(failResponse.status).toBe(200);
+    expect(failResponse.headers.get("cache-control")).toBe("no-store");
+    const failBody = await failResponse.text();
+    expect(
+      (JSON.parse(failBody) as { transcription: boolean }).transcription,
+    ).toBe(false);
+    expect(failBody).not.toContain("secret-speech-token");
+  });
 });
 
 describe("authentication availability", () => {

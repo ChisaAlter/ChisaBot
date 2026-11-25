@@ -428,6 +428,10 @@ export function createApp(
     primaryAgentService?: PrimaryAgentService;
     quotaService?: QuotaService;
     demonstrationStore?: DemonstrationStore;
+    dictation?: {
+      isReady: () => Promise<boolean>;
+      transcribe: (file: File, signal: AbortSignal) => Promise<string>;
+    };
   } = {},
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
@@ -480,8 +484,12 @@ export function createApp(
   });
   // Projected, never the raw config object: this endpoint is reachable before sign-in, so only
   // public capability flags belong here. Add fields explicitly.
-  app.get("/api/capabilities", async (context) =>
-    context.json({
+  app.get("/api/capabilities", async (context) => {
+    const transcription = options.dictation
+      ? await options.dictation.isReady().catch(() => false)
+      : Boolean(config.transcription);
+    context.header("Cache-Control", "no-store");
+    return context.json({
       mode: config.runtime.mode,
       durableHistory: config.runtime.durableHistory,
       learning: false,
@@ -501,7 +509,7 @@ export function createApp(
       accountsUi: config.accountsUi === true,
       // 功能精简（DESIGN.md §74）：默认隐藏的功能里，这台部署用 CHISABOT_EXTRAS 重新打开的。
       extras: [...(config.extras ?? [])],
-      transcription: Boolean(config.transcription),
+      transcription,
       /*
        * Which identity providers this deployment can sign somebody in with.
        *
@@ -513,8 +521,8 @@ export function createApp(
        * build machine cannot offer a provider that machine had never heard of.
        */
       authProviders: configuredAuthProviders(config.auth),
-    }),
-  );
+    });
+  });
   app.on(["GET", "POST"], "/api/auth/*", async (context) => {
     if (!auth) {
       return context.json(
@@ -544,9 +552,10 @@ export function createApp(
     "/api/audio",
     createDictationRoutes(
       requireUser,
-      config.transcription
-        ? createTranscriptionProvider(config.transcription)
-        : undefined,
+      options.dictation ??
+        (config.transcription
+          ? createTranscriptionProvider(config.transcription)
+          : undefined),
     ),
   );
 

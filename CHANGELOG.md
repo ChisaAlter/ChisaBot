@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **输入框语音输入统一接入后台 ASR 配置**：将 `/api/audio/transcriptions` 与 `/api/capabilities.transcription` 统一接入 `speechService`（沿用 `/admin/models` 语音设置 → `SPEECH_ASR_*` → `TRANSCRIPTION_*`），保存设置后即时生效；彻底移除浏览器 `Web Speech API`（`SpeechRecognition`）兜底，未配置服务端 ASR 时直接隐藏输入框语音按钮，不再误报「没有网络连接」。
+
 ## 0.1.188 — 2026-11-25
 
 全端版本 `0.1.188`，Android `versionCode 368`：恢复默认 `glass`（磨砂）与 `clear`（通透）材质的无生硬白边、通透柔和磨砂质感，并同步 PC 端原生令牌与指纹。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `07964e288351b644`；无新增数据库迁移。

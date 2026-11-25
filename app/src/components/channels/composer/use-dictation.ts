@@ -4,9 +4,7 @@ import { useExternalConnection } from "@/hooks";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
 import {
   recordingSupported,
-  speechRecognitionSupported,
   startRecording,
-  startSpeechRecognitionRecording,
   transcribeRecording,
 } from "@/lib/dictation/recording";
 import {
@@ -25,15 +23,10 @@ export function useDictation(
   );
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
-  const serverTranscriptionRef = useRef(false);
-  serverTranscriptionRef.current = data?.transcription === true;
   const [session] = useState(
     () =>
       new DictationSession({
-        record: (onError) =>
-          !serverTranscriptionRef.current && speechRecognitionSupported()
-            ? startSpeechRecognitionRecording(onError)
-            : startRecording(onError),
+        record: (onError) => startRecording(onError),
         transcribe: transcribeRecording,
         onTranscript: (text, intent) => onTranscriptRef.current(text, intent),
       }),
@@ -43,14 +36,13 @@ export function useDictation(
     session.getSnapshot,
     session.getSnapshot,
   );
-  const browserSpeech = speechRecognitionSupported();
-  const available = data?.transcription === true || browserSpeech;
+  const available = data?.transcription === true;
   useExternalConnection(!disabled && available, () => () => session.cancel());
   return {
     session,
     state,
     available,
-    supported: recordingSupported() || browserSpeech,
+    supported: recordingSupported(),
     busy: state.phase !== "idle",
   };
 }
