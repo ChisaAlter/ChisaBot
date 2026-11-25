@@ -2,11 +2,23 @@
 
 ## Unreleased
 
-- **左右面板弹出透明度跳变与聊天气泡材质统一**：
-  - 在 `tokens.css` / `materials.css` 新增不继承表面变量 `--surface-bg-hold` 与预合成 hold 色标（`--mat-{glass,clear}-{panel,elevated}-hold`），`glass-hold` 及入退场剥离模糊期间同步补厚底色而不影响遮罩层；移除宽屏左栏 `glass-fade-in`、宽屏右栏 `rail-card-enter`/`rail-card-exit` `opacity: 0` 淡入，并让窄屏右栏抽屉 `.rail-sheet` 与 `.hk-drawer` 保持 `opacity: 1` 纯位平滑入出。
-  - 移除 `styles.css` 中残留的 AI 气泡 `--glass-strong` 覆写与用户气泡悬空 `--glass-user` 覆写并统一内边距，使双方气泡一致走 `[data-surface="bubble"]` 单通道（补齐 `bubble-and-panel-surface.test.ts` 回归守卫；无需数据库迁移，端侧刷新即生效）。
-- **Claude 全站衬线字体与 DeepSeek（DSH 超椭圆）主题深度重构（DESIGN.md §155）**：
-  - 将 `claude` 主题的 `--font` 与 `--font-claude-serif` 统一为 `Georgia / Charter / Iowan Old Style / Cambria / Noto Serif SC / Songti SC` 衬线栈，并将 `styles.css` 失效选择器替换为全站标题（`.ph-title` / `.page-title` / `.ap-title` / `h1..h3`）、聊天气泡（`[data-slot="bubble-content"]`）与 Claude 主题卡标题；将 `deepseek` 主题对标官方 DSH（`@deepseek-ai/dsh-client-ui-theme`）规范重构为 `16px/20px` 圆角、`superellipse(1.5)` 超椭圆、`0.5px` 发丝边、`neutral-bluish` 冷蓝灰层次（`#4176e6` / `#5686fe`）与蓝青紫纯画布静谧光晕。PC 外壳指纹 `7314f9105596bec5` 不变，客户端代码指纹同步更新为 `e3fec6689d6c030b`。
+## 0.1.187 — 2026-11-25
+
+全端版本 `0.1.187`，Android `versionCode 367`：新增精简模式、对话内 GitHub 与个人数据源连接卡片及本机 Antigravity 托管代理支持，落地全局 P0/P1 安全与运行时增强并打通 PC 安全自检与手动更新、群聊收敛交互与 MCP auto 模式 UI；同步合并 Claude 全站衬线与 DeepSeek DSH 主题（#586）、左右面板持底防跳变与气泡单通道（#587）、对话内连接续聊（#588）及 DSH 依赖升级修复（#584）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `b1398c68b9ffb62c`；无新增数据库迁移。
+
+- **精简模式、主题材质与 `Sidebar` 修复（`9f6abbc8` · #586 · #587）**：
+  - 新增精简模式偏好与布局样式（`simple-mode.ts`、`simple-mode.css`、`simple-mode-preference.tsx`），修复 `Sidebar` `parked` 态误卸载聊天左栏导致的 `left-rail-kept` 失败。
+  - 将 `claude` 主题的 `--font` 与 `--font-claude-serif` 统一为衬线字体栈并覆盖全站标题与聊天气泡正文；将 `deepseek` 主题对标官方 DSH 规范重构为 `16px/20px` 圆角、`superellipse(1.5)` 超椭圆、`0.5px` 发丝边、`neutral-bluish` 冷蓝灰层次与蓝青紫纯画布静谧光晕（DESIGN.md §155）。
+  - 在 `tokens.css` / `materials.css` 新增不继承表面变量 `--surface-bg-hold` 与预合成 hold 色标消除左右面板弹出透明度跳变，移除宽屏侧栏/抽屉不必要的 `opacity: 0` 淡入，并移除 `styles.css` 残留气泡覆写使双方气泡一致走 `[data-surface="bubble"]` 单通道（补齐 `bubble-and-panel-surface.test.ts`）。
+- **对话内连接卡片与 Antigravity 托管代理支持（`9f6abbc8` · #588）**：
+  - 对话内优先推出 GitHub 与个人数据源连接卡片并支持授权后自动续聊（`github-tool.tsx`、`personal-sources-tool.tsx`、`bot-bubbles.tsx`、`connect-service.ts`）。
+  - 新增本机 Antigravity 托管代理检测、运行时桥接与设置页管理卡片（`pc/src/agent-runtime/antigravity-managed.js`、`antigravity-managed-card.tsx`、`local-agents.ts`）。
+- **全局 P0/P1 安全与运行时增强（`f43bb0cd`）**：
+  - 借鉴 BotArk 架构落地 PC 端 `safe-fs.js`、`code-ops.js`/`ops.js`/`proxy.js`/`mcp-host.js` 与 `updater.js` 安全加固、Android 网关鉴权加固（`GatewayAuth.kt` / `AppViewModel.kt`）、IM 适配器安全加固、内联审批/确认卡增强及设备 Hub 与 MCP 扩展。
+- **PC 安全自检与手动更新、群聊收敛交互及 MCP auto 模式 UI（`298921ac`）**：
+  - 打通设置页 PC 安全自检卡片（`security-audit-card.tsx`）、手动检查更新横幅（`update-banner.tsx` · `pc-bridge.ts`）、群聊收敛交互视图（`group-chat-view.tsx` · `group-api.ts`）、应用包面板及管理端插件 MCP auto 模式 UI。
+- **DSH 运行时依赖修复（`08c0c9ac` · #584）**：
+  - 修复 Dependabot PR #584 引起的 `npm ci` `ERESOLVE` 冲突，将 10 个 `@deepseek-ai/dsh*` 包对齐至 `0.2.2-rc.1` 并保留 `undici: "8.12.2"`。
 
 ## 0.1.186 — 2026-11-24
 

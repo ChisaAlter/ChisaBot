@@ -1,7 +1,13 @@
 ## Unreleased
 
-- **左右面板弹出透明度跳变与聊天气泡材质统一**：在 `tokens.css` / `materials.css` 新增 `--surface-bg-hold` 与 `--mat-*-hold` 预合成色标，使 `glass-hold` 剥离模糊期间自动补厚底色（不影响遮罩层）；移除 `.glass-side-full`/`.glass-mini`、`rail-card-enter`/`rail-card-exit` 与 `.rail-sheet` 的 `opacity: 0` 淡入；删除 `styles.css` 对用户/AI 气泡的 `--glass-user`/`--glass-strong` 残留覆写并统一 `padding: 12px 16px;`，使双方一致走 `[data-surface="bubble"]` 单通道，新增 `bubble-and-panel-surface.test.ts` 回归守卫（`styles/{tokens,materials}.css` · `styles.css` · `bubble-and-panel-surface.test.ts`）。
-- **Claude 全站衬线字体与 DeepSeek（DSH）主题重构（DESIGN §155）**：为 `claude` 补齐 `--font` 与真实页面标题/气泡衬线覆盖；按官方 DSH 设计语言（`16px/20px`、`superellipse(1.5)`、`0.5px` 发丝边、`neutral-bluish` 与纯画布蓝青紫光晕）重构 `deepseek` 浅深双版并同步 PC `skyglass-tokens.css` 与 `shell-fingerprint.json`（外壳 `7314f9105596bec5` 不变，`clientHash` 更新为 `e3fec6689d6c030b`）。
+## 0.1.187 — 2026-11-25
+
+- 全端发版：`0.1.187`，Android `versionCode 367`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `b1398c68b9ffb62c`；无新增数据库迁移。
+- **精简模式、主题字体重构与面板/气泡材质统一（`9f6abbc8` · #586 · #587，DESIGN §155）**：新增精简模式开关与布局，修复 `Sidebar` `parked` 态误卸载聊天左栏；补齐 `claude` 全站衬线字体并将 `deepseek` 重构为 DSH `16px/20px`、`superellipse(1.5)`、`0.5px` 发丝边与冷蓝灰/纯画布光晕；新增 `--surface-bg-hold` 与 `--mat-*-hold` 消除面板弹出透明度跳变并统一双方聊天气泡至 `[data-surface="bubble"]` 单通道（`simple-mode.*` · `styles/{tokens,canvas,materials}.css` · `styles.css` · `bubble-and-panel-surface.test.ts`）。
+- **对话内连接卡片与 Antigravity 托管代理支持（`9f6abbc8` · #588）**：优先推出对话内 GitHub 与个人数据源连接卡片并支持授权后自动续聊；新增本机 Antigravity 托管代理检测、桥接与设置页管理卡片（`github-tool.tsx` · `personal-sources-tool.tsx` · `connect-service.ts` · `pc/src/agent-runtime/antigravity-managed.js` · `antigravity-managed-card.tsx`）。
+- **全局 P0/P1 安全与运行时增强（`f43bb0cd`）**：落地 PC 端 `safe-fs`、`code-ops`/`ops`/`proxy`/`mcp-host` 与 `updater` 安全加固、Android `GatewayAuth` 鉴权校验、IM 适配器安全加固、内联审批/确认卡增强及设备 Hub 与 MCP 扩展（`pc/src/{safe-fs,agent/*,updater}.js` · `android/.../GatewayAuth.kt` · `server/src/{im,devices,plugins}/*`）。
+- **PC 安全自检与手动更新、群聊收敛交互及 MCP auto 模式 UI（`298921ac`）**：打通设置页 PC 安全自检卡、手动检查更新横幅、群聊收敛交互视图、应用包面板及管理端插件 MCP auto 模式 UI（`security-audit-card.tsx` · `update-banner.tsx` · `group-chat-view.tsx` · `admin/plugins/index.tsx`）。
+- **DSH 运行时依赖修复（`08c0c9ac` · #584）**：修复 Dependabot PR #584 的 `ERESOLVE` 冲突，对齐 `@deepseek-ai/dsh*` 至 `0.2.2-rc.1` 并升级 `undici` 至 `8.12.2`（`runtime/dsh/package{,-lock}.json`）。
 
 ## 0.1.186 — 2026-11-24
 
