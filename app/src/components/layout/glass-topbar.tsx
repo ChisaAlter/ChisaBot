@@ -35,6 +35,7 @@ import { usePendingActionCount } from "@/lib/pending-actions";
 import { presenceRef } from "@/lib/presence-flag";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
 import { requestSidebarSearchFocus } from "@/lib/sidebar-search";
+import { useSimpleMode } from "@/lib/simple-mode";
 import { cn } from "@/lib/utils";
 
 export function initialsOf(
@@ -110,6 +111,7 @@ const TopBarWindowControls = memo(function TopBarWindowControls() {
 export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
   const sidebar = useOptionalSidebar();
   const mobile = Boolean(sidebar?.isMobile);
+  const simpleMode = useSimpleMode();
   const bridge = desktopWindow();
   const drawerLabel =
     scope === "app"
@@ -168,7 +170,7 @@ export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
             <BrandMark avatar={false} />
           </span>
         )}
-        {PROTO_PREVIEW && !mobile ? (
+        {PROTO_PREVIEW && !mobile && !simpleMode ? (
           <span
             className="proto-badge"
             title={"这是独立的原型沙箱，使用线上数据的副本；改动不会影响线上。"}
@@ -178,7 +180,9 @@ export function GlassTopBar({ scope = "app" }: { scope?: ShellScope }) {
         ) : null}
       </div>
       <div className="glass-topbar-mid">
-        {scope === "app" && !mobile ? <WorkingCrewStrip /> : null}
+        {scope === "app" && !mobile && !simpleMode ? (
+          <WorkingCrewStrip />
+        ) : null}
       </div>
       <div className="glass-topbar-end">
         {mobile ? <MobileSearchButton scope={scope} /> : null}

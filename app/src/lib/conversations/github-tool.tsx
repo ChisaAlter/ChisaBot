@@ -6,15 +6,21 @@ import {
   IconGitPullRequest,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { memo, useRef } from "react";
+import { memo, useRef, useState } from "react";
 import { z } from "zod";
+import {
+  formatGithubConnectedPrompt,
+  GithubTokenDialog,
+} from "@/components/settings/github-connection";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
-import { useRenderTool } from "@/lib/chat/renderers";
+import { type ToolRenderProps, useRenderTool } from "@/lib/chat/renderers";
+import { useConversation } from "@/lib/conversations/conversation";
 import {
   decideGithubAction,
   githubActionQueryOptions,
   githubKeys,
+  githubQueryOptions,
 } from "@/lib/github";
 import type {
   GithubActionKind,
@@ -37,6 +43,12 @@ const parameters = z.object({
 });
 type Given = z.infer<typeof parameters>;
 
+const connectParameters = z.object({
+  reason: z.string().optional(),
+  repo: z.string().optional(),
+});
+type ConnectGiven = z.infer<typeof connectParameters>;
+
 const TOOLS = [
   { name: "github_create_issue", kind: "create_issue" },
   { name: "github_comment", kind: "comment" },
@@ -58,12 +70,126 @@ function useGithubRender(tool: (typeof TOOLS)[number]) {
   });
 }
 
+function renderGithubConnectTool({
+  parameters: given,
+  result,
+}: ToolRenderProps<ConnectGiven>) {
+  return (
+    <GithubConnectCard
+      given={given ?? {}}
+      result={typeof result === "string" ? result : undefined}
+    />
+  );
+}
+
 export function GithubTool() {
   useGithubRender(TOOLS[0]);
   useGithubRender(TOOLS[1]);
   useGithubRender(TOOLS[2]);
+  useRenderTool({
+    name: "github_connect",
+    parameters: connectParameters,
+    render: renderGithubConnectTool,
+  });
   return null;
 }
+
+const DEFAULT_CONNECT_SUB = "令牌只发往服务器，加密保存，机器人看不到。";
+
+/**
+ * 对话内 GitHub 连接交互卡片：点按钮原地弹出令牌输入框，不跳出对话；
+ * 复用 githubQueryOptions() 响应式读取连接状态，保存后自动切换为已连接态。
+ */
+export const GithubConnectCard = memo(function GithubConnectCard({
+  given,
+  result,
+}: {
+  given: ConnectGiven;
+  result?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const openedWhileConnectedRef = useRef(false);
+  const conversation = useConversation();
+  const connection = useQuery(githubQueryOptions());
+  const conn = connection.data ?? null;
+  const connected = conn !== null && conn.status === "ok";
+  const needsReconnect =
+    !connected &&
+    (conn?.status === "invalid" ||
+      Boolean(result?.includes("⟦github:reconnect⟧")));
+  const reason = typeof given.reason === "string" ? given.reason.trim() : "";
+  const repo = typeof given.repo === "string" ? given.repo.trim() : "";
+
+  const title = connected
+    ? `已连接 @${conn.login}`
+    : needsReconnect
+      ? "更换 GitHub 令牌"
+      : "连接 GitHub";
+
+  const sub = connected
+    ? repo
+      ? `可直接访问 ${repo} 及已授权仓库；写操作前仍会先向你确认。`
+      : "机器人已可读取你授权的仓库、Issue 与 PR；写操作前仍会先向你确认。"
+    : reason && repo && !reason.includes(repo)
+      ? `${reason}（${repo}）`
+      : reason
+        ? reason
+        : repo
+          ? `连接后即可访问 ${repo}；${DEFAULT_CONNECT_SUB}`
+          : needsReconnect
+            ? `当前令牌已失效，请更换后继续；${DEFAULT_CONNECT_SUB}`
+            : DEFAULT_CONNECT_SUB;
+
+  return (
+    <div
+      className="gh-card"
+      data-state={connected ? "done" : needsReconnect ? "failed" : "open"}
+      data-surface="bubble"
+      data-testid="github-connect-card"
+    >
+      <div className="gh-card-h">
+        <span className="gh-card-ico">
+          {connected ? (
+            <IconCircleCheck className="size-5" />
+          ) : (
+            <IconBrandGithub className="size-5" />
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="gh-card-t">{title}</div>
+          <div className="gh-card-s">{sub}</div>
+        </div>
+      </div>
+      <div className="gh-card-f">
+        <Button
+          onClick={() => {
+            openedWhileConnectedRef.current = connected;
+            setOpen(true);
+          }}
+          size="sm"
+          type="button"
+          variant={connected ? "outline" : "default"}
+        >
+          {connected || needsReconnect ? "更换令牌" : "连接 GitHub"}
+        </Button>
+      </div>
+      <GithubTokenDialog
+        onConnected={(next) => {
+          conversation?.ask(
+            formatGithubConnectedPrompt(
+              next.login,
+              openedWhileConnectedRef.current,
+              repo,
+            ),
+          );
+        }}
+        onOpenChange={setOpen}
+        open={open}
+        replacing={Boolean(conn) || needsReconnect}
+      />
+    </div>
+  );
+});
 
 const ACTION_ID = /⟦github:(ga_[a-z0-9]+)⟧/;
 

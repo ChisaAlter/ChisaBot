@@ -240,6 +240,122 @@ describe("splitBubbles（DESIGN.md §69）", () => {
       "[连接 Google](/settings/connected-accounts)",
     ]);
   });
+
+  test("正文提及 /settings/connected-accounts/github 时自动补出独立连接胶囊", () => {
+    const screenshotSentence =
+      "到时候要么你连一下 GitHub（`/settings/connected-accounts/github`），要么我在你本地推。";
+    const normalized = normalizeDirectiveCards(screenshotSentence);
+    expect(normalized).toBe(
+      `${screenshotSentence}\n\n[连接 GitHub](/settings/connected-accounts/github)`,
+    );
+    expect(splitBubbles(normalized).map((x) => x.text)).toEqual([
+      screenshotSentence,
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    ]);
+
+    const barePathMultiParagraph = [
+      "先在 /settings/connected-accounts/github 粘贴令牌。",
+      "",
+      "连好之后我直接帮你推。",
+    ].join("\n");
+    expect(
+      splitBubbles(normalizeDirectiveCards(barePathMultiParagraph)).map(
+        (x) => x.text,
+      ),
+    ).toEqual([
+      "先在 /settings/connected-accounts/github 粘贴令牌。",
+      "[连接 GitHub](/settings/connected-accounts/github)",
+      "连好之后我直接帮你推。",
+    ]);
+
+    const inlineMarkdownLink =
+      "你可以先点 [这里](/settings/connected-accounts/github) 连接后再继续。";
+    expect(
+      splitBubbles(normalizeDirectiveCards(inlineMarkdownLink)).map(
+        (x) => x.text,
+      ),
+    ).toEqual([
+      inlineMarkdownLink,
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    ]);
+  });
+
+  test("围栏代码块内的 /settings/connected-accounts/github 不误触发补出胶囊", () => {
+    const backtickFence = [
+      "```text",
+      "示例路径：/settings/connected-accounts/github",
+      "```",
+    ].join("\n");
+    expect(normalizeDirectiveCards(backtickFence)).toBe(backtickFence);
+
+    const tildeFence = [
+      "~~~bash",
+      "echo /settings/connected-accounts/github",
+      "~~~",
+    ].join("\n");
+    expect(normalizeDirectiveCards(tildeFence)).toBe(tildeFence);
+  });
+
+  test("消息已含独立 /settings/connected-accounts/github 胶囊时不重复追加", () => {
+    const withAfter = [
+      "请前往 `/settings/connected-accounts/github` 连接：",
+      "",
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    ].join("\n");
+    const afterSegs = splitBubbles(normalizeDirectiveCards(withAfter));
+    expect(afterSegs.map((x) => x.text)).toEqual([
+      "请前往 `/settings/connected-accounts/github` 连接：",
+      "[连接 GitHub](/settings/connected-accounts/github)",
+    ]);
+
+    const withBeforeCustomLabel = [
+      "[更换 GitHub 令牌](/settings/connected-accounts/github)",
+      "",
+      "也可以在 `/settings/connected-accounts/github` 里管理令牌。",
+    ].join("\n");
+    const beforeSegs = splitBubbles(
+      normalizeDirectiveCards(withBeforeCustomLabel),
+    );
+    expect(beforeSegs.map((x) => x.text)).toEqual([
+      "[更换 GitHub 令牌](/settings/connected-accounts/github)",
+      "也可以在 `/settings/connected-accounts/github` 里管理令牌。",
+    ]);
+  });
+
+  test("正文提及账号连接或插件管理站内路径时泛化补出独立胶囊，外链与代码块不误触发", () => {
+    const accountLine =
+      "请先去账号连接设置（`/settings/connected-accounts`）完成配置。";
+    expect(splitBubbles(normalizeDirectiveCards(accountLine)).map((x) => x.text)).toEqual([
+      accountLine,
+      "[打开账号连接](/settings/connected-accounts)",
+    ]);
+
+    const connectorLine =
+      "Notion 需要你点 `/settings/connected-accounts/notion` 授权，并在 `/admin/plugins` 启用。";
+    expect(
+      splitBubbles(normalizeDirectiveCards(connectorLine)).map((x) => x.text),
+    ).toEqual([
+      connectorLine,
+      "[去连接 notion 账号](/settings/connected-accounts/notion)",
+      "[管理插件与 MCP](/admin/plugins)",
+    ]);
+
+    const directoryLine =
+      "你可以到国内应用目录（/admin/plugins/directory）逛逛。";
+    expect(
+      splitBubbles(normalizeDirectiveCards(directoryLine)).map((x) => x.text),
+    ).toEqual([
+      directoryLine,
+      "[浏览国内应用目录](/admin/plugins/directory)",
+    ]);
+
+    // 带域名外链与围栏代码块中的同后缀路径不误触发
+    const externalUrl =
+      "参考文档：https://docs.example.com/settings/connected-accounts";
+    expect(normalizeDirectiveCards(externalUrl)).toBe(externalUrl);
+    const fenced = "```text\n/admin/plugins/notion\n```";
+    expect(normalizeDirectiveCards(fenced)).toBe(fenced);
+  });
 });
 
 describe("DocCard 收起阈值（FIX-PLAN 4c：RO 量内容高度，不再读 scrollHeight）", () => {

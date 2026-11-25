@@ -239,18 +239,24 @@ export function PanelRail({ className }: { className?: string }) {
     keepWidth(next);
   };
 
-  // Ctrl+Alt+B（⌘⌥B）收起 / 展开面板卡。只在面板栏存在的宽度（≥1280px）生效。
-  useWindowEvent("keydown", (event) => {
-    if (!matchesHotkey(event, PANEL_RAIL_HOTKEY)) return;
-    if (!window.matchMedia("(min-width: 1280px)").matches) return;
-    event.preventDefault();
-    togglePanelRail();
-  });
-
   const wide = useWideForRail();
   const wideBodyReady = useDeferWhileResizing(wide);
   const sheetOpen = usePanelSheetOpen();
   const onScreen = useKeptVisible();
+
+  // Ctrl+Alt+B（⌘⌥B）收起 / 展开面板卡。只在面板栏可见且宽度（≥1280px）足够时生效。
+  useWindowEvent(
+    "keydown",
+    onScreen
+      ? (event) => {
+          if (!matchesHotkey(event, PANEL_RAIL_HOTKEY)) return;
+          if (!window.matchMedia("(min-width: 1280px)").matches) return;
+          event.preventDefault();
+          togglePanelRail();
+        }
+      : null,
+  );
+
   const railVisible = (wide ? open : sheetOpen) && onScreen;
   // 宽窗展开/收起改由单次布局落位 + 卡片纯 GPU 滑移完成（避免 260ms width/padding 逐帧挤压重排聊天区）。
   const [railMotion, setRailMotion] = useState<"idle" | "opening" | "closing">(
@@ -284,24 +290,29 @@ export function PanelRail({ className }: { className?: string }) {
     },
     [],
   );
-  // 窄窗口（< 1280px）期间全程保持 body[data-has-narrow-rail]：以前绑在条件渲染的 .rail-tab.is-narrow 上，
+  // 窄窗口（< 1280px）且右栏可见时全程保持 body[data-has-narrow-rail]：以前绑在条件渲染的 .rail-tab.is-narrow 上，
   // 开关面板抽屉会反复卸载/重挂该属性，改写 [data-testid="chat-transcript"] 的 padding-right，
-  // 抑制浏览器 overflow-anchor 并触发整列重折行与回跳下滑。
-  usePresenceFlag("has-narrow-rail", "body", !wide);
+  // 抑制浏览器 overflow-anchor 并触发整列重折行与回跳下滑。精简模式或设置页（!onScreen）下移除，保持消息列居中对称。
+  usePresenceFlag("has-narrow-rail", "body", !wide && onScreen);
   // 谁打开的抽屉：关掉后把焦点还给它。右边缘把手打开时它自己已被卸载，这里会是 null，回落到把手。
   const sheetOpener = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
-    if (!sheetOpen || wide) return;
+    if (!sheetOpen || !onScreen || wide) return;
     const active = document.activeElement;
     sheetOpener.current =
       active instanceof HTMLElement && active !== document.body ? active : null;
-  }, [sheetOpen, wide]);
+  }, [sheetOpen, onScreen, wide]);
   const sheetFinalFocus = useCallback(
     () => panelSheetFinalFocus(sheetOpener.current),
     [],
   );
   // 关掉抽屉后窗口又变宽：抽屉的状态不带过去。
   useExternalConnection(wide, () => {
+    setPanelSheetOpen(false);
+  });
+  // 右栏整体藏起（精简模式 / 设置 / 管理）：清掉窄窗抽屉展开态，避免切回标准模式时旧抽屉幽灵弹出；
+  // 不动计算机 watch 记忆。
+  useExternalConnection(!onScreen, () => {
     setPanelSheetOpen(false);
   });
 
@@ -323,7 +334,7 @@ export function PanelRail({ className }: { className?: string }) {
   useExternalConnection(`${computerOn}:${wide}`, () => {
     const first = firstComputerRun.current;
     firstComputerRun.current = false;
-    if (!computerOn) return;
+    if (!onScreen || !computerOn) return;
     if (wide) {
       setPanelRailOpen(true);
       return;
@@ -362,6 +373,7 @@ export function PanelRail({ className }: { className?: string }) {
       }
       const fresh = items.filter((p) => !seen.ids.has(p.id));
       for (const p of items) seen.ids.add(p.id);
+      if (!onScreen) return;
       if (!fresh.some((p) => p.status === "building")) return;
       const current = latestChat.current;
       if (current?.canComputer && current.computerOpen)
@@ -388,8 +400,12 @@ export function PanelRail({ className }: { className?: string }) {
     },
     [closeComputer],
   );
-  // 返回键 / 浏览器返回先关面板抽屉（CB-098）。
-  useBackDismiss(!wide && sheetOpen, closeSheet, panelSheetOpenSource());
+  // 返回键 / 浏览器返回先关面板抽屉（CB-098）；右栏被隐藏时不拦截返回栈。
+  useBackDismiss(
+    !wide && sheetOpen && onScreen,
+    closeSheet,
+    panelSheetOpenSource(),
+  );
   // 抽屉和常驻栏用同一张卡片、同一个内容宽度；24px 是常驻栏左右的留边。
   const cardWidth = width - CARD_INSET;
   const panelBody = (
@@ -429,7 +445,7 @@ export function PanelRail({ className }: { className?: string }) {
           onOpenChange={(next) =>
             next ? openPanelSheet("user") : closeSheet("user")
           }
-          open={sheetOpen}
+          open={sheetOpen && onScreen}
         >
           <SheetContent
             className={cn(PANEL_CARD_CLASS, "rail-sheet")}

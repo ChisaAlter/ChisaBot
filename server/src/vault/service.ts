@@ -565,7 +565,7 @@ export function createVault(
             return `${REFUSAL_MARKER} 这一轮不是在网页聊天里，弹不出安全输入卡片。请用户去 ChisaBot 网页的 设置 → 密钥 里添加「${input.label}」（名字 ${input.name}），或在网页聊天里再让你请求一次。`;
           const name = nameSchema.parse(input.name);
           if (vaultReserved(name))
-            return `${REFUSAL_MARKER} 要用 GitHub 请让用户在对话里就地连接——引导输出独立一行的链接卡 [连接 GitHub](/settings/connected-accounts/github)；不要用保险箱卡片要 GitHub 令牌。`;
+            return `${REFUSAL_MARKER} 要用 GitHub 请优先调用 github_connect 在对话里推出连接卡片，或在回复末尾附独立一行的链接卡 [连接 GitHub](/settings/connected-accounts/github)；不要用保险箱卡片要 GitHub 令牌。`;
           const domains = domainsSchema.parse(input.domains);
           const id = `vr_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
           await sql.unsafe(

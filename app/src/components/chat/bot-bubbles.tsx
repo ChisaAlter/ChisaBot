@@ -26,7 +26,10 @@ import {
 import { DiagramZoom, svgNaturalWidth } from "@/components/chat/diagram-zoom";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
 import { useDisplayText } from "@/components/rich-previews/rich-previews";
-import { GithubTokenDialog } from "@/components/settings/github-connection";
+import {
+  formatGithubConnectedPrompt,
+  GithubTokenDialog,
+} from "@/components/settings/github-connection";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { CopyButton } from "@/components/ui/copy-button";
 import {
@@ -41,6 +44,7 @@ import {
   foldLongMessage,
   LONG_MESSAGE_FOLD_THRESHOLD,
 } from "@/lib/chat/fold-long-message";
+import { useConversation } from "@/lib/conversations/conversation";
 import { githubQueryOptions } from "@/lib/github";
 import { EASE_OUT, ENTRANCE_SECONDS, smoothScrollIntoView } from "@/lib/motion";
 import {
@@ -268,15 +272,77 @@ export type ParsedStatusCard = {
   body: string;
 };
 
+const GITHUB_CONNECT_HREF = "/settings/connected-accounts/github";
+const CONNECTED_ACCOUNTS_PREFIX = "/settings/connected-accounts";
+const ADMIN_PLUGINS_PREFIX = "/admin/plugins";
+const STANDALONE_ACTION_PILL_RE =
+  /^\[([^\]]{2,32})\]\((\/[a-zA-Z0-9/_?=&#-]*)\)$/;
+const ACTION_PATH_MENTION_RE =
+  /(\/settings\/connected-accounts\/(?:github|[a-z0-9][a-z0-9_-]*)|\/settings\/connected-accounts|\/admin\/plugins\/(?:directory|[a-z0-9][a-z0-9_-]*)|\/admin\/plugins)(?=$|[^a-zA-Z0-9_/-])/g;
+
+function actionPillForPath(href: string): string {
+  let label: string;
+  if (href === GITHUB_CONNECT_HREF) {
+    label = "连接 GitHub";
+  } else if (href === CONNECTED_ACCOUNTS_PREFIX) {
+    label = "打开账号连接";
+  } else if (href.startsWith(`${CONNECTED_ACCOUNTS_PREFIX}/`)) {
+    const key = href.slice(CONNECTED_ACCOUNTS_PREFIX.length + 1);
+    const candidate = `去连接 ${key} 账号`;
+    label = candidate.length <= 32 ? candidate : "去连接账号";
+  } else if (href === "/admin/plugins/directory") {
+    label = "浏览国内应用目录";
+  } else if (href === ADMIN_PLUGINS_PREFIX) {
+    label = "管理插件与 MCP";
+  } else {
+    const key = href.slice(ADMIN_PLUGINS_PREFIX.length + 1);
+    const candidate = `管理 ${key} 插件设置`;
+    label = candidate.length <= 32 ? candidate : "管理插件设置";
+  }
+  return `[${label}](${href})`;
+}
+
+function collectActionPaths(line: string): string[] {
+  const found: string[] = [];
+  ACTION_PATH_MENTION_RE.lastIndex = 0;
+  for (let m = ACTION_PATH_MENTION_RE.exec(line); m !== null; m = ACTION_PATH_MENTION_RE.exec(line)) {
+    const href = m[1];
+    if (!href) continue;
+    const prev = m.index > 0 ? (line[m.index - 1] ?? "") : "";
+    if (prev && /[a-zA-Z0-9._/-]/.test(prev)) continue;
+    found.push(href);
+  }
+  return found;
+}
+
 export function normalizeDirectiveCards(raw: string): string {
-  // 快速路径：不含 CR、指令块或站内操作胶囊时与原文逐字符等价，跳过逐行 split 与正则扫描。
-  if (!raw.includes("\r") && !raw.includes(":::") && !raw.includes("](/")) {
+  // 快速路径：不含 CR、指令块、站内操作胶囊或已知站内连接/插件路径时与原文逐字符等价，跳过逐行 split 与正则扫描。
+  if (
+    !raw.includes("\r") &&
+    !raw.includes(":::") &&
+    !raw.includes("](/") &&
+    !raw.includes(CONNECTED_ACCOUNTS_PREFIX) &&
+    !raw.includes(ADMIN_PLUGINS_PREFIX)
+  ) {
     return raw;
   }
   const normalizedNewlines = raw.replace(/\r\n?/g, "\n");
   const rawLines = normalizedNewlines.split("\n");
   const step1: string[] = [];
   let i = 0;
+  const standaloneHrefs = new Set<string>();
+  const pendingParagraphHrefs = new Set<string>();
+  const firstMentionByHref = new Map<string, number>();
+
+  const closeMentionParagraph = () => {
+    if (pendingParagraphHrefs.size === 0) return;
+    for (const href of pendingParagraphHrefs) {
+      if (!firstMentionByHref.has(href)) {
+        firstMentionByHref.set(href, step1.length);
+      }
+    }
+    pendingParagraphHrefs.clear();
+  };
 
   while (i < rawLines.length) {
     const rawLine = rawLines[i];
@@ -286,6 +352,7 @@ export function normalizeDirectiveCards(raw: string): string {
     // Ordinary streaming answers keep their Markdown structure throughout the turn.
     const fence = /^ {0,3}(`{3,}|~{3,})/.exec(rawLine);
     if (fence?.[1]) {
+      closeMentionParagraph();
       const marker = fence[1];
       step1.push(rawLine);
       i++;
@@ -304,6 +371,7 @@ export function normalizeDirectiveCards(raw: string): string {
     }
 
     if (line === ":::group") {
+      closeMentionParagraph();
       const groupLines: string[] = [rawLine];
       i++;
       let inCard = false;
@@ -334,6 +402,7 @@ export function normalizeDirectiveCards(raw: string): string {
     }
 
     if (line.startsWith(":::card")) {
+      closeMentionParagraph();
       const cardLines: string[] = [rawLine];
       i++;
       while (i < rawLines.length) {
@@ -349,7 +418,10 @@ export function normalizeDirectiveCards(raw: string): string {
     }
 
     // 独立一行的站内操作胶囊（如 `[连接 Google](/settings/connected-accounts)`）自动前后留空行，拆成独立胶囊段
-    if (/^\[([^\]]{2,32})\]\((\/[a-zA-Z0-9/_?=&#-]*)\)$/.test(line)) {
+    const pillMatch = STANDALONE_ACTION_PILL_RE.exec(line);
+    if (pillMatch) {
+      if (pillMatch[2]) standaloneHrefs.add(pillMatch[2]);
+      closeMentionParagraph();
       if (step1.length > 0 && step1[step1.length - 1]?.trim() !== "") {
         step1.push("");
       }
@@ -361,8 +433,47 @@ export function normalizeDirectiveCards(raw: string): string {
       continue;
     }
 
+    if (line === "") {
+      closeMentionParagraph();
+      step1.push(rawLine);
+      i++;
+      continue;
+    }
+
+    for (const href of collectActionPaths(rawLine)) {
+      pendingParagraphHrefs.add(href);
+    }
+
     step1.push(rawLine);
     i++;
+  }
+
+  closeMentionParagraph();
+
+  const pillsByIndex = new Map<number, string[]>();
+  for (const [href, insertAt] of firstMentionByHref) {
+    if (standaloneHrefs.has(href)) continue;
+    const list = pillsByIndex.get(insertAt) ?? [];
+    list.push(actionPillForPath(href));
+    pillsByIndex.set(insertAt, list);
+  }
+  const indices = [...pillsByIndex.keys()].sort((a, b) => b - a);
+  for (const insertAt of indices) {
+    const pills = pillsByIndex.get(insertAt);
+    if (!pills?.length) continue;
+    const insert: string[] = [];
+    if (insertAt > 0 && step1[insertAt - 1]?.trim() !== "") {
+      insert.push("");
+    }
+    for (let idx = 0; idx < pills.length; idx++) {
+      if (idx > 0) insert.push("");
+      const pill = pills[idx];
+      if (pill) insert.push(pill);
+    }
+    if (insertAt < step1.length && step1[insertAt]?.trim() !== "") {
+      insert.push("");
+    }
+    step1.splice(insertAt, 0, ...insert);
   }
 
   return step1.join("\n");
@@ -524,15 +635,13 @@ function parseActionPillSegment(
   rawText: string,
 ): { label: string; href: string } | null {
   const trimmed = rawText.trim();
-  const match = /^\[([^\]]{2,32})\]\((\/[a-zA-Z0-9/_?=&#-]*)\)$/.exec(trimmed);
+  const match = STANDALONE_ACTION_PILL_RE.exec(trimmed);
   if (!match?.[1] || !match[2]) return null;
   const label = match[1].replace(/[*_`~]+/g, "").trim();
   const href = match[2].trim();
   if (!label || !href) return null;
   return { label, href };
 }
-
-const GITHUB_CONNECT_HREF = "/settings/connected-accounts/github";
 
 export function HarkActionPill({
   label,
@@ -605,19 +714,32 @@ function GithubConnectPill({
   label: string;
 }) {
   const [open, setOpen] = useState(false);
+  const openedWhileConnectedRef = useRef(false);
+  const conversation = useConversation();
   const connection = useQuery(githubQueryOptions());
   return (
     <>
       <button
         className="hark-action-pill"
         data-testid="hark-action-pill"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          openedWhileConnectedRef.current = connection.data?.status === "ok";
+          setOpen(true);
+        }}
         type="button"
       >
         {icon}
         <span>{label}</span>
       </button>
       <GithubTokenDialog
+        onConnected={(next) => {
+          conversation?.ask(
+            formatGithubConnectedPrompt(
+              next.login,
+              openedWhileConnectedRef.current,
+            ),
+          );
+        }}
         onOpenChange={setOpen}
         open={open}
         replacing={Boolean(connection.data)}

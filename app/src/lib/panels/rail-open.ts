@@ -5,6 +5,7 @@ import {
   readStoredPreference,
   writeStoredPreference,
 } from "@/lib/preference-storage";
+import { isSimpleModeEnabled } from "@/lib/simple-mode";
 
 /**
  * Whether the right-hand 自定义面板 column is open, per device.
@@ -49,6 +50,7 @@ export function showRailFor(botId: string | undefined): number | undefined {
 }
 
 export function togglePanelRail() {
+  if (isSimpleModeEnabled()) return;
   setPanelRailOpen(!open);
 }
 
@@ -97,7 +99,7 @@ export function panelSheetOpenSource(): PanelSheetOpenSource {
  * history（之后在抽屉里切标签一律 replace）。
  */
 export function openPanelSheet(source: PanelSheetOpenSource = "user") {
-  if (sheetOpen) return;
+  if (isSimpleModeEnabled() || sheetOpen) return;
   sheetSource = source;
   setPanelSheetOpen(true);
 }
@@ -115,6 +117,7 @@ export function usePanelSheetOpen(): boolean {
 
 /** 宽窗口展开右侧面板栏，窄窗口打开面板抽屉。机器人「⋯ → 自定义面板」用它。 */
 export function showPanels() {
+  if (isSimpleModeEnabled()) return;
   if (typeof window !== "undefined" && window.matchMedia(PANEL_RAIL_WIDE_QUERY).matches) {
     setPanelRailOpen(true);
   } else {

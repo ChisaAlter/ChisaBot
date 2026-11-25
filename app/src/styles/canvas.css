@@ -266,6 +266,48 @@ html.dark[data-theme="porcelain"][data-canvas="pure"] #sky-root #skyph::before {
     );
 }
 
+/* DeepSeek（deepseek）浅/深：DSH 标志性蓝青紫极微静谧光晕（零动画） */
+html:not(.dark)[data-theme="deepseek"][data-canvas="pure"] #sky-root::before,
+html:not(.dark)[data-theme="deepseek"][data-canvas="pure"] #sky-root #skyph::before {
+  display: block;
+  background:
+    radial-gradient(
+      880px 420px at 14% 16%,
+      rgba(57, 100, 254, 0.08),
+      transparent 68%
+    ),
+    radial-gradient(
+      760px 420px at 86% 22%,
+      rgba(45, 200, 235, 0.06),
+      transparent 70%
+    ),
+    radial-gradient(
+      840px 460px at 78% 86%,
+      rgba(139, 118, 246, 0.065),
+      transparent 72%
+    );
+}
+html.dark[data-theme="deepseek"][data-canvas="pure"] #sky-root::before,
+html.dark[data-theme="deepseek"][data-canvas="pure"] #sky-root #skyph::before {
+  display: block;
+  background:
+    radial-gradient(
+      900px 440px at 16% 18%,
+      rgba(57, 100, 254, 0.11),
+      transparent 68%
+    ),
+    radial-gradient(
+      780px 420px at 84% 20%,
+      rgba(2, 147, 180, 0.085),
+      transparent 70%
+    ),
+    radial-gradient(
+      860px 480px at 78% 86%,
+      rgba(139, 118, 246, 0.095),
+      transparent 72%
+    );
+}
+
 /* ── 2. 动态天空画布（sky）：WebGL 天空 + 单层轻薄护读幕 ── */
 html[data-canvas="sky"] #sky-root .chisabot-wallpaper {
   display: none;

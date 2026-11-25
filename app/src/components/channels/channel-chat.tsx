@@ -178,6 +178,7 @@ import {
 } from "@/lib/model-selection/queries";
 import { panelAuthoringForwardedProps, panelKeys } from "@/lib/panels/api";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
+import { useSimpleMode } from "@/lib/simple-mode";
 import { queryClient } from "@/query-client";
 import { modelMissingFromCatalog } from "../../../../shared/model-selection";
 import { newId } from "../../lib/new-id";
@@ -2489,6 +2490,7 @@ export function ChannelChat({
    * 元素和数组在这里按值缓存，配合 Composer / ContextMeter 等的 memo，token 不再穿过输入框
    * （jank FIX-PLAN §5 / P2-1）。
    */
+  const simpleMode = useSimpleMode();
   const channelActive = channel.active;
   const channelThreadId = channel.threadId;
   const modelControl = useMemo(
@@ -2512,31 +2514,33 @@ export function ChannelChat({
     [subagentInstancesQuery.data],
   );
   const leadingControl = useMemo(
-    () => (
-      <span className="inline-flex items-center gap-1">
-        <PermissionChip agentId={runtimeAgentId} disabled={!channelActive} />
-        <SubagentPickerChip
-          disabled={!channelActive}
-          onSelect={setSelectedSubagentId}
-          selectedId={selectedSubagentId}
-        />
-        <VoiceCallTriggerButton
-          disabled={!channelActive}
-          onOpen={() => setVoiceCallOpen(true)}
-        />
-      </span>
-    ),
-    [runtimeAgentId, channelActive, selectedSubagentId],
+    () =>
+      simpleMode ? null : (
+        <span className="inline-flex items-center gap-1">
+          <PermissionChip agentId={runtimeAgentId} disabled={!channelActive} />
+          <SubagentPickerChip
+            disabled={!channelActive}
+            onSelect={setSelectedSubagentId}
+            selectedId={selectedSubagentId}
+          />
+          <VoiceCallTriggerButton
+            disabled={!channelActive}
+            onOpen={() => setVoiceCallOpen(true)}
+          />
+        </span>
+      ),
+    [simpleMode, runtimeAgentId, channelActive, selectedSubagentId],
   );
   const contextControl = useMemo(
-    () => (
-      <ContextMeter
-        agentId={runtimeAgentId}
-        running={chatBusy}
-        threadId={channelThreadId}
-      />
-    ),
-    [runtimeAgentId, chatBusy, channelThreadId],
+    () =>
+      simpleMode ? null : (
+        <ContextMeter
+          agentId={runtimeAgentId}
+          running={chatBusy}
+          threadId={channelThreadId}
+        />
+      ),
+    [simpleMode, runtimeAgentId, chatBusy, channelThreadId],
   );
   const agentOptions = useMemo(
     () => [
@@ -2569,7 +2573,7 @@ export function ChannelChat({
               <div className="chat-intro" style={{ animation: "none" }}>
                 <ChannelAvatar participantIds={[draftProfile.id]} size={48} />
                 <p className="chat-intro-name">{draftProfile.name}</p>
-                {draftProfile.title ? (
+                {!simpleMode && draftProfile.title ? (
                   <p className="chat-intro-sub">{draftProfile.title}</p>
                 ) : null}
               </div>

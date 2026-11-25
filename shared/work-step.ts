@@ -70,6 +70,16 @@ export function describeWorkerStep(name: string, args: Record<string, unknown>):
     case "memory_log": return "正在记下来";
     case "memory_update": return "正在更新记忆";
     case "memory_forget": return "正在删一条记忆";
+    case "connect_service": return "正在检查可用连接器";
+    case "calendar_connect": return "正在推出日历连接流程";
+    case "calendar_list_events": return "正在查看个人日历";
+    case "email_connect": return "正在推出邮箱连接流程";
+    case "email_list_recent": return "正在查看个人收件箱";
+    case "email_send": return "正在准备发送邮件";
+    case "notify_webhook_connect": return "正在推出通知推送绑定流程";
+    case "notify_push": return "正在发送随身通知";
+    case "webhook_trigger_info": return "正在打开入站 Webhook 设置";
+    case "github_connect": return "正在推出 GitHub 连接流程";
     case "github_list_repos": return "正在看 GitHub 仓库列表";
     case "github_list_issues": return text(args.repo, 40) ? `正在看 ${text(args.repo, 40)} 的 Issue` : "正在看 Issue 列表";
     case "github_list_pulls": return text(args.repo, 40) ? `正在看 ${text(args.repo, 40)} 的 PR` : "正在看 PR 列表";

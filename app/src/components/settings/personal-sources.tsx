@@ -737,7 +737,29 @@ export function PersonalSourcesSection() {
   );
 }
 
-function CalendarConnectDialog({
+export type PersonalSourceKind = "calendar" | "email" | "notify";
+
+/** 构造对话内连接/更新个人数据源成功后的续聊文案（只含公开名称或邮箱，绝不携带密码、ICS 或 Webhook 链接）。 */
+export function formatPersonalSourceConnectedPrompt(
+  kind: PersonalSourceKind,
+  status: PersonalSourcesStatusView,
+  replacing: boolean,
+): string {
+  const verb = replacing ? "已更新" : "已连接";
+  if (kind === "calendar") {
+    const label = status.calendar?.label?.trim();
+    return `${verb}个人日历${label ? `（${label}）` : ""}，请继续刚才的日程操作。`;
+  }
+  if (kind === "email") {
+    const email = status.email?.email?.trim();
+    return `${verb}电子邮箱${email ? `（${email}）` : ""}，请继续刚才的邮件操作。`;
+  }
+  const label = status.notifyWebhook?.label?.trim();
+  const action = replacing ? "已更新随身通知推送配置" : "已绑定随身通知推送";
+  return `${action}${label ? `（${label}）` : ""}，请继续刚才的通知操作。`;
+}
+
+export function CalendarConnectDialog({
   open,
   onOpenChange,
   onSaved,
@@ -872,7 +894,7 @@ function CalendarConnectDialog({
   );
 }
 
-function EmailConnectDialog({
+export function EmailConnectDialog({
   open,
   onOpenChange,
   onSaved,
@@ -1151,7 +1173,7 @@ function EmailConnectDialog({
   );
 }
 
-function NotifyWebhookDialog({
+export function NotifyWebhookDialog({
   open,
   onOpenChange,
   onSaved,

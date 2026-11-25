@@ -355,14 +355,20 @@ function buildCommand(
       };
     }
     case "antigravity": {
-      const args = ["chat", "-m", prompt];
+      // Antigravity CLI 1.5.x headless 参数：-p 接收 prompt 字符串，走 stdin 时不可传裸 -p。
+      const args = viaStdin
+        ? ["--output-format", "text"]
+        : ["-p", prompt, "--output-format", "text"];
       if (trimmedModel) args.push("--model", trimmedModel);
+      if (trimmedResume) args.push("--resume", trimmedResume);
+      if (skipPermissions) args.push("--dangerously-skip-permissions");
+      else if (profile === "readonly") args.push("--mode", "plan");
       if (extra.length) args.push(...extra);
       return {
         name: "agy",
         args,
         env: {},
-        stdin: null,
+        stdin: viaStdin ? prompt : null,
         parser: textParser("Antigravity"),
       };
     }

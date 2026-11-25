@@ -1,0 +1,51 @@
+/*
+ * 精简模式（html[data-simple-mode="1"]）独立样式。
+ *
+ * 严格约束：
+ * - 全部选择器必须以 html[data-simple-mode="1"] 为前缀，避免污染标准模式；
+ * - 严禁使用 :has() / group-has-* / peer-has-* / !important；
+ * - 严禁新增 backdrop-filter 或在 html 上覆盖 --surface-* 令牌；
+ * - 保持 PC .win-ctrls（40px 高）与移动端 44px 顶栏按钮不被裁切，完整继承亮暗与六套色彩主题令牌。
+ */
+
+html[data-simple-mode="1"] .glass-shell {
+  --glass-top: 52px;
+}
+
+/* 隐藏输入框 8 方向拖拽把手、收起态计算机活动圆点与快捷指令星标按钮。 */
+html[data-simple-mode="1"] .chat-dock-handles,
+html[data-simple-mode="1"] .glass-mini-comp,
+html[data-simple-mode="1"] .composer-spotlight-btn,
+html[data-simple-mode="1"] [data-testid="composer-spotlight-btn"] {
+  display: none;
+}
+
+/* 左栏机器人列表收紧行间距与视觉密度，呈现干净的双栏对话列表。 */
+html[data-simple-mode="1"] .glass-bot-list {
+  gap: 1px;
+}
+
+html[data-simple-mode="1"] .glass-bot-row {
+  border-radius: 11px;
+}
+
+html[data-simple-mode="1"] .glass-bot-row.is-on::before {
+  top: 8px;
+  bottom: 8px;
+}
+
+html[data-simple-mode="1"] .glass-bot-link {
+  gap: 9px;
+  padding: 6px 6px 6px 10px;
+  border-radius: 11px;
+}
+
+html[data-simple-mode="1"] .glass-item {
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 11px;
+}
+
+html[data-simple-mode="1"] .glass-bot-sep {
+  margin: 3px 8px;
+}

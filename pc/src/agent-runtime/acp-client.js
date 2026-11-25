@@ -27,9 +27,11 @@ function killTree(child) {
   if (!child?.pid) return;
   try {
     if (process.platform === "win32") {
-      spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
         windowsHide: true,
+        stdio: "ignore",
       });
+      killer.on("error", () => {});
     } else {
       process.kill(-child.pid, "SIGKILL");
     }
@@ -40,13 +42,86 @@ function killTree(child) {
   }
 }
 
+const WIN_CMD_META_RE = /([()\][%!^"`<>&|;, *?])/g;
+const WIN_ARG_META_RE = /([()!%^&<>"|])/g;
+const WIN_SAFE_ARG_RE = /^[A-Za-z0-9._:+/@\\-]+$/;
+
+/**
+ * Windows cmd.exe 命令路径转义（配合 cmd.exe /d /s /c + windowsVerbatimArguments 使用）。
+ */
+function escapeWinCmdCommand(filePath) {
+  return String(filePath ?? "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(WIN_CMD_META_RE, "^$1");
+}
+
+/**
+ * Windows cmd.exe 参数安全转义（面向 .cmd / .bat 两段解析）：
+ * 1) 纯安全简单参数（无空白、引号、= 及 cmd 元字符）原样传递，兼容 `if "%~1"=="--version"` 等批处理写法；
+ * 2) 其余参数按 MSVCRT 规则加双引号并转义反斜杠/双引号，再对 cmd.exe 元字符（含 % 与 "）执行两轮 ^ 转义，
+ *    阻断 `"` 提前闭合引发的 `&|<>` 命令注入以及 `%VAR%` 环境变量展开。
+ */
+function quoteWinCmdToken(value) {
+  const text = String(value ?? "").replace(/[\r\n]+/g, " ");
+  if (text.length > 0 && WIN_SAFE_ARG_RE.test(text)) {
+    return text;
+  }
+  let escaped = text.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1");
+  escaped = `"${escaped}"`;
+  escaped = escaped.replace(WIN_ARG_META_RE, "^$1");
+  escaped = escaped.replace(WIN_ARG_META_RE, "^$1");
+  return escaped;
+}
+
+/**
+ * 跨平台安全启动子进程：
+ * Windows 下 .cmd / .bat 路径含空格或括号时，直接 spawn(..., { shell: true }) 会被 cmd.exe 截断或触发注入；
+ * 统一改为经 ComSpec /d /s /c 传完整外层双引号命令行，并关闭 Node shell 拼接。
+ */
+function spawnCommand(file, args = [], options = {}) {
+  const win = process.platform === "win32";
+  const argList = Array.isArray(args) ? args.map(String) : [];
+  const isWinBatch = win && /\.(cmd|bat)$/i.test(String(file || ""));
+  if (isWinBatch && !options.shell) {
+    const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
+    const cmdTokens = [
+      escapeWinCmdCommand(file),
+      ...argList.map(quoteWinCmdToken),
+    ];
+    const commandLine = `"${cmdTokens.join(" ")}"`;
+    const { shell: _ignoredShell, ...restOptions } = options;
+    return spawn(comspec, ["/d", "/s", "/c", commandLine], {
+      ...restOptions,
+      shell: false,
+      windowsVerbatimArguments: true,
+    });
+  }
+  return spawn(file, argList, options);
+}
+
+/**
+ * 合并子进程环境变量：若调用方已传入 env 对象，则尊重其中的删除语义（不把 process.env 中被删除的键重新注回）。
+ */
+function resolveSpawnEnv(env, extra = {}) {
+  const base =
+    env && typeof env === "object" ? { ...env } : { ...process.env };
+  return { ...base, ...extra };
+}
+
 /**
  * Antigravity 环境净化：移除干扰 Electron/Node 宿主变量，并为缺少协议前缀的代理补齐 http://。
  */
 function sanitizeAntigravityEnv(env, fixProxy = true) {
   const next = { ...env };
-  delete next.ELECTRON_RUN_AS_NODE;
-  delete next.ELECTRON_NO_ATTACH_CONSOLE;
+  for (const key of Object.keys(next)) {
+    const upper = key.toUpperCase();
+    if (
+      upper === "ELECTRON_RUN_AS_NODE" ||
+      upper === "ELECTRON_NO_ATTACH_CONSOLE"
+    ) {
+      delete next[key];
+    }
+  }
   if (fixProxy !== false) {
     for (const key of PROXY_KEYS) {
       const val = next[key];
@@ -228,13 +303,27 @@ function mapDisposablePath(rawPath, workdir, origin, disposable) {
   return target;
 }
 
+function formatAcpAuthLabel(authMethods) {
+  if (!Array.isArray(authMethods) || authMethods.length === 0) {
+    return "ACP 就绪";
+  }
+  const names = authMethods
+    .map((m) => String(m?.name || m?.id || "").trim())
+    .filter(Boolean);
+  if (names.length === 0 || names.length > 2) {
+    return "ACP 就绪";
+  }
+  const joined = names.join(" / ");
+  return joined.length > 24 ? "ACP 就绪" : `支持 ${joined}`;
+}
+
 /**
  * 探活 ACP 智能体：启动进程并发 initialize 请求，读取版本与认证信息后立即退出。
  */
 async function probeAcpAgent({
   file,
   args = [],
-  env = {},
+  env,
   cwd = process.cwd(),
   timeoutMs = 10_000,
 }) {
@@ -242,12 +331,11 @@ async function probeAcpAgent({
   let child;
   let stderrTail = "";
   try {
-    child = spawn(file, args, {
+    child = spawnCommand(file, args, {
       cwd,
-      env: { ...process.env, ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
+      env: resolveSpawnEnv(env, { NO_COLOR: "1", FORCE_COLOR: "0" }),
       windowsHide: true,
       detached: !win,
-      shell: win && /\.(cmd|bat)$/i.test(file),
       stdio: ["pipe", "pipe", "pipe"],
     });
   } catch (error) {
@@ -288,9 +376,7 @@ async function probeAcpAgent({
       status: "available",
       version,
       authenticated: authMethods.length === 0 ? true : null,
-      authLabel: authMethods.length
-        ? `支持 ${authMethods.map((m) => m.name || m.id).join(" / ")}`
-        : "ACP 就绪",
+      authLabel: formatAcpAuthLabel(authMethods),
       message: info.title || info.name || null,
     };
   } catch (error) {
@@ -316,7 +402,7 @@ async function probeAcpAgent({
 async function runAcpSession({
   file,
   args = [],
-  env = {},
+  env,
   workdir,
   origin,
   disposable = false,
@@ -421,12 +507,11 @@ async function runAcpSession({
 
   let child;
   try {
-    child = spawn(file, args, {
+    child = spawnCommand(file, args, {
       cwd: workdir,
-      env: { ...process.env, ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
+      env: resolveSpawnEnv(env, { NO_COLOR: "1", FORCE_COLOR: "0" }),
       windowsHide: true,
       detached: !win,
-      shell: win && /\.(cmd|bat)$/i.test(file),
       stdio: ["pipe", "pipe", "pipe"],
     });
   } catch (error) {
@@ -643,18 +728,18 @@ async function runAcpSession({
         if (!ok) throw new Error("用户拒绝运行该终端命令");
         emit("tool", label, label);
         const terminalId = `term_${++termSeq}`;
-        const termEnv = { ...process.env, ...env };
+        const termEnv = resolveSpawnEnv(env);
         if (Array.isArray(params.env)) {
           for (const item of params.env) {
             if (item?.name) termEnv[item.name] = String(item.value ?? "");
           }
         }
-        const proc = spawn(cmd, cmdArgs, {
+        const proc = spawnCommand(cmd, cmdArgs, {
           cwd: fs.existsSync(termCwd) ? termCwd : workdir,
           env: termEnv,
           windowsHide: true,
           detached: !win,
-          shell: cmdArgs.length === 0 || (win && /\.(cmd|bat)$/i.test(cmd)),
+          ...(cmdArgs.length === 0 ? { shell: true } : {}),
           stdio: ["ignore", "pipe", "pipe"],
         });
         const byteLimit = Math.min(
@@ -878,4 +963,9 @@ module.exports = {
   runAcpSession,
   sanitizeAntigravityEnv,
   createJsonRpcConnection,
+  killTree,
+  spawnCommand,
+  quoteWinCmdToken,
+  resolveSpawnEnv,
+  formatAcpAuthLabel,
 };

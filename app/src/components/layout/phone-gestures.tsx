@@ -3,6 +3,7 @@ import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { useDocumentEvent } from "@/hooks";
 import { isPhone } from "@/lib/device";
 import { setPanelSheetOpen, usePanelSheetOpen } from "@/lib/panels/rail-open";
+import { useSimpleMode } from "@/lib/simple-mode";
 
 /**
  * 手机上的抽屉手势（DESIGN.md §40.4）：
@@ -29,7 +30,8 @@ function inHorizontalScroller(target: EventTarget | null): boolean {
 
 export function PhoneGestures() {
   const sidebar = useOptionalSidebar();
-  const panelOpen = usePanelSheetOpen();
+  const simpleMode = useSimpleMode();
+  const panelOpen = usePanelSheetOpen() && !simpleMode;
   const drawerOpen = Boolean(sidebar?.openMobile);
   const setDrawer = sidebar?.setOpenMobile;
   const mobile = Boolean(sidebar?.isMobile);
@@ -47,7 +49,10 @@ export function PhoneGestures() {
           const target = event.target;
           if (inHorizontalScroller(target)) return;
           const inDrawer = target instanceof Element && target.closest('[data-slot="sidebar"][data-mobile="true"]');
-          const inPanel = target instanceof Element && target.closest("#chisabot-panel-sheet");
+          const inPanel =
+            !simpleMode &&
+            target instanceof Element &&
+            target.closest("#chisabot-panel-sheet");
           if (drawerOpen) startRef.current = { x: touch.clientX, y: touch.clientY, mode: "close-drawer" };
           else if (panelOpen && inPanel) startRef.current = { x: touch.clientX, y: touch.clientY, mode: "close-panel" };
           else if (!panelOpen && !inDrawer && touch.clientX <= EDGE)
@@ -76,7 +81,7 @@ export function PhoneGestures() {
           } else if (start.mode === "close-drawer" && dx < -TRIGGER) {
             setDrawer?.(false);
             startRef.current = null;
-          } else if (start.mode === "close-panel" && dx > TRIGGER) {
+          } else if (!simpleMode && start.mode === "close-panel" && dx > TRIGGER) {
             setPanelSheetOpen(false);
             startRef.current = null;
           }

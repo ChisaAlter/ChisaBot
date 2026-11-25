@@ -11,7 +11,16 @@
  * 服务器、网页、PC / 无界面节点读同一份定义（节点那份是 pc/src/agent-runtime/profile.js，逐条对应）。
  */
 
-import type { AgentProbeState, RuntimeInstanceSpec } from "./agent-providers";
+import type {
+  AgentProbeState,
+  AntigravityInstallStage,
+  AntigravityLoginStage,
+  AntigravityRuntimeStatus,
+  RuntimeInstanceProbeSpec,
+  RuntimeInstanceSpec,
+} from "./agent-providers";
+
+export type { RuntimeInstanceProbeSpec };
 
 export const AGENT_PROFILES = ["readonly", "workspace", "full"] as const;
 export type AgentProfile = (typeof AGENT_PROFILES)[number];
@@ -175,7 +184,7 @@ export const LOCAL_AGENT_INFO: Record<
     label: "Antigravity",
     vendor: "Google",
     coding: true,
-    hint: "Google Antigravity 智能体（agy / agy_acp_server），支持 ACP 协议与多步推理。",
+    hint: "Google Antigravity 智能体（支持 ChisaBot 一键托管安装、独立账号目录隔离与原生 agy acp 协议）。",
   },
   acp: {
     label: "ACP 智能体",
@@ -603,7 +612,36 @@ export type LocalAgentContinueMessage = Omit<LocalAgentRunMessage, "type"> & {
 
 export type ServerToNodeAgent =
   | { type: "agent_detect" }
-  | { type: "agent_probe"; reqId: string; instance: RuntimeInstanceSpec }
+  | { type: "agent_probe"; reqId: string; instance: RuntimeInstanceProbeSpec }
+  | {
+      type: "agent_runtime_status";
+      reqId: string;
+      driver: "antigravity";
+      checkLatest?: boolean;
+    }
+  | {
+      type: "agent_runtime_install";
+      jobId: string;
+      driver: "antigravity";
+      force?: boolean;
+      version?: string;
+    }
+  | { type: "agent_runtime_install_cancel"; jobId: string }
+  | {
+      type: "agent_runtime_login_start";
+      sessionId: string;
+      driver: "antigravity";
+      instance: RuntimeInstanceProbeSpec;
+      authMethodId?: string;
+    }
+  | { type: "agent_runtime_login_submit"; sessionId: string; code: string }
+  | { type: "agent_runtime_login_cancel"; sessionId: string }
+  | {
+      type: "agent_runtime_logout";
+      reqId: string;
+      driver: "antigravity";
+      instance: RuntimeInstanceProbeSpec;
+    }
   | LocalAgentRunMessage
   | LocalAgentContinueMessage
   | { type: "agent_stop"; taskId: string }
@@ -662,6 +700,59 @@ export type NodeAgentToServer =
       type: "agent_probe_result";
       reqId: string;
       probe: Omit<AgentProbeState, "checkedAt">;
+    }
+  | {
+      type: "agent_runtime_status_result";
+      reqId: string;
+      ok: boolean;
+      status?: AntigravityRuntimeStatus;
+      error?: string;
+    }
+  | {
+      type: "agent_runtime_install_progress";
+      jobId: string;
+      stage: AntigravityInstallStage;
+      percent?: number | null;
+      downloadedBytes?: number;
+      totalBytes?: number | null;
+      message?: string | null;
+    }
+  | {
+      type: "agent_runtime_install_result";
+      jobId: string;
+      ok: boolean;
+      version?: string | null;
+      binaryPath?: string | null;
+      status?: AntigravityRuntimeStatus | null;
+      error?: string | null;
+      cancelled?: boolean;
+    }
+  | {
+      type: "agent_runtime_login_event";
+      sessionId: string;
+      stage: AntigravityLoginStage;
+      authUrl?: string | null;
+      userCode?: string | null;
+      message?: string | null;
+    }
+  | {
+      type: "agent_runtime_login_result";
+      sessionId: string;
+      ok: boolean;
+      authenticated?: boolean;
+      authLabel?: string | null;
+      email?: string | null;
+      homePath?: string | null;
+      error?: string | null;
+      cancelled?: boolean;
+    }
+  | {
+      type: "agent_runtime_logout_result";
+      reqId: string;
+      ok: boolean;
+      homePath?: string | null;
+      message?: string | null;
+      error?: string | null;
     }
   | {
       type: "agent_event";
@@ -726,6 +817,12 @@ export type NodeAgentToServer =
 export const LOCAL_AGENT_MESSAGE_TYPES = new Set([
   "agents_detected",
   "agent_probe_result",
+  "agent_runtime_status_result",
+  "agent_runtime_install_progress",
+  "agent_runtime_install_result",
+  "agent_runtime_login_event",
+  "agent_runtime_login_result",
+  "agent_runtime_logout_result",
   "agent_event",
   "agent_started",
   "agent_done",

@@ -1677,7 +1677,7 @@ export function createPersonalSources(
           const days = parsed.success ? (parsed.data.days ?? 7) : 7;
           const row = await getRow(actorId);
           if (!row?.calendar_ics_enc) {
-            return `${REFUSAL_MARKER} 用户还没有连接日历。请通过「设置 → 账号连接」的安全表单接入，不要在聊天中提供私密订阅链接：\n[打开账号连接](/settings/connected-accounts)`;
+            return `${REFUSAL_MARKER} 用户还没有连接日历。请优先调用 calendar_connect 在对话里推出安全连接卡片（不要在聊天中索要私密订阅链接）；如需文字入口，回复末尾附独立一行的链接卡：\n[打开账号连接](/settings/connected-accounts)`;
           }
           const source = await readEvents(actorId, days);
           return [
@@ -1702,7 +1702,7 @@ export function createPersonalSources(
           "打开日历的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
         parameters: z.object({}).strict(),
         execute: async () =>
-          "请在安全设置中连接日历，完成后我会读取连接状态。不要在聊天中发送密码或带密钥的链接。\n[打开账号连接](/settings/connected-accounts)",
+          "界面已推出「连接个人日历」安全连接卡片，请用户直接点开卡片填写 ICS 订阅链接或内容（连接成功后会自动通知你继续处理）。不要在聊天中索要密码或带密钥的链接。\n\n[打开账号连接](/settings/connected-accounts)",
       },
       {
         name: "email_list_recent",
@@ -1726,7 +1726,7 @@ export function createPersonalSources(
           const limit = parsed.success ? (parsed.data.limit ?? 8) : 8;
           const row = await getRow(actorId);
           if (!row?.email_address || !row.imap_pass_enc) {
-            return `${REFUSAL_MARKER} 用户还没有连接邮箱。请在「设置 → 账号连接」的安全表单中接入 IMAP，不要在聊天中提供授权码：\n[打开账号连接](/settings/connected-accounts)`;
+            return `${REFUSAL_MARKER} 用户还没有连接邮箱。请优先调用 email_connect 在对话里推出安全连接卡片（不要在聊天中索要授权码或密码）；如需文字入口，回复末尾附独立一行的链接卡：\n[打开账号连接](/settings/connected-accounts)`;
           }
           const source = await readEmails(actorId, limit);
           return [
@@ -1751,7 +1751,7 @@ export function createPersonalSources(
           "打开邮箱的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
         parameters: z.object({}).strict(),
         execute: async () =>
-          "请在安全设置中连接邮箱，完成后我会读取连接状态。不要在聊天中发送密码或带密钥的链接。\n[打开账号连接](/settings/connected-accounts)",
+          "界面已推出「连接电子邮箱」安全连接卡片，请用户直接点开卡片填写邮箱与应用专用密码（连接成功后会自动通知你继续处理）。不要在聊天中索要密码或带密钥的链接。\n\n[打开账号连接](/settings/connected-accounts)",
       },
       {
         name: "email_send",
@@ -1791,7 +1791,7 @@ export function createPersonalSources(
           "打开通知推送的安全连接入口。凭据只在账号连接设置中输入，不要向用户索要密码或私密订阅链接。",
         parameters: z.object({}).strict(),
         execute: async () =>
-          "请在安全设置中连接通知推送，完成后我会读取连接状态。不要在聊天中发送密码或带密钥的链接。\n[打开账号连接](/settings/connected-accounts)",
+          "界面已推出「绑定随身通知推送」安全连接卡片，请用户直接点开卡片填写 Webhook 地址（绑定成功后会自动通知你继续处理）。不要在聊天中索要密码或带密钥的链接。\n\n[打开账号连接](/settings/connected-accounts)",
       },
       {
         name: "notify_push",

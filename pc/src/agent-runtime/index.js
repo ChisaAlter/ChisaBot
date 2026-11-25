@@ -11,15 +11,29 @@
 const crypto = require("node:crypto");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
 const {
   detectAll,
   probeInstance,
   resolveExecutable,
+  resolveAntigravityExecutable,
+  resolveAntigravityExecutableWithSource,
+  findSystemAntigravityBinary,
+  isStandaloneAcpServerBinary,
   resolveAcpCommand,
+  clearWhichCache,
+  capture,
+  firstVersion,
   AGENT_BINARIES,
   which,
 } = require("./detect");
+const {
+  resolveAntigravityIsolation,
+  ensureAntigravityHomeDirs,
+  getAntigravityRuntimeStatus,
+  installManagedAntigravity,
+  createAntigravityLoginManager,
+  logoutAntigravityInstance,
+} = require("./antigravity-managed");
 const sandbox = require("./sandbox");
 const {
   buildCommand,
@@ -30,12 +44,24 @@ const {
 const { runBuiltin, localModel } = require("./builtin");
 const { isInside } = require("./profile");
 const { prepareShadowHome } = require("./shadow-home");
-const { runAcpSession, sanitizeAntigravityEnv } = require("./acp-client");
+const {
+  runAcpSession,
+  sanitizeAntigravityEnv,
+  killTree,
+  spawnCommand,
+} = require("./acp-client");
 const { createSubagentBridge } = require("./subagent-bridge");
 
 const HANDLED = new Set([
   "agent_detect",
   "agent_probe",
+  "agent_runtime_status",
+  "agent_runtime_install",
+  "agent_runtime_install_cancel",
+  "agent_runtime_login_start",
+  "agent_runtime_login_submit",
+  "agent_runtime_login_cancel",
+  "agent_runtime_logout",
   "agent_run",
   "agent_continue",
   "agent_stop",
@@ -50,21 +76,6 @@ const MAX_LINES = 3000;
 const LINE_CAP = 2000;
 const MAX_RETAINED_SESSIONS = 16;
 const DEFAULT_SESSION_TTL_MS = 30 * 60_000;
-
-function killTree(child) {
-  if (!child?.pid) return;
-  try {
-    if (process.platform === "win32")
-      spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-        windowsHide: true,
-      });
-    else process.kill(-child.pid, "SIGKILL");
-  } catch {
-    try {
-      child.kill("SIGKILL");
-    } catch {}
-  }
-}
 
 function lineSplitter(onLine) {
   let buffer = "";
@@ -134,6 +145,9 @@ function createAgentRuntime(options) {
   const approvalPending = new Map();
   const userInputPending = new Map();
   const subcallPending = new Map();
+  const installJobs = new Map(); // jobId -> { controller }
+  const loginManager = createAntigravityLoginManager();
+  const agyOpts = options.antigravityOptions || {};
   const outbox = [];
   let detection = null;
 
@@ -180,6 +194,7 @@ function createAgentRuntime(options) {
   }
 
   async function detect() {
+    clearWhichCache();
     try {
       detection = await detectAll();
       out({ type: "agents_detected", detection });
@@ -189,6 +204,7 @@ function createAgentRuntime(options) {
   }
 
   async function probe(message) {
+    clearWhichCache();
     try {
       const result = await probeInstance(message.instance || {});
       out({ type: "agent_probe_result", reqId: message.reqId, probe: result });
@@ -204,6 +220,299 @@ function createAgentRuntime(options) {
           authLabel: null,
           message: error?.message ? error.message : String(error),
         },
+      });
+    }
+  }
+
+  async function queryAntigravityStatus(checkLatest = false) {
+    clearWhichCache();
+    const baseEnv = agyOpts.customEnv || process.env;
+    return getAntigravityRuntimeStatus({
+      checkLatest: Boolean(checkLatest),
+      customEnv: baseEnv,
+      findSystemBinary: findSystemAntigravityBinary,
+      probeVersion: async (bin) => {
+        const env = sanitizeAntigravityEnv(baseEnv, true);
+        const res = await capture(bin, ["--version"], {
+          env,
+          timeoutMs: 5000,
+        });
+        return firstVersion(res.out);
+      },
+      ...agyOpts,
+    });
+  }
+
+  async function handleRuntimeStatus(message) {
+    if (message.driver !== "antigravity") {
+      out({
+        type: "agent_runtime_status_result",
+        reqId: message.reqId,
+        ok: false,
+        error: `不支持的托管运行时驱动：${String(message.driver || "")}`,
+      });
+      return;
+    }
+    try {
+      const status = await queryAntigravityStatus(Boolean(message.checkLatest));
+      out({
+        type: "agent_runtime_status_result",
+        reqId: message.reqId,
+        ok: true,
+        status,
+      });
+    } catch (error) {
+      out({
+        type: "agent_runtime_status_result",
+        reqId: message.reqId,
+        ok: false,
+        error: error?.message ? error.message : String(error),
+      });
+    }
+  }
+
+  async function handleRuntimeInstall(message) {
+    const jobId = String(message.jobId || "");
+    if (!jobId) return;
+    if (message.driver !== "antigravity") {
+      out({
+        type: "agent_runtime_install_result",
+        jobId,
+        ok: false,
+        version: null,
+        binaryPath: null,
+        status: null,
+        error: `不支持的托管运行时驱动：${String(message.driver || "")}`,
+        cancelled: false,
+      });
+      return;
+    }
+    if (installJobs.has(jobId)) return;
+    const controller = new AbortController();
+    installJobs.set(jobId, { controller });
+    try {
+      const res = await installManagedAntigravity({
+        jobId,
+        force: Boolean(message.force),
+        version: message.version,
+        signal: controller.signal,
+        customEnv: agyOpts.customEnv || process.env,
+        onProgress: (p) => {
+          out({
+            type: "agent_runtime_install_progress",
+            jobId,
+            stage: p.stage,
+            percent: p.percent ?? null,
+            downloadedBytes: p.downloadedBytes ?? 0,
+            totalBytes: p.totalBytes ?? null,
+            message: p.message ?? null,
+          });
+        },
+        ...agyOpts,
+      });
+      clearWhichCache();
+      let status = null;
+      try {
+        status = await queryAntigravityStatus(false);
+      } catch {}
+      out({
+        type: "agent_runtime_install_result",
+        jobId,
+        ok: true,
+        version: res.version || null,
+        binaryPath: res.binaryPath || null,
+        status,
+        error: null,
+        cancelled: false,
+      });
+    } catch (error) {
+      const cancelled = Boolean(
+        controller.signal.aborted ||
+          error?.cancelled ||
+          error?.name === "AbortError",
+      );
+      out({
+        type: "agent_runtime_install_result",
+        jobId,
+        ok: false,
+        version: null,
+        binaryPath: null,
+        status: null,
+        error: cancelled
+          ? "已取消安装"
+          : error?.message
+            ? error.message
+            : String(error),
+        cancelled,
+      });
+    } finally {
+      installJobs.delete(jobId);
+    }
+  }
+
+  function handleRuntimeInstallCancel(message) {
+    const jobId = String(message.jobId || "");
+    const job = installJobs.get(jobId);
+    if (!job) return;
+    const abortErr = new Error("已取消安装");
+    abortErr.name = "AbortError";
+    abortErr.cancelled = true;
+    job.controller.abort(abortErr);
+  }
+
+  function handleRuntimeLoginStart(message) {
+    const sessionId = String(message.sessionId || "");
+    if (!sessionId) return;
+    if (message.driver !== "antigravity") {
+      out({
+        type: "agent_runtime_login_result",
+        sessionId,
+        ok: false,
+        authenticated: false,
+        authLabel: null,
+        email: null,
+        homePath: null,
+        error: `不支持的登录驱动：${String(message.driver || "")}`,
+        cancelled: false,
+      });
+      return;
+    }
+    clearWhichCache();
+    const baseEnv = agyOpts.customEnv || process.env;
+    const inst = message.instance || { driver: "antigravity" };
+    const lookupEnv = sanitizeAntigravityEnv(
+      { ...baseEnv, ...(inst.env || {}) },
+      inst.config?.fixProxy !== false,
+    );
+    const iso = resolveAntigravityIsolation(inst, lookupEnv);
+    const resolved = resolveAntigravityExecutableWithSource(
+      inst.config?.commandPath,
+      lookupEnv,
+    );
+    if (!resolved.file) {
+      out({
+        type: "agent_runtime_login_result",
+        sessionId,
+        ok: false,
+        authenticated: false,
+        authLabel: null,
+        email: null,
+        homePath: iso.homeDir,
+        error: "未安装 Antigravity 运行时，请先一键安装后再登录。",
+        cancelled: false,
+      });
+      return;
+    }
+    if (isStandaloneAcpServerBinary(resolved.file)) {
+      out({
+        type: "agent_runtime_login_result",
+        sessionId,
+        ok: false,
+        authenticated: false,
+        authLabel: null,
+        email: null,
+        homePath: iso.homeDir,
+        error:
+          "当前可执行文件为旧版独立 agy_acp_server，不支持页内 Google 登录，请使用 ChisaBot 一键托管安装。",
+        cancelled: false,
+      });
+      return;
+    }
+
+    loginManager.startLogin({
+      sessionId,
+      binaryPath: resolved.file,
+      instance: inst,
+      baseEnv,
+      onEvent: (ev) => {
+        out({
+          type: "agent_runtime_login_event",
+          sessionId,
+          stage: ev.stage,
+          authUrl: ev.authUrl ?? null,
+          userCode: ev.userCode ?? null,
+          message: ev.message ?? null,
+        });
+      },
+      onResult: (res) => {
+        out({
+          type: "agent_runtime_login_result",
+          sessionId,
+          ok: Boolean(res.ok),
+          authenticated: Boolean(res.authenticated),
+          authLabel: res.authLabel ?? null,
+          email: res.email ?? null,
+          homePath: res.homePath ?? iso.homeDir,
+          error: res.error ?? null,
+          cancelled: Boolean(res.cancelled),
+        });
+      },
+    });
+  }
+
+  function handleRuntimeLoginSubmit(message) {
+    const sessionId = String(message.sessionId || "");
+    if (!sessionId) return;
+    const res = loginManager.submitCode(sessionId, message.code);
+    if (!res.ok) {
+      log(`提交 Antigravity 登录授权码未受理：${res.error}`);
+      if (!res.finished) {
+        loginManager.disposeLoginSilent(sessionId);
+        out({
+          type: "agent_runtime_login_result",
+          sessionId,
+          ok: false,
+          authenticated: false,
+          authLabel: null,
+          email: null,
+          homePath: res.homePath ?? null,
+          error: res.error || "登录会话不存在或已结束",
+          cancelled: false,
+        });
+      }
+    }
+  }
+
+  function handleRuntimeLoginCancel(message) {
+    const sessionId = String(message.sessionId || "");
+    if (!sessionId) return;
+    loginManager.cancelLogin(sessionId);
+  }
+
+  async function handleRuntimeLogout(message) {
+    if (message.driver !== "antigravity") {
+      out({
+        type: "agent_runtime_logout_result",
+        reqId: message.reqId,
+        ok: false,
+        homePath: null,
+        message: null,
+        error: `不支持的登出驱动：${String(message.driver || "")}`,
+      });
+      return;
+    }
+    try {
+      const baseEnv = agyOpts.customEnv || process.env;
+      const res = await logoutAntigravityInstance({
+        instance: message.instance || { driver: "antigravity" },
+        baseEnv,
+      });
+      out({
+        type: "agent_runtime_logout_result",
+        reqId: message.reqId,
+        ok: Boolean(res.ok),
+        homePath: res.homePath ?? null,
+        message: res.message ?? null,
+        error: null,
+      });
+    } catch (error) {
+      out({
+        type: "agent_runtime_logout_result",
+        reqId: message.reqId,
+        ok: false,
+        homePath: null,
+        message: null,
+        error: error?.message ? error.message : String(error),
       });
     }
   }
@@ -275,11 +584,14 @@ function createAgentRuntime(options) {
     const customEnv = ctx.env || {};
     const defaults = AGENT_BINARIES[name] || [name];
     // WSL：agent 装在 WSL 里，用名字或自定义路径调；其它在本机找到可执行文件。
+    const lookupEnv = { ...process.env, ...customEnv };
     const file =
       isolation === "wsl"
         ? (cfg.commandPath && String(cfg.commandPath).trim()) || name
-        : resolveExecutable(cfg.commandPath, defaults, customEnv) ||
-          (name !== "custom" ? which(name, customEnv) : null);
+        : name === "antigravity"
+          ? resolveAntigravityExecutable(cfg.commandPath, lookupEnv)
+          : resolveExecutable(cfg.commandPath, defaults, customEnv) ||
+            (name !== "custom" ? which(name, customEnv) : null);
     if (!file) {
       throw new Error(
         `没有找到可执行文件 ${cfg.commandPath || name}（请检查提供方路径配置或先安装）。`,
@@ -288,7 +600,10 @@ function createAgentRuntime(options) {
     const viaStdin =
       win &&
       /\.(cmd|bat)$/i.test(file) &&
-      (name === "claude" || name === "codex" || name === "custom");
+      (name === "claude" ||
+        name === "codex" ||
+        name === "antigravity" ||
+        name === "custom");
     const prompt =
       win && /\.(cmd|bat)$/i.test(file) && !viaStdin
         ? cmdSafe(message.prompt)
@@ -330,18 +645,35 @@ function createAgentRuntime(options) {
       FORCE_COLOR: "0",
     };
     if (name === "antigravity") {
-      mergedEnv = sanitizeAntigravityEnv(mergedEnv, cfg.fixProxy !== false);
+      const agyIso =
+        ctx.antigravityIsolation ||
+        resolveAntigravityIsolation(
+          ctx.instance || {
+            driver: "antigravity",
+            config: cfg,
+            env: customEnv,
+          },
+          process.env,
+        );
+      ensureAntigravityHomeDirs(agyIso);
+      mergedEnv = {
+        ...command.env,
+        ...agyIso.env,
+        CHISABOT_TASK: message.taskId,
+        NO_COLOR: "1",
+        FORCE_COLOR: "0",
+      };
     }
     return new Promise((resolve, reject) => {
       let child;
       try {
-        child = spawn(wrapped.file, wrapped.args, {
+        const hasStdin = command.stdin !== null && command.stdin !== undefined;
+        child = spawnCommand(wrapped.file, wrapped.args, {
           cwd: prep.workdir,
           env: mergedEnv,
           windowsHide: true,
           detached: !win,
-          shell: win && /\.(cmd|bat)$/i.test(wrapped.file),
-          stdio: [command.stdin ? "pipe" : "ignore", "pipe", "pipe"],
+          stdio: [hasStdin ? "pipe" : "ignore", "pipe", "pipe"],
         });
       } catch (error) {
         reject(error);
@@ -349,7 +681,9 @@ function createAgentRuntime(options) {
       }
       const taskState = tasks.get(message.taskId);
       if (taskState) taskState.child = child;
-      if (command.stdin) child.stdin.end(command.stdin);
+      if (command.stdin !== null && command.stdin !== undefined) {
+        child.stdin.end(command.stdin);
+      }
       const stdout = lineSplitter((line) => command.parser.line(line, emit));
       let stderrLines = 0;
       let stderrTail = "";
@@ -663,11 +997,32 @@ function createAgentRuntime(options) {
           clearTimeout(timer);
         }
       } else if (driver === "acp" || driver === "antigravity") {
-        let acpEnv = { ...process.env, ...mergedCustomEnv };
+        let lookupEnv = { ...process.env, ...mergedCustomEnv };
+        const agyInstance =
+          driver === "antigravity"
+            ? {
+                ...(inst || {}),
+                driver: "antigravity",
+                config: cfg,
+                env: mergedCustomEnv,
+              }
+            : null;
         if (driver === "antigravity") {
-          acpEnv = sanitizeAntigravityEnv(acpEnv, cfg.fixProxy !== false);
+          lookupEnv = sanitizeAntigravityEnv(lookupEnv, cfg.fixProxy !== false);
         }
-        const resolved = resolveAcpCommand(driver, cfg, acpEnv);
+        const resolved = resolveAcpCommand(
+          driver,
+          cfg,
+          lookupEnv,
+          agyInstance,
+        );
+        const sessionEnv =
+          driver === "antigravity" && resolved.isolation
+            ? resolved.isolation.env
+            : lookupEnv;
+        if (driver === "antigravity" && resolved.isolation) {
+          ensureAntigravityHomeDirs(resolved.isolation);
+        }
         if (resolved.mode === "acp") {
           if (!resolved.file) {
             throw new Error(
@@ -679,7 +1034,7 @@ function createAgentRuntime(options) {
           result = await runAcpSession({
             file: resolved.file,
             args: resolved.args,
-            env: acpEnv,
+            env: sessionEnv,
             workdir: prep.workdir,
             origin: message.cwd,
             disposable: prep.mode !== "direct",
@@ -704,6 +1059,8 @@ function createAgentRuntime(options) {
             env: mergedCustomEnv,
             bridge,
             resumeSessionId,
+            instance: agyInstance,
+            antigravityIsolation: resolved.isolation || null,
           });
         }
       } else {
@@ -845,6 +1202,27 @@ function createAgentRuntime(options) {
         case "agent_probe":
           void probe(message);
           break;
+        case "agent_runtime_status":
+          void handleRuntimeStatus(message);
+          break;
+        case "agent_runtime_install":
+          void handleRuntimeInstall(message);
+          break;
+        case "agent_runtime_install_cancel":
+          handleRuntimeInstallCancel(message);
+          break;
+        case "agent_runtime_login_start":
+          handleRuntimeLoginStart(message);
+          break;
+        case "agent_runtime_login_submit":
+          handleRuntimeLoginSubmit(message);
+          break;
+        case "agent_runtime_login_cancel":
+          handleRuntimeLoginCancel(message);
+          break;
+        case "agent_runtime_logout":
+          void handleRuntimeLogout(message);
+          break;
         case "agent_run":
           void run(message, { isContinue: false });
           break;
@@ -897,6 +1275,13 @@ function createAgentRuntime(options) {
         task.controller.abort(new Error("已停止"));
         killTree(task.child);
       }
+      for (const job of installJobs.values()) {
+        const abortErr = new Error("已停止");
+        abortErr.name = "AbortError";
+        abortErr.cancelled = true;
+        job.controller.abort(abortErr);
+      }
+      loginManager.stopAll();
     },
     pruneSessions,
     async cleanupSessions() {

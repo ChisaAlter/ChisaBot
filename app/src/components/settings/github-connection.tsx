@@ -163,7 +163,23 @@ export function GithubConnectionSection() {
   );
 }
 
-export function GithubTokenDialog({ open, replacing, onOpenChange }: { open: boolean; replacing: boolean; onOpenChange: (open: boolean) => void }) {
+/** 构造对话内连接/更新令牌成功后发回给机器人的续聊文案（只含公开用户名，绝不携带令牌）。 */
+export function formatGithubConnectedPrompt(
+  login: string,
+  replacing: boolean,
+  repo?: string,
+): string {
+  const action = replacing
+    ? `已更新 GitHub 令牌（@${login}）`
+    : `已连接 GitHub 账号 @${login}`;
+  const cleanRepo = repo?.trim();
+  const suffix = cleanRepo
+    ? `，请继续处理 ${cleanRepo}。`
+    : "，请继续刚才的 GitHub 操作。";
+  return `${action}${suffix}`;
+}
+
+export function GithubTokenDialog({ open, replacing, onOpenChange, onConnected }: { open: boolean; replacing: boolean; onOpenChange: (open: boolean) => void; onConnected?: (connection: GithubConnectionView) => void }) {
   const { mounted, onExited } = usePresenceMount(open, DURATION_MS.exit);
   return (
     <Dialog
@@ -178,13 +194,13 @@ export function GithubTokenDialog({ open, replacing, onOpenChange }: { open: boo
           <DialogTitle>{replacing ? "更换 GitHub 令牌" : "连接 GitHub"}</DialogTitle>
           <DialogDescription>{"令牌只发往 api.github.com，加密保存；保存后谁也看不到，包括你自己。"}</DialogDescription>
         </DialogHeader>
-        {mounted ? <GithubTokenForm onClose={() => onOpenChange(false)} replacing={replacing} /> : null}
+        {mounted ? <GithubTokenForm onClose={() => onOpenChange(false)} onConnected={onConnected} replacing={replacing} /> : null}
       </DialogContent>
     </Dialog>
   );
 }
 
-function GithubTokenForm({ replacing, onClose }: { replacing: boolean; onClose: () => void }) {
+function GithubTokenForm({ replacing, onClose, onConnected }: { replacing: boolean; onClose: () => void; onConnected?: (connection: GithubConnectionView) => void }) {
   const queryClient = useQueryClient();
   const [token, setToken] = useState("");
   const save = useAsyncAction(
@@ -192,7 +208,8 @@ function GithubTokenForm({ replacing, onClose }: { replacing: boolean; onClose: 
       const next = await connectGithub(token.trim());
       setToken("");
       queryClient.setQueryData(githubKeys.all, next);
-      await queryClient.invalidateQueries({ queryKey: ["vault"] });
+      void queryClient.invalidateQueries({ queryKey: ["vault"] });
+      onConnected?.(next);
       window.setTimeout(onClose, 700);
     },
     { errorToast: (error) => error.message },

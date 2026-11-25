@@ -54,9 +54,13 @@ export type CustomOutputFormat = "text" | "jsonl";
 export type AgentDriverFieldSpec = {
   supportsCommandPath: boolean;
   defaultCommand: string | null;
+  commandPlaceholder?: string | null;
+  commandHint?: string | null;
   supportsHomePath: boolean;
   homeEnvName: string | null;
   defaultHomePath: string | null;
+  homePlaceholder?: string | null;
+  homeHint?: string | null;
   supportsShadowHome: boolean;
   defaultShadowHint: string | null;
   supportsExtraArgs: boolean;
@@ -123,13 +127,20 @@ export const AGENT_DRIVER_SPECS: Record<
     vendor: "Google",
     badge: "ACP / CLI",
     description:
-      "Google Antigravity 智能体（agy / agy_acp_server），支持原生 ACP 会话与 Windows 代理前缀自动修正。",
+      "Google Antigravity 智能体（支持 ChisaBot 一键托管安装、自动隔离账号目录与页内 Google 登录，优先使用托管版并兼容系统 agy / antigravity 与原生 agy acp）。",
     fields: {
       supportsCommandPath: true,
       defaultCommand: "agy",
-      supportsHomePath: false,
+      commandPlaceholder:
+        "留空自动检测 agy / antigravity（优先 ChisaBot 托管版），或填完整可执行路径",
+      commandHint:
+        "留空优先使用 ChisaBot 一键托管安装的 Antigravity，其次自动检测 PATH 与常见安装目录中的 agy / antigravity（含原生 agy acp）；如需指定自定义版本可填入完整可执行路径。",
+      supportsHomePath: true,
       homeEnvName: null,
       defaultHomePath: null,
+      homePlaceholder: "留空由 ChisaBot 自动分配独立隔离目录",
+      homeHint:
+        "留空默认使用 ChisaBot 托管的独立隔离目录（与全局 ~/.gemini 及宿主凭证库隔离）；如需自定义或复用指定目录可手动填写。",
       supportsShadowHome: false,
       defaultShadowHint: null,
       supportsExtraArgs: true,
@@ -277,7 +288,7 @@ export type AgentDriverConfig = {
   model?: string | null;
   /** Antigravity：自动补齐 Windows HTTP_PROXY 协议头并清理冲突变量（默认 true） */
   fixProxy?: boolean;
-  /** Antigravity：协议选择（默认 auto：优先探测 agy_acp_server 走 ACP，回退 agy CLI） */
+  /** Antigravity：协议选择（默认 auto：优先原生 agy acp / agy_acp_server 走 ACP，回退 CLI） */
   protocolMode?: "auto" | "acp" | "cli";
   /** ACP：来源类型 */
   acpSource?: AcpSourceKind;
@@ -331,7 +342,92 @@ export type AgentProbeState = {
   authenticated: boolean | null;
   authLabel: string | null;
   message: string | null;
+  /** 解析出的运行时来源（ChisaBot 托管 / 自定义路径 / 系统 PATH） */
+  runtimeSource?: "managed" | "custom" | "system" | null;
+  /** 该实例实际使用的隔离账号 Home 目录 */
+  homePath?: string | null;
   checkedAt: string;
+};
+
+export type AntigravityRuntimeSource = "managed" | "system" | "missing";
+
+export type AntigravityRuntimeStatus = {
+  installed: boolean;
+  source: AntigravityRuntimeSource;
+  managedInstalled: boolean;
+  managedVersion: string | null;
+  managedBinaryPath: string | null;
+  systemBinaryPath: string | null;
+  activeBinaryPath: string | null;
+  activeVersion: string | null;
+  platformKey: string;
+  toolsDir: string;
+  latestVersion?: string | null;
+  updateAvailable?: boolean;
+  supported: boolean;
+  unsupportedReason?: string | null;
+};
+
+export type AntigravityInstallStage =
+  | "checking"
+  | "downloading"
+  | "verifying"
+  | "extracting"
+  | "activating";
+
+export type AntigravityInstallJobStatus =
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export type AntigravityInstallJobView = {
+  jobId: string;
+  environmentId: string;
+  status: AntigravityInstallJobStatus;
+  stage: AntigravityInstallStage | null;
+  percent: number | null;
+  downloadedBytes: number;
+  totalBytes: number | null;
+  message: string | null;
+  version: string | null;
+  binaryPath: string | null;
+  error: string | null;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+};
+
+export type AntigravityLoginStage =
+  | "starting"
+  | "awaiting_auth"
+  | "submitting"
+  | "verifying";
+
+export type AntigravityLoginSessionStatus =
+  | "running"
+  | "awaiting_auth"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export type AntigravityLoginSessionView = {
+  sessionId: string;
+  instanceId: string;
+  environmentId: string;
+  status: AntigravityLoginSessionStatus;
+  stage: AntigravityLoginStage | null;
+  authUrl: string | null;
+  userCode: string | null;
+  message: string | null;
+  authenticated: boolean;
+  authLabel: string | null;
+  email: string | null;
+  homePath: string | null;
+  error: string | null;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
 };
 
 export type AgentInstanceView = {
@@ -378,6 +474,17 @@ export type RuntimeInstanceSpec = {
   config: AgentDriverConfig;
   /** 仅服务端在派发任务或探活时解密填入，绝不回传前端 */
   env: Record<string, string>;
+};
+
+/** 节点侧探活 / 登录 / 登出所需的实例规格（完整 RuntimeInstanceSpec 天然兼容）。 */
+export type RuntimeInstanceProbeSpec = {
+  id?: string;
+  slug?: string;
+  name?: string;
+  driver: AgentDriverKind;
+  config?: AgentDriverConfig;
+  /** 仅服务端在派发任务、探活或登录时解密填入，绝不回传前端 */
+  env?: Record<string, string>;
 };
 
 export const BOT_AGENT_GRANT_MODES = ["all", "selected", "none"] as const;
@@ -456,8 +563,8 @@ export const AGENT_PROVIDER_PRESETS: readonly AgentProviderPreset[] = [
     driver: "antigravity",
     vendor: "Google",
     description:
-      "Google Antigravity 智能体，擅长多步工程规划、前后端开发与推理任务。",
-    config: { commandPath: "agy", fixProxy: true, protocolMode: "auto" },
+      "Google Antigravity 智能体（支持 ChisaBot 一键托管安装、自动隔离账号目录与页内 Google 登录，优先使用托管版并兼容系统 agy / antigravity 与原生 agy acp），擅长多步工程规划、前后端开发与推理任务。",
+    config: { commandPath: null, fixProxy: true, protocolMode: "auto" },
   },
   {
     key: "codebuddy",

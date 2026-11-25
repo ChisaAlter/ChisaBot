@@ -24,6 +24,7 @@ import { useLanding } from "@/lib/agents/landing";
 import { draftKeptTtl } from "@/lib/channels/draft-channel";
 import { useChannelEvents } from "@/lib/channels/use-channel-events";
 import { clearPendingBot } from "@/lib/chat/pending-switch";
+import { useSimpleMode } from "@/lib/simple-mode";
 
 /*
  * 整个聊天（会话客户端、Markdown、工具卡片……）只在地址是一段聊天、或 `/` 正要跳进聊天时才下载（DESIGN.md §41.5）；
@@ -108,6 +109,7 @@ function ShellFrame({ pathname }: { pathname: string }) {
   useChannelEvents();
   useReplyNotifications();
   const scope = scopeOfPath(pathname);
+  const simpleMode = useSimpleMode();
   useIdleSettingsPrefetch(scope);
   // 进过一次聊天就保持会话上下文挂载（见上面 ChatConversation）。
   const [conversationMounted, setConversationMounted] = useState(
@@ -123,9 +125,9 @@ function ShellFrame({ pathname }: { pathname: string }) {
   return (
     <TaskCenterProvider>
       <GlassShell
-        // 右栏面板卡只属于机器人；在设置 / 管理里藏起来而不是卸载，回来不重载。
+        // 右栏面板卡只属于机器人；在设置 / 管理 / 精简模式里藏起来而不是卸载，切回不重载且同步停掉轮询。
         right={<KeptPanelRail />}
-        rightHidden={scope !== "app"}
+        rightHidden={scope !== "app" || simpleMode}
         scope={scope}
         sidebar={sidebar}
       >

@@ -61,6 +61,7 @@ import { assertModelSelectionNotSaving } from "@/lib/model-selection/mutations";
 import { restampOverlayMarker } from "@/lib/overlay-back";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { useMainBot } from "@/lib/settings/message-list";
+import { useSimpleMode } from "@/lib/simple-mode";
 import { newId } from "../../../../lib/new-id";
 
 /**
@@ -127,6 +128,7 @@ function BotChat({
   useState(() => reclaimDraftText(`new:${agent}`));
   const modelQueryClient = useQueryClient();
   const navigate = useNavigate();
+  const simpleMode = useSimpleMode();
   const channels = useInfiniteQuery(channelListQueryOptions());
   const { startChosen, startDraft, pending } = useStartChannel();
   const { data: profiles, isError: rosterError } = useQuery(
@@ -379,7 +381,7 @@ function BotChat({
           <ChannelAvatar participantIds={[chosen.id]} size={48} />
           <p className="chat-intro-name flex items-center justify-center gap-1.5">
             <span>{chosen.name}</span>
-            {isMain ? (
+            {!simpleMode && isMain ? (
               <span
                 className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-px font-medium text-[11px] text-amber-700 dark:text-amber-300"
                 data-testid="new-channel-primary-badge"
@@ -389,10 +391,10 @@ function BotChat({
               </span>
             ) : null}
           </p>
-          {chosen.title ? (
+          {!simpleMode && chosen.title ? (
             <p className="chat-intro-sub">{chosen.title}</p>
           ) : null}
-          {otherSwitchCandidates.length > 0 ? (
+          {!simpleMode && otherSwitchCandidates.length > 0 ? (
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -439,25 +441,27 @@ function BotChat({
               {"新话题 · 之前的对话不会发给它"}
             </p>
           ) : null}
-          {/* 新朋友不知道能问什么（成熟度扫查 F2）：几句不带副作用的开场，点了直接发。 */}
-          {/* biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了 */}
-          <div
-            className="chat-intro-tries"
-            role="group"
-            aria-label="试试这样问"
-          >
-            {INTRO_TRIES.map((text) => (
-              <button
-                className="chat-intro-try"
-                disabled={pending || Boolean(loadError) || waitingForUrlAgent}
-                key={text}
-                onClick={() => void start(text).catch(() => undefined)}
-                type="button"
-              >
-                {text}
-              </button>
-            ))}
-          </div>
+          {/* 新朋友不知道能问什么（成熟度扫查 F2）：几句不带副作用的开场，点了直接发。精简模式下隐藏以保持纯净开场。 */}
+          {simpleMode ? null : (
+            // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
+            <div
+              className="chat-intro-tries"
+              role="group"
+              aria-label="试试这样问"
+            >
+              {INTRO_TRIES.map((text) => (
+                <button
+                  className="chat-intro-try"
+                  disabled={pending || Boolean(loadError) || waitingForUrlAgent}
+                  key={text}
+                  onClick={() => void start(text).catch(() => undefined)}
+                  type="button"
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       ) : null}
       <ConversationView
@@ -465,7 +469,9 @@ function BotChat({
         modelControl={
           chosen ? <BotModelSelector agentId={chosen.id} compact /> : null
         }
-        leadingControl={chosen ? <PermissionChip agentId={chosen.id} /> : null}
+        leadingControl={
+          chosen && !simpleMode ? <PermissionChip agentId={chosen.id} /> : null
+        }
         sendBlocked={modelSaving}
         // Choosing a coworker answers the "To:" field, so the message is what remains: the caret
         // lands in the composer the moment a recipient exists, whether picked here or in the URL.

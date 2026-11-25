@@ -10,6 +10,7 @@ import { AppearancePreferences } from "@/components/settings/appearance-preferen
 import { BusySendModePreference } from "@/components/settings/busy-send-mode-preference";
 import { NotificationSettingsSection } from "@/components/settings/notification-settings";
 import { PrivacyMaskPreference } from "@/components/settings/privacy-mask-preference";
+import { SimpleModePreference } from "@/components/settings/simple-mode-preference";
 import { StandingInstructions } from "@/components/settings/standing-instructions";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,10 +45,12 @@ function RouteComponent() {
     >
       <AppearancePreferences />
       <PageSection
-        description={"回复发送行为与屏幕敏感信息遮罩，保存在此浏览器。"}
+        description={"精简双栏界面、回复发送行为与屏幕敏感信息遮罩，保存在此浏览器。"}
         title={"对话与隐私"}
       >
         <PageRows>
+          <SimpleModePreference />
+          <Separator />
           <BusySendModePreference />
           <Separator />
           <PrivacyMaskPreference />

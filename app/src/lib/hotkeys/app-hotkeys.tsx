@@ -6,6 +6,7 @@ import {
   useCreateBotOpen,
 } from "@/lib/agents/create-bot";
 import { togglePrivacyMask } from "@/lib/privacy-mask";
+import { toggleSimpleMode } from "@/lib/simple-mode";
 import { useHotkey } from "./use-hotkey";
 
 /**
@@ -22,6 +23,7 @@ export function AppHotkeys() {
 
   useHotkey("new-bot", openCreateBot);
   useHotkey("privacy-mask", togglePrivacyMask);
+  useHotkey("simple-mode", toggleSimpleMode);
 
   return (
     <CreateAgentDialog

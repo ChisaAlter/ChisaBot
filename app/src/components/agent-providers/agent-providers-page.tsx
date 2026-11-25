@@ -28,7 +28,6 @@ import { useMemo, useState } from "react";
 import { PageShell, PageSkeleton } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
-import { ContentEnter } from "@/components/ui/motion-primitives";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +36,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ContentEnter } from "@/components/ui/motion-primitives";
 import {
   Select,
   SelectContent,
@@ -59,6 +59,7 @@ import {
   type AgentEnvironmentSummary,
   type AgentEnvVarInput,
   type AgentInstanceView,
+  type AgentProbeState,
   type AgentProviderPreset,
   acpRegistryQueryOptions,
   createAgentInstance,
@@ -86,6 +87,7 @@ import {
   type Isolation,
   PROFILE_INFO,
 } from "../../../../shared/local-agents";
+import { AntigravityManagedCard } from "./antigravity-managed-card";
 
 type DraftEnvRow = {
   id: string;
@@ -239,7 +241,35 @@ function DriverIcon({
   );
 }
 
-function describeInstanceStatus(inst: AgentInstanceView): {
+const ANTIGRAVITY_PROTOCOL_LABELS: Record<
+  InstanceDraft["protocolMode"],
+  string
+> = {
+  auto: "自动（优先 ACP）",
+  acp: "仅 ACP",
+  cli: "仅 CLI",
+};
+
+const RUNTIME_SOURCE_LABELS: Record<
+  NonNullable<AgentProbeState["runtimeSource"]>,
+  string
+> = {
+  managed: "托管版",
+  system: "系统版",
+  custom: "自定义",
+};
+
+function withRuntimeSource(
+  text: string,
+  runtimeSource: AgentProbeState["runtimeSource"],
+): string {
+  if (!runtimeSource) return text;
+  const label = RUNTIME_SOURCE_LABELS[runtimeSource];
+  if (!label || text.includes(label)) return text;
+  return `${text} · ${label}`;
+}
+
+export function describeInstanceStatus(inst: AgentInstanceView): {
   text: string;
   tone: "muted" | "ok" | "warn";
 } {
@@ -261,18 +291,32 @@ function describeInstanceStatus(inst: AgentInstanceView): {
     };
   }
   if (probe.status === "unauthenticated" || probe.authenticated === false) {
+    const base = `未认证${probe.message ? ` · ${probe.message}` : ""}`;
     return {
-      text: `未认证${probe.message ? ` · ${probe.message}` : ""}`,
+      text: withRuntimeSource(base, probe.runtimeSource),
       tone: "warn",
     };
   }
+  if (probe.authenticated === true) {
+    const base =
+      probe.authLabel && probe.authLabel !== "已认证"
+        ? `已认证 · ${probe.authLabel}`
+        : "已认证";
+    return {
+      text: withRuntimeSource(base, probe.runtimeSource),
+      tone: "ok",
+    };
+  }
   if (probe.authLabel) {
-    return { text: `已认证 · ${probe.authLabel}`, tone: "ok" };
+    return {
+      text: withRuntimeSource(probe.authLabel, probe.runtimeSource),
+      tone: "ok",
+    };
   }
-  if (probe.authenticated) {
-    return { text: "已认证", tone: "ok" };
-  }
-  return { text: probe.message || "可用", tone: "ok" };
+  return {
+    text: withRuntimeSource(probe.message || "可用", probe.runtimeSource),
+    tone: "ok",
+  };
 }
 
 export function AgentProvidersPage() {
@@ -915,7 +959,7 @@ function EnvironmentBoundaryPanel({
   );
 }
 
-function InstanceDetailPane({
+export function InstanceDetailPane({
   instance,
   readOnly,
   onClone,
@@ -947,17 +991,22 @@ function InstanceDetailPane({
   const previewToolName = agentToolName(draft.slug || instance.slug);
 
   const handleReset = () => {
+    if (saving || probing) return;
     setDraft(buildDraftFromInstance(instance));
     toast.info("已还原未保存的修改");
   };
 
   const handleProbe = async () => {
-    if (probing) return;
+    if (probing || saving) return;
     setProbing(true);
     try {
       const updated = await probeAgentInstance(instance.id);
       const nextStatus = describeInstanceStatus(updated);
-      toast.success(`${updated.name}：${nextStatus.text}`);
+      if (nextStatus.tone === "warn") {
+        toast.error(`${updated.name}：${nextStatus.text}`);
+      } else {
+        toast.success(`${updated.name}：${nextStatus.text}`);
+      }
       onUpdated();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "探活失败");
@@ -985,6 +1034,7 @@ function InstanceDetailPane({
   };
 
   const handleSave = async () => {
+    if (saving || probing) return;
     if (!draft.name.trim()) {
       toast.error("请填写显示名称");
       return;
@@ -1049,7 +1099,25 @@ function InstanceDetailPane({
         config,
         envVars,
       });
-      toast.success("提供方配置已保存");
+
+      if (instance.environmentOnline) {
+        setProbing(true);
+        try {
+          const probed = await probeAgentInstance(instance.id);
+          const nextStatus = describeInstanceStatus(probed);
+          if (nextStatus.tone === "warn") {
+            toast.error(`提供方配置已保存 · ${nextStatus.text}`);
+          } else {
+            toast.success(`提供方配置已保存 · ${nextStatus.text}`);
+          }
+        } catch {
+          toast.info("提供方配置已保存（自动检测未完成，可稍后点击重新检测）");
+        } finally {
+          setProbing(false);
+        }
+      } else {
+        toast.success("提供方配置已保存");
+      }
       onUpdated();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败");
@@ -1080,7 +1148,7 @@ function InstanceDetailPane({
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <Button
-              disabled={!instance.environmentOnline || probing}
+              disabled={!instance.environmentOnline || probing || saving}
               onClick={() => void handleProbe()}
               size="xs"
               title="立即检测该提供方版本与认证状态"
@@ -1094,6 +1162,7 @@ function InstanceDetailPane({
             </Button>
             {!readOnly ? (
               <Button
+                disabled={saving || probing}
                 onClick={handleReset}
                 size="xs"
                 title="还原未保存的修改"
@@ -1138,6 +1207,17 @@ function InstanceDetailPane({
             ) : null}
           </div>
         </div>
+
+        {/* Antigravity 托管运行时与独立账号登录 */}
+        {instance.driver === "antigravity" ? (
+          <div className="py-4">
+            <AntigravityManagedCard
+              instance={instance}
+              onUpdated={onUpdated}
+              readOnly={readOnly}
+            />
+          </div>
+        ) : null}
 
         {/* 显示名称 + 快速新增同驱动账号实例（还原截图 `+` 按钮） */}
         <div className="grid grid-cols-1 items-center gap-3 py-4 sm:grid-cols-[1fr_260px]">
@@ -1231,7 +1311,8 @@ function InstanceDetailPane({
               <div>
                 <div className="text-sm font-medium">{"可执行文件路径"}</div>
                 <div className="text-xs text-muted-foreground">
-                  {`该实例使用的 ${spec.label} 可执行文件路径或命令名。`}
+                  {fields.commandHint ??
+                    `该实例使用的 ${spec.label} 可执行文件路径或命令名。`}
                 </div>
               </div>
               <Input
@@ -1240,7 +1321,9 @@ function InstanceDetailPane({
                 onChange={(e) =>
                   setDraft((prev) => ({ ...prev, commandPath: e.target.value }))
                 }
-                placeholder={fields.defaultCommand ?? ""}
+                placeholder={
+                  fields.commandPlaceholder ?? fields.defaultCommand ?? ""
+                }
                 value={draft.commandPath}
               />
             </div>
@@ -1253,7 +1336,7 @@ function InstanceDetailPane({
                   {`${fields.homeEnvName ?? "HOME"} 路径`}
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {`自定义 ${spec.label} 主配置与状态目录。`}
+                  {fields.homeHint ?? `自定义 ${spec.label} 主配置与状态目录。`}
                 </div>
               </div>
               <Input
@@ -1262,7 +1345,9 @@ function InstanceDetailPane({
                 onChange={(e) =>
                   setDraft((prev) => ({ ...prev, homePath: e.target.value }))
                 }
-                placeholder={fields.defaultHomePath ?? ""}
+                placeholder={
+                  fields.homePlaceholder ?? fields.defaultHomePath ?? ""
+                }
                 value={draft.homePath}
               />
             </div>
@@ -1359,27 +1444,72 @@ function InstanceDetailPane({
           ) : null}
 
           {instance.driver === "antigravity" ? (
-            <div className="grid grid-cols-1 items-center gap-3 sm:grid-cols-[1fr_260px]">
-              <div>
-                <div className="text-sm font-medium">
-                  {"自动修正 Windows 代理前缀"}
+            <>
+              <div className="grid grid-cols-1 items-center gap-3 sm:grid-cols-[1fr_260px]">
+                <div>
+                  <div className="text-sm font-medium">{"连接协议模式"}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {
+                      "自动模式优先通过原生 agy acp 握手执行，不可用时回退 CLI；可按需锁定仅 ACP 或仅 CLI。"
+                    }
+                  </div>
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  {
-                    "自动为缺少协议头的 HTTP_PROXY 补齐 http:// 并清理冲突变量。"
-                  }
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <Switch
-                  checked={draft.fixProxy}
+                <Select
                   disabled={readOnly}
-                  onCheckedChange={(v) =>
-                    setDraft((prev) => ({ ...prev, fixProxy: Boolean(v) }))
+                  onValueChange={(v) =>
+                    v &&
+                    setDraft((prev) => ({
+                      ...prev,
+                      protocolMode: v as InstanceDraft["protocolMode"],
+                    }))
                   }
-                />
+                  value={draft.protocolMode}
+                >
+                  <SelectTrigger
+                    aria-label="Antigravity 连接协议模式"
+                    className="w-full"
+                    size="sm"
+                  >
+                    <SelectValue>
+                      {ANTIGRAVITY_PROTOCOL_LABELS[draft.protocolMode]}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">
+                      {"自动（优先 ACP，失败回退 CLI）"}
+                    </SelectItem>
+                    <SelectItem value="acp">
+                      {"仅 ACP（原生 agy acp 协议）"}
+                    </SelectItem>
+                    <SelectItem value="cli">
+                      {"仅 CLI（headless 命令行模式）"}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            </div>
+
+              <div className="grid grid-cols-1 items-center gap-3 sm:grid-cols-[1fr_260px]">
+                <div>
+                  <div className="text-sm font-medium">
+                    {"自动修正 Windows 代理前缀"}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {
+                      "自动为缺少协议头的 HTTP_PROXY 补齐 http:// 并清理冲突变量。"
+                    }
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <Switch
+                    checked={draft.fixProxy}
+                    disabled={readOnly}
+                    onCheckedChange={(v) =>
+                      setDraft((prev) => ({ ...prev, fixProxy: Boolean(v) }))
+                    }
+                  />
+                </div>
+              </div>
+            </>
           ) : null}
 
           {fields.supportsCustomIO ? (
@@ -1712,7 +1842,7 @@ function InstanceDetailPane({
       {!readOnly ? (
         <div className="flex items-center justify-end gap-2 border-t border-border/60 bg-muted/20 px-6 py-3">
           <Button
-            disabled={saving}
+            disabled={saving || probing}
             onClick={handleReset}
             size="sm"
             type="button"
@@ -1721,13 +1851,13 @@ function InstanceDetailPane({
             {"还原"}
           </Button>
           <Button
-            disabled={saving}
+            disabled={saving || probing}
             onClick={() => void handleSave()}
             size="sm"
             type="button"
           >
             <IconCheck className="size-4" />
-            {saving ? "保存中…" : "保存配置"}
+            {saving ? (probing ? "检测中…" : "保存中…") : "保存配置"}
           </Button>
         </div>
       ) : null}

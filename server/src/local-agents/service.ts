@@ -12,6 +12,11 @@ import {
   type AgentEnvironmentSummary,
   type AgentInstanceView,
   type AgentProbeState,
+  type AntigravityInstallJobView,
+  type AntigravityInstallStage,
+  type AntigravityLoginSessionView,
+  type AntigravityLoginStage,
+  type AntigravityRuntimeStatus,
   agentToolName,
   BOT_AGENT_GRANT_MODES,
   canUseServerHost,
@@ -113,6 +118,31 @@ const STORED_LINES = 1500;
 const CARD_LINES = 40;
 const LLM_CALLS_PER_TASK = LOCAL_AGENT_LIMITS.llmCalls;
 const RESULT_LIMIT = 6000;
+const RUNTIME_STATUS_TIMEOUT_MS = 12_000;
+const RUNTIME_LOGOUT_TIMEOUT_MS = 15_000;
+const INSTALL_JOB_TIMEOUT_MS = 15 * 60_000;
+const LOGIN_SESSION_TIMEOUT_MS = 10 * 60_000;
+const MAX_INSTALL_JOBS = 100;
+const MAX_LOGIN_SESSIONS = 200;
+
+const ANTIGRAVITY_INSTALL_STAGES: ReadonlySet<AntigravityInstallStage> =
+  new Set(["checking", "downloading", "verifying", "extracting", "activating"]);
+const ANTIGRAVITY_LOGIN_STAGES: ReadonlySet<AntigravityLoginStage> = new Set([
+  "starting",
+  "awaiting_auth",
+  "submitting",
+  "verifying",
+]);
+const SERVER_DIRECT_NODE_MESSAGE_TYPES = new Set([
+  "agents_detected",
+  "agent_probe_result",
+  "agent_runtime_status_result",
+  "agent_runtime_install_progress",
+  "agent_runtime_install_result",
+  "agent_runtime_login_event",
+  "agent_runtime_login_result",
+  "agent_runtime_logout_result",
+]);
 
 /** 内置 agent 的工具（和 pc/src/agent-runtime/builtin.js 的 TOOLS 一致；工具在电脑上执行，这里只给模型看定义）。 */
 export const BUILTIN_TOOLS: Array<{
@@ -322,6 +352,14 @@ export type LocalAgentServiceOptions = {
   enableServerHost?: boolean;
   /** 测试用：直接注入宿主实例（给了就不再按 enableServerHost 自建）。 */
   serverHost?: ServerAgentHost | null;
+  /** 测试用：自定义 serverHost 工厂，直连服务内部的 serverHost onMessage 分发链。 */
+  serverHostFactory?: (options: {
+    onMessage: (message: { type: string } & Record<string, unknown>) => void;
+  }) => ServerAgentHost;
+  /** 测试用：托管运行时状态查询超时（默认 12000ms）。 */
+  runtimeStatusTimeoutMs?: number;
+  /** 测试用：托管运行时退出登录超时（默认 15000ms）。 */
+  runtimeLogoutTimeoutMs?: number;
   /**
    * 判定用户角色的唯一入口（默认按 user_roles 表解析）。返回 null / 抛错时按非管理员处理。
    * 生产接线传与运行时一致的解析（含 dev actor），测试注入常量。
@@ -375,9 +413,48 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     string,
     (probe: Omit<AgentProbeState, "checkedAt">) => void
   >();
+  type RuntimeStatusResult = {
+    ok: boolean;
+    status?: AntigravityRuntimeStatus;
+    error?: string;
+  };
+  type RuntimeLogoutResult = {
+    ok: boolean;
+    homePath?: string | null;
+    message?: string | null;
+    error?: string | null;
+  };
+  type StoredInstallJob = {
+    view: AntigravityInstallJobView;
+    ownerUserId: string;
+    timer?: ReturnType<typeof setTimeout>;
+    finalizing?: boolean;
+  };
+  type StoredLoginSession = {
+    view: AntigravityLoginSessionView;
+    ownerUserId: string;
+    timer?: ReturnType<typeof setTimeout>;
+    finalizing?: boolean;
+  };
+  const runtimeStatusPending = new Map<
+    string,
+    { environmentId: string; resolve: (res: RuntimeStatusResult) => void }
+  >();
+  const runtimeLogoutPending = new Map<
+    string,
+    { environmentId: string; resolve: (res: RuntimeLogoutResult) => void }
+  >();
+  const installJobsByEnv = new Map<string, StoredInstallJob>();
+  const installJobEnvById = new Map<string, string>();
+  const loginSessionsByInstance = new Map<string, StoredLoginSession>();
+  const loginSessionInstanceById = new Map<string, string>();
   const waiters = new Map<string, Set<(row: TaskRow) => void>>();
   const deliveredInline = new Set<string>();
   const timeoutMs = options.timeoutMs ?? TASK_TIMEOUT_MS;
+  const runtimeStatusTimeoutMs =
+    options.runtimeStatusTimeoutMs ?? RUNTIME_STATUS_TIMEOUT_MS;
+  const runtimeLogoutTimeoutMs =
+    options.runtimeLogoutTimeoutMs ?? RUNTIME_LOGOUT_TIMEOUT_MS;
 
   const roleForUser =
     options.roleForUser ??
@@ -394,43 +471,143 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
           : null;
     });
 
+  const onServerHostMessage = (
+    message: { type: string } & Record<string, unknown>,
+  ) => {
+    void (async () => {
+      if (SERVER_DIRECT_NODE_MESSAGE_TYPES.has(message.type)) {
+        await handleNodeMessage(
+          buildServerDeviceRecord("system", parseEnvServerRoots()),
+          message,
+        );
+        return;
+      }
+      const taskId = String(message.taskId ?? "");
+      const row = taskId ? await taskRow(taskId) : null;
+      const sSettings = await settingsFor(SERVER_ENVIRONMENT_ID);
+      const roots = serverAllowedRoots(sSettings);
+      await handleNodeMessage(
+        buildServerDeviceRecord(row?.owner_user_id ?? "system", roots),
+        message,
+      );
+    })().catch((err) => {
+      console.warn("server host message error", reasonWithoutStatement(err));
+    });
+  };
+
   const serverHost: ServerAgentHost | null =
     options.serverHost !== undefined
       ? options.serverHost
-      : options.enableServerHost
-        ? createServerAgentHost({
-            onMessage: (message) => {
-              void (async () => {
-                if (
-                  message.type === "agents_detected" ||
-                  message.type === "agent_probe_result"
-                ) {
-                  await handleNodeMessage(
-                    buildServerDeviceRecord("system", parseEnvServerRoots()),
-                    message,
-                  );
-                  return;
-                }
-                const taskId = String(message.taskId ?? "");
-                const row = taskId ? await taskRow(taskId) : null;
-                const sSettings = await settingsFor(SERVER_ENVIRONMENT_ID);
-                const roots = serverAllowedRoots(sSettings);
-                await handleNodeMessage(
-                  buildServerDeviceRecord(
-                    row?.owner_user_id ?? "system",
-                    roots,
-                  ),
-                  message,
-                );
-              })().catch((err) => {
-                console.warn(
-                  "server host message error",
-                  reasonWithoutStatement(err),
-                );
-              });
-            },
-          })
-        : null;
+      : options.serverHostFactory
+        ? options.serverHostFactory({ onMessage: onServerHostMessage })
+        : options.enableServerHost
+          ? createServerAgentHost({ onMessage: onServerHostMessage })
+          : null;
+
+  function pruneInstallJobs() {
+    while (installJobsByEnv.size > MAX_INSTALL_JOBS) {
+      let evictKey: string | null = null;
+      for (const [envId, entry] of installJobsByEnv) {
+        if (entry.view.status !== "running") {
+          evictKey = envId;
+          break;
+        }
+      }
+      if (!evictKey) {
+        evictKey = installJobsByEnv.keys().next().value ?? null;
+      }
+      if (!evictKey) break;
+      const evicted = installJobsByEnv.get(evictKey);
+      if (evicted) {
+        if (evicted.timer) clearTimeout(evicted.timer);
+        installJobEnvById.delete(evicted.view.jobId);
+      }
+      installJobsByEnv.delete(evictKey);
+    }
+  }
+
+  function pruneLoginSessions() {
+    while (loginSessionsByInstance.size > MAX_LOGIN_SESSIONS) {
+      let evictKey: string | null = null;
+      for (const [instId, entry] of loginSessionsByInstance) {
+        if (
+          entry.view.status !== "running" &&
+          entry.view.status !== "awaiting_auth"
+        ) {
+          evictKey = instId;
+          break;
+        }
+      }
+      if (!evictKey) {
+        evictKey = loginSessionsByInstance.keys().next().value ?? null;
+      }
+      if (!evictKey) break;
+      const evicted = loginSessionsByInstance.get(evictKey);
+      if (evicted) {
+        if (evicted.timer) clearTimeout(evicted.timer);
+        loginSessionInstanceById.delete(evicted.view.sessionId);
+      }
+      loginSessionsByInstance.delete(evictKey);
+    }
+  }
+
+  function clearLoginSessionForInstance(
+    instanceId: string,
+    cancelOnNode: boolean,
+  ) {
+    const existing = loginSessionsByInstance.get(instanceId);
+    if (!existing) return;
+    if (existing.timer) clearTimeout(existing.timer);
+    if (
+      cancelOnNode &&
+      (existing.view.status === "running" ||
+        existing.view.status === "awaiting_auth")
+    ) {
+      sendToEnvironment(existing.view.environmentId, {
+        type: "agent_runtime_login_cancel",
+        sessionId: existing.view.sessionId,
+      });
+    }
+    loginSessionInstanceById.delete(existing.view.sessionId);
+    loginSessionsByInstance.delete(instanceId);
+  }
+
+  function cleanupEnvironmentRuntimeState(environmentId: string) {
+    for (const [reqId, pending] of [...runtimeStatusPending]) {
+      if (pending.environmentId !== environmentId) continue;
+      runtimeStatusPending.delete(reqId);
+      pending.resolve({ ok: false, error: "目标运行环境已移除或离线。" });
+    }
+    for (const [reqId, pending] of [...runtimeLogoutPending]) {
+      if (pending.environmentId !== environmentId) continue;
+      runtimeLogoutPending.delete(reqId);
+      pending.resolve({ ok: false, error: "目标运行环境已移除或离线。" });
+    }
+    const job = installJobsByEnv.get(environmentId);
+    if (job) {
+      if (job.timer) clearTimeout(job.timer);
+      installJobEnvById.delete(job.view.jobId);
+      installJobsByEnv.delete(environmentId);
+    }
+    for (const [instId, session] of [...loginSessionsByInstance]) {
+      if (session.view.environmentId !== environmentId) continue;
+      if (session.timer) clearTimeout(session.timer);
+      loginSessionInstanceById.delete(session.view.sessionId);
+      loginSessionsByInstance.delete(instId);
+    }
+  }
+
+  async function reprobeEnvironmentAntigravityInstances(
+    environmentId: string,
+  ): Promise<void> {
+    const rows = await sql.unsafe<{ id: string; owner_user_id: string }[]>(
+      "SELECT id, owner_user_id FROM chisabot_agent_instances WHERE environment_id = $1 AND driver = $2",
+      [environmentId, "antigravity"],
+    );
+    await Promise.allSettled(
+      rows.map((row) => probeInstance(row.owner_user_id, row.id)),
+    );
+  }
 
   function serverAllowedRoots(settings: DeviceAgentSettings): string[] {
     return [...new Set([...parseEnvServerRoots(), ...settings.workspaceRoots])];
@@ -1325,6 +1502,332 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         probePending.delete(reqId);
         pending(message.probe as Omit<AgentProbeState, "checkedAt">);
       }
+      return;
+    }
+    if (message.type === "agent_runtime_status_result") {
+      const reqId = String(message.reqId ?? "");
+      const pending = runtimeStatusPending.get(reqId);
+      if (pending && pending.environmentId === record.id) {
+        runtimeStatusPending.delete(reqId);
+        pending.resolve({
+          ok: message.ok === true,
+          status:
+            message.status && typeof message.status === "object"
+              ? (message.status as AntigravityRuntimeStatus)
+              : undefined,
+          error:
+            typeof message.error === "string" && message.error.trim()
+              ? clip(message.error.trim(), 500)
+              : undefined,
+        });
+      }
+      return;
+    }
+    if (message.type === "agent_runtime_logout_result") {
+      const reqId = String(message.reqId ?? "");
+      const pending = runtimeLogoutPending.get(reqId);
+      if (pending && pending.environmentId === record.id) {
+        runtimeLogoutPending.delete(reqId);
+        pending.resolve({
+          ok: message.ok === true,
+          homePath:
+            typeof message.homePath === "string"
+              ? clip(message.homePath, 600)
+              : null,
+          message:
+            typeof message.message === "string"
+              ? clip(message.message, 500)
+              : null,
+          error:
+            typeof message.error === "string" && message.error.trim()
+              ? clip(message.error.trim(), 500)
+              : null,
+        });
+      }
+      return;
+    }
+    if (message.type === "agent_runtime_install_progress") {
+      const jobId = String(message.jobId ?? "");
+      const envId = installJobEnvById.get(jobId);
+      if (!envId || envId !== record.id) return;
+      const stored = installJobsByEnv.get(envId);
+      if (
+        !stored ||
+        stored.view.jobId !== jobId ||
+        stored.view.status !== "running" ||
+        stored.finalizing
+      )
+        return;
+      if (
+        typeof message.stage === "string" &&
+        ANTIGRAVITY_INSTALL_STAGES.has(message.stage as AntigravityInstallStage)
+      ) {
+        stored.view.stage = message.stage as AntigravityInstallStage;
+      }
+      if (message.percent === null) {
+        stored.view.percent = null;
+      } else if (
+        typeof message.percent === "number" &&
+        Number.isFinite(message.percent)
+      ) {
+        stored.view.percent = Math.max(
+          0,
+          Math.min(100, Math.round(message.percent)),
+        );
+      }
+      if (
+        typeof message.downloadedBytes === "number" &&
+        Number.isFinite(message.downloadedBytes) &&
+        message.downloadedBytes >= 0
+      ) {
+        stored.view.downloadedBytes = Math.floor(message.downloadedBytes);
+      }
+      if (message.totalBytes === null) {
+        stored.view.totalBytes = null;
+      } else if (
+        typeof message.totalBytes === "number" &&
+        Number.isFinite(message.totalBytes) &&
+        message.totalBytes >= 0
+      ) {
+        stored.view.totalBytes = Math.floor(message.totalBytes);
+      }
+      if (message.message === null) {
+        stored.view.message = null;
+      } else if (typeof message.message === "string") {
+        stored.view.message = clip(message.message, 400);
+      }
+      stored.view.updatedAt = new Date().toISOString();
+      return;
+    }
+    if (message.type === "agent_runtime_install_result") {
+      const jobId = String(message.jobId ?? "");
+      const envId = installJobEnvById.get(jobId);
+      if (!envId || envId !== record.id) return;
+      const stored = installJobsByEnv.get(envId);
+      if (
+        !stored ||
+        stored.view.jobId !== jobId ||
+        stored.view.status !== "running" ||
+        stored.finalizing
+      )
+        return;
+      const ok = message.ok === true;
+      const cancelled = message.cancelled === true;
+      const nowIso = new Date().toISOString();
+      const statusObj =
+        message.status && typeof message.status === "object"
+          ? (message.status as AntigravityRuntimeStatus)
+          : null;
+      const resolvedVersion =
+        typeof message.version === "string" && message.version.trim()
+          ? clip(message.version.trim(), 80)
+          : typeof statusObj?.managedVersion === "string" &&
+              statusObj.managedVersion.trim()
+            ? clip(statusObj.managedVersion.trim(), 80)
+            : stored.view.version;
+      const resolvedBinaryPath =
+        typeof message.binaryPath === "string" && message.binaryPath.trim()
+          ? clip(message.binaryPath.trim(), 600)
+          : typeof statusObj?.managedBinaryPath === "string" &&
+              statusObj.managedBinaryPath.trim()
+            ? clip(statusObj.managedBinaryPath.trim(), 600)
+            : stored.view.binaryPath;
+      stored.view.version = resolvedVersion;
+      stored.view.binaryPath = resolvedBinaryPath;
+      if (ok) {
+        // 先保持 running 等待异步重探写库完毕再切 succeeded，避免前端轮询过早读到旧 probe 缓存，同时不阻塞 handleNodeMessage
+        stored.finalizing = true;
+        stored.view.percent = 100;
+        stored.view.stage = "activating";
+        stored.view.message = "正在刷新实例检测状态…";
+        stored.view.error = null;
+        stored.view.updatedAt = nowIso;
+        void reprobeEnvironmentAntigravityInstances(record.id)
+          .catch(() => {})
+          .finally(() => {
+            const latest = installJobsByEnv.get(envId);
+            if (
+              !latest ||
+              latest.view.jobId !== jobId ||
+              latest.view.status !== "running"
+            )
+              return;
+            if (latest.timer) {
+              clearTimeout(latest.timer);
+              latest.timer = undefined;
+            }
+            const doneAt = new Date().toISOString();
+            latest.finalizing = false;
+            latest.view.status = "succeeded";
+            latest.view.stage = "activating";
+            latest.view.percent = 100;
+            latest.view.message = "安装完成";
+            latest.view.error = null;
+            latest.view.updatedAt = doneAt;
+            latest.view.finishedAt = doneAt;
+          });
+        return;
+      }
+      if (stored.timer) {
+        clearTimeout(stored.timer);
+        stored.timer = undefined;
+      }
+      stored.view.status = cancelled ? "cancelled" : "failed";
+      stored.view.error =
+        typeof message.error === "string" && message.error.trim()
+          ? clip(message.error.trim(), 500)
+          : cancelled
+            ? "安装已取消。"
+            : "安装失败。";
+      stored.view.updatedAt = nowIso;
+      stored.view.finishedAt = nowIso;
+      return;
+    }
+    if (message.type === "agent_runtime_login_event") {
+      const sessionId = String(message.sessionId ?? "");
+      const instanceId = loginSessionInstanceById.get(sessionId);
+      if (!instanceId) return;
+      const stored = loginSessionsByInstance.get(instanceId);
+      if (
+        !stored ||
+        stored.view.sessionId !== sessionId ||
+        stored.view.environmentId !== record.id ||
+        stored.finalizing
+      )
+        return;
+      if (
+        stored.view.status !== "running" &&
+        stored.view.status !== "awaiting_auth"
+      )
+        return;
+      if (
+        typeof message.stage === "string" &&
+        ANTIGRAVITY_LOGIN_STAGES.has(message.stage as AntigravityLoginStage)
+      ) {
+        stored.view.stage = message.stage as AntigravityLoginStage;
+      }
+      let receivedAuthUrl = false;
+      if (message.authUrl === null) {
+        stored.view.authUrl = null;
+      } else if (
+        typeof message.authUrl === "string" &&
+        message.authUrl.trim()
+      ) {
+        // 严禁将敏感 authUrl 写入任何服务端日志
+        stored.view.authUrl = message.authUrl.trim().slice(0, 4096);
+        receivedAuthUrl = true;
+      }
+      if (message.userCode === null) {
+        stored.view.userCode = null;
+      } else if (
+        typeof message.userCode === "string" &&
+        message.userCode.trim()
+      ) {
+        stored.view.userCode = clip(message.userCode.trim(), 120);
+      }
+      if (message.message === null) {
+        stored.view.message = null;
+      } else if (typeof message.message === "string") {
+        stored.view.message = clip(message.message, 400);
+      }
+      if (
+        stored.view.stage === "awaiting_auth" ||
+        (receivedAuthUrl &&
+          stored.view.stage !== "submitting" &&
+          stored.view.stage !== "verifying")
+      ) {
+        stored.view.status = "awaiting_auth";
+      } else if (
+        stored.view.stage === "submitting" ||
+        stored.view.stage === "verifying"
+      ) {
+        stored.view.status = "running";
+      }
+      stored.view.updatedAt = new Date().toISOString();
+      return;
+    }
+    if (message.type === "agent_runtime_login_result") {
+      const sessionId = String(message.sessionId ?? "");
+      const instanceId = loginSessionInstanceById.get(sessionId);
+      if (!instanceId) return;
+      const stored = loginSessionsByInstance.get(instanceId);
+      if (
+        !stored ||
+        stored.view.sessionId !== sessionId ||
+        stored.view.environmentId !== record.id ||
+        stored.finalizing
+      )
+        return;
+      if (
+        stored.view.status !== "running" &&
+        stored.view.status !== "awaiting_auth"
+      )
+        return;
+      const ok = message.ok === true;
+      const cancelled = message.cancelled === true;
+      const nowIso = new Date().toISOString();
+      stored.view.authUrl = null;
+      stored.view.authenticated = ok ? message.authenticated !== false : false;
+      stored.view.email =
+        typeof message.email === "string" && message.email.trim()
+          ? clip(message.email.trim(), 200)
+          : null;
+      stored.view.authLabel =
+        typeof message.authLabel === "string" && message.authLabel.trim()
+          ? clip(message.authLabel.trim(), 200)
+          : ok && stored.view.email
+            ? stored.view.email
+            : null;
+      if (typeof message.homePath === "string" && message.homePath.trim()) {
+        stored.view.homePath = clip(message.homePath.trim(), 600);
+      }
+      if (ok) {
+        // 先保持 running 等待异步重探写库完毕再切 succeeded，避免前端轮询过早读到旧 probe 缓存，同时不阻塞 handleNodeMessage
+        stored.finalizing = true;
+        stored.view.status = "running";
+        stored.view.stage = "verifying";
+        stored.view.message = "正在刷新实例检测状态…";
+        stored.view.error = null;
+        stored.view.updatedAt = nowIso;
+        void probeInstance(stored.ownerUserId, stored.view.instanceId)
+          .catch(() => {})
+          .finally(() => {
+            const latest = loginSessionsByInstance.get(instanceId);
+            if (
+              !latest ||
+              latest.view.sessionId !== sessionId ||
+              latest.view.status !== "running"
+            )
+              return;
+            if (latest.timer) {
+              clearTimeout(latest.timer);
+              latest.timer = undefined;
+            }
+            const doneAt = new Date().toISOString();
+            latest.finalizing = false;
+            latest.view.status = "succeeded";
+            latest.view.stage = "verifying";
+            latest.view.authUrl = null;
+            latest.view.message = "登录完成";
+            latest.view.error = null;
+            latest.view.updatedAt = doneAt;
+            latest.view.finishedAt = doneAt;
+          });
+        return;
+      }
+      if (stored.timer) {
+        clearTimeout(stored.timer);
+        stored.timer = undefined;
+      }
+      stored.view.status = cancelled ? "cancelled" : "failed";
+      stored.view.error =
+        typeof message.error === "string" && message.error.trim()
+          ? clip(message.error.trim(), 500)
+          : cancelled
+            ? "登录已取消。"
+            : "登录失败。";
+      stored.view.updatedAt = nowIso;
+      stored.view.finishedAt = nowIso;
       return;
     }
     if (message.type === "agents_detected") {
@@ -3193,6 +3696,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
   /** 删设备时一起删。 */
   async function forgetDevice(deviceId: string) {
     settingsCache.delete(deviceId);
+    cleanupEnvironmentRuntimeState(deviceId);
     await sql.unsafe(
       "DELETE FROM chisabot_device_agent_settings WHERE device_id = $1",
       [deviceId],
@@ -3298,6 +3802,8 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
         resolvedPath: row.probe?.resolvedPath ?? null,
         authenticated: row.probe?.authenticated ?? null,
         authLabel: row.probe?.authLabel ?? null,
+        runtimeSource: row.probe?.runtimeSource ?? null,
+        homePath: row.probe?.homePath ?? null,
         message: "宿主当前离线，无法检测",
         checkedAt: new Date().toISOString(),
       };
@@ -4111,6 +4617,122 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     })
     .strict();
 
+  const antigravityInstallSchema = z
+    .object({
+      force: z.boolean().optional(),
+      version: z.string().trim().min(1).max(80).optional(),
+    })
+    .strict();
+
+  const antigravityLoginStartSchema = z
+    .object({
+      authMethodId: z.string().trim().min(1).max(120).optional(),
+      restart: z.boolean().optional(),
+    })
+    .strict();
+
+  const antigravityLoginSubmitSchema = z
+    .object({
+      code: z
+        .string()
+        .trim()
+        .min(1, "请粘贴授权码或回调页面完整链接。")
+        .max(4096),
+      sessionId: z.string().trim().min(1).max(120).optional(),
+    })
+    .strict();
+
+  async function readOptionalJsonBody(req: {
+    text: () => Promise<string>;
+  }): Promise<unknown> {
+    const raw = (await req.text()).trim();
+    if (!raw) return {};
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new LocalAgentError("请求体不是合法 JSON。", 400);
+    }
+  }
+
+  function queryAntigravityRuntimeStatus(
+    environmentId: string,
+    checkLatest: boolean,
+  ): Promise<RuntimeStatusResult> {
+    const reqId = `ag_status_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    return new Promise<RuntimeStatusResult>((resolve) => {
+      let settled = false;
+      const finishStatus = (res: RuntimeStatusResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        runtimeStatusPending.delete(reqId);
+        resolve(res);
+      };
+      const timer = setTimeout(() => {
+        finishStatus({
+          ok: false,
+          error: `查询 Antigravity 运行时状态超时（${Math.round(runtimeStatusTimeoutMs / 1000)} 秒未响应）。`,
+        });
+      }, runtimeStatusTimeoutMs);
+      runtimeStatusPending.set(reqId, {
+        environmentId,
+        resolve: finishStatus,
+      });
+      const sent = sendToEnvironment(environmentId, {
+        type: "agent_runtime_status",
+        reqId,
+        driver: "antigravity",
+        ...(checkLatest ? { checkLatest: true } : {}),
+      });
+      if (!sent) {
+        finishStatus({ ok: false, error: "宿主离线。" });
+      }
+    });
+  }
+
+  function requestAntigravityLogout(
+    environmentId: string,
+    spec: RuntimeInstanceSpec,
+  ): Promise<{ sent: boolean; result: RuntimeLogoutResult }> {
+    const reqId = `ag_logout_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    return new Promise<{ sent: boolean; result: RuntimeLogoutResult }>(
+      (resolve) => {
+        let settled = false;
+        const finishLogout = (sent: boolean, result: RuntimeLogoutResult) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          runtimeLogoutPending.delete(reqId);
+          resolve({ sent, result });
+        };
+        const timer = setTimeout(() => {
+          finishLogout(true, {
+            ok: false,
+            homePath: null,
+            error: `退出登录超时（${Math.round(runtimeLogoutTimeoutMs / 1000)} 秒未响应）。`,
+          });
+        }, runtimeLogoutTimeoutMs);
+        runtimeLogoutPending.set(reqId, {
+          environmentId,
+          resolve: (res) => finishLogout(true, res),
+        });
+        const sent = sendToEnvironment(environmentId, {
+          type: "agent_runtime_logout",
+          reqId,
+          driver: "antigravity",
+          instance: spec,
+        });
+        if (!sent) {
+          finishLogout(false, {
+            ok: false,
+            homePath: null,
+            error: "宿主离线。",
+          });
+        }
+      },
+    );
+  }
+
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
     const app = new Hono<{ Variables: AppVariables }>();
     app.use("*", requireUser, bodyLimit({ maxSize: 65_536 }));
@@ -4222,6 +4844,148 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       return c.json({ instances });
     });
 
+    app.get("/environments/:id/antigravity/runtime", async (c) => {
+      const envId = c.req.param("id");
+      const target = await ownEnvironment(c.var.actor.id, envId);
+      const checkLatestRaw = c.req.query("checkLatest");
+      const checkLatest = checkLatestRaw === "1" || checkLatestRaw === "true";
+      const existingJob = installJobsByEnv.get(target.id);
+      const installJob = existingJob ? { ...existingJob.view } : null;
+      if (!isEnvironmentOnline(target.id)) {
+        return c.json({ online: false, runtime: null, installJob });
+      }
+      const res = await queryAntigravityRuntimeStatus(target.id, checkLatest);
+      const latestJob = installJobsByEnv.get(target.id);
+      const nextInstallJob = latestJob ? { ...latestJob.view } : null;
+      if (!res.ok) {
+        if (!isEnvironmentOnline(target.id)) {
+          return c.json({
+            online: false,
+            runtime: null,
+            installJob: nextInstallJob,
+          });
+        }
+        return c.json({
+          online: true,
+          runtime: res.status ?? null,
+          installJob: nextInstallJob,
+          ...(res.error ? { error: res.error } : {}),
+        });
+      }
+      return c.json({
+        online: true,
+        runtime: res.status ?? null,
+        installJob: nextInstallJob,
+      });
+    });
+
+    app.post("/environments/:id/antigravity/install", async (c) => {
+      const envId = c.req.param("id");
+      assertServerAdminIfNeeded(c.var.actor, envId);
+      const target = await ownEnvironment(c.var.actor.id, envId);
+      const body = antigravityInstallSchema.parse(
+        await readOptionalJsonBody(c.req),
+      );
+      if (!isEnvironmentOnline(target.id)) {
+        throw new LocalAgentError(
+          "目标运行环境当前离线，无法安装 Antigravity。",
+          409,
+        );
+      }
+      const existing = installJobsByEnv.get(target.id);
+      if (existing && existing.view.status === "running") {
+        return c.json({ installJob: { ...existing.view } });
+      }
+      if (existing) {
+        if (existing.timer) clearTimeout(existing.timer);
+        installJobEnvById.delete(existing.view.jobId);
+      }
+      const jobId = `ag_inst_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      const nowIso = new Date().toISOString();
+      const jobView: AntigravityInstallJobView = {
+        jobId,
+        environmentId: target.id,
+        status: "running",
+        stage: "checking",
+        percent: null,
+        downloadedBytes: 0,
+        totalBytes: null,
+        message: "正在向宿主发起安装…",
+        version: body.version ?? null,
+        binaryPath: null,
+        error: null,
+        startedAt: nowIso,
+        updatedAt: nowIso,
+        finishedAt: null,
+      };
+      const stored: StoredInstallJob = {
+        view: jobView,
+        ownerUserId: c.var.actor.id,
+      };
+      stored.timer = setTimeout(() => {
+        if (stored.view.status !== "running") return;
+        const doneAt = new Date().toISOString();
+        stored.view.status = "failed";
+        stored.view.error = "安装超时，宿主长时间未返回结果。";
+        stored.view.updatedAt = doneAt;
+        stored.view.finishedAt = doneAt;
+        stored.timer = undefined;
+      }, INSTALL_JOB_TIMEOUT_MS);
+      stored.timer.unref?.();
+      installJobsByEnv.set(target.id, stored);
+      installJobEnvById.set(jobId, target.id);
+      pruneInstallJobs();
+      const sent = sendToEnvironment(target.id, {
+        type: "agent_runtime_install",
+        jobId,
+        driver: "antigravity",
+        ...(body.force !== undefined ? { force: body.force } : {}),
+        ...(body.version ? { version: body.version } : {}),
+      });
+      if (!sent) {
+        if (stored.timer) clearTimeout(stored.timer);
+        installJobEnvById.delete(jobId);
+        if (installJobsByEnv.get(target.id)?.view.jobId === jobId) {
+          installJobsByEnv.delete(target.id);
+        }
+        throw new LocalAgentError(
+          "目标运行环境当前离线，无法发送安装指令。",
+          409,
+        );
+      }
+      const current = installJobsByEnv.get(target.id);
+      return c.json({
+        installJob: current ? { ...current.view } : { ...jobView },
+      });
+    });
+
+    app.post("/environments/:id/antigravity/install/cancel", async (c) => {
+      const envId = c.req.param("id");
+      assertServerAdminIfNeeded(c.var.actor, envId);
+      const target = await ownEnvironment(c.var.actor.id, envId);
+      const existing = installJobsByEnv.get(target.id);
+      if (!existing) {
+        return c.json({ installJob: null });
+      }
+      if (existing.view.status === "running") {
+        sendToEnvironment(target.id, {
+          type: "agent_runtime_install_cancel",
+          jobId: existing.view.jobId,
+        });
+        if (existing.timer) {
+          clearTimeout(existing.timer);
+          existing.timer = undefined;
+        }
+        const nowIso = new Date().toISOString();
+        existing.view.status = "cancelled";
+        existing.view.message = "已取消安装";
+        existing.view.error = null;
+        existing.view.updatedAt = nowIso;
+        existing.view.finishedAt = nowIso;
+      }
+      return c.json({ installJob: { ...existing.view } });
+    });
+
     app.get("/instances", async (c) => {
       const envId = c.req.query("environmentId") || undefined;
       const instances = await listInstances(c.var.actor.id, envId);
@@ -4287,6 +5051,7 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
       const existing = await instancesStore.getRow(c.var.actor.id, id);
       if (!existing) throw new LocalAgentError("没有这个智能体实例。", 404);
       assertServerAdminIfNeeded(c.var.actor, existing.environment_id);
+      clearLoginSessionForInstance(id, true);
       await instancesStore.deleteInstance(c.var.actor.id, id);
       return c.json({ deleted: true });
     });
@@ -4294,6 +5059,272 @@ export function createLocalAgentService(options: LocalAgentServiceOptions) {
     app.post("/instances/:id/probe", async (c) => {
       const instance = await probeInstance(c.var.actor.id, c.req.param("id"));
       return c.json({ instance });
+    });
+
+    const requireAntigravityInstance = async (
+      actor: AppVariables["actor"],
+      id: string,
+      requireWrite: boolean,
+    ) => {
+      const row = await instancesStore.getRow(actor.id, id);
+      if (!row) throw new LocalAgentError("没有这个智能体实例。", 404);
+      if (requireWrite) {
+        assertServerAdminIfNeeded(actor, row.environment_id);
+      }
+      if (row.environment_id === SERVER_ENVIRONMENT_ID) {
+        if (!(await serverHostAllowedFor(actor.id))) {
+          throw new LocalAgentError("没有这个智能体实例。", 404);
+        }
+      } else if (requireWrite) {
+        await ownEnvironment(actor.id, row.environment_id);
+      }
+      if (row.driver !== "antigravity") {
+        throw new LocalAgentError("仅 Antigravity 实例支持该操作。", 400);
+      }
+      return row;
+    };
+
+    app.get("/instances/:id/antigravity/login", async (c) => {
+      const row = await requireAntigravityInstance(
+        c.var.actor,
+        c.req.param("id"),
+        false,
+      );
+      const stored = loginSessionsByInstance.get(row.id);
+      return c.json({
+        session:
+          stored && stored.ownerUserId === c.var.actor.id
+            ? { ...stored.view }
+            : null,
+      });
+    });
+
+    app.post("/instances/:id/antigravity/login", async (c) => {
+      const row = await requireAntigravityInstance(
+        c.var.actor,
+        c.req.param("id"),
+        true,
+      );
+      const body = antigravityLoginStartSchema.parse(
+        await readOptionalJsonBody(c.req),
+      );
+      if (!isEnvironmentOnline(row.environment_id)) {
+        throw new LocalAgentError(
+          "目标运行环境当前离线，无法发起 Antigravity 登录。",
+          409,
+        );
+      }
+      const existing = loginSessionsByInstance.get(row.id);
+      const existingActive =
+        existing &&
+        existing.ownerUserId === c.var.actor.id &&
+        (existing.view.status === "running" ||
+          existing.view.status === "awaiting_auth");
+      if (existingActive && !body.restart) {
+        return c.json({ session: { ...existing.view } });
+      }
+      if (existing) {
+        clearLoginSessionForInstance(row.id, true);
+      }
+      const spec = await instancesStore.toRuntimeSpec(row);
+      const sessionId = `ag_login_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      const nowIso = new Date().toISOString();
+      const sessionView: AntigravityLoginSessionView = {
+        sessionId,
+        instanceId: row.id,
+        environmentId: row.environment_id,
+        status: "running",
+        stage: "starting",
+        authUrl: null,
+        userCode: null,
+        message: "正在启动 Antigravity 登录流程…",
+        authenticated: false,
+        authLabel: null,
+        email: null,
+        homePath: row.probe?.homePath ?? row.config?.homePath ?? null,
+        error: null,
+        startedAt: nowIso,
+        updatedAt: nowIso,
+        finishedAt: null,
+      };
+      const stored: StoredLoginSession = {
+        view: sessionView,
+        ownerUserId: c.var.actor.id,
+      };
+      stored.timer = setTimeout(() => {
+        if (
+          stored.view.status !== "running" &&
+          stored.view.status !== "awaiting_auth"
+        )
+          return;
+        sendToEnvironment(row.environment_id, {
+          type: "agent_runtime_login_cancel",
+          sessionId,
+        });
+        const doneAt = new Date().toISOString();
+        stored.view.status = "failed";
+        stored.view.authUrl = null;
+        stored.view.error = "登录会话已超时，请重新发起登录。";
+        stored.view.updatedAt = doneAt;
+        stored.view.finishedAt = doneAt;
+        stored.timer = undefined;
+      }, LOGIN_SESSION_TIMEOUT_MS);
+      stored.timer.unref?.();
+      loginSessionsByInstance.set(row.id, stored);
+      loginSessionInstanceById.set(sessionId, row.id);
+      pruneLoginSessions();
+      const sent = sendToEnvironment(row.environment_id, {
+        type: "agent_runtime_login_start",
+        sessionId,
+        driver: "antigravity",
+        instance: spec,
+        ...(body.authMethodId ? { authMethodId: body.authMethodId } : {}),
+      });
+      if (!sent) {
+        clearLoginSessionForInstance(row.id, false);
+        throw new LocalAgentError(
+          "目标运行环境当前离线，无法发送登录指令。",
+          409,
+        );
+      }
+      const current = loginSessionsByInstance.get(row.id);
+      return c.json({
+        session: current ? { ...current.view } : { ...sessionView },
+      });
+    });
+
+    app.post("/instances/:id/antigravity/login/submit", async (c) => {
+      const row = await requireAntigravityInstance(
+        c.var.actor,
+        c.req.param("id"),
+        true,
+      );
+      // 严禁将 body.code 写入任何服务端日志
+      const body = antigravityLoginSubmitSchema.parse(await c.req.json());
+      const stored = loginSessionsByInstance.get(row.id);
+      if (
+        !stored ||
+        stored.ownerUserId !== c.var.actor.id ||
+        (stored.view.status !== "running" &&
+          stored.view.status !== "awaiting_auth")
+      ) {
+        throw new LocalAgentError(
+          "当前没有进行中的登录会话，请重新发起登录。",
+          409,
+        );
+      }
+      if (stored.finalizing) {
+        throw new LocalAgentError("登录结果正在确认中，请稍候。", 409);
+      }
+      if (body.sessionId && body.sessionId !== stored.view.sessionId) {
+        throw new LocalAgentError(
+          "登录会话已过期或不匹配，请重新发起登录。",
+          409,
+        );
+      }
+      if (!isEnvironmentOnline(row.environment_id)) {
+        throw new LocalAgentError(
+          "目标运行环境当前离线，无法提交授权码。",
+          409,
+        );
+      }
+      const prevStage = stored.view.stage;
+      const prevStatus = stored.view.status;
+      const prevMessage = stored.view.message;
+      stored.view.stage = "submitting";
+      stored.view.status = "running";
+      stored.view.message = "正在提交授权码并验证登录…";
+      stored.view.updatedAt = new Date().toISOString();
+      const sent = sendToEnvironment(row.environment_id, {
+        type: "agent_runtime_login_submit",
+        sessionId: stored.view.sessionId,
+        code: body.code,
+      });
+      if (!sent) {
+        stored.view.stage = prevStage;
+        stored.view.status = prevStatus;
+        stored.view.message = prevMessage;
+        throw new LocalAgentError(
+          "目标运行环境当前离线，无法发送授权码。",
+          409,
+        );
+      }
+      const current = loginSessionsByInstance.get(row.id);
+      return c.json({
+        session: current ? { ...current.view } : { ...stored.view },
+      });
+    });
+
+    app.post("/instances/:id/antigravity/login/cancel", async (c) => {
+      const row = await requireAntigravityInstance(
+        c.var.actor,
+        c.req.param("id"),
+        true,
+      );
+      const stored = loginSessionsByInstance.get(row.id);
+      if (!stored || stored.ownerUserId !== c.var.actor.id) {
+        return c.json({ session: null });
+      }
+      if (
+        stored.view.status === "running" ||
+        stored.view.status === "awaiting_auth"
+      ) {
+        sendToEnvironment(row.environment_id, {
+          type: "agent_runtime_login_cancel",
+          sessionId: stored.view.sessionId,
+        });
+        if (stored.timer) {
+          clearTimeout(stored.timer);
+          stored.timer = undefined;
+        }
+        const nowIso = new Date().toISOString();
+        stored.view.status = "cancelled";
+        stored.view.authUrl = null;
+        stored.view.error = null;
+        stored.view.message = "已取消登录";
+        stored.view.updatedAt = nowIso;
+        stored.view.finishedAt = nowIso;
+      }
+      return c.json({ session: { ...stored.view } });
+    });
+
+    app.post("/instances/:id/antigravity/logout", async (c) => {
+      const row = await requireAntigravityInstance(
+        c.var.actor,
+        c.req.param("id"),
+        true,
+      );
+      if (!isEnvironmentOnline(row.environment_id)) {
+        throw new LocalAgentError("目标运行环境当前离线，无法退出登录。", 409);
+      }
+      const spec = await instancesStore.toRuntimeSpec(row);
+      const { sent, result } = await requestAntigravityLogout(
+        row.environment_id,
+        spec,
+      );
+      if (!sent) {
+        throw new LocalAgentError(
+          "目标运行环境当前离线，无法发送退出登录指令。",
+          409,
+        );
+      }
+      if (!result.ok) {
+        return c.json({
+          ok: false,
+          homePath: result.homePath ?? null,
+          probe: null,
+          error: result.error ?? "退出登录失败。",
+        });
+      }
+      clearLoginSessionForInstance(row.id, true);
+      const probed = await probeInstance(c.var.actor.id, row.id).catch(
+        () => null,
+      );
+      return c.json({
+        ok: true,
+        homePath: result.homePath ?? probed?.probe?.homePath ?? null,
+        probe: probed?.probe ?? null,
+      });
     });
 
     app.get("/bots/:botId/grants", async (c) => {

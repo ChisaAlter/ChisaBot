@@ -100,6 +100,7 @@ import { useKeptVisibility } from "@/lib/kept-visible";
 import { DURATION_MS, useRetainedValue } from "@/lib/motion";
 import { newId } from "@/lib/new-id";
 import { presenceRef } from "@/lib/presence-flag";
+import { useSimpleMode } from "@/lib/simple-mode";
 import { useCoarsePointer } from "@/lib/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 import { chatFileUrl } from "../../../../../shared/chat-files";
@@ -503,6 +504,7 @@ function ComposerImpl({
   queuedAttachmentCount = 0,
 }: ComposerProps) {
   const accountId = currentDraftFileAccount();
+  const simpleMode = useSimpleMode();
   const conversationScope = useConversationScope();
   const fileDraft = useRef(new Map<string, PersistedDraftFile>());
   const pendingBusyModeRef = useRef<BusySendMode | null>(null);
@@ -2998,23 +3000,25 @@ function ComposerImpl({
                   <div className="glass-composer-toolbar-start flex items-center gap-1.5">
                     {attachButton}
                     {leadingControl}
-                    <Button
-                      aria-label={"助理快捷指令与随手问 (Alt+Space)"}
-                      className="glass-composer-icon"
-                      data-testid="composer-spotlight-btn"
-                      disabled={disabled}
-                      onClick={() =>
-                        window.dispatchEvent(
-                          new CustomEvent("chisabot-spotlight"),
-                        )
-                      }
-                      size="icon"
-                      title={"助理快捷指令与随手问 (Alt+Space)"}
-                      type="button"
-                      variant="ghost"
-                    >
-                      <IconSparkles className="size-[16px]" />
-                    </Button>
+                    {simpleMode ? null : (
+                      <Button
+                        aria-label={"助理快捷指令与随手问 (Alt+Space)"}
+                        className="glass-composer-icon"
+                        data-testid="composer-spotlight-btn"
+                        disabled={disabled}
+                        onClick={() =>
+                          window.dispatchEvent(
+                            new CustomEvent("chisabot-spotlight"),
+                          )
+                        }
+                        size="icon"
+                        title={"助理快捷指令与随手问 (Alt+Space)"}
+                        type="button"
+                        variant="ghost"
+                      >
+                        <IconSparkles className="size-[16px]" />
+                      </Button>
+                    )}
                   </div>
                   <div className="glass-composer-toolbar-end flex shrink-0 items-center gap-1.5">
                     {modelControl ? (
@@ -3127,21 +3131,23 @@ function ComposerImpl({
                 </Button>
               ) : null}
               {leadingControl}
-              <Button
-                aria-label={"助理快捷指令与随手问 (Alt+Space)"}
-                className="glass-composer-icon"
-                data-testid="composer-spotlight-btn"
-                disabled={disabled}
-                onClick={() =>
-                  window.dispatchEvent(new CustomEvent("chisabot-spotlight"))
-                }
-                size="icon"
-                title={"助理快捷指令与随手问 (Alt+Space)"}
-                type="button"
-                variant="ghost"
-              >
-                <IconSparkles className="size-[16px]" />
-              </Button>
+              {simpleMode ? null : (
+                <Button
+                  aria-label={"助理快捷指令与随手问 (Alt+Space)"}
+                  className="glass-composer-icon"
+                  data-testid="composer-spotlight-btn"
+                  disabled={disabled}
+                  onClick={() =>
+                    window.dispatchEvent(new CustomEvent("chisabot-spotlight"))
+                  }
+                  size="icon"
+                  title={"助理快捷指令与随手问 (Alt+Space)"}
+                  type="button"
+                  variant="ghost"
+                >
+                  <IconSparkles className="size-[16px]" />
+                </Button>
+              )}
               {modelControl ? (
                 <div className="flex shrink-0 items-center">{modelControl}</div>
               ) : null}

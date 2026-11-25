@@ -8,6 +8,7 @@ import {
   PANEL_RAIL_WIDE_QUERY,
   setPanelRailOpen,
 } from "@/lib/panels/rail-open";
+import { isSimpleModeEnabled } from "@/lib/simple-mode";
 
 /**
  * 右栏「面板 | 计算机」的自动切换（DESIGN.md §23）。
@@ -110,6 +111,7 @@ export function openForActivityJump(current: {
   watching: boolean;
   setWatching: (open: boolean) => void;
 }): void {
+  if (isSimpleModeEnabled()) return;
   const wide =
     typeof window !== "undefined" &&
     window.matchMedia(PANEL_RAIL_WIDE_QUERY).matches;

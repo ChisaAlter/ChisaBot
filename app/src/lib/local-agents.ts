@@ -16,7 +16,16 @@ import {
   type AgentEnvironmentSummary,
   type AgentEnvVarInput,
   type AgentInstanceView,
+  type AgentProbeState,
   type AgentProviderPreset,
+  type AntigravityInstallJobStatus,
+  type AntigravityInstallJobView,
+  type AntigravityInstallStage,
+  type AntigravityLoginSessionStatus,
+  type AntigravityLoginSessionView,
+  type AntigravityLoginStage,
+  type AntigravityRuntimeSource,
+  type AntigravityRuntimeStatus,
   type BotAgentGrant,
   type BotAgentGrantMode,
   SERVER_ENVIRONMENT_ID,
@@ -36,7 +45,16 @@ export type {
   AgentEnvironmentSummary,
   AgentEnvVarInput,
   AgentInstanceView,
+  AgentProbeState,
   AgentProviderPreset,
+  AntigravityInstallJobStatus,
+  AntigravityInstallJobView,
+  AntigravityInstallStage,
+  AntigravityLoginSessionStatus,
+  AntigravityLoginSessionView,
+  AntigravityLoginStage,
+  AntigravityRuntimeSource,
+  AntigravityRuntimeStatus,
   BotAgentGrant,
   BotAgentGrantMode,
 };
@@ -66,6 +84,12 @@ export const localAgentKeys = {
   instancesAll: () => ["local-agents", "instances"] as const,
   instances: (envId?: string) =>
     ["local-agents", "instances", envId ?? "all"] as const,
+  antigravityRuntimeAll: () => ["local-agents", "antigravity-runtime"] as const,
+  antigravityRuntime: (envId: string) =>
+    ["local-agents", "antigravity-runtime", envId] as const,
+  antigravityLoginAll: () => ["local-agents", "antigravity-login"] as const,
+  antigravityLogin: (instanceId: string) =>
+    ["local-agents", "antigravity-login", instanceId] as const,
   botGrantsAll: () => ["local-agents", "bot-grant"] as const,
   botGrant: (botId: string) => ["local-agents", "bot-grant", botId] as const,
 };
@@ -484,7 +508,394 @@ export async function invalidateAgentProviderQueries(
           queryClient.invalidateQueries({
             queryKey: localAgentKeys.environmentSettings(environmentId),
           }),
+          queryClient.invalidateQueries({
+            queryKey: localAgentKeys.antigravityRuntime(environmentId),
+          }),
         ]
       : []),
   ]);
+}
+
+// ── Antigravity 托管运行时与独立账号登录 API ──────────────────────────────
+
+const ANTIGRAVITY_FALLBACK = "Antigravity 托管服务暂时不可用，请重试。";
+
+export type AntigravityRuntimeState = {
+  online: boolean;
+  runtime: AntigravityRuntimeStatus | null;
+  installJob: AntigravityInstallJobView | null;
+  error?: string | null;
+};
+
+export type AntigravityInstallInput = {
+  force?: boolean;
+  version?: string;
+};
+
+export type AntigravityLoginInput = {
+  authMethodId?: string;
+  restart?: boolean;
+};
+
+export type AntigravityLoginSubmitInput = {
+  code: string;
+  sessionId?: string;
+};
+
+export type AntigravityLogoutResult = {
+  ok: boolean;
+  homePath?: string | null;
+  probe?: AgentProbeState | null;
+  error?: string | null;
+};
+
+export async function fetchAntigravityRuntime(
+  envId: string,
+  checkLatest = false,
+): Promise<AntigravityRuntimeState> {
+  const qs = checkLatest ? "?checkLatest=1" : "";
+  return (
+    await client(
+      `/api/local-agents/environments/${encodeURIComponent(envId)}/antigravity/runtime${qs}`,
+      { fallback: ANTIGRAVITY_FALLBACK },
+    )
+  ).json();
+}
+
+export function antigravityRuntimeQueryOptions(
+  envId: string,
+  checkLatest = false,
+) {
+  return queryOptions({
+    queryKey: localAgentKeys.antigravityRuntime(envId),
+    queryFn: (): Promise<AntigravityRuntimeState> =>
+      fetchAntigravityRuntime(envId, checkLatest),
+    refetchInterval: (query) =>
+      query.state.data?.installJob?.status === "running" ? 1000 : false,
+    staleTime: 3000,
+  });
+}
+
+export function useAntigravityRuntime(
+  envId: string | null | undefined,
+  options?: {
+    enabled?: boolean;
+    onInstallSettled?: (job: AntigravityInstallJobView) => void;
+  },
+) {
+  const queryClient = useQueryClient();
+  const targetEnvId = envId ?? "";
+  const queryKey = localAgentKeys.antigravityRuntime(targetEnvId);
+  const onInstallSettled = options?.onInstallSettled;
+
+  return useQuery({
+    ...antigravityRuntimeQueryOptions(targetEnvId),
+    enabled: Boolean(envId) && (options?.enabled ?? true),
+    queryFn: async (): Promise<AntigravityRuntimeState> => {
+      const prev = queryClient.getQueryData<AntigravityRuntimeState>(queryKey);
+      const next = await fetchAntigravityRuntime(targetEnvId);
+      const prevJob = prev?.installJob;
+      const nextJob = next.installJob;
+      if (
+        prevJob?.status === "running" &&
+        nextJob &&
+        nextJob.status !== "running"
+      ) {
+        void queryClient.invalidateQueries({
+          queryKey: localAgentKeys.instancesAll(),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: localAgentKeys.environments(),
+        });
+        onInstallSettled?.(nextJob);
+      }
+      return next;
+    },
+  });
+}
+
+export async function startAntigravityInstall(
+  envId: string,
+  input: AntigravityInstallInput = {},
+): Promise<AntigravityInstallJobView> {
+  return client<AntigravityInstallJobView>(
+    `/api/local-agents/environments/${encodeURIComponent(envId)}/antigravity/install`,
+    "installJob",
+    {
+      method: "POST",
+      body: input,
+      fallback: ANTIGRAVITY_FALLBACK,
+      timeoutMs: 30_000,
+    },
+  );
+}
+
+export async function cancelAntigravityInstall(
+  envId: string,
+): Promise<AntigravityInstallJobView | null> {
+  return client<AntigravityInstallJobView | null>(
+    `/api/local-agents/environments/${encodeURIComponent(envId)}/antigravity/install/cancel`,
+    "installJob",
+    { method: "POST", fallback: ANTIGRAVITY_FALLBACK },
+  );
+}
+
+export async function fetchAntigravityLogin(
+  instanceId: string,
+): Promise<AntigravityLoginSessionView | null> {
+  return client<AntigravityLoginSessionView | null>(
+    `/api/local-agents/instances/${encodeURIComponent(instanceId)}/antigravity/login`,
+    "session",
+    { fallback: ANTIGRAVITY_FALLBACK },
+  );
+}
+
+export function antigravityLoginQueryOptions(instanceId: string) {
+  return queryOptions({
+    queryKey: localAgentKeys.antigravityLogin(instanceId),
+    queryFn: (): Promise<AntigravityLoginSessionView | null> =>
+      fetchAntigravityLogin(instanceId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "running" || status === "awaiting_auth" ? 1200 : false;
+    },
+    staleTime: 1000,
+  });
+}
+
+export function useAntigravityLogin(
+  instanceId: string | null | undefined,
+  options?: {
+    enabled?: boolean;
+    environmentId?: string;
+    onLoginSettled?: (session: AntigravityLoginSessionView) => void;
+  },
+) {
+  const queryClient = useQueryClient();
+  const targetId = instanceId ?? "";
+  const queryKey = localAgentKeys.antigravityLogin(targetId);
+  const environmentId = options?.environmentId;
+  const onLoginSettled = options?.onLoginSettled;
+
+  return useQuery({
+    ...antigravityLoginQueryOptions(targetId),
+    enabled: Boolean(instanceId) && (options?.enabled ?? true),
+    queryFn: async (): Promise<AntigravityLoginSessionView | null> => {
+      const prev = queryClient.getQueryData<AntigravityLoginSessionView | null>(
+        queryKey,
+      );
+      const next = await fetchAntigravityLogin(targetId);
+      const wasActive =
+        prev?.status === "running" || prev?.status === "awaiting_auth";
+      const isTerminal =
+        next !== null &&
+        next.status !== "running" &&
+        next.status !== "awaiting_auth";
+      if (wasActive && isTerminal) {
+        void invalidateAgentProviderQueries(queryClient, environmentId);
+        onLoginSettled?.(next);
+      }
+      return next;
+    },
+  });
+}
+
+export async function startAntigravityLogin(
+  instanceId: string,
+  input: AntigravityLoginInput = {},
+): Promise<AntigravityLoginSessionView> {
+  return client<AntigravityLoginSessionView>(
+    `/api/local-agents/instances/${encodeURIComponent(instanceId)}/antigravity/login`,
+    "session",
+    {
+      method: "POST",
+      body: input,
+      fallback: ANTIGRAVITY_FALLBACK,
+      timeoutMs: 30_000,
+    },
+  );
+}
+
+export async function submitAntigravityLoginCode(
+  instanceId: string,
+  input: AntigravityLoginSubmitInput,
+): Promise<AntigravityLoginSessionView> {
+  return client<AntigravityLoginSessionView>(
+    `/api/local-agents/instances/${encodeURIComponent(instanceId)}/antigravity/login/submit`,
+    "session",
+    {
+      method: "POST",
+      body: input,
+      fallback: ANTIGRAVITY_FALLBACK,
+      timeoutMs: 30_000,
+    },
+  );
+}
+
+export async function cancelAntigravityLogin(
+  instanceId: string,
+): Promise<AntigravityLoginSessionView | null> {
+  return client<AntigravityLoginSessionView | null>(
+    `/api/local-agents/instances/${encodeURIComponent(instanceId)}/antigravity/login/cancel`,
+    "session",
+    { method: "POST", fallback: ANTIGRAVITY_FALLBACK },
+  );
+}
+
+export async function logoutAntigravityInstance(
+  instanceId: string,
+): Promise<AntigravityLogoutResult> {
+  return (
+    await client(
+      `/api/local-agents/instances/${encodeURIComponent(instanceId)}/antigravity/logout`,
+      { method: "POST", fallback: ANTIGRAVITY_FALLBACK, timeoutMs: 30_000 },
+    )
+  ).json();
+}
+
+export function startAntigravityInstallMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: (input: {
+      environmentId: string;
+      force?: boolean;
+      version?: string;
+    }): Promise<AntigravityInstallJobView> =>
+      startAntigravityInstall(input.environmentId, {
+        ...(input.force !== undefined ? { force: input.force } : {}),
+        ...(input.version !== undefined ? { version: input.version } : {}),
+      }),
+    onSuccess: (installJob, input) => {
+      queryClient.setQueryData<AntigravityRuntimeState>(
+        localAgentKeys.antigravityRuntime(input.environmentId),
+        (prev) => ({
+          online: prev?.online ?? true,
+          runtime: prev?.runtime ?? null,
+          installJob,
+        }),
+      );
+      if (installJob.status !== "running") {
+        void invalidateAgentProviderQueries(queryClient, input.environmentId);
+      }
+    },
+  });
+}
+
+export function cancelAntigravityInstallMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: (
+      environmentId: string,
+    ): Promise<AntigravityInstallJobView | null> =>
+      cancelAntigravityInstall(environmentId),
+    onSuccess: (installJob, environmentId) => {
+      queryClient.setQueryData<AntigravityRuntimeState>(
+        localAgentKeys.antigravityRuntime(environmentId),
+        (prev) => ({
+          online: prev?.online ?? true,
+          runtime: prev?.runtime ?? null,
+          installJob,
+        }),
+      );
+      void queryClient.invalidateQueries({
+        queryKey: localAgentKeys.antigravityRuntime(environmentId),
+      });
+    },
+  });
+}
+
+export function startAntigravityLoginMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: (input: {
+      instanceId: string;
+      environmentId?: string;
+      authMethodId?: string;
+      restart?: boolean;
+    }): Promise<AntigravityLoginSessionView> =>
+      startAntigravityLogin(input.instanceId, {
+        ...(input.authMethodId !== undefined
+          ? { authMethodId: input.authMethodId }
+          : {}),
+        ...(input.restart !== undefined ? { restart: input.restart } : {}),
+      }),
+    onSuccess: (session, input) => {
+      queryClient.setQueryData(
+        localAgentKeys.antigravityLogin(input.instanceId),
+        session,
+      );
+      if (session.status !== "running" && session.status !== "awaiting_auth") {
+        void invalidateAgentProviderQueries(queryClient, input.environmentId);
+      }
+    },
+  });
+}
+
+export function submitAntigravityLoginMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: (input: {
+      instanceId: string;
+      environmentId?: string;
+      code: string;
+      sessionId?: string;
+    }): Promise<AntigravityLoginSessionView> =>
+      submitAntigravityLoginCode(input.instanceId, {
+        code: input.code,
+        ...(input.sessionId !== undefined
+          ? { sessionId: input.sessionId }
+          : {}),
+      }),
+    onSuccess: (session, input) => {
+      queryClient.setQueryData(
+        localAgentKeys.antigravityLogin(input.instanceId),
+        session,
+      );
+      if (session.status !== "running" && session.status !== "awaiting_auth") {
+        void invalidateAgentProviderQueries(queryClient, input.environmentId);
+      }
+    },
+  });
+}
+
+export function cancelAntigravityLoginMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: (
+      instanceId: string,
+    ): Promise<AntigravityLoginSessionView | null> =>
+      cancelAntigravityLogin(instanceId),
+    onSuccess: (session, instanceId) => {
+      queryClient.setQueryData(
+        localAgentKeys.antigravityLogin(instanceId),
+        session,
+      );
+      void queryClient.invalidateQueries({
+        queryKey: localAgentKeys.antigravityLogin(instanceId),
+      });
+    },
+  });
+}
+
+export function logoutAntigravityMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: (input: {
+      instanceId: string;
+      environmentId?: string;
+    }): Promise<AntigravityLogoutResult> =>
+      logoutAntigravityInstance(input.instanceId),
+    onSuccess: (_result, input) => {
+      queryClient.setQueryData(
+        localAgentKeys.antigravityLogin(input.instanceId),
+        null,
+      );
+      void queryClient.invalidateQueries({
+        queryKey: localAgentKeys.antigravityLogin(input.instanceId),
+      });
+      void invalidateAgentProviderQueries(queryClient, input.environmentId);
+    },
+  });
 }

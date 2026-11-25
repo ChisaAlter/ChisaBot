@@ -16,6 +16,7 @@ import { installPreviewWindowBridge } from "./lib/proto-preview";
 import { installPwa } from "./lib/pwa";
 import { initResizeState } from "./lib/resize-state";
 import { installPrimaryAgentSync } from "./lib/settings/queries";
+import { installSimpleMode } from "./lib/simple-mode";
 import { installStaleChunkReload } from "./lib/stale-chunk";
 import { queryClient } from "./query-client";
 import { router } from "./router";
@@ -24,6 +25,7 @@ import "./styles/tokens.css";
 import "./styles/canvas.css";
 import "./styles/materials.css";
 import "./styles.css";
+import "./styles/simple-mode.css";
 // 实色材质 / 性能模式 / 减少透明度：全局关掉 backdrop-filter 并落到实底。放在 styles.css 之后。
 import "./perf-noblur.css";
 // 增加对比度 / 强制颜色：文字、边框和焦点环。放在 perf-noblur.css 之后。
@@ -34,6 +36,7 @@ installPhoneLayout();
 installPerfMode();
 installBusySendMode();
 installPrivacyMask();
+installSimpleMode();
 installHaltProbe();
 installPwa();
 installPreviewWindowBridge();

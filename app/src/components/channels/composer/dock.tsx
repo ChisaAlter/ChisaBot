@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { useExternalConnection } from "@/hooks";
+import { useSimpleMode } from "@/lib/simple-mode";
 import { useCoarsePointer } from "@/lib/use-coarse-pointer";
 import {
   applyDockDrag,
@@ -97,6 +98,9 @@ export function ComposerDock({
   const pillRef = useRef(pill);
   pillRef.current = pill;
   const coarse = useCoarsePointer();
+  const simpleMode = useSimpleMode();
+  const simpleModeRef = useRef(simpleMode);
+  simpleModeRef.current = simpleMode;
   const lastInsetRef = useRef<number | null>(null);
   const appliedScrollPadRef = useRef<HTMLElement | null>(null);
   const appliedBottomPillRef = useRef<HTMLElement | null>(null);
@@ -223,7 +227,7 @@ export function ComposerDock({
       syncPill();
       observeContent(ro);
       syncInset();
-      if (!clamp || drag.current) return;
+      if (!clamp || drag.current || simpleModeRef.current) return;
       const r = rectRef.current;
       if (!r) return;
       const p = pane.getBoundingClientRect();
@@ -289,9 +293,21 @@ export function ComposerDock({
     };
   });
 
+  // 精简模式切入时中止残留拖拽、清除直接写进 DOM 的 inline 定位并重算底部留白；保留 localStorage，切回标准模式无缝还原。
+  useExternalConnection(simpleMode ? "simple" : "standard", () => {
+    const box = boxRef.current;
+    if (simpleMode) {
+      drag.current = null;
+      if (box) applyDockStyle(box, null, pillRef.current);
+    } else if (box && rectRef.current && !coarse) {
+      applyDockStyle(box, rectRef.current, pillRef.current);
+    }
+    scheduleSyncRef.current();
+  });
+
   const onHandleDown = useCallback(
     (dir: DockDir) => (event: PointerEvent<HTMLSpanElement>) => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || simpleModeRef.current) return;
       const box = boxRef.current;
       const pane = paneOf(box);
       if (!box || !pane) return;
@@ -373,7 +389,7 @@ export function ComposerDock({
     }
   }, []);
 
-  const docked = rect !== null && !coarse;
+  const docked = rect !== null && !coarse && !simpleMode;
   const effectiveH = pill ? null : (rect?.h ?? null);
   const sized = docked && effectiveH !== null;
 
@@ -399,7 +415,7 @@ export function ComposerDock({
       }
     >
       {children}
-      {coarse ? null : (
+      {coarse || simpleMode ? null : (
         <div
           aria-hidden="true"
           className="chat-dock-handles"

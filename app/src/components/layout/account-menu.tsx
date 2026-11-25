@@ -2,6 +2,7 @@ import {
   IconAlarm,
   IconDeviceDesktop,
   IconInbox,
+  IconLayoutSidebar,
   IconListCheck,
   IconLogout,
   IconMoon,
@@ -26,12 +27,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { signOutMutationOptions } from "@/lib/auth/mutations";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import { usePendingActionCount } from "@/lib/pending-actions";
 import { PROTO_PREVIEW } from "@/lib/proto-preview";
+import {
+  setSimpleMode,
+  toggleSimpleMode,
+  useSimpleMode,
+} from "@/lib/simple-mode";
 import type { AppearanceMode } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { openAccountDialog, preloadAccountDialogs } from "./account-dialogs";
@@ -76,6 +83,7 @@ export function AccountMenu({
   const sidebar = useOptionalSidebar();
   const signOut = useMutation(signOutMutationOptions(queryClient));
   const pending = usePendingActionCount();
+  const simpleMode = useSimpleMode();
   const [open, setOpen] = useState(false);
   const openTaskCenter = useOpenTaskCenter();
 
@@ -191,18 +199,32 @@ export function AccountMenu({
             }}
           />
           <Row icon={<IconSettings className={icon} />} label={"设置"} onClick={() => go("/settings")} />
-          <Row icon={<IconListCheck className={icon} />} label={"任务中心"} onClick={() => {
-            setOpen(false);
-            if (sidebar?.isMobile) sidebar.setOpenMobile(false);
-            openTaskCenter();
-          }} />
-          <Row icon={<IconAlarm className={icon} />} label={"定时任务"} onClick={() => go("/settings/schedules")} />
-          <Row
-            hint={pending > 0 ? `${pending} 项` : undefined}
-            icon={<IconInbox className={icon} />}
-            label={"待处理"}
-            onClick={() => go("/approvals")}
-          />
+          {!simpleMode ? (
+            <Row
+              icon={<IconListCheck className={icon} />}
+              label={"任务中心"}
+              onClick={() => {
+                setOpen(false);
+                if (sidebar?.isMobile) sidebar.setOpenMobile(false);
+                openTaskCenter();
+              }}
+            />
+          ) : null}
+          {!simpleMode ? (
+            <Row
+              icon={<IconAlarm className={icon} />}
+              label={"定时任务"}
+              onClick={() => go("/settings/schedules")}
+            />
+          ) : null}
+          {!simpleMode || pending > 0 ? (
+            <Row
+              hint={pending > 0 ? `${pending} 项` : undefined}
+              icon={<IconInbox className={icon} />}
+              label={"待处理"}
+              onClick={() => go("/approvals")}
+            />
+          ) : null}
         </DropdownMenuGroup>
         <DropdownMenuSeparator className="glass-sep" />
         <DropdownMenuGroup className="py-1">
@@ -219,6 +241,26 @@ export function AccountMenu({
         </DropdownMenuGroup>
         <DropdownMenuSeparator className="glass-sep" />
         <DropdownMenuGroup className="py-1">
+          <DropdownMenuItem
+            className="glass-mi"
+            closeOnClick={false}
+            data-testid="account-simple-mode-row"
+            onClick={() => toggleSimpleMode()}
+          >
+            <span className="mi-lead">
+              <IconLayoutSidebar className={icon} />
+            </span>
+            <span className="t-line min-w-0 flex-1">{"精简模式"}</span>
+            <Switch
+              aria-label={"精简模式"}
+              checked={simpleMode}
+              data-testid="account-simple-mode-switch"
+              onCheckedChange={(checked) => setSimpleMode(checked)}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+              size="sm"
+            />
+          </DropdownMenuItem>
           <DropdownMenuItem
             className="glass-mi"
             closeOnClick={false}

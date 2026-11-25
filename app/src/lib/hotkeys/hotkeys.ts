@@ -48,6 +48,12 @@ export const HOTKEYS = [
     description: "一键模糊屏幕中的账号、密钥提示与机器人名称，适合录屏、投屏或公共场合使用。",
     combo: { key: "p", mod: true, shift: true },
   },
+  {
+    id: "simple-mode",
+    label: "切换精简模式",
+    description: "在标准工作台与「左侧机器人列表 + 中间对话」极简双栏界面之间一键切换。",
+    combo: { key: "m", mod: true, alt: true },
+  },
 ] as const satisfies readonly Hotkey[];
 
 export type HotkeyId = (typeof HOTKEYS)[number]["id"];

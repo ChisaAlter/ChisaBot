@@ -219,6 +219,24 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
         ],
       },
       {
+        id: "simple-mode",
+        title: "精简模式",
+        description:
+          "界面收敛为左侧机器人列表与中间对话双栏，隐藏右侧栏与非核心控件（Ctrl+Alt+M）",
+        find: "精简模式",
+        keywords: [
+          "精简",
+          "极简",
+          "双栏",
+          "专注",
+          "简洁",
+          "simple",
+          "minimal",
+          "grokbot",
+          "jjms",
+        ],
+      },
+      {
         id: "busy-send-mode",
         title: "回复中途发消息",
         description: "AI 正在回复时按 Enter 的默认方式（立即插话引导或排到下一轮）",

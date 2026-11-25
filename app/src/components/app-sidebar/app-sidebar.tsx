@@ -93,6 +93,7 @@ import {
   SEARCH_RESULTS_ID,
   searchHitWhen,
 } from "@/lib/sidebar-search-nav";
+import { useSimpleMode } from "@/lib/simple-mode";
 import { cn } from "@/lib/utils";
 import { queryClient } from "@/query-client";
 import {
@@ -356,6 +357,7 @@ const BotRow = memo(function BotRow({
   canReplaceMain?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const simpleMode = useSimpleMode();
   const menuMount = usePresenceMount(menuOpen);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
@@ -416,7 +418,7 @@ const BotRow = memo(function BotRow({
         </span>
         {paused ? (
           <span className="glass-item-s">{"已暂停"}</span>
-        ) : bot.title ? (
+        ) : !simpleMode && bot.title ? (
           <span className="glass-item-s" data-private="">
             {bot.title}
           </span>
@@ -482,7 +484,7 @@ const BotRow = memo(function BotRow({
           {content}
         </Link>
       )}
-      <BotRowComputerChip chat={chat} />
+      {simpleMode ? null : <BotRowComputerChip chat={chat} />}
       <DropdownMenu
         onOpenChange={handleMenuOpenChange}
         onOpenChangeComplete={(next) => {
@@ -579,6 +581,7 @@ function BotMenuContent({
   onComputer: (() => void) | null;
 }) {
   const icon = "size-[18px] shrink-0 opacity-80";
+  const simpleMode = useSimpleMode();
   const navigate = useNavigate();
   const { botId: panelBotId } = usePanelBot();
   // 菜单离左栏卡片右边 8px、顶边与机器人行齐平（DESIGN.md §34.3），而不是挨着 ⋯ 小按钮压在卡片上。
@@ -630,14 +633,16 @@ function BotMenuContent({
         <span className="min-w-0 flex-1">{"机器人资料"}</span>
       </DropdownMenuItem>
       <BotChatMenuItems agentId={bot.id} chat={chat} onDone={closeDrawer} />
-      <DropdownMenuItem className="glass-mi" onClick={() => void openPanels()}>
-        <IconLayoutDashboard className={icon} />
-        <span className="min-w-0 flex-1">
-          <span className="block">{"面板"}</span>
-          <span className="glass-mi-sub">{"它做的仪表盘、列表和小工具"}</span>
-        </span>
-      </DropdownMenuItem>
-      {onComputer ? (
+      {simpleMode ? null : (
+        <DropdownMenuItem className="glass-mi" onClick={() => void openPanels()}>
+          <IconLayoutDashboard className={icon} />
+          <span className="min-w-0 flex-1">
+            <span className="block">{"面板"}</span>
+            <span className="glass-mi-sub">{"它做的仪表盘、列表和小工具"}</span>
+          </span>
+        </DropdownMenuItem>
+      )}
+      {!simpleMode && onComputer ? (
         <DropdownMenuItem className="glass-mi" onClick={onComputer}>
           <IconDeviceDesktop className={icon} />
           <span className="min-w-0 flex-1">
@@ -739,6 +744,7 @@ function HiddenBotRow({
   chat: NonNullable<ReturnType<typeof useBotChat>>;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const simpleMode = useSimpleMode();
   const menuMount = usePresenceMount(menuOpen);
   return (
     <div className={cn("glass-bot-row is-on", menuOpen && "menu-open")}>
@@ -750,14 +756,14 @@ function HiddenBotRow({
           <span className="glass-item-t" data-private="">
             {bot.name}
           </span>
-          {bot.title ? (
+          {!simpleMode && bot.title ? (
             <span className="glass-item-s" data-private="">
               {bot.title}
             </span>
           ) : null}
         </span>
       </span>
-      <BotRowComputerChip chat={chat} />
+      {simpleMode ? null : <BotRowComputerChip chat={chat} />}
       <DropdownMenu
         onOpenChange={setMenuOpen}
         onOpenChangeComplete={(next) => {
@@ -1212,6 +1218,7 @@ const MiniBot = memo(function MiniBot({
   canReplaceMain?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const simpleMode = useSimpleMode();
   const menuMount = usePresenceMount(menuOpen);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
@@ -1310,7 +1317,7 @@ const MiniBot = memo(function MiniBot({
           </Link>
         )}
       </RailTip>
-      {computer ? (
+      {!simpleMode && computer ? (
         <span
           className={cn("glass-mini-comp", computer === "needs" && "is-needs")}
           role="img"
@@ -1391,6 +1398,7 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
   const current = useCurrentBotChat();
   const agents = useQuery(agentListQueryOptions());
   const [menuOpen, setMenuOpen] = useState(false);
+  const simpleMode = useSimpleMode();
   const menuMount = usePresenceMount(menuOpen);
   if (!current || known.has(current.agentId)) return null;
   const profile = agents.data?.find((a) => a.id === current.agentId);
@@ -1427,7 +1435,7 @@ function HiddenChatMiniBot({ known }: { known: Set<string> }) {
             <ChannelAvatar participantIds={[bot.id]} selected size={36} />
           </span>
         </RailTip>
-        {computer ? (
+        {!simpleMode && computer ? (
           <span
             className={cn(
               "glass-mini-comp",

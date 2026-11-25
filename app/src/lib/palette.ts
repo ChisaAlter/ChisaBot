@@ -73,7 +73,7 @@ export function appearanceBootScript(): string {
     sky: ["#9dbddc", "#070d1c"],
     aurora: ["#a8e2d8", "#06151c"],
     porcelain: ["#c4d5ee", "#081226"],
-    deepseek: ["#dde6ff", "#1e2025"],
+    deepseek: ["#e4edfd", "#151517"],
     claude: ["#ece7db", "#1c1b18"],
     cossui: ["#e4e4e7", "#09090b"],
   };

@@ -499,3 +499,1167 @@ process.stdin.on("data", (chunk) => {
   assert.equal(blockedBridge, null);
 });
 
+test("which(): quote stripping, case-insensitive Path/PathExt, and Windows .cmd over extensionless POSIX script", () => {
+  const { which, clearWhichCache } = require("../src/agent-runtime/detect");
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cbla-which-"));
+  const win = process.platform === "win32";
+  try {
+    const spacedDir = path.join(tmpRoot, "dir with spaces");
+    fs.mkdirSync(spacedDir, { recursive: true });
+
+    const bareScript = path.join(spacedDir, "mytool");
+    fs.writeFileSync(bareScript, "#!/bin/sh\necho posix\n", { mode: 0o755 });
+    const cmdFile = path.join(spacedDir, "mytool.cmd");
+    if (win) {
+      fs.writeFileSync(cmdFile, "@echo off\r\necho win-cmd\r\n");
+    }
+
+    clearWhichCache();
+    // 1. 显式路径带双引号剥离 + Windows 下无扩展名显式路径优先匹配 .cmd 而非同名 POSIX sh 脚本
+    const explicitHit = which(`"${bareScript}"`);
+    assert.equal(explicitHit, win ? cmdFile : bareScript);
+
+    // 2. PATH 条目带双引号与 Windows 大小写 Path / PathExt
+    const quotedPathEnv = win
+      ? { Path: `"${spacedDir}"`, PathExt: ".CMD;.BAT" }
+      : { PATH: `"${spacedDir}"` };
+    assert.equal(which("mytool", quotedPathEnv), win ? cmdFile : bareScript);
+
+    if (win) {
+      // 3. 同时存在 Path 与 PATH 时，后者覆盖前者
+      const dir2 = path.join(tmpRoot, "dir2");
+      fs.mkdirSync(dir2, { recursive: true });
+      const exe2 = path.join(dir2, "mytool.exe");
+      fs.writeFileSync(exe2, "stub");
+      const overrideEnv = { Path: spacedDir, PATH: dir2, PathExt: ".EXE;.CMD" };
+      assert.equal(which("mytool", overrideEnv), exe2);
+    }
+  } finally {
+    clearWhichCache();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("antigravity discovery: custom > managed > system, no .t3/agentapi sniffing, desktop GUI filtered, ACP isolation args", () => {
+  const {
+    resolveAntigravityExecutable,
+    resolveAntigravityExecutableWithSource,
+    resolveAcpCommand,
+    isAntigravityDesktopGuiPath,
+    extraSearchDirs,
+    clearWhichCache,
+  } = require("../src/agent-runtime/detect");
+  const {
+    resolveAntigravityToolsDir,
+  } = require("../src/agent-runtime/antigravity-managed");
+  const win = process.platform === "win32";
+  const ext = win ? ".exe" : "";
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cbla-agy-disc-"));
+  try {
+    const fakeHome = path.join(tmpRoot, "home");
+    const dataDir = path.join(tmpRoot, "chisabot-data");
+    const localAppData = path.join(fakeHome, "AppData", "Local");
+    fs.mkdirSync(localAppData, { recursive: true });
+    const baseEnv = win
+      ? {
+          PATH: "",
+          USERPROFILE: fakeHome,
+          LOCALAPPDATA: localAppData,
+          CHISABOT_AGENT_DATA_DIR: dataDir,
+        }
+      : {
+          PATH: "",
+          HOME: fakeHome,
+          CHISABOT_AGENT_DATA_DIR: dataDir,
+        };
+
+    // 0. extraSearchDirs 包含 %LOCALAPPDATA%\agy\bin，且严禁包含桌面 GUI 根目录 Programs\antigravity
+    if (win) {
+      const dirs = extraSearchDirs(baseEnv).map((d) => d.toLowerCase());
+      assert.ok(dirs.includes(path.join(localAppData, "agy", "bin").toLowerCase()));
+      assert.equal(
+        dirs.includes(path.join(localAppData, "programs", "antigravity").toLowerCase()),
+        false,
+      );
+    }
+
+    // 1. 桌面 GUI 路径拒绝规则
+    assert.equal(
+      isAntigravityDesktopGuiPath("C:\\Users\\demo\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe"),
+      true,
+    );
+    assert.equal(
+      isAntigravityDesktopGuiPath("/Applications/Antigravity.app/Contents/MacOS/Antigravity"),
+      true,
+    );
+    assert.equal(
+      isAntigravityDesktopGuiPath("C:\\AI\\antigravity-cli\\antigravity.exe"),
+      false,
+    );
+
+    // 2. 彻底不再嗅探 ~/.t3/tools 或 ~/.gemini/antigravity-cli/bin/agentapi(.bat)
+    const platKey = `${process.platform}-${process.arch}`;
+    const t3Root = path.join(fakeHome, ".t3", "tools", "antigravity-acp", platKey);
+    const t3VerDir = path.join(t3Root, "versions", "rel-1515");
+    fs.mkdirSync(t3VerDir, { recursive: true });
+    fs.writeFileSync(path.join(t3VerDir, `agy${ext}`), "stub", { mode: 0o755 });
+    fs.writeFileSync(path.join(t3Root, "active.json"), JSON.stringify({ releaseId: "rel-1515" }));
+
+    const staleCliDir = path.join(tmpRoot, "stale-cli");
+    fs.mkdirSync(staleCliDir, { recursive: true });
+    const staleCli = path.join(staleCliDir, `antigravity${ext}`);
+    fs.writeFileSync(staleCli, "stub", { mode: 0o755 });
+    const geminiCliBin = path.join(fakeHome, ".gemini", "antigravity-cli", "bin");
+    fs.mkdirSync(geminiCliBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(geminiCliBin, win ? "agentapi.bat" : "agentapi"),
+      win ? `@echo off\r\n"${staleCli}" agentapi %*\r\n` : `#!/bin/sh\nexec "${staleCli}" agentapi "$@"\n`,
+      { mode: 0o755 },
+    );
+
+    clearWhichCache();
+    assert.deepEqual(resolveAntigravityExecutableWithSource("agy", baseEnv), {
+      file: null,
+      source: null,
+    });
+    const missingDefault = resolveAcpCommand("antigravity", {}, baseEnv);
+    assert.equal(missingDefault.file, null);
+    assert.equal(
+      missingDefault.missingReason,
+      "未安装 Antigravity 运行时，可在下方一键安装或手动指定可执行路径",
+    );
+
+    // 3. 系统 PATH 中的 antigravity 返回 source: "system"，并自动跳过排在前面的桌面端 GUI
+    const guiDir = path.join(tmpRoot, "Programs", "Antigravity");
+    fs.mkdirSync(guiDir, { recursive: true });
+    const guiExe = path.join(guiDir, win ? "Antigravity.exe" : "antigravity");
+    fs.writeFileSync(guiExe, "gui-stub", { mode: 0o755 });
+    const pathBinDir = path.join(tmpRoot, "path-bin");
+    fs.mkdirSync(pathBinDir, { recursive: true });
+    const systemBin = path.join(pathBinDir, `antigravity${ext}`);
+    fs.writeFileSync(systemBin, "cli-stub", { mode: 0o755 });
+
+    const envWithSystem = {
+      ...baseEnv,
+      PATH: win ? `${guiDir};${pathBinDir}` : pathBinDir,
+    };
+    clearWhichCache();
+    if (win) {
+      assert.equal(resolveAntigravityExecutable(guiExe, baseEnv), null);
+      const guiRes = resolveAcpCommand(
+        "antigravity",
+        { commandPath: guiExe, protocolMode: "auto" },
+        baseEnv,
+      );
+      assert.equal(guiRes.file, null);
+      assert.match(guiRes.missingReason || "", /桌面端/);
+    }
+    assert.deepEqual(resolveAntigravityExecutableWithSource("agy", envWithSystem), {
+      file: systemBin,
+      source: "system",
+    });
+
+    // 4. ChisaBot 托管版优先级高于系统 PATH（managed > system）
+    const toolsDir = resolveAntigravityToolsDir(envWithSystem);
+    const managedVerDir = path.join(toolsDir, "versions", "1.5.16");
+    fs.mkdirSync(managedVerDir, { recursive: true });
+    const managedBin = path.join(managedVerDir, `agy${ext}`);
+    fs.writeFileSync(managedBin, "managed-stub", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(toolsDir, "active.json"),
+      JSON.stringify({
+        version: "1.5.16",
+        binaryRelPath: `versions/1.5.16/agy${ext}`,
+        sha512: "a".repeat(128),
+        installedAt: new Date().toISOString(),
+        sourceUrl: "https://storage.googleapis.com/antigravity-public/antigravity-cli/test",
+      }),
+    );
+
+    clearWhichCache();
+    assert.deepEqual(resolveAntigravityExecutableWithSource("", envWithSystem), {
+      file: managedBin,
+      source: "managed",
+    });
+    assert.deepEqual(resolveAntigravityExecutableWithSource("agy", envWithSystem), {
+      file: managedBin,
+      source: "managed",
+    });
+
+    // 5. 显式非默认 commandPath 优先级最高（custom > managed > system），且找不到时不回退
+    const customDir = path.join(tmpRoot, "custom-agy");
+    fs.mkdirSync(customDir, { recursive: true });
+    const customBin = path.join(customDir, `my-agy${ext}`);
+    fs.writeFileSync(customBin, "custom-stub", { mode: 0o755 });
+    clearWhichCache();
+    assert.deepEqual(resolveAntigravityExecutableWithSource(customBin, envWithSystem), {
+      file: customBin,
+      source: "custom",
+    });
+    const missingCustom = resolveAcpCommand(
+      "antigravity",
+      { commandPath: path.join(tmpRoot, "not-exist-agy"), protocolMode: "auto" },
+      envWithSystem,
+    );
+    assert.equal(missingCustom.file, null);
+    assert.equal(missingCustom.runtimeSource, null);
+    assert.match(missingCustom.missingReason || "", /not-exist-agy/);
+
+    // 6. resolveAcpCommand 自动拼入严格隔离参数（--gemini-dir / 相对名 --app-data-dir antigravity-cli / --disable-telemetry）
+    const autoCmd = resolveAcpCommand(
+      "antigravity",
+      { commandPath: "", protocolMode: "auto", extraArgs: ["--sandbox"] },
+      envWithSystem,
+      { id: "inst-alpha", slug: "alpha", driver: "antigravity", config: {}, env: {} },
+    );
+    assert.equal(autoCmd.mode, "acp");
+    assert.equal(autoCmd.file, managedBin);
+    assert.equal(autoCmd.runtimeSource, "managed");
+    const expectedHome = path.join(dataDir, "agent-homes", "antigravity", "inst-alpha");
+    assert.equal(autoCmd.homePath, expectedHome);
+    assert.deepEqual(autoCmd.args, [
+      "acp",
+      "--gemini-dir",
+      path.join(expectedHome, ".gemini"),
+      "--app-data-dir",
+      "antigravity-cli",
+      "--disable-telemetry",
+      "--sandbox",
+    ]);
+    const appDataIdx = autoCmd.args.indexOf("--app-data-dir");
+    assert.equal(path.isAbsolute(autoCmd.args[appDataIdx + 1]), false);
+  } finally {
+    clearWhichCache();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("antigravity probeInstance protocolMode acp/auto, env sanitization, spaced .cmd, and CLI args", async () => {
+  const { probeInstance, capture } = require("../src/agent-runtime/detect");
+  const { probeAcpAgent, sanitizeAntigravityEnv } = require("../src/agent-runtime/acp-client");
+  const win = process.platform === "win32";
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cbla-agy-probe "));
+  const prevElectronNode = process.env.ELECTRON_RUN_AS_NODE;
+  const prevElectronConsole = process.env.ELECTRON_NO_ATTACH_CONSOLE;
+  try {
+    // 1. CLI 参数构建校验（-p / --output-format text / --model / viaStdin）
+    const cliDirect = buildCommand("antigravity", {
+      prompt: "hello\nworld",
+      model: "gemini-2.5-pro",
+      profile: "workspace",
+      viaStdin: false,
+      extraArgs: ["--sandbox"],
+    });
+    assert.deepEqual(cliDirect.args, [
+      "-p",
+      "hello\nworld",
+      "--output-format",
+      "text",
+      "--model",
+      "gemini-2.5-pro",
+      "--sandbox",
+    ]);
+    assert.equal(cliDirect.stdin, null);
+
+    const cliStdin = buildCommand("antigravity", {
+      prompt: "multi\nline",
+      model: "gemini-2.5-pro",
+      profile: "readonly",
+      viaStdin: true,
+    });
+    assert.deepEqual(cliStdin.args, [
+      "--output-format",
+      "text",
+      "--model",
+      "gemini-2.5-pro",
+      "--mode",
+      "plan",
+    ]);
+    assert.equal(cliStdin.stdin, "multi\nline");
+
+    // 2. probeAcpAgent 绝不将 sanitizeAntigravityEnv 删除的 ELECTRON_RUN_AS_NODE 重新注回
+    const envCheckScript = path.join(tmpRoot, "env-check-acp.js");
+    fs.writeFileSync(
+      envCheckScript,
+      `"use strict";
+process.stdin.setEncoding("utf8");
+let buf = "";
+process.stdin.on("data", (chunk) => {
+  buf += chunk;
+  const idx = buf.indexOf("\\n");
+  if (idx < 0) return;
+  const msg = JSON.parse(buf.slice(0, idx).trim());
+  if (msg.method === "initialize") {
+    if (process.env.ELECTRON_RUN_AS_NODE !== undefined || process.env.ELECTRON_NO_ATTACH_CONSOLE !== undefined) {
+      process.stderr.write("LEAKED_ELECTRON_ENV\\n");
+      process.exit(1);
+    }
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: { protocolVersion: 1, agentInfo: { name: "Clean ACP", version: "1.5.16" }, authMethods: [] },
+    }) + "\\n");
+  }
+});
+`,
+    );
+    process.env.ELECTRON_RUN_AS_NODE = "1";
+    process.env.ELECTRON_NO_ATTACH_CONSOLE = "1";
+    const sanitized = sanitizeAntigravityEnv(process.env, true);
+    assert.equal(sanitized.ELECTRON_RUN_AS_NODE, undefined);
+    const acpRes = await probeAcpAgent({
+      file: process.execPath,
+      args: [envCheckScript],
+      env: sanitized,
+      timeoutMs: 5000,
+    });
+    assert.equal(acpRes.status, "available", JSON.stringify(acpRes));
+    assert.equal(acpRes.version, "1.5.16");
+
+    // 3. 含空格路径的假 CLI（支持 --version 但 acp 子命令失败）：
+    //    - protocolMode: "acp" 必须返回 error，绝不误报 CLI 可用
+    //    - protocolMode: "auto" 可降级返回 available / CLI 可用
+    const spacedBinDir = path.join(tmpRoot, "My Tools (Test)");
+    fs.mkdirSync(spacedBinDir, { recursive: true });
+    const fakeCliJs = path.join(spacedBinDir, "fake-agy.js");
+    fs.writeFileSync(
+      fakeCliJs,
+      `"use strict";
+const args = process.argv.slice(2);
+if (args[0] === "--version") {
+  console.log("1.5.16");
+  process.exit(0);
+}
+if (args[0] === "acp") {
+  console.error("ACP_BROKEN_HANDSHAKE");
+  process.exit(2);
+}
+process.exit(1);
+`,
+    );
+    const fakeWrapper = path.join(spacedBinDir, win ? "fake agy.cmd" : "fake-agy");
+    if (win) {
+      fs.writeFileSync(
+        fakeWrapper,
+        `@echo off\r\n"${process.execPath}" "${fakeCliJs}" %*\r\n`,
+      );
+    } else {
+      fs.writeFileSync(
+        fakeWrapper,
+        `#!/bin/sh\nexec "${process.execPath}" "${fakeCliJs}" "$@"\n`,
+        { mode: 0o755 },
+      );
+    }
+
+    // 验证含空格路径 .cmd 通过 capture() 正常拿版本号
+    const capRes = await capture(fakeWrapper, ["--version"], { timeoutMs: 5000 });
+    assert.equal(capRes.code, 0, JSON.stringify(capRes));
+    assert.match(capRes.out, /1\.5\.16/);
+
+    // protocolMode: "acp" 失败不得降级误报 CLI 可用
+    const acpStrictProbe = await probeInstance({
+      driver: "antigravity",
+      config: { commandPath: fakeWrapper, protocolMode: "acp" },
+    });
+    assert.equal(acpStrictProbe.status, "error", JSON.stringify(acpStrictProbe));
+    assert.match(acpStrictProbe.message, /ACP_BROKEN_HANDSHAKE/);
+
+    // protocolMode: "auto" 在 ACP 失败且 --version 成功时降级 CLI 可用（隔离 HOME 确保无本地凭据干扰）
+    const emptyHome = path.join(tmpRoot, "empty-home");
+    fs.mkdirSync(emptyHome, { recursive: true });
+    const isolatedAuthEnv = {
+      USERPROFILE: emptyHome,
+      HOME: emptyHome,
+      GEMINI_API_KEY: "",
+      GOOGLE_API_KEY: "",
+    };
+    const autoFallbackProbe = await probeInstance({
+      driver: "antigravity",
+      config: { commandPath: fakeWrapper, protocolMode: "auto" },
+      env: isolatedAuthEnv,
+    });
+    assert.equal(autoFallbackProbe.status, "available", JSON.stringify(autoFallbackProbe));
+    assert.equal(autoFallbackProbe.authenticated, null);
+    assert.equal(autoFallbackProbe.authLabel, "CLI 可用");
+    assert.equal(autoFallbackProbe.version, "1.5.16");
+
+    // 4. capture() 超时能杀子进程并及时返回
+    const tStart = Date.now();
+    const timeoutRes = await capture(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 30000)"],
+      { timeoutMs: 300 },
+    );
+    const elapsed = Date.now() - tStart;
+    assert.equal(timeoutRes.code, -1);
+    assert.equal(timeoutRes.timedOut, true);
+    assert.ok(elapsed < 4000, `capture timeout took too long: ${elapsed}ms`);
+  } finally {
+    if (prevElectronNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+    else process.env.ELECTRON_RUN_AS_NODE = prevElectronNode;
+    if (prevElectronConsole === undefined) delete process.env.ELECTRON_NO_ATTACH_CONSOLE;
+    else process.env.ELECTRON_NO_ATTACH_CONSOLE = prevElectronConsole;
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("Windows .cmd spawnCommand prevents quote breakout injection & env expansion; authLabel compaction & isolated auth check", async () => {
+  const {
+    capture,
+    clearWhichCache,
+  } = require("../src/agent-runtime/detect");
+  const {
+    resolveAntigravityIsolation,
+    inspectManagedAntigravityAuth,
+  } = require("../src/agent-runtime/antigravity-managed");
+  const {
+    formatAcpAuthLabel,
+    probeAcpAgent,
+  } = require("../src/agent-runtime/acp-client");
+  const win = process.platform === "win32";
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cbla-sec-auth "));
+  try {
+    // 1. Windows .cmd 危险参数防命令注入与防 %VAR% 展开回归测试
+    if (win) {
+      const binDir = path.join(tmpRoot, "Tools (Safe)");
+      fs.mkdirSync(binDir, { recursive: true });
+      const echoJs = path.join(binDir, "echo-argv.js");
+      const echoCmd = path.join(binDir, "run echo.cmd");
+      fs.writeFileSync(
+        echoJs,
+        'console.log(JSON.stringify(process.argv.slice(2)));\n',
+      );
+      fs.writeFileSync(
+        echoCmd,
+        `@echo off\r\n"${process.execPath}" "%~dp0echo-argv.js" %*\r\n`,
+      );
+
+      const dangerousCases = [
+        ["--arg", 'a"b&echo INJECTED'],
+        ["--arg", "%OS%"],
+        ["--arg", "%OS%%TEMP%"],
+        ["--arg", "a|echo PWN", "x>pwn.txt", "c^d", "(paren)", "!OS!", "--k=v", ""],
+      ];
+      for (const argv of dangerousCases) {
+        const res = await capture(echoCmd, argv, { cwd: tmpRoot, timeoutMs: 5000 });
+        assert.equal(res.code, 0, JSON.stringify(res));
+        assert.equal(
+          res.out.trim(),
+          JSON.stringify(argv),
+          `argv fidelity mismatch for ${JSON.stringify(argv)}: got ${res.out}`,
+        );
+      }
+      assert.equal(fs.existsSync(path.join(tmpRoot, "pwn.txt")), false);
+    }
+
+    // 2. formatAcpAuthLabel 与 probeAcpAgent 收敛超长英文 authMethods
+    assert.equal(
+      formatAcpAuthLabel([
+        { id: "oauth-personal", name: "Log in with Google" },
+        { id: "oauth-business", name: "Log in with Gemini Enterprise" },
+        { id: "gemini-api-key", name: "Gemini API key" },
+        { id: "agent-platform", name: "Gemini Enterprise Agent Platform" },
+      ]),
+      "ACP 就绪",
+    );
+    assert.equal(
+      formatAcpAuthLabel([{ id: "oauth", name: "OAuth" }, { id: "key", name: "API Key" }]),
+      "支持 OAuth / API Key",
+    );
+
+    const longAuthScript = path.join(tmpRoot, "long-auth-acp.js");
+    fs.writeFileSync(
+      longAuthScript,
+      `"use strict";
+process.stdin.setEncoding("utf8");
+let buf = "";
+process.stdin.on("data", (chunk) => {
+  buf += chunk;
+  const idx = buf.indexOf("\\n");
+  if (idx < 0) return;
+  const msg = JSON.parse(buf.slice(0, idx).trim());
+  if (msg.method === "initialize") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        protocolVersion: 1,
+        agentInfo: { name: "Antigravity ACP Server", version: "1.5.16" },
+        authMethods: [
+          { id: "oauth-personal", name: "Log in with Google" },
+          { id: "oauth-business", name: "Log in with Gemini Enterprise" },
+          { id: "gemini-api-key", name: "Gemini API key" },
+          { id: "agent-platform", name: "Gemini Enterprise Agent Platform" },
+        ],
+      },
+    }) + "\\n");
+  }
+});
+`,
+    );
+    const acpLongRes = await probeAcpAgent({
+      file: process.execPath,
+      args: [longAuthScript],
+      timeoutMs: 5000,
+    });
+    assert.equal(acpLongRes.status, "available");
+    assert.equal(acpLongRes.authLabel, "ACP 就绪");
+
+    // 3. 严格隔离环境与隔离凭据无副作用探测（绝不读取宿主全局 ~/.gemini）
+    const hostHome = path.join(tmpRoot, "host-home");
+    const dataDir = path.join(tmpRoot, "chisabot-data");
+    // 在宿主全局 ~/.gemini 放置一个有效 token，验证隔离实例绝不会误读它
+    const hostAcpDir = path.join(hostHome, ".gemini", "antigravity-acp");
+    fs.mkdirSync(hostAcpDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(hostAcpDir, "acp_token.json"),
+      JSON.stringify({ token: "host-secret-token" }),
+    );
+
+    const baseHostEnv = {
+      USERPROFILE: hostHome,
+      HOME: hostHome,
+      CHISABOT_AGENT_DATA_DIR: dataDir,
+      ANTIGRAVITY_LEAK: "from-host",
+      agy_host_var: "from-host-lower",
+      ELECTRON_RUN_AS_NODE: "1",
+      ELECTRON_NO_ATTACH_CONSOLE: "1",
+      GEMINI_API_KEY: "",
+      GOOGLE_API_KEY: "",
+    };
+    const instanceSpec = {
+      id: "inst_01/bad:chars",
+      slug: "work-agy",
+      driver: "antigravity",
+      config: { fixProxy: true },
+      env: { HTTP_PROXY: "127.0.0.1:7890", CUSTOM_FLAG: "yes" },
+    };
+
+    const iso = resolveAntigravityIsolation(instanceSpec, baseHostEnv);
+    assert.equal(
+      iso.homeDir,
+      path.join(dataDir, "agent-homes", "antigravity", "inst_01-bad-chars"),
+    );
+    assert.equal(iso.geminiDir, path.join(iso.homeDir, ".gemini"));
+    assert.equal(iso.env.HOME, iso.homeDir);
+    assert.equal(iso.env.USERPROFILE, iso.homeDir);
+    assert.equal(iso.env.AGY_CLI_FORCE_FILE_TOKEN_STORAGE, "1");
+    assert.equal(iso.env.AGY_CLI_DISABLE_AUTO_UPDATE, "1");
+    assert.equal(iso.env.ANTIGRAVITY_LEAK, undefined);
+    assert.equal(iso.env.agy_host_var, undefined);
+    assert.equal(iso.env.ELECTRON_RUN_AS_NODE, undefined);
+    assert.equal(iso.env.ELECTRON_NO_ATTACH_CONSOLE, undefined);
+    assert.equal(iso.env.HTTP_PROXY, "http://127.0.0.1:7890");
+    assert.equal(iso.env.CUSTOM_FLAG, "yes");
+    if (win) {
+      assert.equal(iso.env.APPDATA, path.join(iso.homeDir, "AppData", "Roaming"));
+      assert.equal(iso.env.LOCALAPPDATA, path.join(iso.homeDir, "AppData", "Local"));
+    } else {
+      assert.equal(iso.env.XDG_CONFIG_HOME, path.join(iso.homeDir, ".config"));
+      assert.equal(iso.env.XDG_DATA_HOME, path.join(iso.homeDir, ".local", "share"));
+      assert.equal(iso.env.XDG_CACHE_HOME, path.join(iso.homeDir, ".cache"));
+    }
+    assert.deepEqual(iso.acpExtraArgs, [
+      "--gemini-dir",
+      iso.geminiDir,
+      "--app-data-dir",
+      "antigravity-cli",
+      "--disable-telemetry",
+    ]);
+
+    // 宿主 ~/.gemini 有 token 但隔离目录为空 -> 必须为未登录
+    assert.equal(
+      inspectManagedAntigravityAuth(instanceSpec, baseHostEnv).authenticated,
+      null,
+    );
+    // 实例显式配了 GEMINI_API_KEY -> 已配置 API Key
+    assert.equal(
+      inspectManagedAntigravityAuth(
+        { ...instanceSpec, env: { GEMINI_API_KEY: "dummy-placeholder" } },
+        baseHostEnv,
+      ).authLabel,
+      "已配置 API Key",
+    );
+
+    // 隔离目录中空对象 token 不视为已认证
+    const isoCliDir = path.join(iso.geminiDir, "antigravity-cli");
+    fs.mkdirSync(isoCliDir, { recursive: true });
+    fs.writeFileSync(path.join(isoCliDir, "cli_token.json"), "{}");
+    assert.equal(
+      inspectManagedAntigravityAuth(instanceSpec, baseHostEnv).authenticated,
+      null,
+    );
+
+    // 隔离目录写入有效 token + settings -> Google 账号
+    fs.writeFileSync(
+      path.join(isoCliDir, "cli_token.json"),
+      JSON.stringify({ token: "iso-stub" }),
+    );
+    fs.writeFileSync(
+      path.join(isoCliDir, "settings.json"),
+      JSON.stringify({ auth: { type: "oauth-personal" } }),
+    );
+    const tokenAuth = inspectManagedAntigravityAuth(instanceSpec, baseHostEnv);
+    assert.equal(tokenAuth.authenticated, true);
+    assert.equal(tokenAuth.authLabel, "Google 账号");
+
+    // chisabot-auth.json 优先提供邮箱标签
+    fs.writeFileSync(
+      path.join(isoCliDir, "chisabot-auth.json"),
+      JSON.stringify({
+        email: "dev@example.com",
+        loggedInAt: new Date().toISOString(),
+        method: "oauth-oob",
+      }),
+    );
+    const metaAuth = inspectManagedAntigravityAuth(instanceSpec, baseHostEnv);
+    assert.equal(metaAuth.authenticated, true);
+    assert.equal(metaAuth.authLabel, "Google · dev@example.com");
+    assert.equal(metaAuth.email, "dev@example.com");
+  } finally {
+    clearWhichCache();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("antigravity managed installer: SHA-512 verify, tamper reject, allowlist, cancel zero-residue staging, atomic active.json & version pruning", async () => {
+  const crypto = require("node:crypto");
+  const http = require("node:http");
+  const {
+    installManagedAntigravity,
+    readManagedAntigravityInfo,
+    getAntigravityRuntimeStatus,
+    resolveAntigravityToolsDir,
+    resolveManifestPlatform,
+    assertAllowedUrl,
+    auditTarListing,
+  } = require("../src/agent-runtime/antigravity-managed");
+
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cbla-agy-inst-"));
+  const dataDir = path.join(tmpRoot, "chisabot-data");
+  const customEnv = { CHISABOT_AGENT_DATA_DIR: dataDir };
+  const platSpec = resolveManifestPlatform();
+  assert.equal(platSpec.supported, true);
+
+  // 1. 验证默认生产白名单严格拦截非官方域名与非官方路径前缀
+  assert.throws(
+    () => assertAllowedUrl("https://evil.example.com/manifests/windows_amd64.json", "manifest"),
+    /非官方 Manifest/,
+  );
+  assert.throws(
+    () => assertAllowedUrl("https://storage.googleapis.com/other-bucket/cli.exe", "download"),
+    /非官方下载源/,
+  );
+  assert.doesNotThrow(() =>
+    assertAllowedUrl(
+      "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.16/windows-x64/cli_windows_x64.exe",
+      "download",
+    ),
+  );
+
+  // 2. 验证 tar 安全审计（拒绝绝对路径、..、symlink、hardlink，仅放行 antigravity）
+  assert.equal(
+    auditTarListing(
+      "-rwxr-xr-x 0/0 1024 2026-11-24 12:00 ./antigravity\n",
+      "./antigravity\n",
+    ),
+    "./antigravity",
+  );
+  assert.throws(
+    () => auditTarListing("lrwxrwxrwx 0/0 0 2026-11-24 12:00 antigravity -> /etc/passwd\n", "antigravity\n"),
+    /非普通文件|符号链接/,
+  );
+  assert.throws(
+    () => auditTarListing("hrwxr-xr-x 0/0 0 2026-11-24 12:00 antigravity link to /bin/sh\n", "antigravity\n"),
+    /非普通文件|硬链接/,
+  );
+  assert.throws(
+    () => auditTarListing("-rwxr-xr-x 0/0 10 2026-11-24 12:00 ../antigravity\n", "../antigravity\n"),
+    /路径穿越/,
+  );
+  assert.throws(
+    () => auditTarListing("-rwxr-xr-x 0/0 10 2026-11-24 12:00 /usr/bin/antigravity\n", "/usr/bin/antigravity\n"),
+    /绝对路径/,
+  );
+
+  // 准备真实测试载荷（Windows 直下 exe 字节；Unix 用 tar 打包真实 .tar.gz）
+  const makePayload = (label) => {
+    if (platSpec.archiveType === "exe") {
+      return Buffer.from(`MOCK_AGY_BINARY_${label}_${"x".repeat(4096)}`);
+    }
+    const packDir = fs.mkdtempSync(path.join(tmpRoot, "pack-"));
+    const binPath = path.join(packDir, "antigravity");
+    fs.writeFileSync(binPath, `#!/bin/sh\necho "${label}"\n`, { mode: 0o755 });
+    const tgzPath = path.join(tmpRoot, `payload-${label}.tar.gz`);
+    execFileSync("tar", ["-czf", tgzPath, "-C", packDir, "antigravity"]);
+    return fs.readFileSync(tgzPath);
+  };
+
+  let activeManifest = null;
+  const payloads = new Map();
+  let slowMode = false;
+  let redirectEvil = false;
+
+  const server = http.createServer((req, res) => {
+    if (req.url === `/manifests/${platSpec.manifestPlatform}.json`) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(activeManifest));
+      return;
+    }
+    if (req.url === "/redirect-evil") {
+      res.writeHead(302, { Location: "http://evil.invalid/bad.exe" });
+      res.end();
+      return;
+    }
+    const body = payloads.get(req.url);
+    if (body) {
+      if (redirectEvil) {
+        res.writeHead(302, { Location: "http://evil.invalid/hijack.exe" });
+        res.end();
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": String(body.length),
+      });
+      if (slowMode) {
+        res.write(body.subarray(0, 64));
+        const t = setTimeout(() => {
+          if (!res.destroyed) res.end(body.subarray(64));
+        }, 5000);
+        res.on("close", () => clearTimeout(t));
+        return;
+      }
+      res.end(body);
+      return;
+    }
+    res.writeHead(404);
+    res.end("not found");
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const toolsDir = resolveAntigravityToolsDir(customEnv);
+
+  const registerRelease = (version, tamperSha = false) => {
+    const buf = makePayload(version);
+    const sha512 = crypto.createHash("sha512").update(buf).digest("hex");
+    const route = `/downloads/${version}`;
+    payloads.set(route, buf);
+    activeManifest = {
+      version,
+      url: `${baseUrl}${route}`,
+      sha512: tamperSha ? "0".repeat(128) : sha512,
+    };
+    return sha512;
+  };
+
+  try {
+    // 3. 正常安装 v1.5.15 + 进度阶段上报 + active.json 落盘 + staging 零残留
+    const sha15 = registerRelease("1.5.15");
+    const stages = [];
+    const res15 = await installManagedAntigravity({
+      jobId: "job-15",
+      customEnv,
+      manifestBaseUrl: baseUrl,
+      allowedHosts: ["127.0.0.1"],
+      onProgress: (p) => stages.push(p.stage),
+    });
+    assert.equal(res15.ok, true);
+    assert.equal(res15.version, "1.5.15");
+    assert.equal(fs.existsSync(res15.binaryPath), true);
+    for (const s of ["checking", "downloading", "verifying", "extracting", "activating"]) {
+      assert.ok(stages.includes(s), `missing progress stage ${s}: ${JSON.stringify(stages)}`);
+    }
+    const info15 = readManagedAntigravityInfo(customEnv);
+    assert.equal(info15.version, "1.5.15");
+    assert.equal(info15.sha512, sha15);
+    assert.deepEqual(fs.readdirSync(path.join(toolsDir, "staging")), []);
+
+    // 4. 连续升级到 v1.5.16 与 v1.5.17，验证 active.json 原子切换且仅保留最近 2 个版本
+    registerRelease("1.5.16");
+    await installManagedAntigravity({
+      jobId: "job-16",
+      customEnv,
+      manifestBaseUrl: baseUrl,
+      allowedHosts: ["127.0.0.1"],
+    });
+    // 稍微拉大 mtime 间隔确保 1.5.16 新于 1.5.15
+    const nowSec = Date.now() / 1000;
+    fs.utimesSync(path.join(toolsDir, "versions", "1.5.15"), nowSec - 60, nowSec - 60);
+    fs.utimesSync(path.join(toolsDir, "versions", "1.5.16"), nowSec - 10, nowSec - 10);
+
+    registerRelease("1.5.17");
+    await installManagedAntigravity({
+      jobId: "job-17",
+      customEnv,
+      manifestBaseUrl: baseUrl,
+      allowedHosts: ["127.0.0.1"],
+    });
+    assert.equal(readManagedAntigravityInfo(customEnv).version, "1.5.17");
+    const keptVersions = fs.readdirSync(path.join(toolsDir, "versions")).sort();
+    assert.deepEqual(keptVersions, ["1.5.16", "1.5.17"]);
+
+    // 5. SHA-512 篡改失败：中止安装、不破坏旧 active.json、staging 零残留
+    registerRelease("1.5.18", true);
+    await assert.rejects(
+      () =>
+        installManagedAntigravity({
+          jobId: "job-tamper",
+          customEnv,
+          manifestBaseUrl: baseUrl,
+          allowedHosts: ["127.0.0.1"],
+        }),
+      /SHA-512/,
+    );
+    assert.equal(readManagedAntigravityInfo(customEnv).version, "1.5.17");
+    assert.deepEqual(fs.readdirSync(path.join(toolsDir, "staging")), []);
+
+    // 6. 重定向跳出白名单域名被严格拦截，且 staging 零残留
+    registerRelease("1.5.19");
+    redirectEvil = true;
+    await assert.rejects(
+      () =>
+        installManagedAntigravity({
+          jobId: "job-redirect",
+          customEnv,
+          manifestBaseUrl: baseUrl,
+          allowedHosts: ["127.0.0.1"],
+        }),
+      /白名单/,
+    );
+    redirectEvil = false;
+    assert.deepEqual(fs.readdirSync(path.join(toolsDir, "staging")), []);
+
+    // 7. 下载中途取消：立即中止且 staging 零残留
+    slowMode = true;
+    const ac = new AbortController();
+    const cancelPromise = installManagedAntigravity({
+      jobId: "job-cancel",
+      customEnv,
+      manifestBaseUrl: baseUrl,
+      allowedHosts: ["127.0.0.1"],
+      signal: ac.signal,
+    });
+    setTimeout(() => ac.abort(), 120);
+    await assert.rejects(
+      () => cancelPromise,
+      (err) => err?.cancelled === true || err?.name === "AbortError",
+    );
+    slowMode = false;
+    assert.deepEqual(fs.readdirSync(path.join(toolsDir, "staging")), []);
+
+    // 8. getAntigravityRuntimeStatus 查询托管状态与最新版本检查
+    const status = await getAntigravityRuntimeStatus({
+      customEnv,
+      checkLatest: true,
+      manifestBaseUrl: baseUrl,
+      allowedHosts: ["127.0.0.1"],
+    });
+    assert.equal(status.installed, true);
+    assert.equal(status.source, "managed");
+    assert.equal(status.managedInstalled, true);
+    assert.equal(status.managedVersion, "1.5.17");
+    assert.equal(status.latestVersion, "1.5.19");
+    assert.equal(status.updateAvailable, true);
+  } finally {
+    server.close();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("antigravity OOB login, submitCode, logout, cancel & runtime protocol end-to-end", async () => {
+  const {
+    resolveAntigravityIsolation,
+    inspectManagedAntigravityAuth,
+    logoutAntigravityInstance,
+  } = require("../src/agent-runtime/antigravity-managed");
+  const win = process.platform === "win32";
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cbla-agy-login-"));
+  const dataDir = path.join(tmpRoot, "chisabot-data");
+  const hostHome = path.join(tmpRoot, "host-home");
+  fs.mkdirSync(path.join(hostHome, ".gemini", "antigravity-cli"), { recursive: true });
+  // 在宿主全局目录写一个保护文件，验证 logout 绝不会触碰它
+  const hostSentinel = path.join(hostHome, ".gemini", "antigravity-cli", "cli_token.json");
+  fs.writeFileSync(hostSentinel, JSON.stringify({ token: "host-untouched" }));
+
+  const customEnv = {
+    USERPROFILE: hostHome,
+    HOME: hostHome,
+    CHISABOT_AGENT_DATA_DIR: dataDir,
+    GEMINI_API_KEY: "",
+    GOOGLE_API_KEY: "",
+  };
+
+  const mockScriptJs = path.join(tmpRoot, "mock-agy-login.js");
+  fs.writeFileSync(
+    mockScriptJs,
+    `"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+if (args[0] === "--version") {
+  console.log("1.5.16");
+  process.exit(0);
+}
+if (args[0] === "acp" && args[1] === "--login") {
+  const gIdx = args.indexOf("--gemini-dir");
+  const aIdx = args.indexOf("--app-data-dir");
+  if (
+    process.env.ANTIGRAVITY_REMOTE_OOB_AUTH !== "1" ||
+    process.env.AGY_CLI_FORCE_FILE_TOKEN_STORAGE !== "1" ||
+    process.env.AGY_CLI_DISABLE_AUTO_UPDATE !== "1" ||
+    gIdx < 0 ||
+    aIdx < 0 ||
+    args[aIdx + 1] !== "antigravity-cli"
+  ) {
+    process.stderr.write("BAD_ISOLATION_ARGS\\n");
+    process.exit(2);
+  }
+  const geminiDir = args[gIdx + 1];
+  process.stdout.write(
+    "Open this link in a browser to log in with Google:\\n\\n" +
+    "  https://accounts.google.com/o/oauth2/auth?client_id=mock&state=s123&response_type=code\\n\\n" +
+    "Then paste the authorization code and press Enter:\\n"
+  );
+  process.stdin.setEncoding("utf8");
+  let buf = "";
+  process.stdin.on("data", (chunk) => {
+    buf += chunk;
+    const nl = buf.indexOf("\\n");
+    if (nl < 0) return;
+    const code = buf.slice(0, nl).trim();
+    if (code === "VALID_CODE_42") {
+      const cliDir = path.join(geminiDir, "antigravity-cli");
+      fs.mkdirSync(cliDir, { recursive: true });
+      fs.writeFileSync(path.join(cliDir, "cli_token.json"), JSON.stringify({ access_token: "mock-tok" }));
+      process.stdout.write("Logged in as alice@example.com\\n");
+      process.exit(0);
+    }
+    process.stderr.write("INVALID_CODE\\n");
+    process.exit(1);
+  });
+}
+`,
+  );
+
+  const mockWrapper = path.join(tmpRoot, win ? "mock-agy.cmd" : "mock-agy");
+  if (win) {
+    fs.writeFileSync(
+      mockWrapper,
+      `@echo off\r\n"${process.execPath}" "${mockScriptJs}" %*\r\n`,
+    );
+  } else {
+    fs.writeFileSync(
+      mockWrapper,
+      `#!/bin/sh\nexec "${process.execPath}" "${mockScriptJs}" "$@"\n`,
+      { mode: 0o755 },
+    );
+  }
+
+  const sent = [];
+  const runtime = createAgentRuntime({
+    send: (m) => {
+      sent.push(m);
+      return true;
+    },
+    antigravityOptions: { customEnv },
+  });
+
+  const inst = {
+    id: "agy-inst-1",
+    slug: "agy-1",
+    driver: "antigravity",
+    config: { commandPath: mockWrapper },
+    env: {},
+  };
+
+  try {
+    // 1. agent_runtime_status 协议回包
+    assert.equal(
+      runtime.handle({
+        type: "agent_runtime_status",
+        reqId: "st-1",
+        driver: "antigravity",
+      }),
+      true,
+    );
+    const tSt = Date.now();
+    while (!sent.some((m) => m.type === "agent_runtime_status_result" && m.reqId === "st-1") && Date.now() - tSt < 5000) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const stRes = sent.find((m) => m.type === "agent_runtime_status_result" && m.reqId === "st-1");
+    assert.equal(stRes?.ok, true);
+    assert.equal(stRes.status.supported, true);
+
+    // 2. agent_runtime_login_start -> awaiting_auth -> agent_runtime_login_submit -> login_result
+    assert.equal(
+      runtime.handle({
+        type: "agent_runtime_login_start",
+        sessionId: "login-1",
+        driver: "antigravity",
+        instance: inst,
+      }),
+      true,
+    );
+    const tAuth = Date.now();
+    while (
+      !sent.some(
+        (m) =>
+          m.type === "agent_runtime_login_event" &&
+          m.sessionId === "login-1" &&
+          m.stage === "awaiting_auth",
+      ) &&
+      Date.now() - tAuth < 8000
+    ) {
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    const authEv = sent.find(
+      (m) =>
+        m.type === "agent_runtime_login_event" &&
+        m.sessionId === "login-1" &&
+        m.stage === "awaiting_auth",
+    );
+    assert.ok(authEv, JSON.stringify(sent));
+    assert.match(authEv.authUrl || "", /^https:\/\/accounts\.google\.com\/o\/oauth2\/auth/);
+
+    // 提交授权码
+    assert.equal(
+      runtime.handle({
+        type: "agent_runtime_login_submit",
+        sessionId: "login-1",
+        code: "VALID_CODE_42",
+      }),
+      true,
+    );
+    const tDone = Date.now();
+    while (
+      !sent.some(
+        (m) => m.type === "agent_runtime_login_result" && m.sessionId === "login-1",
+      ) &&
+      Date.now() - tDone < 8000
+    ) {
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    const loginRes = sent.find(
+      (m) => m.type === "agent_runtime_login_result" && m.sessionId === "login-1",
+    );
+    assert.equal(loginRes?.ok, true, JSON.stringify(loginRes));
+    assert.equal(loginRes.authenticated, true);
+    assert.equal(loginRes.email, "alice@example.com");
+    assert.equal(loginRes.authLabel, "Google · alice@example.com");
+
+    // 验证 chisabot-auth.json 落盘且不含敏感 token/code/authUrl
+    const iso = resolveAntigravityIsolation(inst, customEnv);
+    const metaPath = path.join(iso.geminiDir, "antigravity-cli", "chisabot-auth.json");
+    const metaRaw = fs.readFileSync(metaPath, "utf8");
+    const meta = JSON.parse(metaRaw);
+    assert.equal(meta.email, "alice@example.com");
+    assert.equal(meta.method, "oauth-oob");
+    assert.equal(metaRaw.includes("VALID_CODE_42"), false);
+    assert.equal(metaRaw.includes("mock-tok"), false);
+
+    // 验证隔离态探活识别到 Google · alice@example.com
+    const authState = inspectManagedAntigravityAuth(inst, customEnv);
+    assert.equal(authState.authenticated, true);
+    assert.equal(authState.authLabel, "Google · alice@example.com");
+
+    // 在隔离目录放一个非凭据文件 settings.json，验证 logout 保留它且清除凭据
+    const keepSettings = path.join(iso.geminiDir, "antigravity-cli", "settings.json");
+    fs.writeFileSync(keepSettings, JSON.stringify({ theme: "dark" }));
+
+    // 3. agent_runtime_logout 清理隔离凭据且不动宿主 ~/.gemini 与非凭据文件
+    assert.equal(
+      runtime.handle({
+        type: "agent_runtime_logout",
+        reqId: "logout-1",
+        driver: "antigravity",
+        instance: inst,
+      }),
+      true,
+    );
+    const tOut = Date.now();
+    while (
+      !sent.some((m) => m.type === "agent_runtime_logout_result" && m.reqId === "logout-1") &&
+      Date.now() - tOut < 5000
+    ) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const logoutRes = sent.find(
+      (m) => m.type === "agent_runtime_logout_result" && m.reqId === "logout-1",
+    );
+    assert.equal(logoutRes?.ok, true);
+    assert.equal(fs.existsSync(metaPath), false);
+    assert.equal(
+      fs.existsSync(path.join(iso.geminiDir, "antigravity-cli", "cli_token.json")),
+      false,
+    );
+    assert.equal(fs.existsSync(keepSettings), true);
+    assert.equal(fs.existsSync(hostSentinel), true);
+    assert.equal(inspectManagedAntigravityAuth(inst, customEnv).authenticated, null);
+
+    // 也直接验证 logoutAntigravityInstance 幂等性
+    const idempotentLogout = await logoutAntigravityInstance({
+      instance: inst,
+      baseEnv: customEnv,
+    });
+    assert.equal(idempotentLogout.ok, true);
+    assert.equal(idempotentLogout.removedCount, 0);
+
+    // 4. agent_runtime_login_cancel 中止进行中的登录进程并回报 cancelled: true
+    runtime.handle({
+      type: "agent_runtime_login_start",
+      sessionId: "login-cancel-1",
+      driver: "antigravity",
+      instance: inst,
+    });
+    const tWait2 = Date.now();
+    while (
+      !sent.some(
+        (m) =>
+          m.type === "agent_runtime_login_event" &&
+          m.sessionId === "login-cancel-1" &&
+          m.stage === "awaiting_auth",
+      ) &&
+      Date.now() - tWait2 < 8000
+    ) {
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    runtime.handle({
+      type: "agent_runtime_login_cancel",
+      sessionId: "login-cancel-1",
+    });
+    const cancelRes = sent.find(
+      (m) => m.type === "agent_runtime_login_result" && m.sessionId === "login-cancel-1",
+    );
+    assert.equal(cancelRes?.ok, false);
+    assert.equal(cancelRes?.cancelled, true);
+
+    // 5. 回归验证：向不存在/已失效的 sessionId 提交授权码时，立即回发 agent_runtime_login_result（避免服务端卡死在 submitting）
+    assert.equal(
+      runtime.handle({
+        type: "agent_runtime_login_submit",
+        sessionId: "login-missing-session",
+        code: "ORPHAN_CODE",
+      }),
+      true,
+    );
+    const missingSubmitRes = sent.find(
+      (m) =>
+        m.type === "agent_runtime_login_result" &&
+        m.sessionId === "login-missing-session",
+    );
+    assert.ok(missingSubmitRes, "missing session submit must emit agent_runtime_login_result immediately");
+    assert.equal(missingSubmitRes.ok, false);
+    assert.equal(missingSubmitRes.authenticated, false);
+    assert.equal(missingSubmitRes.cancelled, false);
+    assert.equal(missingSubmitRes.homePath, null);
+    assert.match(missingSubmitRes.error || "", /不存在或已结束/);
+  } finally {
+    runtime.stopAll();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+
