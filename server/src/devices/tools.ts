@@ -1,18 +1,24 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { z } from "zod";
-import { emitToolImage } from "../conversations/tool-images";
 import {
   CAPABILITY_INFO,
   capabilityFor,
   checkOpenTarget,
+  DESKTOP_BG_ACTIONS,
   type DeviceOperation,
   GIT_SUBCOMMANDS,
 } from "../../../shared/devices";
 import type { AuditInitiator } from "../audit";
 import { redactText } from "../computer/activity-redact";
-import { currentToolAbort, TOOL_STOPPED_ZH } from "../confirmations/context";
+import {
+  currentConfirmTurn,
+  currentToolAbort,
+  TOOL_STOPPED_ZH,
+} from "../confirmations/context";
+import { emitToolImage } from "../conversations/tool-images";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
+import { sanitizeDesktopSnapshotForModel } from "./desktop-snapshot-store";
 import { type DeviceHub, DeviceRefusedError } from "./hub";
 import { type DeviceRecord, type DeviceStore, fullAccessActive } from "./store";
 
@@ -402,6 +408,115 @@ const schemas = {
       .optional()
       .describe("launch：传给软件的启动参数或要打开的网址"),
   }),
+  desktopSnapshot: z.object({
+    deviceId,
+    bundleId: z
+      .string()
+      .max(200)
+      .optional()
+      .describe("macOS 应用 Bundle ID（可选）"),
+    processName: z
+      .string()
+      .max(120)
+      .optional()
+      .describe("目标窗口进程名（例如 notepad、Code、msedge、WeChat）"),
+    hwnd: z
+      .union([z.number().int(), z.string().min(1).max(64)])
+      .optional()
+      .describe("Windows 目标窗口句柄 HWND（来自 device_windows）"),
+    title: z
+      .string()
+      .max(200)
+      .optional()
+      .describe("目标窗口标题关键词（可选）"),
+    interactiveOnly: z
+      .boolean()
+      .optional()
+      .describe("是否只返回可交互控件（默认 true）"),
+    compact: z
+      .boolean()
+      .optional()
+      .describe("是否使用紧凑结构输出（默认 true）"),
+    maxDepth: z
+      .number()
+      .int()
+      .min(1)
+      .max(30)
+      .optional()
+      .describe("控件树遍历最大深度"),
+    maxNodes: z
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .optional()
+      .describe("最多返回的控件节点数"),
+  }),
+  desktopAct: z.object({
+    deviceId,
+    ref: z
+      .string()
+      .min(1)
+      .max(64)
+      .describe(
+        "控件引用，必须为 @<snapshotId>:e<N> 格式（来自最近一次 device_desktop_snapshot）",
+      ),
+    action: z
+      .enum(DESKTOP_BG_ACTIONS)
+      .describe(
+        "后台语义动作：click / set_value / clear / toggle / check / uncheck / select / expand / collapse / scroll / scroll_to / type（不含 focus，不抢占用户鼠标与前台焦点）",
+      ),
+    value: z
+      .string()
+      .max(20_000)
+      .optional()
+      .describe("set_value / type 时要输入的文字"),
+    direction: z
+      .enum(["up", "down", "left", "right"])
+      .optional()
+      .describe("scroll 滚动方向"),
+    amount: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional()
+      .describe("scroll 滚动步数"),
+    option: z
+      .string()
+      .max(500)
+      .optional()
+      .describe("select 动作要选择的选项文本或值"),
+  }),
+  windowScreenshot: z.object({
+    deviceId,
+    hwnd: z
+      .union([z.number().int(), z.string().min(1).max(64)])
+      .optional()
+      .describe("Windows 目标窗口句柄 HWND（来自 device_windows）"),
+    bundleId: z
+      .string()
+      .max(200)
+      .optional()
+      .describe("macOS 应用 Bundle ID（可选）"),
+    processName: z
+      .string()
+      .max(120)
+      .optional()
+      .describe("目标窗口进程名（可选）"),
+    title: z
+      .string()
+      .max(200)
+      .optional()
+      .describe("目标窗口标题关键词（可选）"),
+    maxWidth: z
+      .number()
+      .int()
+      .min(320)
+      .max(3840)
+      .optional()
+      .describe("缩放后的最大宽度，默认 1600"),
+  }),
 };
 
 /**
@@ -440,6 +555,53 @@ export async function resolveDevice(
 
 function clip(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+const DESKTOP_BG_ERROR_GUIDANCE: Record<string, string> = {
+  STALE_REF:
+    "控件引用已过期或不存在，请重新调用 device_desktop_snapshot 获取最新快照后再操作。",
+  POLICY_DENIED:
+    "当前策略拒绝该后台动作（例如受限控件或未签发所需无障碍 scope）。请勿静默抢焦点，先向用户说明原因，必要时再引导授权或改用前台操作。",
+  ACTION_NOT_SUPPORTED:
+    "该控件或动作不支持纯后台无感执行（例如 Windows 光标处输入、右键、拖拽或自绘 Canvas/游戏）。请向用户说明原因后，再按需使用前台 device_windows(focus) + device_screenshot + device_input。",
+  WINDOW_MINIMIZED:
+    "目标窗口处于最小化状态，无法在后台读取有效控件或截图。请向用户说明原因后，按需使用 device_windows(focus) 还原窗口。",
+  AMBIGUOUS_TARGET:
+    "目标控件在快照中不唯一，无法安全后台定位。请重新调用 device_desktop_snapshot 缩小窗口范围，或向用户说明后改用前台操作。",
+  WINDOW_NOT_FOUND:
+    '未找到匹配的桌面窗口，请先调用 device_windows(action: "list") 确认窗口是否存在。',
+  SELF_TARGET_FORBIDDEN: "禁止读取、截图或操控 ChisaBot 自身窗口与审批弹窗。",
+  NEEDS_PERMISSION:
+    "目标设备尚未授予系统无障碍权限，请引导用户在系统设置中开启权限后重试。",
+  DRIVER_UNAVAILABLE:
+    "目标设备当前缺少可用的后台无障碍驱动，请向用户说明原因后按需改用前台 device_windows(focus) + device_screenshot + device_input。",
+  TIMEOUT:
+    "后台桌面操控超时，请重新调用 device_desktop_snapshot 确认窗口状态后再决定下一步。",
+};
+
+function enrichDesktopBgStringError(text: string): string {
+  for (const [code, guidance] of Object.entries(DESKTOP_BG_ERROR_GUIDANCE)) {
+    if (text.includes(code)) {
+      return text.includes(guidance) ? text : `${text} ${guidance}`;
+    }
+  }
+  return text;
+}
+
+function formatDesktopBgObjectResult(result: unknown): string {
+  if (typeof result === "string") {
+    return enrichDesktopBgStringError(result);
+  }
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const obj = result as Record<string, unknown>;
+    if (obj.ok === false && typeof obj.code === "string") {
+      const guidance = DESKTOP_BG_ERROR_GUIDANCE[obj.code];
+      if (guidance && typeof obj.guidance !== "string") {
+        return JSON.stringify({ ...obj, guidance });
+      }
+    }
+  }
+  return JSON.stringify(result ?? {});
 }
 
 /**
@@ -581,7 +743,7 @@ export function deviceGuidance(
       "A capability that is off was switched off by the person (命令行、读取文件、写入文件、截图、鼠标键盘、打开网址 / 文件、剪贴板). If a request needs one that is off, say which one and tell them they can set it to 询问 in 设置 → 设备 → the computer → 权限, then try again; do not pretend to have done it.",
       "完全访问 (full access) can only be turned on by the person in 设置 → 设备 → the computer → 权限; you cannot turn it on. If a task genuinely needs it (whole-disk access, admin rights, unattended long jobs) say so once and let them decide.",
       'Coding / changing files on their device (also servers running chisabot-node): work like a careful engineer. 1) Find: device_search (pattern + glob) and device_list_files. 2) Read only what you need: device_read_file with startLine/endLine (numbered lines; never dump whole large files into the chat). 3) Change: device_edit_file with exact oldText/newText (copy the text from what you read, without the line-number prefix; add surrounding lines until it is unique), or device_apply_patch for multi-file changes; device_write_file only for new files or full rewrites. 4) Verify: run the tests / build with device_run_shell (cwd = the project; background: true + device_shell_output for anything longer than a minute, e.g. dev servers, big builds). 5) Report: a short summary plus the diffs the tools returned (only the relevant hunks), test results, and git status if it is a repo; commit with device_git only when the person asked or clearly expects it, and push only when asked (push always needs their approval). Use a session name (e.g. session: "main") when later commands depend on cd / env from earlier ones. Never wait in the foreground on a program that is itself waiting for input (login prompts, REPLs, y/n confirmations): it will not exit, every retry burns the whole timeout, and the turn looks dead. Feed input through a stdin pipe (`echo CODE | cmd`) or a non-interactive flag, or run it with background: true and poll device_shell_output.',
-      'Operating their local desktop software & local browser (Chrome / Edge / VS Code / WeChat / WPS / Notion / etc.): 1) Use device_windows (action: "list") to inspect all open desktop windows, the currently active foreground window, and each window\'s exact screen coordinates (bounds: left, top, width, height). 2) Use device_windows (action: "focus" or "launch") or device_open to bring the target app/browser window to the front or open a URL/file in their default app. 3) Use device_screenshot to see the live window on their screen, then use device_input (click, double_click, type, key, scroll) with the window bounds from device_windows to interact with buttons, inputs, or menus. 4) For stdio MCP servers on their PC, use device_mcp_discover (read-only redacted config discovery) and device_mcp_call.',
+      'Operating their local desktop software & local browser (Chrome / Edge / VS Code / WeChat / WPS / Notion / etc.): ALWAYS prefer the non-intrusive background desktop pipeline first so you do not steal the user\'s mouse cursor or foreground window focus: 1) Call device_windows (action: "list") to inspect open windows (uses read-only desktop_windows when supported). 2) Call device_desktop_snapshot on the target window (by hwnd / processName / bundleId / title) to get semantic UI refs (@<snapshotId>:e<N>). 3) Call device_desktop_act with those refs (click / set_value / clear / toggle / check / uncheck / select / expand / collapse / scroll / scroll_to / type) in the background; if you need to see an occluded window visually, use device_window_screenshot instead of stealing focus. 4) NEVER silently fall back to foreground clicking/typing: only when background tools return ACTION_NOT_SUPPORTED / POLICY_DENIED (e.g. cursor-based typing on Windows, right-click, drag, Canvas/games) or WINDOW_MINIMIZED, briefly explain the reason to the user and then use foreground device_windows (action: "focus" / "launch") + device_screenshot + device_input as needed. 5) For stdio MCP servers on their PC, use device_mcp_discover (read-only redacted config discovery) and device_mcp_call.',
     );
   } else {
     lines.push(
@@ -657,6 +819,7 @@ export function deviceTools(options: {
     if (typeof picked === "string")
       return `${REFUSAL_MARKER} ${picked} 可用设备：${roster}`;
     const device = picked;
+    const conversationId = currentConfirmTurn()?.threadId;
     try {
       const result = await hub.invoke({
         device,
@@ -666,11 +829,12 @@ export function deviceTools(options: {
         summary,
         timeoutMs,
         diff: diff ?? null,
+        ...(conversationId ? { conversationId } : {}),
         ...(signal ? { signal } : {}),
       });
       if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
       if (
-        operation === "screenshot" &&
+        (operation === "screenshot" || operation === "window_screenshot") &&
         result &&
         typeof result === "object" &&
         "url" in result
@@ -682,7 +846,7 @@ export function deviceTools(options: {
           height?: number;
         };
         if (shot.screenshotId) {
-          const rawImage = hub.screenshot(device.id, shot.screenshotId);
+          const rawImage = hub.screenshot?.(device.id, shot.screenshotId);
           if (rawImage) {
             try {
               const jpeg = await sharp(rawImage)
@@ -726,6 +890,20 @@ export function deviceTools(options: {
         (device) =>
           fullAccessActive(device) || device.capabilities[capability] !== "off",
       )
+    );
+  };
+
+  const enabledAndSupportedAnywhere = (
+    operation: DeviceOperation,
+    args: Record<string, unknown> = {},
+  ) => {
+    const capability = capabilityFor(operation, args);
+    return onlineDevices.some(
+      (device) =>
+        hub.supports?.(device.id, operation) === true &&
+        (!capability ||
+          fullAccessActive(device) ||
+          device.capabilities[capability] !== "off"),
     );
   };
 
@@ -1411,12 +1589,113 @@ export function deviceTools(options: {
       },
     });
 
-  if (enabledAnywhere("shell"))
+  if (enabledAndSupportedAnywhere("desktop_snapshot"))
+    tools.push({
+      name: "device_desktop_snapshot",
+      ref: "devices/desktop_snapshot",
+      effect: "read",
+      description:
+        "后台无感读取用户电脑上指定桌面窗口的无障碍控件树快照，返回带快照限定引用（@<snapshotId>:e<N>）的语义控件列表，不抢占用户鼠标与前台焦点。结果带有不可信内容边界提示且自动抹除密码框内容。",
+      parameters: schemas.desktopSnapshot,
+      execute: async (input) => {
+        const args = schemas.desktopSnapshot.parse(input ?? {});
+        const { deviceId: id, ...payload } = args;
+        const targetLabel =
+          args.processName ??
+          args.bundleId ??
+          args.title ??
+          (args.hwnd !== undefined ? `HWND ${args.hwnd}` : "当前窗口");
+        const result = await raw(
+          "desktop_snapshot",
+          id,
+          payload,
+          `后台读取桌面控件树：${clip(String(targetLabel), 80)}`,
+          30_000,
+        );
+        if (typeof result === "string") {
+          return enrichDesktopBgStringError(result);
+        }
+        const enriched =
+          result &&
+          typeof result === "object" &&
+          !Array.isArray(result) &&
+          (result as Record<string, unknown>).ok === false &&
+          typeof (result as Record<string, unknown>).code === "string"
+            ? {
+                ...(result as Record<string, unknown>),
+                ...(DESKTOP_BG_ERROR_GUIDANCE[
+                  String((result as Record<string, unknown>).code)
+                ]
+                  ? {
+                      guidance:
+                        DESKTOP_BG_ERROR_GUIDANCE[
+                          String((result as Record<string, unknown>).code)
+                        ],
+                    }
+                  : {}),
+              }
+            : result;
+        return JSON.stringify(sanitizeDesktopSnapshotForModel(enriched));
+      },
+    });
+
+  if (enabledAndSupportedAnywhere("desktop_act"))
+    tools.push({
+      name: "device_desktop_act",
+      ref: "devices/desktop_act",
+      description:
+        "基于 device_desktop_snapshot 返回的控件引用（@<snapshotId>:e<N>）在后台无感操控桌面控件（click / set_value / clear / toggle / check / uncheck / select / expand / collapse / scroll / scroll_to / type），不移动用户鼠标也不抢前台焦点。遇到 ACTION_NOT_SUPPORTED / POLICY_DENIED / WINDOW_MINIMIZED / STALE_REF / AMBIGUOUS_TARGET 时绝不自动前台降级，而是原样返回结构化错误码与指引。",
+      parameters: schemas.desktopAct,
+      execute: async (input) => {
+        const args = schemas.desktopAct.parse(input ?? {});
+        const { deviceId: id, ...payload } = args;
+        const result = await raw(
+          "desktop_act",
+          id,
+          payload,
+          `后台 ${args.action}：${args.ref}`,
+          30_000,
+        );
+        return formatDesktopBgObjectResult(result);
+      },
+    });
+
+  if (enabledAndSupportedAnywhere("window_screenshot"))
+    tools.push({
+      name: "device_window_screenshot",
+      ref: "devices/window_screenshot",
+      effect: "read",
+      description:
+        "后台无感截取指定桌面窗口画面（即使窗口被其他窗口遮挡也可截取，不置顶不抢焦点），返回截图地址和尺寸并附带图像回传。",
+      parameters: schemas.windowScreenshot,
+      execute: async (input) => {
+        const args = schemas.windowScreenshot.parse(input ?? {});
+        const { deviceId: id, ...payload } = args;
+        const targetLabel =
+          args.processName ??
+          args.bundleId ??
+          args.title ??
+          (args.hwnd !== undefined ? `HWND ${args.hwnd}` : "指定窗口");
+        const result = await raw(
+          "window_screenshot",
+          id,
+          { ...payload, maxWidth: args.maxWidth ?? 1600 },
+          `后台截取窗口：${clip(String(targetLabel), 80)}`,
+          30_000,
+        );
+        return formatDesktopBgObjectResult(result);
+      },
+    });
+
+  if (
+    enabledAnywhere("shell") ||
+    enabledAndSupportedAnywhere("desktop_windows")
+  )
     tools.push({
       name: "device_windows",
       ref: "devices/windows",
       description:
-        "列出、聚焦（置顶激活）、启动或关闭用户电脑上的本地桌面软件与浏览器窗口，并返回当前活动窗口及每个窗口的屏幕坐标矩形（left/top/width/height），便于配合 device_screenshot 与 device_input 精准操作本地软件和浏览器。",
+        "列出、聚焦（置顶激活）、启动或关闭用户电脑上的本地桌面软件与浏览器窗口。list 优先走只读无感的 desktop_windows 协议（无需命令行能力），并返回窗口句柄 hwnd、进程名、PID、窗口标题、是否前台及屏幕坐标矩形（left/top/width/height），便于配合 device_desktop_snapshot / device_desktop_act / device_window_screenshot 在后台无感操作本地软件。",
       parameters: schemas.windows,
       execute: async (input) => {
         const args = schemas.windows.parse(input ?? {});
@@ -1443,7 +1722,34 @@ export function deviceTools(options: {
           args.deviceId,
           (id) => hub.isOnline(id),
         );
-        const platform = typeof picked === "string" ? "win32" : picked.platform;
+        if (typeof picked === "string") {
+          return `${REFUSAL_MARKER} ${picked} 可用设备：${roster}`;
+        }
+        if (
+          args.action === "list" &&
+          hub.supports?.(picked.id, "desktop_windows") === true &&
+          (fullAccessActive(picked) || picked.capabilities.screenshot !== "off")
+        ) {
+          const listLabel = effectiveQuery
+            ? `列出桌面窗口（筛选：${clip(effectiveQuery, 40)}）`
+            : "列出当前打开的桌面窗口";
+          const listResult = await raw(
+            "desktop_windows",
+            picked.id,
+            { ...(effectiveQuery ? { query: effectiveQuery } : {}) },
+            listLabel,
+            20_000,
+          );
+          return formatDesktopBgObjectResult(listResult);
+        }
+        if (
+          args.action !== "list" &&
+          !fullAccessActive(picked) &&
+          picked.capabilities.shell === "off"
+        ) {
+          return `${REFUSAL_MARKER} device_windows 的 ${args.action} 操作需要「命令行」能力（当前设备已关闭命令行；列出窗口 list 可走只读无感的桌面窗口能力）。请到 设置 → 设备 打开「命令行」能力，或优先使用后台无感工具 device_desktop_snapshot / device_desktop_act。`;
+        }
+        const platform = picked.platform;
         const q = effectiveQuery;
         const pid = args.pid ?? 0;
         const max = Boolean(args.maximize);

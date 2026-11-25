@@ -1349,6 +1349,7 @@ function startAgent() {
   const { createNodeAgent } = getNodeAgentMod();
   const ops = createOps({
     clientVersion: pkg.version,
+    accessibilityBridge: getAccessibilityBridge(),
     hooks: {
       screenshot: screenshotHook,
       screenInfo: async () =>

@@ -22,7 +22,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { createNodeAgent } = require("./agent/core");
-const { createOps } = require("./agent/ops");
+const { createOps, disposeWinPsHelper } = require("./agent/ops");
+const { createAccessibilityBridge } = require("./accessibility-bridge");
 const { attachAgentRuntime } = require("./agent-runtime/attach");
 const auth = require("./agent/auth");
 
@@ -161,7 +162,11 @@ function run(dir) {
     console.error(`没有配置（${configPath(dir)}）。先运行安装命令或 pair。`);
     process.exit(2);
   }
-  const ops = createOps({ clientVersion: `${VERSION}-node` });
+  const accessibilityBridge = createAccessibilityBridge();
+  const ops = createOps({
+    clientVersion: `${VERSION}-node`,
+    accessibilityBridge,
+  });
   // 本地 agent（Claude Code / Codex / 内置循环…，docs/local-agents.md）：和节点共用这条连接。
   const agentRuntime = attachAgentRuntime({ log: (line) => console.log(new Date().toISOString(), `[本地 agent] ${line}`) });
   const agent = createNodeAgent({
@@ -184,6 +189,7 @@ function run(dir) {
   agent.events.on("revoked", () => {
     log("[撤销] 设备已在网页上被撤销，节点退出。重新安装请在网页上生成新的安装命令。");
     ops.stopAll?.("revoked");
+    disposeWinPsHelper({ sync: true });
     // 退出码 0：systemd Restart=on-failure 不会再拉起
     process.exit(0);
   });
@@ -191,6 +197,7 @@ function run(dir) {
   agent.start();
   const stop = () => {
     ops.stopAll?.("shutdown");
+    disposeWinPsHelper({ sync: true });
     agentRuntime.runtime.stopAll?.();
     agent.stop();
     process.exit(0);

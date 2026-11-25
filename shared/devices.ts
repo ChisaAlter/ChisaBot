@@ -179,6 +179,10 @@ export const OPERATION_CAPABILITY: Record<
   activity: null,
   mcp_call: "shell",
   mcp_discover: "files_read",
+  desktop_windows: "screenshot",
+  desktop_snapshot: "screenshot",
+  desktop_act: "input",
+  window_screenshot: "screenshot",
 };
 
 /** git 只读子命令（status / diff / log / show / 列分支…）只要「读取文件」能力；其余要「命令行」。 */
@@ -288,7 +292,11 @@ export type DeviceOperation =
   | "file_download"
   | "activity"
   | "mcp_call"
-  | "mcp_discover";
+  | "mcp_discover"
+  | "desktop_windows"
+  | "desktop_snapshot"
+  | "desktop_act"
+  | "window_screenshot";
 
 export const OPERATION_LABEL: Record<DeviceOperation, string> = {
   system_info: "读取系统信息",
@@ -318,6 +326,10 @@ export const OPERATION_LABEL: Record<DeviceOperation, string> = {
   activity: "查看运行中的命令",
   mcp_call: "调用本地 MCP",
   mcp_discover: "发现本地 MCP 配置",
+  desktop_windows: "列出桌面窗口",
+  desktop_snapshot: "读取桌面控件树",
+  desktop_act: "后台操控桌面控件",
+  window_screenshot: "后台截取窗口",
 };
 
 /** 网页 / PC 看到的设备。不含令牌。 */
@@ -361,6 +373,8 @@ export type DeviceView = {
   fullAccessRemainingMs?: number | null;
   /** 在线时：这个客户端支持哪些操作（hello.features）。旧客户端没有。 */
   features?: string[] | null;
+  /** 已签发的桌面桥接 / 无障碍 scopes（如 accessibility_control），同步给 PC 端。 */
+  grantedScopes?: string[];
 };
 
 export type DeviceAuditEntry = {
@@ -465,7 +479,8 @@ export type ServerToDevice =
       version?: string;
       /** 触发原因（release_watch / hello_behind / admin_push）。 */
       reason?: string;
-    };
+    }
+  | { type: "direction_epoch_advance"; conversationId: string };
 
 /** 打开就等于运行的文件类型（CB-030）。和 pc/src/agent/open-target.js 的 EXECUTABLE_EXT 一致。 */
 export const OPEN_EXECUTABLE_EXT: ReadonlySet<string> = new Set(
@@ -523,4 +538,133 @@ export function checkOpenTarget(raw: unknown): string | null {
   if (!ext && !/[\\/]$/.test(target) && target !== "." && target !== "~")
     return "没有扩展名的路径只当文件夹打开，请以 / 或 \\ 结尾（例如 D:\\报告\\）；文件请写全文件名和扩展名。";
   return null;
+}
+
+/** 后台无感操控允许的语义动作集合（刻意不含 focus，防止抢占前景焦点）。 */
+export const DESKTOP_BG_ACTIONS = [
+  "click",
+  "set_value",
+  "clear",
+  "toggle",
+  "check",
+  "uncheck",
+  "select",
+  "expand",
+  "collapse",
+  "scroll",
+  "scroll_to",
+  "type",
+] as const;
+
+export type DesktopBgAction = (typeof DESKTOP_BG_ACTIONS)[number];
+
+/** 后台无感操控的结构化错误码（服务端与 PC 端统一使用，禁止隐式前台降级）。 */
+export const DESKTOP_BG_ERROR_CODES = [
+  "POLICY_DENIED",
+  "ACTION_NOT_SUPPORTED",
+  "STALE_REF",
+  "AMBIGUOUS_TARGET",
+  "WINDOW_MINIMIZED",
+  "WINDOW_NOT_FOUND",
+  "SELF_TARGET_FORBIDDEN",
+  "NEEDS_PERMISSION",
+  "DRIVER_UNAVAILABLE",
+  "TIMEOUT",
+] as const;
+
+export type DesktopBgErrorCode = (typeof DESKTOP_BG_ERROR_CODES)[number];
+
+/** 禁止被后台操控的 ChisaBot 自身进程名 / Bundle ID 黑名单（防自审批自提权）。 */
+export const DESKTOP_SELF_PROCESS_NAMES = [
+  "chisabot",
+  "chisabot-pc",
+  "cn.ayase.chisabot.pc",
+] as const;
+
+const DESKTOP_SELF_PROCESS_SET: ReadonlySet<string> = new Set(
+  DESKTOP_SELF_PROCESS_NAMES,
+);
+
+const PROTECTED_SELF_TITLE_PATTERNS = [
+  "chisabot 审批",
+  "chisabot 确认",
+] as const;
+
+function normalizeDesktopProcessToken(raw: string | null | undefined): string {
+  if (typeof raw !== "string") return "";
+  let normalized = raw.trim().toLowerCase();
+  if (!normalized) return "";
+  const sepIdx = Math.max(
+    normalized.lastIndexOf("/"),
+    normalized.lastIndexOf("\\"),
+  );
+  if (sepIdx >= 0) {
+    normalized = normalized.slice(sepIdx + 1);
+  }
+  if (normalized.endsWith(".exe")) {
+    normalized = normalized.slice(0, -4);
+  }
+  return normalized;
+}
+
+/**
+ * 判断目标窗口 / 进程是否属于 ChisaBot 自身受保护对象（防自审批、自提权与自关闭）。
+ */
+export function isProtectedSelfTarget(target: {
+  pid?: number | null;
+  selfPid?: number | null;
+  processName?: string | null;
+  bundleId?: string | null;
+  title?: string | null;
+}): boolean {
+  if (!target || typeof target !== "object") return false;
+  if (
+    typeof target.pid === "number" &&
+    typeof target.selfPid === "number" &&
+    Number.isInteger(target.pid) &&
+    Number.isInteger(target.selfPid) &&
+    target.pid > 0 &&
+    target.selfPid > 0 &&
+    target.pid === target.selfPid
+  ) {
+    return true;
+  }
+  const proc = normalizeDesktopProcessToken(target.processName);
+  if (proc && DESKTOP_SELF_PROCESS_SET.has(proc)) {
+    return true;
+  }
+  const bundle = normalizeDesktopProcessToken(target.bundleId);
+  if (bundle && DESKTOP_SELF_PROCESS_SET.has(bundle)) {
+    return true;
+  }
+  if (typeof target.title === "string" && target.title.length > 0) {
+    const lowerTitle = target.title.toLowerCase();
+    for (const pattern of PROTECTED_SELF_TITLE_PATTERNS) {
+      if (lowerTitle.includes(pattern)) return true;
+    }
+  }
+  return false;
+}
+
+const DESKTOP_REF_PATTERN = /^@([1-9]\d*):(e[1-9]\d*)$/;
+
+/**
+ * 严格解析快照限定的控件引用 `@<正整数>:e<正整数>`（例如 `@12:e4`）。
+ * 拒绝裸 `@e4`、负数、0、前导零、大小写偏差或任何多余字符。
+ */
+export function parseDesktopRef(
+  ref: unknown,
+): { snapshotId: number; elementKey: string } | null {
+  if (typeof ref !== "string") return null;
+  const match = DESKTOP_REF_PATTERN.exec(ref);
+  if (!match) return null;
+  const rawSnapshotId = match[1];
+  const elementKey = match[2];
+  if (!rawSnapshotId || !elementKey) return null;
+  const snapshotId = Number(rawSnapshotId);
+  const elementNum = Number(elementKey.slice(1));
+  if (!Number.isSafeInteger(snapshotId) || !Number.isSafeInteger(elementNum)) {
+    return null;
+  }
+  return { snapshotId, elementKey };
 }

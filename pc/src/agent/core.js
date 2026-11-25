@@ -16,6 +16,10 @@ const OPERATION_CAPABILITY = {
   write_file: "files_write",
   screenshot: "screenshot",
   input: "input",
+  desktop_windows: "screenshot",
+  desktop_snapshot: "screenshot",
+  desktop_act: "input",
+  window_screenshot: "screenshot",
   open: "open",
   clipboard_read: "clipboard",
   clipboard_write: "clipboard",
@@ -51,6 +55,64 @@ function capabilityFor(operation, args = {}) {
 // open 也算：它能 Start-Process / xdg-open 任意程序（带参数），等同命令行（CB-030）。
 const DANGEROUS = new Set(["shell", "files_write", "input", "open"]);
 
+// 高敏终端与密码管理器进程：即使在同一对话回合内也不走回合授权免确认，每次都必须本机明确确认。
+const HIGH_RISK_BG_APPS = new Set([
+  "powershell",
+  "pwsh",
+  "cmd",
+  "wt",
+  "windowsterminal",
+  "bash",
+  "sh",
+  "zsh",
+  "terminal",
+  "iterm",
+  "iterm2",
+  "kitty",
+  "alacritty",
+  "wezterm",
+  "warp",
+  "1password",
+  "onepassword",
+  "onepassword7",
+  "keepass",
+  "keepassxc",
+  "bitwarden",
+  "lastpass",
+  "dashlane",
+  "com.apple.terminal",
+  "com.googlecode.iterm2",
+  "com.1password.1password",
+  "com.agilebits.onepassword7",
+  "org.keepassxc.keepassxc",
+  "com.bitwarden.desktop",
+  "com.lastpass.lastpassmacdesktop",
+  "com.dashlane.dashlanephonefinal",
+  "com.microsoft.windowsterminal",
+]);
+
+function normalizeBgAppId(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return "";
+  const base = trimmed.split(/[\\/]/).pop() || trimmed;
+  const lower = base.trim().toLowerCase();
+  return lower.endsWith(".exe") ? lower.slice(0, -4) : lower;
+}
+
+function isHighRiskBgApp(candidates) {
+  const list = Array.isArray(candidates) ? candidates : [candidates];
+  for (const raw of list) {
+    const token = normalizeBgAppId(raw);
+    if (!token) continue;
+    if (HIGH_RISK_BG_APPS.has(token)) return true;
+    const segments = token.split(".").filter(Boolean);
+    for (const seg of segments) {
+      if (HIGH_RISK_BG_APPS.has(seg)) return true;
+    }
+  }
+  return false;
+}
+
 function wsUrlFor(serverUrl) {
   const url = new URL(serverUrl);
   url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
@@ -80,6 +142,50 @@ function summarize(operation, args) {
       return `列出：${args.path || "允许的文件夹"}`;
     case "input":
       return `鼠标键盘：${args.action}`;
+    case "desktop_windows":
+      return args.query
+        ? `列出桌面窗口（筛选：${String(args.query).slice(0, 80)}）`
+        : "列出桌面窗口";
+    case "desktop_snapshot": {
+      const target =
+        args.title ||
+        args.bundleId ||
+        args.processName ||
+        (args.hwnd !== undefined ? `HWND ${args.hwnd}` : "目标窗口");
+      return `读取桌面控件树：${String(target).slice(0, 120)}`;
+    }
+    case "window_screenshot": {
+      const target =
+        args.title ||
+        args.bundleId ||
+        args.processName ||
+        (args.hwnd !== undefined ? `HWND ${args.hwnd}` : "目标窗口");
+      return `后台截取窗口：${String(target).slice(0, 120)}`;
+    }
+    case "desktop_act": {
+      const win = args._resolved?.window || {};
+      const el = args._resolved?.element || {};
+      const appLabel = String(
+        win.processName || win.bundleId || win.title || args.bundleId || "",
+      ).slice(0, 60);
+      const elLabel = String(el.name || el.role || "").slice(0, 80);
+      const actLabel = String(args.action || "act").slice(0, 32);
+      const refLabel = args.ref ? String(args.ref).slice(0, 48) : "";
+      const targetDesc = [appLabel, elLabel].filter(Boolean).join(" · ");
+      const hasValue =
+        args.value !== undefined &&
+        args.value !== null &&
+        (actLabel === "set_value" || actLabel === "type");
+      const valueDesc = hasValue
+        ? el.isPassword
+          ? "，值：[已隐藏密码]"
+          : `，值：${String(args.value).slice(0, 60)}`
+        : "";
+      const actionMeta = [actLabel, refLabel].filter(Boolean).join(" ");
+      return targetDesc
+        ? `后台操控：${targetDesc}（${actionMeta}${valueDesc}）`
+        : `后台操控：${actionMeta}${valueDesc}`;
+    }
     case "open":
       return `打开：${String(args.target || "").slice(0, 200)}`;
     case "mcp_call":
@@ -349,27 +455,87 @@ function createNodeAgent(options) {
       policy === "allow" &&
       options.approve
     ) {
-      const closePrompt = () =>
-        events.emit("approval_closed", { id: `local-${id}` });
-      controller.signal.addEventListener("abort", closePrompt, { once: true });
-      const decision = await options
-        .approve({
-          id: `local-${id}`,
-          operation,
-          summary: summarize(operation, args),
-          botName: message.botName,
-          local: true,
-          // 本机确认最多等到这次调用的超时（服务器那边到点就按失败处理），上限 2 分钟。
-          remainingMs: Math.min(
-            120_000,
-            Math.max(10_000, (message.timeoutMs || 120_000) - 5_000),
-          ),
-        })
-        .catch(() => "deny");
-      controller.signal.removeEventListener("abort", closePrompt);
-      if (controller.signal.aborted) return reply(false, "已取消。");
-      if (decision !== "approve")
-        return reply(false, "用户在本机拒绝了这次操作。");
+      const authorizer =
+        operation === "desktop_act"
+          ? options.ops.accessibilityBridge?.authorizer
+          : null;
+      const convId =
+        typeof args.conversationId === "string"
+          ? args.conversationId.trim()
+          : "";
+      const rawAppId =
+        args._resolved?.window?.bundleId ||
+        args._resolved?.window?.processName ||
+        args.bundleId ||
+        "";
+      const bgAppId = normalizeBgAppId(rawAppId);
+      const appCandidates = [
+        args._resolved?.window?.bundleId,
+        args._resolved?.window?.processName,
+        args.bundleId,
+      ];
+      const deviceId = device?.id || "local";
+      const grantedScopes = Array.isArray(device?.grantedScopes)
+        ? device.grantedScopes
+        : ["accessibility_control"];
+      const reqEpoch =
+        typeof args.directionEpoch === "number" &&
+        Number.isInteger(args.directionEpoch)
+          ? args.directionEpoch
+          : undefined;
+      const canUseTurnGrant = Boolean(
+        authorizer &&
+          convId &&
+          bgAppId &&
+          !isHighRiskBgApp(appCandidates),
+      );
+      let skipLocalPrompt = false;
+      if (canUseTurnGrant) {
+        const verdict = authorizer.checkAuthorization({
+          conversationId: convId,
+          deviceId,
+          bundleId: bgAppId,
+          ...(reqEpoch !== undefined ? { epoch: reqEpoch } : {}),
+          scopes: grantedScopes,
+        });
+        if (verdict?.allowed === true) {
+          skipLocalPrompt = true;
+        }
+      }
+      if (!skipLocalPrompt) {
+        const closePrompt = () =>
+          events.emit("approval_closed", { id: `local-${id}` });
+        controller.signal.addEventListener("abort", closePrompt, {
+          once: true,
+        });
+        const decision = await options
+          .approve({
+            id: `local-${id}`,
+            operation,
+            summary: summarize(operation, args),
+            botName: message.botName,
+            local: true,
+            // 本机确认最多等到这次调用的超时（服务器那边到点就按失败处理），上限 2 分钟。
+            remainingMs: Math.min(
+              120_000,
+              Math.max(10_000, (message.timeoutMs || 120_000) - 5_000),
+            ),
+          })
+          .catch(() => "deny");
+        controller.signal.removeEventListener("abort", closePrompt);
+        if (controller.signal.aborted) return reply(false, "已取消。");
+        if (decision !== "approve")
+          return reply(false, "用户在本机拒绝了这次操作。");
+        if (canUseTurnGrant) {
+          authorizer.authorizeApp({
+            conversationId: convId,
+            deviceId,
+            bundleId: bgAppId,
+            ...(reqEpoch !== undefined ? { epoch: reqEpoch } : {}),
+            scopes: grantedScopes,
+          });
+        }
+      }
     }
     if (controller.signal.aborted || stopped) return reply(false, "已取消。");
     if (local().paused || device?.paused)
@@ -469,6 +635,18 @@ function createNodeAgent(options) {
           reason: typeof message.reason === "string" ? message.reason.trim() : "",
         });
         return;
+      case "direction_epoch_advance": {
+        const convId =
+          typeof message.conversationId === "string"
+            ? message.conversationId.trim()
+            : "";
+        if (convId) {
+          try {
+            options.ops.accessibilityBridge?.authorizer?.advanceEpoch?.(convId);
+          } catch {}
+        }
+        return;
+      }
       default:
         // 本地 agent 运行时（agent-runtime/）等扩展：不认识的消息交给它。
         if (options.onExtra) options.onExtra(message);
@@ -574,6 +752,8 @@ function createNodeAgent(options) {
       else return; // 已被 reconnectNow() 换掉的旧连接
       clearTimeout(watchdog);
       cancelPending();
+      options.ops.accessibilityBridge?.authorizer?.revokeAll?.();
+      options.ops.accessibilityBridge?.clearSnapshots?.();
       if (code === 4401) {
         stopped = true;
         clearTimeout(fullAccessTimer);

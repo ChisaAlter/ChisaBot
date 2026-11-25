@@ -6,12 +6,19 @@ import {
   type DeviceOperation,
   type DeviceToServer,
   type DeviceView,
+  isProtectedSelfTarget,
   OPERATION_LABEL,
   type ServerToDevice,
 } from "../../../shared/devices";
 import { compareSemver } from "../../../shared/system-update";
 import { redactText } from "../computer/activity-redact";
 import { TOOL_STOPPED_ZH } from "../confirmations/context";
+import {
+  createDesktopSnapshotStore,
+  type DesktopSnapshotStore,
+  type StoredDesktopElement,
+  type StoredDesktopWindow,
+} from "./desktop-snapshot-store";
 import { isMobilePlatform, MOBILE_ONLINE_WINDOW_MS } from "./pairing";
 import { outsideRoots, outsideRootsNote } from "./roots";
 import {
@@ -104,6 +111,10 @@ export type InvokeInput = {
   signal?: AbortSignal;
   /** 改文件类操作的改动预览（unified diff），放进审批卡片。 */
   diff?: string | null;
+  /** 当前对话 ID，供 PC 端后台桌面操控的回合代际授权使用。 */
+  conversationId?: string;
+  /** 可选显式回合代际序号。 */
+  directionEpoch?: number;
 };
 
 /**
@@ -136,6 +147,81 @@ function unref(timer: ReturnType<typeof setTimeout>) {
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isSelfTargetFromObject(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const obj = raw as Record<string, unknown>;
+  return isProtectedSelfTarget({
+    pid: typeof obj.pid === "number" ? obj.pid : null,
+    processName: typeof obj.processName === "string" ? obj.processName : null,
+    bundleId: typeof obj.bundleId === "string" ? obj.bundleId : null,
+    title: typeof obj.title === "string" ? obj.title : null,
+  });
+}
+
+function buildDesktopActSummary(
+  action: string,
+  window: StoredDesktopWindow,
+  element: StoredDesktopElement,
+  args: Record<string, unknown>,
+): string {
+  const appLabel =
+    window.processName || window.bundleId || window.title || "未知窗口";
+  const elementLabel = element.name || element.automationId || element.ref;
+  let suffix = "";
+  if (typeof args.value === "string" && args.value.length > 0) {
+    if (element.isPassword) {
+      suffix = " = [已隐藏密码]";
+    } else {
+      const clipped =
+        args.value.length > 80 ? `${args.value.slice(0, 79)}…` : args.value;
+      suffix = ` = ${clipped}`;
+    }
+  } else if (typeof args.option === "string" && args.option.length > 0) {
+    suffix = ` → ${args.option.slice(0, 60)}`;
+  } else if (
+    action === "scroll" &&
+    typeof args.direction === "string" &&
+    args.direction.length > 0
+  ) {
+    suffix = ` (${args.direction}${typeof args.amount === "number" ? ` ×${args.amount}` : ""})`;
+  }
+  return redactText(
+    `后台 ${action}：[${appLabel}] ${element.role}「${elementLabel}」(${element.ref})${suffix}`,
+  );
+}
+
+function scrubPasswordElementsInResult(
+  result: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!Array.isArray(result.elements)) return result;
+  return {
+    ...result,
+    elements: result.elements.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+      const elem = item as Record<string, unknown>;
+      return elem.isPassword === true ? { ...elem, value: null } : elem;
+    }),
+  };
+}
+
+function sanitizeArgsForConfirm(
+  operation: DeviceOperation,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  if (operation !== "desktop_act") return args;
+  const resolved = args._resolved as
+    | { element?: { isPassword?: unknown } }
+    | undefined;
+  if (
+    resolved?.element?.isPassword === true &&
+    typeof args.value === "string" &&
+    args.value.length > 0
+  ) {
+    return { ...args, value: "[已隐藏密码]" };
+  }
+  return args;
 }
 
 /**
@@ -185,6 +271,10 @@ export function createDeviceHub(options: {
   now?: () => number;
   /** 可选：返回服务端当前已知的最新桌面端版本号，用于设备连上 hello 时即时推送更新提醒。 */
   getLatestClientVersion?: () => string | null;
+  /** 可选：服务端桌面控件快照仓库（未提供时自动创建默认内存实例）。 */
+  desktopSnapshots?: DesktopSnapshotStore;
+  /** 可选：解析已签发给该设备的桥接 / 无障碍 scopes（写入 DeviceView.grantedScopes）。 */
+  resolveDeviceScopes?: (record: DeviceRecord) => readonly string[];
 }) {
   const { store } = options;
   const now = options.now ?? Date.now;
@@ -193,6 +283,10 @@ export function createDeviceHub(options: {
   const connections = new Map<string, Connection>();
   const approvals = new Map<string, Approval>();
   const screenshots = new Map<string, Screenshot>();
+  const desktopSnapshots =
+    options.desktopSnapshots ?? createDesktopSnapshotStore({ now });
+  let scopeResolver: ((record: DeviceRecord) => readonly string[]) | null =
+    options.resolveDeviceScopes ?? null;
   let confirm = options.confirm;
   const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let extension: DeviceHubExtension | null = null;
@@ -218,6 +312,14 @@ export function createDeviceHub(options: {
       : connections.has(record.id);
     const full = fullAccessActive(record, now());
     const features = connections.get(record.id)?.features;
+    let grantedScopes: string[] | undefined;
+    if (scopeResolver) {
+      try {
+        grantedScopes = [...scopeResolver(record)];
+      } catch {
+        grantedScopes = [];
+      }
+    }
     return {
       ...rest,
       online,
@@ -228,6 +330,7 @@ export function createDeviceHub(options: {
           ? Date.parse(record.fullAccessUntil) - now()
           : null,
       features: features ? [...features] : null,
+      ...(grantedScopes ? { grantedScopes } : {}),
     };
   }
 
@@ -314,6 +417,7 @@ export function createDeviceHub(options: {
   function dropConnection(connection: Connection, reason: string) {
     if (connections.get(connection.deviceId) === connection)
       connections.delete(connection.deviceId);
+    desktopSnapshots.clearDevice(connection.deviceId);
     for (const [id, pending] of connection.pending) {
       clearTimeout(pending.timer);
       pending.cleanup?.();
@@ -375,6 +479,7 @@ export function createDeviceHub(options: {
   }
 
   function cancelAllFor(deviceId: string, reason: string) {
+    desktopSnapshots.clearDevice(deviceId);
     const connection = connections.get(deviceId);
     if (connection) {
       for (const [id, pending] of connection.pending) {
@@ -482,7 +587,7 @@ export function createDeviceHub(options: {
             deviceName: record.name,
             operationLabel: OPERATION_LABEL[input.operation] ?? input.operation,
             summary: view.summary,
-            args: input.args,
+            args: sanitizeArgsForConfirm(input.operation, input.args),
             diff: view.diff ?? null,
             expiresAt: view.expiresAt,
           })
@@ -749,6 +854,33 @@ export function createDeviceHub(options: {
       extension = next;
     },
 
+    setScopeResolver(
+      resolver: ((record: DeviceRecord) => readonly string[]) | null,
+    ) {
+      scopeResolver = resolver;
+    },
+
+    desktopSnapshots,
+
+    /** 向该用户所有在线设备广播新对话回合信号，推进 PC 端 directionEpoch。 */
+    advanceDirectionEpoch(ownerUserId: string, conversationId: string): number {
+      const cleanConversationId = conversationId.trim();
+      if (!ownerUserId || !cleanConversationId) return 0;
+      let pushed = 0;
+      for (const connection of connections.values()) {
+        if (connection.ownerUserId !== ownerUserId) continue;
+        if (
+          send(connection, {
+            type: "direction_epoch_advance",
+            conversationId: cleanConversationId,
+          })
+        ) {
+          pushed++;
+        }
+      }
+      return pushed;
+    },
+
     setLatestClientVersionProvider(provider: (() => string | null) | null) {
       getLatestClientVersion = provider;
     },
@@ -863,6 +995,87 @@ export function createDeviceHub(options: {
      */
     async invoke(input: InvokeInput): Promise<unknown> {
       const record = input.device;
+      let preRefusal: string | null = null;
+      if (input.operation === "desktop_act") {
+        const rawRef = typeof input.args.ref === "string" ? input.args.ref : "";
+        const action =
+          typeof input.args.action === "string" && input.args.action.trim()
+            ? input.args.action.trim()
+            : "act";
+        const resolved = desktopSnapshots.resolveRef(
+          record.ownerUserId,
+          record.id,
+          rawRef,
+        );
+        if (!resolved.ok) {
+          input = {
+            ...input,
+            summary: redactText(`后台 ${action}：无效或已过期引用`),
+          };
+          preRefusal = `[${resolved.code}] ${resolved.error}`;
+        } else {
+          const { snapshot, element } = resolved;
+          const serverSummary = buildDesktopActSummary(
+            action,
+            snapshot.window,
+            element,
+            input.args,
+          );
+          const nextArgs: Record<string, unknown> = {
+            ...input.args,
+            ref: element.ref,
+            _resolved: {
+              snapshotId: snapshot.snapshotId,
+              ...(snapshot.driver ? { driver: snapshot.driver } : {}),
+              window: snapshot.window,
+              element,
+            },
+          };
+          if (input.conversationId && nextArgs.conversationId === undefined) {
+            nextArgs.conversationId = input.conversationId;
+          }
+          if (
+            typeof input.directionEpoch === "number" &&
+            nextArgs.directionEpoch === undefined
+          ) {
+            nextArgs.directionEpoch = input.directionEpoch;
+          }
+          input = {
+            ...input,
+            summary: serverSummary,
+            args: nextArgs,
+          };
+          if (
+            isProtectedSelfTarget({
+              pid: snapshot.window.pid ?? null,
+              processName: snapshot.window.processName ?? null,
+              bundleId: snapshot.window.bundleId ?? null,
+              title: snapshot.window.title ?? null,
+            })
+          ) {
+            preRefusal =
+              "[SELF_TARGET_FORBIDDEN] 禁止后台操控 ChisaBot 自身窗口或审批弹窗。";
+          }
+        }
+      } else if (
+        (input.operation === "desktop_snapshot" ||
+          input.operation === "window_screenshot") &&
+        isSelfTargetFromObject(input.args)
+      ) {
+        preRefusal =
+          input.operation === "desktop_snapshot"
+            ? "[SELF_TARGET_FORBIDDEN] 禁止读取 ChisaBot 自身窗口或审批弹窗的控件树。"
+            : "[SELF_TARGET_FORBIDDEN] 禁止截取 ChisaBot 自身窗口或审批弹窗。";
+      } else if (
+        input.operation === "desktop_snapshot" &&
+        input.conversationId &&
+        input.args.conversationId === undefined
+      ) {
+        input = {
+          ...input,
+          args: { ...input.args, conversationId: input.conversationId },
+        };
+      }
       const capability = capabilityFor(input.operation, input.args);
       const full = fullAccessActive(record, now());
       let policy = full
@@ -964,6 +1177,7 @@ export function createDeviceHub(options: {
             `这台设备上的 ChisaBot 客户端（${record.clientVersion ?? "旧版"}）还不支持「${OPERATION_LABEL[input.operation] ?? input.operation}」。请把 ChisaBot 客户端更新到 0.1.8 或更新版本（服务器节点重新运行安装命令即可）。`,
           );
       }
+      if (preRefusal) return refuse("refused", preRefusal);
 
       let approvalNote: string | null = null;
       const preference =
@@ -976,7 +1190,7 @@ export function createDeviceHub(options: {
                 operationLabel:
                   OPERATION_LABEL[input.operation] ?? input.operation,
                 summary: input.summary,
-                args: input.args,
+                args: sanitizeArgsForConfirm(input.operation, input.args),
               })
               .catch(() => "ask" as const)
           : "ask";
@@ -1108,22 +1322,73 @@ export function createDeviceHub(options: {
         if (input.signal?.aborted)
           throw new DeviceRefusedError(TOOL_STOPPED_ZH);
         if (
-          input.operation === "screenshot" &&
+          input.operation === "desktop_snapshot" &&
           result &&
           typeof result === "object" &&
-          typeof (result as { base64?: unknown }).base64 === "string"
+          !Array.isArray(result)
         ) {
-          const { base64, ...rest } = result as { base64: string } & Record<
-            string,
-            unknown
-          >;
-          const shot = keepScreenshot(record.id, base64);
-          result = {
-            ...rest,
-            screenshotId: shot,
-            url: `/api/devices/${record.id}/screenshots/${shot}`,
-            bytes: Math.round((base64.length * 3) / 4),
-          };
+          const snap = result as Record<string, unknown>;
+          if (isSelfTargetFromObject(snap.window)) {
+            throw new DeviceRefusedError(
+              "[SELF_TARGET_FORBIDDEN] 目标窗口属于 ChisaBot 自身受保护进程，已拒绝返回控件树。",
+            );
+          }
+          if (
+            snap.ok !== false &&
+            typeof snap.snapshotId === "number" &&
+            Array.isArray(snap.elements)
+          ) {
+            const windowInfo =
+              snap.window &&
+              typeof snap.window === "object" &&
+              !Array.isArray(snap.window)
+                ? (snap.window as StoredDesktopWindow)
+                : {};
+            desktopSnapshots.saveSnapshot({
+              ownerUserId: record.ownerUserId,
+              deviceId: record.id,
+              snapshotId: snap.snapshotId,
+              driver: typeof snap.driver === "string" ? snap.driver : undefined,
+              window: windowInfo,
+              elements: snap.elements as StoredDesktopElement[],
+            });
+          }
+          result = scrubPasswordElementsInResult(snap);
+        }
+        if (
+          (input.operation === "screenshot" ||
+            input.operation === "window_screenshot") &&
+          result &&
+          typeof result === "object" &&
+          !Array.isArray(result)
+        ) {
+          if (
+            input.operation === "window_screenshot" &&
+            (isSelfTargetFromObject(result) ||
+              isSelfTargetFromObject(
+                (result as Record<string, unknown>).window,
+              ))
+          ) {
+            throw new DeviceRefusedError(
+              "[SELF_TARGET_FORBIDDEN] 目标窗口属于 ChisaBot 自身受保护进程，已拒绝返回截图。",
+            );
+          }
+          if (
+            typeof (result as { base64?: unknown }).base64 === "string" &&
+            (result as { base64: string }).base64.length > 0
+          ) {
+            const { base64, ...rest } = result as { base64: string } & Record<
+              string,
+              unknown
+            >;
+            const shot = keepScreenshot(record.id, base64);
+            result = {
+              ...rest,
+              screenshotId: shot,
+              url: `/api/devices/${record.id}/screenshots/${shot}`,
+              bytes: Math.round((base64.length * 3) / 4),
+            };
+          }
         }
         const diff =
           result &&

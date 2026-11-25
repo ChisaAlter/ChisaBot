@@ -57,7 +57,9 @@ export class DesktopBrowserBridgeError extends Error {
 export type DesktopBrowserBridgeOptions = {
   deviceStore: Pick<DeviceStore, "get" | "forOwner" | "audit"> &
     Partial<Pick<DeviceStore, "authenticate">>;
-  hub?: Pick<DeviceHub, "isOnline" | "sendRaw">;
+  hub?: Pick<DeviceHub, "isOnline" | "sendRaw"> & {
+    pushConfig?: (deviceId: string) => Promise<void> | void;
+  };
   /** Wave 4 Harness 开关读取器；默认采用 DEFAULT_HARNESS_FLAGS。 */
   getHarnessFlags?: () => Promise<HarnessFlags> | HarnessFlags;
   /** 可选自定义设备 scope 解析器（若未提供，使用内置的配对签发 scope 注册表）。 */
@@ -292,7 +294,21 @@ export function createDesktopBrowserBridge(
         durationMs: null,
       })
       .catch(() => {});
+    if (hub?.pushConfig) {
+      void Promise.resolve(hub.pushConfig(device.id)).catch(() => {});
+    }
     return clean;
+  }
+
+  /**
+   * 同步只读查询内存注册表中已签发给该设备的桌面桥接 / 无障碍 scopes（供 DeviceHub.view 同步下发）。
+   */
+  function peekDeviceScopes(
+    ownerUserId: string,
+    deviceId: string,
+  ): DesktopBridgeScope[] {
+    const partition = queuePartitionKey(ownerUserId, deviceId);
+    return [...(grantedScopesByPartition.get(partition) ?? [])];
   }
 
   async function getDeviceScopes(
@@ -1429,6 +1445,7 @@ export function createDesktopBrowserBridge(
   return {
     setDeviceScopes,
     getDeviceScopes,
+    peekDeviceScopes,
     createCookieApproval,
     waitForCookieApproval,
     respondCookieApproval,

@@ -2146,6 +2146,9 @@ const desktopBrowserBridge = createDesktopBrowserBridge({
   hub: deviceHub,
   getHarnessFlags: () => harnessSettingsService.currentFlags(),
 });
+deviceHub.setScopeResolver((record) =>
+  desktopBrowserBridge.peekDeviceScopes(record.ownerUserId, record.id),
+);
 const promptWorkbenchStore = createPromptWorkbenchStore(
   createPgPromptWorkbenchStorage(database),
 );
@@ -4363,6 +4366,13 @@ const actorAgentResolver = createActorAgentResolver({
         !props?.chisabotWorker &&
         (!input.threadId ||
           !(await isGroupChannelThread(input.threadId).catch(() => true)));
+      if (
+        isPersonPrimaryTurn &&
+        input.threadId &&
+        !props?.chisabotWorkerDelivery
+      ) {
+        deviceHub.advanceDirectionEpoch(actorId, input.threadId);
+      }
       const sessionTools = isPersonPrimaryTurn
         ? await restrictNamedToolsForWorkflow(initiator, async () =>
             createSessionSearchTools({
