@@ -279,6 +279,7 @@ let chatDomReady = false;
 
 let config;
 let agent = null;
+let activeAgentRuntime = null;
 /** 节点最近一次状态说明（例如「设备令牌无效」「设备已被撤销」），托盘和网页设备页用。 */
 let agentDetail = "";
 /** 为什么这台电脑还没成为在线设备（登记失败 / 会话过期 / 连不上）；登记成功后清空。 */
@@ -385,8 +386,37 @@ function localWindow(name, file, { query, ...options } = {}) {
   win.loadFile(path.join(UI, file), {
     query: { ...windowChrome.frameQuery(FRAME), ...(query || {}) },
   });
-  win.once("ready-to-show", () => win.show());
+  let localShown = false;
+  const revealLocalWindow = () => {
+    if (localShown || win.isDestroyed()) return;
+    localShown = true;
+    clearTimeout(showFallbackTimer);
+    win.show();
+  };
+  const showFallbackTimer = setTimeout(revealLocalWindow, 1500);
+  showFallbackTimer.unref?.();
+  win.once("ready-to-show", revealLocalWindow);
+  win.on("unresponsive", () => {
+    diagnosticsLog.record({
+      category: "system",
+      level: "warn",
+      event: "local_window_unresponsive",
+      message: `本机窗口 ${name} 无响应`,
+    });
+  });
+  win.webContents.on("render-process-gone", (_event, details) => {
+    if (details?.reason !== "clean-exit") {
+      diagnosticsLog.record({
+        category: "system",
+        level: "error",
+        event: "local_render_process_gone",
+        message: `本机窗口 ${name} 渲染进程异常退出（${details?.reason || "unknown"}）`,
+        detail: { reason: details?.reason, exitCode: details?.exitCode },
+      });
+    }
+  });
   win.on("closed", () => {
+    clearTimeout(showFallbackTimer);
     windows[name] = null;
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -443,7 +473,15 @@ async function proxyAgentFor(url) {
   let answer = "DIRECT";
   try {
     answer = await session.fromPartition(PARTITION).resolveProxy(String(url));
-  } catch {}
+  } catch (error) {
+    diagnosticsLog.record({
+      category: "network",
+      level: "warn",
+      event: "resolve_proxy_failed",
+      message: String(error?.message || error || "resolveProxy failed"),
+      detail: { url: String(url) },
+    });
+  }
   const secure = /^(https|wss):/i.test(String(url));
   const key = `${secure ? "s" : "p"}|${answer}`;
   if (!proxyAgents.has(key)) {
@@ -464,7 +502,9 @@ async function proxyAgentFor(url) {
   if (!agent) proxyRoute = "直连";
   return agent;
 }
-const netFetch = createAgentFetch((url) => proxyAgentFor(url.toString()));
+const netFetch = createAgentFetch((url) => proxyAgentFor(url.toString()), {
+  directFetch: (input, init) => net.fetch(input, init),
+});
 
 async function cookieHeaderFor(origin) {
   const cookies = await session
@@ -706,7 +746,22 @@ function openChat(pathname, options) {
       Menu.buildFromTemplate(template).popup({ window: win });
     }
   });
-  win.once("ready-to-show", () => win.show());
+  let chatShown = false;
+  let chatShowTimer = null;
+  const revealChatWindow = () => {
+    if (chatShown || win.isDestroyed()) return;
+    chatShown = true;
+    if (chatShowTimer && typeof clearTimeout === "function") {
+      clearTimeout(chatShowTimer);
+      chatShowTimer = null;
+    }
+    win.show();
+  };
+  if (typeof setTimeout === "function") {
+    chatShowTimer = setTimeout(revealChatWindow, 1500);
+    chatShowTimer?.unref?.();
+  }
+  win.once("ready-to-show", revealChatWindow);
   chatOffline = Boolean(options?.offline);
   if (chatOffline) {
     if (pathname) lastWebPath = pathname;
@@ -776,9 +831,65 @@ function openChat(pathname, options) {
       showOffline(win, description || String(code));
     },
   );
-  win.webContents.on("render-process-gone", () =>
-    showOffline(win, "页面进程意外退出"),
-  );
+  const crashTimestamps = [];
+  let crashReloadTimer = null;
+  win.webContents.on("render-process-gone", (_event, details) => {
+    const reason = details?.reason || "unknown";
+    if (reason !== "clean-exit") {
+      if (typeof diagnosticsLog !== "undefined") {
+        diagnosticsLog?.record?.({
+          category: "system",
+          level: "error",
+          event: "render_process_gone",
+          message: `主窗口渲染进程异常退出（${reason}）`,
+          detail: { reason, exitCode: details?.exitCode },
+        });
+      }
+      const nowMs = Date.now();
+      while (
+        crashTimestamps.length > 0 &&
+        nowMs - crashTimestamps[0] > 60_000
+      ) {
+        crashTimestamps.shift();
+      }
+      crashTimestamps.push(nowMs);
+      if (
+        crashTimestamps.length <= 2 &&
+        typeof setTimeout === "function" &&
+        typeof win.webContents.reload === "function"
+      ) {
+        if (crashReloadTimer && typeof clearTimeout === "function") {
+          clearTimeout(crashReloadTimer);
+        }
+        crashReloadTimer = setTimeout(() => {
+          crashReloadTimer = null;
+          if (!win.isDestroyed()) {
+            try {
+              win.webContents.reload();
+            } catch {
+              showOffline(win, "页面进程意外退出");
+            }
+          }
+        }, 600);
+        crashReloadTimer?.unref?.();
+        return;
+      }
+    }
+    showOffline(
+      win,
+      reason === "clean-exit" ? "页面已关闭" : `页面进程意外退出（${reason}）`,
+    );
+  });
+  win.on("unresponsive", () => {
+    if (typeof diagnosticsLog !== "undefined") {
+      diagnosticsLog?.record?.({
+        category: "system",
+        level: "warn",
+        event: "window_unresponsive",
+        message: "主窗口渲染进程无响应",
+      });
+    }
+  });
   win.webContents.on("did-start-loading", () => {
     lastSentWindowState.delete(win);
   });
@@ -820,14 +931,56 @@ function openChat(pathname, options) {
     event.preventDefault();
     compactWindows().toggle(win);
   });
+  let hidingFromFullScreen = false;
+  let fullScreenHideTimer = null;
+  const clearFullScreenHideTimer = () => {
+    if (fullScreenHideTimer && typeof clearTimeout === "function") {
+      clearTimeout(fullScreenHideTimer);
+      fullScreenHideTimer = null;
+    }
+  };
   win.on("close", (event) => {
     if (!quitting) {
       event.preventDefault();
-      win.hide();
+      if (
+        typeof process !== "undefined" &&
+        process.platform === "darwin" &&
+        typeof win.isFullScreen === "function" &&
+        win.isFullScreen()
+      ) {
+        if (hidingFromFullScreen) return;
+        hidingFromFullScreen = true;
+        const finishHide = () => {
+          hidingFromFullScreen = false;
+          clearFullScreenHideTimer();
+          win.removeListener?.("leave-full-screen", finishHide);
+          if (!win.isDestroyed() && !quitting) {
+            win.hide?.();
+          }
+        };
+        win.once("leave-full-screen", finishHide);
+        if (typeof setTimeout === "function") {
+          fullScreenHideTimer = setTimeout(finishHide, 900);
+          fullScreenHideTimer?.unref?.();
+        }
+        win.setFullScreen?.(false);
+        return;
+      }
+      win.hide?.();
     }
   });
   win.on("closed", () => {
     chatDomReady = false;
+    hidingFromFullScreen = false;
+    clearFullScreenHideTimer();
+    if (chatShowTimer && typeof clearTimeout === "function") {
+      clearTimeout(chatShowTimer);
+      chatShowTimer = null;
+    }
+    if (crashReloadTimer && typeof clearTimeout === "function") {
+      clearTimeout(crashReloadTimer);
+      crashReloadTimer = null;
+    }
     windows.chat = null;
     clearInterval(chatRetryTimer);
     cancelChatRetry();
@@ -973,8 +1126,9 @@ function refreshTray() {
   const fullAccess = Boolean(agent?.fullAccess);
   const updStatus = updater?.state.status || "idle";
   const updVersion = updater?.state.version || "";
+  const updManual = Boolean(updater?.state.manualInstall);
   // 托盘菜单不跟随 download-progress 逐小数点重建：实时百分比由独立更新进度窗口展示。
-  const nextTrayKey = `${kind}|${text}|${paused ? 1 : 0}|${hasServer ? 1 : 0}|${enroll ? 1 : 0}|${fullAccess ? 1 : 0}|${updStatus}|${updVersion}`;
+  const nextTrayKey = `${kind}|${text}|${paused ? 1 : 0}|${hasServer ? 1 : 0}|${enroll ? 1 : 0}|${fullAccess ? 1 : 0}|${updStatus}|${updVersion}|${updManual ? 1 : 0}`;
   if (nextTrayKey !== lastTrayKey) {
     lastTrayKey = nextTrayKey;
     if (kind !== lastTrayIconKind) {
@@ -1019,21 +1173,28 @@ function refreshTray() {
                 click: () => openUpdateWindow({ focus: true }),
               },
             ]
-          : updStatus === "downloading"
+          : updStatus === "available" && updManual
             ? [
                 {
-                  label: `正在下载新版本 ${updVersion || ""}…`,
+                  label: `发现新版本 ${updVersion || ""}（手动下载）…`,
                   click: () => openUpdateWindow({ focus: true }),
                 },
               ]
-            : updStatus === "verifying"
+            : updStatus === "downloading"
               ? [
                   {
-                    label: `正在校验新版本 ${updVersion || ""}…`,
+                    label: `正在下载新版本 ${updVersion || ""}…`,
                     click: () => openUpdateWindow({ focus: true }),
                   },
                 ]
-              : []),
+              : updStatus === "verifying"
+                ? [
+                    {
+                      label: `正在校验新版本 ${updVersion || ""}…`,
+                      click: () => openUpdateWindow({ focus: true }),
+                    },
+                  ]
+                : []),
         { type: "separator" },
         ...(fullAccess
           ? [
@@ -1207,6 +1368,7 @@ function startAgent() {
   });
   // 本地 agent（Claude Code / Codex / 内置循环…，docs/local-agents.md）：和节点共用这条连接。
   const agentRuntime = attachAgentRuntime();
+  activeAgentRuntime = agentRuntime;
   const handleExtra = (message) => {
     if (message?.type === "desktop_browser_cookie_request") {
       if (config.get().localPaused || agent?.device?.paused) {
@@ -1634,6 +1796,20 @@ function manualUpdateDownloadUrl() {
   });
 }
 
+function openManualUpdateDownload() {
+  const url = manualUpdateDownloadUrl();
+  if (!/^https:\/\//i.test(url)) return false;
+  config.appendAudit({
+    at: new Date().toISOString(),
+    actor: "本机",
+    operation: "update_manual_download",
+    outcome: "succeeded",
+    summary: `打开手动下载页 ${updater?.state.version || ""}`.trim(),
+  });
+  void shell.openExternal(url);
+  return true;
+}
+
 function currentUpdatePayload() {
   if (!updater) return null;
   const st = updater.state;
@@ -1649,6 +1825,7 @@ function currentUpdatePayload() {
     currentVersion: pkg.version,
     percent,
     fullInstall: !!updater.state.fullInstall,
+    manualInstall: !!updater.state.manualInstall,
     error: st.error || "",
     downloadUrl: manualUpdateDownloadUrl(),
   };
@@ -1674,6 +1851,7 @@ function startUpdater() {
   const updateSignature = require("./update-signature");
   const feed = buildConfig.resolveFeedDetail(BUILD, config.get());
   let lastUpdaterTrayKey = "";
+  let lastUpdaterManual = false;
   updater = createUpdater({
     autoUpdater,
     feedUrl: feed.url,
@@ -1689,29 +1867,48 @@ function startUpdater() {
     clientHash: CLIENT_HASH,
     // 内置更新公钥（docs/pc-update-signing.md）：为空 = 这个构建不验签（自建版没配公钥），保持旧行为。
     updateKeys: updateSignature.loadKeys(),
+    fetchImpl: netFetch,
     getAutoUpdate: () => config.get().autoUpdate !== false,
     logger: updateLogger(),
     onState: (nextState) => {
       sendUpdateState();
+      const manualNow = Boolean(nextState?.manualInstall);
+      if (
+        manualNow &&
+        !lastUpdaterManual &&
+        nextState?.status === "available" &&
+        (!updateWindow || updateWindow.isDestroyed()) &&
+        dismissedDownloadVersion !== (nextState?.version || "")
+      ) {
+        openUpdateWindow({ focus: false });
+      }
+      lastUpdaterManual = manualNow;
       // download-progress 高频推送时仅广播更新进度，状态键未变不重建托盘菜单或全窗口群发 state:changed。
-      const nextKey = `${nextState?.status || ""}|${nextState?.version || ""}|${nextState?.fullInstall ? 1 : 0}|${nextState?.error || ""}`;
+      const nextKey = `${nextState?.status || ""}|${nextState?.version || ""}|${nextState?.fullInstall ? 1 : 0}|${manualNow ? 1 : 0}|${nextState?.error || ""}`;
       if (nextKey !== lastUpdaterTrayKey) {
         lastUpdaterTrayKey = nextKey;
         refreshTray();
       }
     },
-    onAvailable: (version) => {
+    onAvailable: (version, meta) => {
+      const isManual = Boolean(
+        meta?.manualInstall || updater?.state.manualInstall,
+      );
       config.appendAudit({
         at: new Date().toISOString(),
         actor: "本机",
         operation: "update_available",
         outcome: "succeeded",
-        summary: `发现新版本 ${version || ""}，正在后台下载`,
+        summary: isManual
+          ? `发现新版本 ${version || ""}（需手动下载安装）`
+          : `发现新版本 ${version || ""}，正在后台下载`,
       });
       if (Notification.isSupported())
         new Notification({
           title: "ChisaBot",
-          body: `发现新版本 ${version || ""}，正在后台下载…`,
+          body: isManual
+            ? `发现新版本 ${version || ""}，请下载最新版本手动安装。`
+            : `发现新版本 ${version || ""}，正在后台下载…`,
         }).show();
       if (
         (!updateWindow || updateWindow.isDestroyed()) &&
@@ -1847,8 +2044,11 @@ function openUpdateWindow({ focus = true, allowIdle = false } = {}) {
   };
   updateWindow.on("maximize", sendMax);
   updateWindow.on("unmaximize", sendMax);
-  updateWindow.once("ready-to-show", () => {
-    if (!updateWindow || updateWindow.isDestroyed()) return;
+  let updateShown = false;
+  const revealUpdateWindow = () => {
+    if (updateShown || !updateWindow || updateWindow.isDestroyed()) return;
+    updateShown = true;
+    clearTimeout(updateShowTimer);
     if (focus) {
       updateWindow.show();
       updateWindow.focus();
@@ -1857,15 +2057,20 @@ function openUpdateWindow({ focus = true, allowIdle = false } = {}) {
     }
     sendUpdateState();
     sendMax();
-  });
+  };
+  const updateShowTimer = setTimeout(revealUpdateWindow, 1500);
+  updateShowTimer.unref?.();
+  updateWindow.once("ready-to-show", revealUpdateWindow);
   updateWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:/i.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
   updateWindow.on("closed", () => {
+    clearTimeout(updateShowTimer);
     if (
       updater?.state.status === "downloading" ||
-      updater?.state.status === "verifying"
+      updater?.state.status === "verifying" ||
+      (updater?.state.status === "available" && updater?.state.manualInstall)
     ) {
       dismissedDownloadVersion = updater.state.version || "";
     }
@@ -1875,6 +2080,14 @@ function openUpdateWindow({ focus = true, allowIdle = false } = {}) {
 }
 
 function installUpdateNow() {
+  if (
+    updater?.state.manualInstall &&
+    (updater?.state.status === "available" || updater?.state.status === "error")
+  ) {
+    const opened = openManualUpdateDownload();
+    updateWindow?.close();
+    return opened;
+  }
   if (updater?.state.status !== "downloaded") return false;
   const how = updater.state.fullInstall ? "重新安装" : "重启并安装";
   config.appendAudit({
@@ -2129,6 +2342,7 @@ async function dropDevice(serverUrl) {
   const token = config.getToken();
   agent?.stop();
   agent = null;
+  activeAgentRuntime = null;
   if (token && serverUrl)
     await auth
       .unenroll({ fetchImpl: netFetch, serverUrl, token })
@@ -2404,7 +2618,12 @@ function registerIpc() {
     }
   });
   handleLocal("update:current", () => currentUpdatePayload());
-  handleLocal("update:answer", ({ restart } = {}) => {
+  handleLocal("update:answer", ({ restart, manualInstall } = {}) => {
+    if (manualInstall === true) {
+      const opened = openManualUpdateDownload();
+      updateWindow?.close();
+      return opened;
+    }
     if (restart === true) return installUpdateNow();
     updateWindow?.close();
     return false;
@@ -2414,12 +2633,7 @@ function registerIpc() {
     const activeUpdater = ensureUpdaterStarted();
     return activeUpdater ? activeUpdater.check() : currentUpdatePayload();
   });
-  handleLocal("update:download-latest", () => {
-    const url = manualUpdateDownloadUrl();
-    if (!/^https:\/\//i.test(url)) return false;
-    void shell.openExternal(url);
-    return true;
-  });
+  handleLocal("update:download-latest", () => openManualUpdateDownload());
   // 本机小窗口自己的窗口按钮（最小化 / 最大化 / 关闭，DESIGN.md §91、§152）：只作用于发起调用的那个本机窗口。
   handleLocal("window:local", (action, event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -2561,7 +2775,10 @@ function registerIpc() {
     const next = activeUpdater
       ? await activeUpdater.check()
       : { supported: false, status: "idle" };
-    if (["downloading", "verifying", "downloaded"].includes(next?.status)) {
+    if (
+      ["downloading", "verifying", "downloaded"].includes(next?.status) ||
+      (next?.status === "available" && next?.manualInstall)
+    ) {
       dismissedDownloadVersion = "";
       openUpdateWindow({ focus: true });
     }
@@ -2703,8 +2920,54 @@ app.on("activate", () => void openApp());
 app.on("window-all-closed", () => {
   /* 常驻托盘 */
 });
+const QUIT_CLEANUP_TIMEOUT_MS = 2500;
+let quitCleanupDone = false;
+let quitCleanupStarted = false;
+let quitHoldActive = false;
+
+function runAsyncQuitCleanup() {
+  const tasks = [];
+  if (activeAgentRuntime?.runtime) {
+    try {
+      activeAgentRuntime.runtime.stopAll?.();
+    } catch {}
+    if (typeof activeAgentRuntime.runtime.cleanupSessions === "function") {
+      tasks.push(
+        Promise.resolve()
+          .then(() => activeAgentRuntime.runtime.cleanupSessions())
+          .catch(() => {}),
+      );
+    }
+  }
+  if (typeof config?.flushAudit === "function") {
+    tasks.push(
+      Promise.resolve()
+        .then(() => config.flushAudit())
+        .catch(() => {}),
+    );
+  }
+  if (tasks.length === 0) return Promise.resolve();
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(resolve, QUIT_CLEANUP_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  return Promise.race([Promise.allSettled(tasks), timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 app.on("before-quit", (event) => {
   quitting = true;
+  if (quitCleanupDone) {
+    config?.flushAuditSync?.();
+    return;
+  }
+  if (quitCleanupStarted) {
+    event.preventDefault();
+    return;
+  }
+  quitCleanupStarted = true;
   disposePrewarmedChatWindow();
   try {
     globalShortcut?.unregisterAll?.();
@@ -2714,12 +2977,7 @@ app.on("before-quit", (event) => {
   // 下载好（并验签通过）的更新而用户选了「稍后」：退出这一刻静默安装。需要重新安装（换了图标 / 组件）的走重新安装；
   // 普通更新在启用验签时也由这里安装（electron-updater 自己的退出安装没挂，见 updater.js）。
   const outcome = updater?.installOnQuit();
-  // macOS 验签后退出安装要撑住应用：Squirrel 还在从本地代理拉包，拉完 electron-updater 会自己再退一次。
-  if (outcome === "hold") {
-    event.preventDefault();
-    return;
-  }
-  if (outcome)
+  if (outcome && outcome !== "hold") {
     config?.appendAudit({
       at: new Date().toISOString(),
       actor: "本机",
@@ -2727,7 +2985,31 @@ app.on("before-quit", (event) => {
       outcome: "succeeded",
       summary: `${updater.state.fullInstall ? "退出时重新安装" : "退出时安装"} ${updater.state.version || ""}`,
     });
-  config?.flushAuditSync?.();
+  }
+  // macOS 验签后退出安装要撑住应用：Squirrel 还在从本地代理拉包，拉完 electron-updater 会自己再退一次。
+  if (outcome === "hold") {
+    quitHoldActive = true;
+    event.preventDefault();
+    void runAsyncQuitCleanup().finally(() => {
+      config?.flushAuditSync?.();
+      quitCleanupDone = true;
+    });
+    return;
+  }
+  if (
+    !activeAgentRuntime?.runtime &&
+    typeof config?.flushAudit !== "function"
+  ) {
+    quitCleanupDone = true;
+    config?.flushAuditSync?.();
+    return;
+  }
+  event.preventDefault();
+  void runAsyncQuitCleanup().finally(() => {
+    config?.flushAuditSync?.();
+    quitCleanupDone = true;
+    if (!quitHoldActive) app.quit();
+  });
 });
 
 // ---------- 外壳刷新（src/shell-refresh.js） ----------

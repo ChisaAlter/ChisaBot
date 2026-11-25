@@ -11,11 +11,11 @@ import {
 } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useMemo, useRef, useState } from "react";
-import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { ContinuationStatus } from "@/components/chat/continuation-status";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { useExternalConnection, useWindowEvent } from "@/hooks";
 import { continuationError } from "@/lib/chat/continuation";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
@@ -77,9 +77,13 @@ export function ConfirmCardView({
   onApprove,
   onDeny,
   onAlways,
+  onAllowAlways,
   onRetry,
   approveLabel = "确认",
   denyLabel = "取消",
+  alwaysLabel,
+  scopeHint,
+  actionBusy = false,
   testId = "confirm-card",
 }: {
   model: ConfirmCardModel;
@@ -87,22 +91,41 @@ export function ConfirmCardView({
   onDeny?: () => Promise<unknown>;
   /** 「以后这类直接做」：改偏好再确认。付款没有这个。 */
   onAlways?: () => Promise<unknown>;
+  /** 按当前作用域记住本次授权（非锁定类别可用，与 onAlways 向后兼容）。 */
+  onAllowAlways?: () => unknown;
   onRetry?: () => Promise<unknown>;
   approveLabel?: string;
   denyLabel?: string;
+  alwaysLabel?: string;
+  scopeHint?: string;
+  actionBusy?: boolean;
   testId?: string;
 }) {
-  const approve = useAsyncAction(async () => onApprove?.(), {
+  const decidingRef = useRef(false);
+  const runExclusive = async (handler?: () => unknown) => {
+    if (!handler || decidingRef.current || actionBusy) return;
+    decidingRef.current = true;
+    try {
+      return await handler();
+    } finally {
+      decidingRef.current = false;
+    }
+  };
+  const alwaysAction = onAllowAlways ?? onAlways;
+  const resolvedAlwaysLabel =
+    alwaysLabel ?? (onAllowAlways ? "始终允许此范围" : "以后这类直接做");
+  const approve = useAsyncAction(() => runExclusive(onApprove), {
     errorToast: (error) => error.message,
   });
-  const deny = useAsyncAction(async () => onDeny?.(), {
+  const deny = useAsyncAction(() => runExclusive(onDeny), {
     errorToast: (error) => error.message,
   });
-  const always = useAsyncAction(async () => onAlways?.(), {
+  const always = useAsyncAction(() => runExclusive(alwaysAction), {
     errorToast: (error) => error.message,
   });
   const pending = model.status === "pending";
   const busy =
+    actionBusy ||
     approve.state === "pending" ||
     deny.state === "pending" ||
     always.state === "pending";
@@ -110,6 +133,7 @@ export function ConfirmCardView({
   const info = CONFIRM_CATEGORY_INFO[model.category];
   const details = model.details ?? [];
   const failure = continuationError(model.continuation);
+  const trimmedScopeHint = scopeHint?.trim();
   return (
     <section
       aria-label={`${pending ? "需要你确认" : DECIDED_TEXT[model.status as Exclude<ConfirmStatus, "pending">]}：${model.title}`}
@@ -200,7 +224,7 @@ export function ConfirmCardView({
             >
               {denyLabel}
             </Button>
-            {onAlways && !info.locked ? (
+            {alwaysAction && !info.locked ? (
               <button
                 className="cf-always"
                 data-testid="confirm-always"
@@ -208,7 +232,7 @@ export function ConfirmCardView({
                 onClick={() => void always.run()}
                 type="button"
               >
-                {always.state === "pending" ? "保存中…" : "以后这类直接做"}
+                {always.state === "pending" ? "保存中…" : resolvedAlwaysLabel}
               </button>
             ) : info.locked && pending ? (
               <span className="cf-lock">
@@ -217,6 +241,14 @@ export function ConfirmCardView({
               </span>
             ) : null}
           </div>
+          {trimmedScopeHint && !info.locked ? (
+            <p
+              className="mt-2 text-xs leading-relaxed text-[var(--ink-3)]"
+              data-testid="confirm-scope-hint"
+            >
+              {trimmedScopeHint}
+            </p>
+          ) : null}
         </div>
       </div>
     </section>

@@ -155,8 +155,8 @@ object GatewayAuth {
         throw last ?: LoginError("invalid", "这个地址能打开，但不像 ChisaBot 服务器，请检查地址。")
     }
 
-    /** 探测主地址并在不可达时自动尝试备选地址（HTTPS 优先）。返回命中的 `(origin, Session)`。 */
-    fun probeWithFallback(origins: List<String>, cookie: String?): Pair<String, Session> {
+    /** 将候选服务器地址按「首地址优先，其余 HTTPS 优先于 HTTP」排序去重，忽略非法地址。 */
+    internal fun candidateOrigins(origins: List<String>): List<String> {
         val unique = LinkedHashSet<String>()
         val httpsList = ArrayList<String>()
         val httpList = ArrayList<String>()
@@ -171,17 +171,25 @@ object GatewayAuth {
         if (first != null) ordered.add(first)
         for (item in httpsList) if (item != first) ordered.add(item)
         for (item in httpList) if (item != first) ordered.add(item)
+        return ordered
+    }
 
+    internal fun probeWithFallback(origins: List<String>, probeOrigin: (String) -> Session): Pair<String, Session> {
+        val ordered = candidateOrigins(origins)
         var lastError: LoginError? = null
         for (candidate in ordered) {
             try {
-                return candidate to probe(candidate, cookie)
+                return candidate to probeOrigin(candidate)
             } catch (e: LoginError) {
                 lastError = e
             }
         }
         throw lastError ?: LoginError("unreachable", "所有候选服务器地址均无法连接。")
     }
+
+    /** 探测主地址并在不可达时自动尝试备选地址（HTTPS 优先）。返回命中的 `(origin, Session)`。 */
+    fun probeWithFallback(origins: List<String>, cookie: String?): Pair<String, Session> =
+        probeWithFallback(origins) { candidate -> probe(candidate, cookie) }
 
     private fun error(reply: Reply, fallback: String): String =
         runCatching {

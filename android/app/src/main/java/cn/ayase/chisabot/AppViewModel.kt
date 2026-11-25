@@ -54,7 +54,17 @@ private val Context.store by preferencesDataStore("native")
 private val BOTS_CACHE = stringPreferencesKey("bots")
 
 /**
- * 机器人头像（DESIGN §81，GET /api/bot-avatars）：image = 上传的图（url 相对路径，带 ?v= 版本），emoji / monogram = 渐变底 + 字，
+ * 解析扫码配对的目标源站：存在备选地址时通过 `probeFallback` 按「主地址优先、其余 HTTPS 优先」探测可达源站，
+ * 没有备选地址时直接使用主地址。
+ */
+internal fun resolvePairingOrigin(
+    link: Pairing.Link,
+    probeFallback: (List<String>) -> String = { GatewayAuth.probeWithFallback(it, null).first },
+): String =
+    if (link.alternates.isNotEmpty()) probeFallback(listOf(link.server) + link.alternates)
+    else link.server
+
+/** 机器人头像（DESIGN §81，GET /api/bot-avatars）：image = 上传的图（url 相对路径，带 ?v= 版本），emoji / monogram = 渐变底 + 字，
  * shape = 形象（形状 + 形象底色的键名，见 ui/ShapeAvatar.kt）。null = 默认（按 avatarSeed）。
  */
 data class BotAvatarSpec(val kind: String, val url: String? = null, val emoji: String? = null, val color: String? = null, val shape: String? = null)
@@ -213,25 +223,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putString("recent", org.json.JSONArray(list.take(6)).toString()).apply()
     }
 
-    /** 扫码 / 系统相机链接：绑定码 → 设备令牌 → 网关会话（和 WebView 版同一套请求）。 */
+    /** 扫码 / 系统相机链接：存在备选地址时先按 HTTPS 优先探测可达地址，再完成绑定码 → 设备令牌 → 网关会话。 */
     suspend fun pair(link: Pairing.Link) = withContext(Dispatchers.IO) {
         val os = Pairing.osVersion()
-        val paired = GatewayAuth.pair(link.server, link.code, Pairing.deviceName(ctx.contentResolver), Pairing.model(), os)
+        val targetOrigin = resolvePairingOrigin(link)
+        val paired = GatewayAuth.pair(targetOrigin, link.code, Pairing.deviceName(ctx.contentResolver), Pairing.model(), os)
         // 先换出会话再动本机状态：换不成（旧服务器没这个接口、网络断）时旧绑定和旧登录原样保留，可以重扫。
-        val cookies = GatewayAuth.deviceSession(link.server, paired.token, os)
+        val cookies = GatewayAuth.deviceSession(targetOrigin, paired.token, os)
         val (oldServer, oldToken) = synchronized(authStateLock) {
             val prev = prefs.getString("deviceServer", null) to prefs.getString("deviceToken", null)
-            prefs.edit().putString("deviceToken", paired.token).putString("deviceServer", link.server)
+            prefs.edit().putString("deviceToken", paired.token).putString("deviceServer", targetOrigin)
                 .putString("deviceId", paired.deviceId).putString("deviceName", paired.deviceName).apply()
             lastRenewAt = 0L; lastRenewSucceededAt = 0L
-            setCookies(link.server, cookies)
-            prefs.edit().putString("server", link.server).putBoolean("remember", true).putBoolean("loggedIn", true).apply()
+            setCookies(targetOrigin, cookies)
+            prefs.edit().putString("server", targetOrigin).putBoolean("remember", true).putBoolean("loggedIn", true).apply()
             prev
         }
         if (oldToken != null && oldServer != null) {
             viewModelScope.launch(Dispatchers.IO) { GatewayAuth.unenroll(oldServer, oldToken) }
         }
-        saveRecent(link.server)
+        saveRecent(targetOrigin)
     }
 
     suspend fun passwordLogin(serverInput: String, username: String, password: String, remember: Boolean) = withContext(Dispatchers.IO) {

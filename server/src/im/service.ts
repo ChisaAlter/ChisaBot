@@ -214,9 +214,19 @@ const newToken = () =>
   crypto.randomUUID().replace(/-/g, "") +
   crypto.randomUUID().replace(/-/g, "").slice(0, 8);
 
-/** 平台会话 → 线程键。 */
-export function chatKey(inbound: Pick<ImInbound, "chatType" | "chatId">) {
-  return `${inbound.chatType}:${inbound.chatId}`;
+/** 平台会话 → 线程键。群聊/频道携带显式 `threadKey`（如 Slack `thread_ts`）时按线程隔离上下文。 */
+export function chatKey(
+  inbound: Pick<ImInbound, "chatType" | "chatId"> & {
+    reply?: Record<string, unknown>;
+  },
+) {
+  const threadKey =
+    inbound.chatType === "group" && typeof inbound.reply?.threadKey === "string"
+      ? inbound.reply.threadKey.trim()
+      : "";
+  return threadKey
+    ? `${inbound.chatType}:${inbound.chatId}:thread:${threadKey}`
+    : `${inbound.chatType}:${inbound.chatId}`;
 }
 
 const NEW_TOPIC = new Set(["/new", "/reset", "新话题", "/新话题", "重新开始"]);
@@ -626,9 +636,10 @@ export function createImService(options: ImServiceOptions) {
       log: (level, text) => log(row.id, level, text),
       setStatus: (status) => setStatus(row.id, status),
       onMessage: (message) =>
-        void onInbound(row.id, message).catch((error) =>
-          log(row.id, "error", `处理消息失败：${errorText(error)}`),
-        ),
+        onInbound(row.id, message).catch((error) => {
+          log(row.id, "error", `处理消息失败：${errorText(error)}`);
+          throw error;
+        }),
       fetch: channels.fetch,
       ws: channels.ws,
     };
@@ -1195,9 +1206,36 @@ export function createImService(options: ImServiceOptions) {
     }
     queue.size++;
     queues.set(queueKey, queue);
+    let accepted: {
+      messageId: string;
+      threadId: string;
+      inbound: ImInbound;
+    } | null = null;
+    try {
+      accepted = await acceptInbound(row, entry.adapter, inbound, key);
+    } catch (error) {
+      queue.size--;
+      if (queue.size <= 0) queues.delete(queueKey);
+      throw error;
+    }
+    if (!accepted) {
+      queue.size--;
+      if (queue.size <= 0) queues.delete(queueKey);
+      return;
+    }
+    const ready = accepted;
     log(row.id, "info", `收到 ${who}：${text.slice(0, 80) || "（附件）"}`);
     queue.tail = queue.tail
-      .then(() => runOne(connectionId, inbound, platformName, key))
+      .then(() =>
+        runOne(
+          connectionId,
+          ready.inbound,
+          platformName,
+          key,
+          ready.messageId,
+          ready.threadId,
+        ),
+      )
       .catch((error) =>
         log(connectionId, "error", `处理失败：${errorText(error)}`),
       )
@@ -1207,19 +1245,16 @@ export function createImService(options: ImServiceOptions) {
       });
   }
 
-  async function runOne(
-    connectionId: string,
+  async function acceptInbound(
+    row: Row,
+    adapter: ImAdapter,
     inbound: ImInbound,
-    platformName: string,
     key: string,
-  ) {
-    const entry = live.get(connectionId);
-    const row = await rowById(connectionId);
-    if (!entry || !row?.enabled) return;
-    // 排队期间名单可能已变更；撤销授权或进入人工接管后不再以主人身份执行尚未开始的消息。
-    if (!canUseConnection(row, inbound.userId)) return;
-    if (await isChatTakenOver(row.id, key)) return;
-    const adapter = entry.adapter;
+  ): Promise<{
+    messageId: string;
+    threadId: string;
+    inbound: ImInbound;
+  } | null> {
     if (!(await options.botAvailable(row.owner_user_id, row.agent_id))) {
       log(row.id, "error", "对接的机器人不存在或已删除，请在设置里重新选择");
       await reply(
@@ -1228,7 +1263,7 @@ export function createImService(options: ImServiceOptions) {
         inbound,
         "这个连接对接的机器人已经不在了，请主人在 ChisaBot 设置里重新选择。",
       ).catch(() => {});
-      return;
+      return null;
     }
     const messageId = inbound.messageId
       ? `im:${row.id}:${Buffer.from(JSON.stringify([key, inbound.messageId]), "utf8").toString("base64url")}`
@@ -1244,7 +1279,7 @@ export function createImService(options: ImServiceOptions) {
         "warn",
         "原消息属于此前的机器人配置，不会重新执行或转交新机器人。",
       );
-      return;
+      return null;
     }
     if (received?.state === "staged") {
       await dispatchDelivery(`reply:${messageId}`).catch((error) =>
@@ -1255,27 +1290,72 @@ export function createImService(options: ImServiceOptions) {
         "info",
         "原消息已有交付记录，按原记录处理，不会重新执行或重复发送。",
       );
-      return;
+      return null;
     }
     const threadId =
       received?.thread_id ?? (await threadFor(row, key, false, inbound));
-    inbound = await enrichInboundMedia(row, received?.inbound ?? inbound);
+    const enriched = await enrichInboundMedia(
+      row,
+      received?.inbound ?? inbound,
+    );
     await delivery.accept({
       id: messageId,
       connection_id: row.id,
       owner_user_id: row.owner_user_id,
       agent_id: row.agent_id,
       thread_id: threadId,
-      inbound,
+      inbound: enriched,
     });
     wakeDeliveries();
     // 定时任务到点或待确认卡片要主动推回这个会话（DESIGN.md §55）：记住最近一条消息的回复信息。
     await sql
       .unsafe(
         "UPDATE chisabot_im_chats SET last_inbound = $3::text::jsonb, updated_at = now() WHERE connection_id = $1 AND chat_key = $2",
-        [row.id, key, JSON.stringify(inbound)],
+        [row.id, key, JSON.stringify(enriched)],
       )
       .catch(() => {});
+    return { messageId, threadId, inbound: enriched };
+  }
+
+  async function runOne(
+    connectionId: string,
+    inbound: ImInbound,
+    platformName: string,
+    key: string,
+    messageId: string,
+    threadId: string,
+  ) {
+    const entry = live.get(connectionId);
+    const row = await rowById(connectionId);
+    if (!entry || !row?.enabled) return;
+    // 排队期间名单可能已变更；撤销授权或进入人工接管后不再以主人身份执行尚未开始的消息。
+    if (!canUseConnection(row, inbound.userId)) return;
+    if (await isChatTakenOver(row.id, key)) return;
+    const adapter = entry.adapter;
+    const latestInbox = await delivery.inbox(messageId);
+    if (
+      latestInbox &&
+      (latestInbox.owner_user_id !== row.owner_user_id ||
+        latestInbox.agent_id !== row.agent_id)
+    ) {
+      log(
+        row.id,
+        "warn",
+        "原消息属于此前的机器人配置，不会重新执行或转交新机器人。",
+      );
+      return;
+    }
+    if (latestInbox?.state === "staged") {
+      await dispatchDelivery(`reply:${messageId}`).catch((error) =>
+        log(row.id, "warn", errorText(error)),
+      );
+      log(
+        row.id,
+        "info",
+        "原消息已有交付记录，按原记录处理，不会重新执行或重复发送。",
+      );
+      return;
+    }
     const content = frameInbound(platformName, inbound);
     const userMessage = buildImUserMessage(messageId, content, inbound);
     const ownerPrivate = isOwnerImSender(row, inbound);

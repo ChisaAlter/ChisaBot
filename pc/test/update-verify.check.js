@@ -11,9 +11,16 @@ const { EventEmitter } = require("node:events");
 const { createUpdater } = require("../src/updater");
 const sig = require("../src/update-signature");
 
-const execPath = path.join(os.tmpdir(), "chisabot-pc-update-verify", "ChisaBot.exe");
+const execPath = path.join(
+  os.tmpdir(),
+  "chisabot-pc-update-verify",
+  "ChisaBot.exe",
+);
 fs.mkdirSync(path.dirname(execPath), { recursive: true });
-fs.writeFileSync(path.join(path.dirname(execPath), "Uninstall ChisaBot.exe"), "");
+fs.writeFileSync(
+  path.join(path.dirname(execPath), "Uninstall ChisaBot.exe"),
+  "",
+);
 
 /** 和 electron-updater 6.8.9 一样：先派发 update-downloaded（带 downloadedFile），再看 autoInstallOnAppQuit 决定挂不挂退出安装。 */
 function fakeAutoUpdater(info) {
@@ -28,7 +35,8 @@ function fakeAutoUpdater(info) {
     e.quitHandlerAdded = e.autoInstallOnAppQuit;
     return {};
   };
-  e.quitAndInstall = (silent, runAfter) => e.quitAndInstalls.push([silent, runAfter]);
+  e.quitAndInstall = (silent, runAfter) =>
+    e.quitAndInstalls.push([silent, runAfter]);
   e.install = (silent, runAfter) => {
     e.installs.push([silent, runAfter]);
     return true;
@@ -36,9 +44,23 @@ function fakeAutoUpdater(info) {
   return e;
 }
 
-function make(info, { updateKeys = { enforce: true, keys: new Map(), problem: "" }, verifyDownload, shellHash = "aaaa" } = {}) {
+function make(
+  info,
+  {
+    updateKeys = { enforce: true, keys: new Map(), problem: "" },
+    verifyDownload,
+    shellHash = "aaaa",
+  } = {},
+) {
   const autoUpdater = fakeAutoUpdater(info);
-  const out = { states: [], downloaded: [], rejected: [], removed: [], spawned: [], quits: 0 };
+  const out = {
+    states: [],
+    downloaded: [],
+    rejected: [],
+    removed: [],
+    spawned: [],
+    quits: 0,
+  };
   out.autoUpdater = autoUpdater;
   out.updater = createUpdater({
     autoUpdater,
@@ -56,16 +78,28 @@ function make(info, { updateKeys = { enforce: true, keys: new Map(), problem: ""
     onRejected: (r) => out.rejected.push(r),
     spawn: (cmd, args) => out.spawned.push([cmd, args]),
     quitApp: () => out.quits++,
-    timers: { setTimeout: () => 0, setInterval: () => 0, clearTimeout() {}, clearInterval() {} },
+    timers: {
+      setTimeout: () => 0,
+      setInterval: () => 0,
+      clearTimeout() {},
+      clearInterval() {},
+    },
   });
   return out;
 }
 
 const pass = async () => ({ keyId: "00000000" });
 const reject = async () => {
-  throw new sig.UpdateSignatureError("ERR_SIGNATURE_MISMATCH", "更新清单的签名不符");
+  throw new sig.UpdateSignatureError(
+    "ERR_SIGNATURE_MISMATCH",
+    "更新清单的签名不符",
+  );
 };
-const INFO = { version: "0.1.200", chisabotShell: "aaaa", downloadedFile: "C:\\pending\\ChisaBot-0.1.200-x64-setup.exe" };
+const INFO = {
+  version: "0.1.200",
+  chisabotShell: "aaaa",
+  downloadedFile: "C:\\pending\\ChisaBot-0.1.200-x64-setup.exe",
+};
 
 test("signing on: electron-updater never registers its own quit-time install", async () => {
   const t = make(INFO, { verifyDownload: pass });
@@ -73,7 +107,11 @@ test("signing on: electron-updater never registers its own quit-time install", a
   assert.strictEqual(t.updater.state.signing, true);
   assert.strictEqual(t.autoUpdater.autoInstallOnAppQuit, false);
   await t.updater.check();
-  assert.strictEqual(t.autoUpdater.quitHandlerAdded, false, "update-downloaded 时还没验完，不能让它挂退出安装");
+  assert.strictEqual(
+    t.autoUpdater.quitHandlerAdded,
+    false,
+    "update-downloaded 时还没验完，不能让它挂退出安装",
+  );
 });
 
 test("signature ok → verifying → downloaded; 稍后 then quit installs via autoUpdater.install(true, false)", async () => {
@@ -103,14 +141,22 @@ test("signature ok + 立即重启 → quitAndInstall(true, true), quitting after
 });
 
 test("signature ok + full reinstall → our installer path, both now and on quit", async () => {
-  const now = make({ ...INFO, chisabotShell: "bbbb" }, { verifyDownload: pass });
+  const now = make(
+    { ...INFO, chisabotShell: "bbbb" },
+    { verifyDownload: pass },
+  );
   await now.updater.check();
   await now.updater.settled();
   assert.strictEqual(now.updater.state.fullInstall, true);
   assert.strictEqual(now.updater.install(), true);
-  assert.deepStrictEqual(now.spawned, [[INFO.downloadedFile, ["/S", "--force-run"]]]);
+  assert.deepStrictEqual(now.spawned, [
+    [INFO.downloadedFile, ["/S", "--force-run"]],
+  ]);
   assert.strictEqual(now.quits, 1);
-  const later = make({ ...INFO, chisabotShell: "bbbb" }, { verifyDownload: pass });
+  const later = make(
+    { ...INFO, chisabotShell: "bbbb" },
+    { verifyDownload: pass },
+  );
   await later.updater.check();
   await later.updater.settled();
   assert.strictEqual(later.updater.installOnQuit(), true);
@@ -119,7 +165,10 @@ test("signature ok + full reinstall → our installer path, both now and on quit
 });
 
 test("full reinstall without an installer path under signing falls back to autoUpdater.install on quit", async () => {
-  const t = make({ version: "0.1.200", fullInstall: true, downloadedFile: undefined }, { verifyDownload: pass });
+  const t = make(
+    { version: "0.1.200", fullInstall: true, downloadedFile: undefined },
+    { verifyDownload: pass },
+  );
   await t.updater.check();
   await t.updater.settled();
   assert.strictEqual(t.updater.installOnQuit(), true);
@@ -133,10 +182,19 @@ test("signature bad → file removed, error state, audit hook, no window, no ins
   await t.updater.settled();
   const state = t.updater.state;
   assert.strictEqual(state.status, "error");
-  assert.match(state.error, /^更新包签名校验失败，已拒绝安装：更新清单的签名不符/);
+  assert.match(
+    state.error,
+    /^更新包签名校验失败，已拒绝安装：更新清单的签名不符/,
+  );
   assert.deepStrictEqual(t.removed, [INFO.downloadedFile]);
   assert.deepStrictEqual(t.downloaded, [], "不弹「新版本已下载」");
-  assert.deepStrictEqual(t.rejected, [{ version: "0.1.200", code: "ERR_SIGNATURE_MISMATCH", reason: "更新清单的签名不符" }]);
+  assert.deepStrictEqual(t.rejected, [
+    {
+      version: "0.1.200",
+      code: "ERR_SIGNATURE_MISMATCH",
+      reason: "更新清单的签名不符",
+    },
+  ]);
   assert.strictEqual(t.updater.install(), false);
   assert.strictEqual(t.updater.installOnQuit(), false);
   assert.deepStrictEqual(t.autoUpdater.installs, []);
@@ -149,7 +207,10 @@ test("signature bad → file removed, error state, audit hook, no window, no ins
 });
 
 test("a rejected full reinstall does not run the installer either", async () => {
-  const t = make({ ...INFO, chisabotShell: "bbbb" }, { verifyDownload: reject });
+  const t = make(
+    { ...INFO, chisabotShell: "bbbb" },
+    { verifyDownload: reject },
+  );
   await t.updater.check();
   await t.updater.settled();
   assert.strictEqual(t.updater.state.status, "error");
@@ -160,12 +221,19 @@ test("a rejected full reinstall does not run the installer either", async () => 
 });
 
 test("no keys in this build (self-built without CHISABOT_UPDATE_PUBKEYS) → old behavior, state.signing = false", async () => {
-  const t = make(INFO, { updateKeys: { enforce: false, keys: new Map(), problem: "" }, verifyDownload: reject });
+  const t = make(INFO, {
+    updateKeys: { enforce: false, keys: new Map(), problem: "" },
+    verifyDownload: reject,
+  });
   assert.strictEqual(t.updater.state.signing, false);
   assert.strictEqual(t.autoUpdater.autoInstallOnAppQuit, true);
   const state = await t.updater.check();
   assert.strictEqual(state.status, "downloaded", "不验签");
-  assert.strictEqual(t.autoUpdater.quitHandlerAdded, true, "退出安装照旧交给 electron-updater");
+  assert.strictEqual(
+    t.autoUpdater.quitHandlerAdded,
+    true,
+    "退出安装照旧交给 electron-updater",
+  );
   assert.strictEqual(t.updater.installOnQuit(), false);
 });
 
@@ -174,13 +242,27 @@ test("real verification end to end: signed release passes, re-signed by a strang
   try {
     const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
     const pub = sig.rawPublicKey(publicKey).toString("base64");
-    const updateKeys = { enforce: true, keys: sig.parseKeys({ keys: [{ publicKey: pub }] }), problem: "" };
+    const updateKeys = {
+      enforce: true,
+      keys: sig.parseKeys({ keys: [{ publicKey: pub }] }),
+      problem: "",
+    };
     const file = path.join(dir, "ChisaBot-0.1.200-x64-setup.exe");
     const bytes = crypto.randomBytes(2048);
     fs.writeFileSync(file, bytes);
     const sha512 = crypto.createHash("sha512").update(bytes).digest("base64");
-    const base = { version: "0.1.200", path: path.basename(file), sha512, files: [{ url: path.basename(file), sha512, size: bytes.length }], chisabotShell: "aaaa" };
-    const good = { ...base, chisabotSig: sig.signManifest(base, privateKey), downloadedFile: file };
+    const base = {
+      version: "0.1.200",
+      path: path.basename(file),
+      sha512,
+      files: [{ url: path.basename(file), sha512, size: bytes.length }],
+      chisabotShell: "aaaa",
+    };
+    const good = {
+      ...base,
+      chisabotSig: sig.signManifest(base, privateKey),
+      downloadedFile: file,
+    };
 
     const ok = make(good, { updateKeys });
     await ok.updater.check();
@@ -188,7 +270,14 @@ test("real verification end to end: signed release passes, re-signed by a strang
     assert.strictEqual(ok.updater.state.status, "downloaded");
 
     const stranger = crypto.generateKeyPairSync("ed25519").privateKey;
-    const forged = make({ ...base, chisabotSig: sig.signManifest(base, stranger), downloadedFile: file }, { updateKeys });
+    const forged = make(
+      {
+        ...base,
+        chisabotSig: sig.signManifest(base, stranger),
+        downloadedFile: file,
+      },
+      { updateKeys },
+    );
     await forged.updater.check();
     await forged.updater.settled();
     assert.strictEqual(forged.rejected[0]?.code, "ERR_UNKNOWN_KEY");
@@ -196,26 +285,165 @@ test("real verification end to end: signed release passes, re-signed by a strang
     const unsigned = make({ ...base, downloadedFile: file }, { updateKeys });
     await unsigned.updater.check();
     await unsigned.updater.settled();
-    assert.strictEqual(unsigned.rejected[0]?.code, "ERR_NO_SIGNATURE", "没签名的更新源（被换掉的 latest.yml）也拒绝");
+    assert.strictEqual(
+      unsigned.rejected[0]?.code,
+      "ERR_NO_SIGNATURE",
+      "没签名的更新源（被换掉的 latest.yml）也拒绝",
+    );
 
-    fs.writeFileSync(file, Buffer.concat([bytes.subarray(0, 100), Buffer.from([bytes[100] ^ 1]), bytes.subarray(101)]));
+    fs.writeFileSync(
+      file,
+      Buffer.concat([
+        bytes.subarray(0, 100),
+        Buffer.from([bytes[100] ^ 1]),
+        bytes.subarray(101),
+      ]),
+    );
     const swapped = make(good, { updateKeys });
     await swapped.updater.check();
     await swapped.updater.settled();
     assert.strictEqual(swapped.rejected[0]?.code, "ERR_HASH_MISMATCH");
 
-    const broken = make(good, { updateKeys: { enforce: true, keys: new Map(), problem: "公钥表坏了" } });
+    const broken = make(good, {
+      updateKeys: { enforce: true, keys: new Map(), problem: "公钥表坏了" },
+    });
     await broken.updater.check();
     await broken.updater.settled();
-    assert.strictEqual(broken.rejected[0]?.code, "ERR_NO_KEYS", "公钥表坏了：宁可装不上");
+    assert.strictEqual(
+      broken.rejected[0]?.code,
+      "ERR_NO_KEYS",
+      "公钥表坏了：宁可装不上",
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test("main wires the key table, the rejection audit and quit-time install", () => {
-  const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
+  const main = fs.readFileSync(
+    path.join(__dirname, "..", "src", "main.js"),
+    "utf8",
+  );
   assert.ok(main.includes("updateKeys: updateSignature.loadKeys()"));
   assert.ok(main.includes('operation: "update_rejected"'));
   assert.ok(main.includes("updater?.installOnQuit()"));
+  assert.ok(main.includes("manualInstall: !!updater.state.manualInstall"));
+  assert.ok(
+    main.includes("directFetch: (input, init) => net.fetch(input, init)"),
+  );
+  assert.ok(main.includes("resolve_proxy_failed"));
+  assert.ok(main.includes("QUIT_CLEANUP_TIMEOUT_MS"));
+  assert.ok(main.includes("render-process-gone"));
+  assert.ok(main.includes("unresponsive"));
+  assert.ok(main.includes("leave-full-screen"));
+});
+
+test("manual update check mode enforces Ed25519 manifest signature when signing=true", async () => {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+  const pub = sig.rawPublicKey(publicKey).toString("base64");
+  const updateKeys = {
+    enforce: true,
+    keys: sig.parseKeys({ keys: [{ publicKey: pub }] }),
+    problem: "",
+  };
+  const base = {
+    version: "0.1.250",
+    path: "ChisaBot-0.1.250-arm64-mac.zip",
+    sha512: crypto.createHash("sha512").update("bundle").digest("base64"),
+    files: [
+      {
+        url: "ChisaBot-0.1.250-arm64-mac.zip",
+        sha512: crypto.createHash("sha512").update("bundle").digest("base64"),
+        size: 6,
+      },
+    ],
+    chisabotShell: "shell-a",
+  };
+  const adhocSpawn = () => ({
+    status: 0,
+    stdout: "",
+    stderr: "Signature=adhoc\n",
+  });
+
+  // 有效签名通过：status="available", manualInstall=true
+  const good = createUpdater({
+    autoUpdater: fakeAutoUpdater(INFO),
+    feedUrl: "https://updates.example/mac/",
+    currentVersion: "0.1.200",
+    isPackaged: true,
+    platform: "darwin",
+    execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot",
+    productName: "ChisaBot",
+    shellHash: "shell-b",
+    updateKeys,
+    fetchManifest: async () => ({
+      ...base,
+      chisabotSig: sig.signManifest(base, privateKey),
+    }),
+    spawnSync: adhocSpawn,
+    getAutoUpdate: () => false,
+    timers: {
+      setTimeout: () => 0,
+      setInterval: () => 0,
+      clearTimeout() {},
+      clearInterval() {},
+    },
+  });
+  assert.strictEqual(good.supported, false);
+  const okState = await good.check();
+  assert.strictEqual(okState.status, "available");
+  assert.strictEqual(okState.version, "0.1.250");
+  assert.strictEqual(okState.manualInstall, true);
+  assert.strictEqual(okState.fullInstall, true);
+
+  // 未签名 / 陌生密钥 / 篡改字段 / 公钥表损坏：全部拒绝，绝不放行 manualInstall
+  const strangerKey = crypto.generateKeyPairSync("ed25519").privateKey;
+  for (const [label, manifest, keysOverride] of [
+    ["unsigned", base, updateKeys],
+    [
+      "unknown-key",
+      { ...base, chisabotSig: sig.signManifest(base, strangerKey) },
+      updateKeys,
+    ],
+    [
+      "tampered",
+      {
+        ...base,
+        version: "0.1.251",
+        chisabotSig: sig.signManifest(base, privateKey),
+      },
+      updateKeys,
+    ],
+    [
+      "broken-keys",
+      { ...base, chisabotSig: sig.signManifest(base, privateKey) },
+      { enforce: true, keys: new Map(), problem: "broken" },
+    ],
+  ]) {
+    const rejected = [];
+    const bad = createUpdater({
+      autoUpdater: fakeAutoUpdater(INFO),
+      feedUrl: "https://updates.example/mac/",
+      currentVersion: "0.1.200",
+      isPackaged: true,
+      platform: "darwin",
+      execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot",
+      productName: "ChisaBot",
+      updateKeys: keysOverride,
+      fetchManifest: async () => manifest,
+      spawnSync: adhocSpawn,
+      getAutoUpdate: () => false,
+      onRejected: (entry) => rejected.push(entry),
+      timers: {
+        setTimeout: () => 0,
+        setInterval: () => 0,
+        clearTimeout() {},
+        clearInterval() {},
+      },
+    });
+    const res = await bad.check();
+    assert.strictEqual(res.status, "error", label);
+    assert.strictEqual(res.manualInstall, undefined, label);
+    assert.strictEqual(rejected.length, 1, label);
+  }
 });

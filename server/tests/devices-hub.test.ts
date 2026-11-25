@@ -505,4 +505,65 @@ describe("device hub", () => {
     for (const approval of hub.listApprovals(null))
       hub.decide(approval.id, false, "web");
   });
+
+  test("post-approval recheck refuses when capability turned off or allowedRoot removed during approval", async () => {
+    const initial = record({
+      capabilities: {
+        ...defaultCapabilities(),
+        clipboard: "ask",
+        files_write: "ask",
+      },
+      allowedRoots: ["C:\\Work"],
+    });
+    const fake = fakeStore(initial);
+    const hub = createDeviceHub({ store: fake.store as never });
+    const s = fakeSocket();
+    hub.attach(initial, s.socket, null);
+
+    // 1) 审批等待期间用户关闭了能力（ask -> off），批准后必须拒绝且不下发 call
+    const capPending = hub.invoke({
+      device: initial,
+      operation: "clipboard_read",
+      args: {},
+      bot: { id: "bot1", name: "B" },
+      summary: "读取剪贴板",
+    });
+    await tick();
+    const [capApproval] = hub.listApprovals("u1");
+    fake.set(
+      record({
+        ...initial,
+        capabilities: {
+          ...initial.capabilities,
+          clipboard: "off",
+        },
+      }),
+    );
+    expect(hub.decide(capApproval!.id, true, "web")).toBe(true);
+    await expect(capPending).rejects.toThrow("关闭");
+    expect(s.sent.some((m) => m.type === "call")).toBe(false);
+    expect(fake.audits.at(-1)?.outcome).toBe("refused");
+
+    // 2) 审批前路径在 allowedRoots 内（!outside），等待期间用户移除了该目录，批准后必须拒绝
+    fake.set(initial);
+    const rootPending = hub.invoke({
+      device: initial,
+      operation: "write_file",
+      args: { path: "C:\\Work\\a.txt", content: "hi" },
+      bot: { id: "bot1", name: "B" },
+      summary: "写文件 C:\\Work\\a.txt",
+    });
+    await tick();
+    const [rootApproval] = hub.listApprovals("u1");
+    fake.set(
+      record({
+        ...initial,
+        allowedRoots: ["D:\\Other"],
+      }),
+    );
+    expect(hub.decide(rootApproval!.id, true, "web")).toBe(true);
+    await expect(rootPending).rejects.toThrow("允许的文件夹");
+    expect(s.sent.some((m) => m.type === "call")).toBe(false);
+    expect(fake.audits.at(-1)?.outcome).toBe("refused");
+  });
 });

@@ -27,6 +27,8 @@ export abstract class LoopAdapter implements ImAdapter {
   protected connectedAt = 0;
   /** 去重：平台偶尔会重投同一条消息。 */
   private seen = new Map<string, number>();
+  /** 正在等待落库受理的消息，避免并发重复投递绕过去重或提前 ACK。 */
+  private inFlight = new Map<string, Promise<boolean>>();
 
   constructor(protected readonly ctx: AdapterContext) {}
 
@@ -65,22 +67,48 @@ export abstract class LoopAdapter implements ImAdapter {
     });
   }
 
-  /** 收到一条消息：去重后交给服务。 */
-  protected emit(message: ImInbound) {
-    if (this.stopped) return;
-    const now = Date.now();
-    if (message.messageId) {
-      if (this.seen.has(message.messageId)) return;
-      this.seen.set(message.messageId, now);
-      if (this.seen.size > 500) {
-        for (const [key, at] of this.seen) {
-          if (now - at > 10 * 60_000 || this.seen.size > 400)
-            this.seen.delete(key);
-          else break;
-        }
+  /** 收到一条消息：去重后交给服务，返回是否受理成功（供需要延迟 ACK 的平台判断）。 */
+  protected emit(
+    message: ImInbound,
+    options?: { throwOnError?: boolean },
+  ): Promise<boolean> {
+    if (this.stopped) return Promise.resolve(false);
+    const id = message.messageId;
+    if (id) {
+      if (this.seen.has(id)) return Promise.resolve(true);
+      const pending = this.inFlight.get(id);
+      if (pending) {
+        return options?.throwOnError ? pending : pending.catch(() => false);
       }
     }
-    this.ctx.onMessage(message);
+    const work = Promise.resolve()
+      .then(() => this.ctx.onMessage(message))
+      .then(() => {
+        if (this.stopped) return false;
+        if (id) {
+          const now = Date.now();
+          this.seen.set(id, now);
+          if (this.seen.size > 500) {
+            for (const [key, at] of this.seen) {
+              if (now - at > 10 * 60_000 || this.seen.size > 400)
+                this.seen.delete(key);
+              else break;
+            }
+          }
+        }
+        return true;
+      })
+      .finally(() => {
+        if (id && this.inFlight.get(id) === work) {
+          this.inFlight.delete(id);
+        }
+      });
+    if (id) this.inFlight.set(id, work);
+    if (options?.throwOnError) return work;
+    return work.catch((error) => {
+      this.ctx.log("warn", `处理平台消息出错：${errorText(error)}`);
+      return false;
+    });
   }
 
   private async loop() {

@@ -120,6 +120,122 @@ export function createMcpClientTransport(input: {
   });
 }
 
+const FALLBACK_SSE_HTTP_STATUSES: ReadonlySet<number> = new Set([
+  400, 404, 405, 406, 501,
+]);
+
+const NON_FALLBACK_NETWORK_CODES: ReadonlySet<string> = new Set([
+  "-32001",
+  "ETIMEDOUT",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EPIPE",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+function extractHttpStatusCode(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const obj = error as {
+    code?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+  };
+  for (const candidate of [obj.status, obj.statusCode, obj.code]) {
+    if (
+      typeof candidate === "number" &&
+      Number.isInteger(candidate) &&
+      candidate >= 100 &&
+      candidate <= 599
+    ) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/**
+ * 判断 Streamable HTTP 建连失败是否允许在 `auto` 模式下自动降级为 SSE：
+ * 严格排除 401/403 鉴权错误、Abort/Timeout/网络中断与 SSRF/重定向拒接错误，
+ * 仅对 HTTP 400/404/405/406/501、Streamable HTTP 不支持或 Content-Type 不匹配返回 `true`。
+ */
+export function shouldFallbackToSse(error: unknown): boolean {
+  if (!error) return false;
+  if (typeof error !== "object" && typeof error !== "string") return false;
+
+  const name =
+    typeof error === "object" && error !== null && "name" in error
+      ? String((error as { name?: unknown }).name ?? "")
+      : "";
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : String(error);
+
+  if (
+    name === "BlockedUrlError" ||
+    name === "McpServerError" ||
+    name === "UnauthorizedError" ||
+    name === "AbortError" ||
+    name === "TimeoutError"
+  ) {
+    return false;
+  }
+  if (NON_FALLBACK_NETWORK_CODES.has(code)) {
+    return false;
+  }
+  if (isUserAbortOnly(error) || isMcpTimeoutOrNetworkError(error)) {
+    return false;
+  }
+  if (
+    /不能访问内网|ssrf|private network|not reachable|could not be resolved|redirected|cross-origin|endpoint changed|must be json text/i.test(
+      message,
+    )
+  ) {
+    return false;
+  }
+
+  const status = extractHttpStatusCode(error);
+  if (status !== null) {
+    if (status === 401 || status === 403) return false;
+    return FALLBACK_SSE_HTTP_STATUSES.has(status);
+  }
+
+  if (
+    /\b(?:http|status(?:\s+code)?|returned)\s*[:=]?\s*(?:401|403)\b|\b(?:401\s+unauthorized|403\s+forbidden)\b/i.test(
+      message,
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    /unexpected content[- ]?type|content[- ]?type\s*(?:mismatch|not supported|unsupported|invalid)|streamable[- ]?http.*(?:not supported|unsupported)|does not support streamable[- ]?http/i.test(
+      message,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:http|status(?:\s+code)?|returned)\s*[:=]?\s*(?:400|404|405|406|501)\b|\b(?:400\s+bad\s+request|404\s+not\s+found|405\s+method\s+not\s+allowed|406\s+not\s+acceptable|501\s+not\s+implemented)\b/i.test(
+      message,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 // ── 2. listTools nextCursor 完整有界分页 ─────────────────────────────────
 
 type RawMcpListToolsResult = {
@@ -241,7 +357,10 @@ function validateGifBytes(bytes: Uint8Array): {
     height > MAX_AVATAR_IMAGE_DIMENSION ||
     width * height > MAX_AVATAR_IMAGE_PIXELS
   ) {
-    return { ok: false, reason: `GIF 分辨率超过安全上限（${width}×${height}）。` };
+    return {
+      ok: false,
+      reason: `GIF 分辨率超过安全上限（${width}×${height}）。`,
+    };
   }
   return { ok: true };
 }
@@ -462,9 +581,7 @@ export type McpEnhancementStorage = {
     serverIds: readonly string[],
   ): Promise<Map<string, StoredMcpEnhancementMetaRow>>;
   /** 单条运行时投影：跳过大体积 last_good_tools JSONB。 */
-  getRuntime?(
-    serverId: string,
-  ): Promise<StoredMcpEnhancementRuntimeRow | null>;
+  getRuntime?(serverId: string): Promise<StoredMcpEnhancementRuntimeRow | null>;
   list(): Promise<StoredMcpEnhancementRow[]>;
   upsert(row: StoredMcpEnhancementRow): Promise<void>;
   /** 仅定向更新 OAuth 密文与时间戳，避免刷新期间覆盖并发修改的 disabledTools/customInstructions/customHeaders。 */
@@ -507,6 +624,13 @@ function isoOrNull(value: Date | string | null): string | null {
     : new Date(value).toISOString();
 }
 
+function normalizeMcpTransport(value: unknown): McpTransportMode {
+  if (value === "auto" || value === "sse" || value === "streamable-http") {
+    return value;
+  }
+  return "streamable-http";
+}
+
 export function createPgMcpEnhancementStorage(
   database: McpEnhancementDatabase,
 ): McpEnhancementStorage {
@@ -517,7 +641,7 @@ export function createPgMcpEnhancementStorage(
     const lastGoodRaw = parseJsonCol<unknown>(row.last_good_tools);
     return {
       serverId: row.server_id,
-      transport: row.transport === "sse" ? "sse" : "streamable-http",
+      transport: normalizeMcpTransport(row.transport),
       customInstructions: row.custom_instructions ?? "",
       disabledTools: Array.isArray(disabledRaw)
         ? disabledRaw.filter((item): item is string => typeof item === "string")
@@ -571,7 +695,9 @@ export function createPgMcpEnhancementStorage(
       const uniqueIds = [...new Set(serverIds.filter(Boolean))];
       const out = new Map<string, StoredMcpEnhancementMetaRow>();
       if (uniqueIds.length === 0) return out;
-      const placeholders = uniqueIds.map((_, index) => `$${index + 1}`).join(", ");
+      const placeholders = uniqueIds
+        .map((_, index) => `$${index + 1}`)
+        .join(", ");
       const rows = await sql.unsafe<
         Pick<
           PgEnhancementRow,
@@ -589,7 +715,9 @@ export function createPgMcpEnhancementStorage(
           serverId: row.server_id,
           customInstructions: row.custom_instructions ?? "",
           disabledTools: Array.isArray(disabledRaw)
-            ? disabledRaw.filter((item): item is string => typeof item === "string")
+            ? disabledRaw.filter(
+                (item): item is string => typeof item === "string",
+              )
             : [],
         });
       }
@@ -619,10 +747,12 @@ export function createPgMcpEnhancementStorage(
       const disabledRaw = parseJsonCol<unknown>(row.disabled_tools);
       return {
         serverId: row.server_id,
-        transport: row.transport === "sse" ? "sse" : "streamable-http",
+        transport: normalizeMcpTransport(row.transport),
         customInstructions: row.custom_instructions ?? "",
         disabledTools: Array.isArray(disabledRaw)
-          ? disabledRaw.filter((item): item is string => typeof item === "string")
+          ? disabledRaw.filter(
+              (item): item is string => typeof item === "string",
+            )
           : [],
         encryptedHeaders: row.encrypted_headers ?? null,
         encryptedOAuth: row.encrypted_oauth ?? null,
@@ -1008,9 +1138,13 @@ export function createMcpEnhancementStore(options: McpEnhancementStoreOptions) {
       };
 
       if (patch.transport !== undefined) {
-        if (patch.transport !== "streamable-http" && patch.transport !== "sse") {
+        if (
+          patch.transport !== "auto" &&
+          patch.transport !== "streamable-http" &&
+          patch.transport !== "sse"
+        ) {
           throw new McpEnhancementValidationError(
-            "transport 仅支持 streamable-http 或 sse。",
+            "transport 仅支持 auto、streamable-http 或 sse。",
           );
         }
         next.transport = patch.transport;
@@ -1523,9 +1657,9 @@ export function createMcpEnhancementRoutes(options: {
       const forbidden = requireAdmin(context);
       if (forbidden) return forbidden;
       const serverId = context.req.param("serverId");
-      const body = (await context.req.json().catch(() => null)) as
-        | McpServerEnhancementPatch
-        | null;
+      const body = (await context.req
+        .json()
+        .catch(() => null)) as McpServerEnhancementPatch | null;
       if (!isPlainObject(body)) {
         return context.json({ error: "请求体必须是 JSON 对象。" }, 400);
       }

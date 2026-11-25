@@ -11,6 +11,7 @@ import {
   type GroupStore,
   type GroupTurn,
   groupTurnMessage,
+  maskNonProseMentions,
   mentionedPeers,
   parseGroupGoal,
   turnSchema,
@@ -93,6 +94,72 @@ test("a longer name at the same @ is the one addressed, and an email address is 
   expect(ids("I, @Ops Lead, will do it", "lead")).toEqual([]);
   expect(ids("write to jo@sam.com")).toEqual([]);
   expect(ids("(@Sam) can you check")).toEqual(["sam"]);
+});
+
+test("maskNonProseMentions masks code blocks, inline code, quotes, link targets, URLs and paths with equal-length spaces", () => {
+  const sample = [
+    "prose @Ops",
+    "> quote @Ada",
+    "inline `@Sam` and ``@Ops``",
+    "[label](https://example.com/@Ada(1))",
+    "visit https://x.com/@Sam/status",
+    "pkg @ops/core and /var/@Ada/log and C:\\work\\@Sam\\a.txt",
+    "```ts",
+    "const x = '@Ada';",
+    "```",
+    "~~~md",
+    "```",
+    "@Ops",
+    "~~~",
+    "tail @Sam",
+  ].join("\n");
+  const masked = maskNonProseMentions(sample);
+  expect(masked.length).toBe(sample.length);
+  expect(masked).toContain("prose @Ops");
+  expect(masked).toContain("tail @Sam");
+  expect(masked).not.toContain("@Ada");
+  expect(masked).not.toContain("`@Sam`");
+  expect(masked).not.toContain("@ops/core");
+  expect(masked).not.toContain("https://");
+
+  // Unclosed fenced code block masks until EOF.
+  const unclosed = "before @Ops\n```js\n@Ada\n@Sam";
+  const maskedUnclosed = maskNonProseMentions(unclosed);
+  expect(maskedUnclosed.length).toBe(unclosed.length);
+  expect(maskedUnclosed.startsWith("before @Ops\n")).toBe(true);
+  expect(maskedUnclosed).not.toContain("@Ada");
+  expect(maskedUnclosed).not.toContain("@Sam");
+});
+
+test("mentionedPeers ignores non-prose @mentions, normalizes NFC and supports full-width ＠", () => {
+  const roster = [
+    { id: "ada", name: "Ada" },
+    { id: "ops", name: "Ops" },
+    { id: "lead", name: "Ops Lead" },
+    { id: "cafe", name: "Cafe\u0301" },
+  ];
+  const ids = (reply: string, speaker = "ada") =>
+    mentionedPeers(reply, roster, speaker).map((bot) => bot.id);
+
+  // Only prose mentions outside code/quotes/links/urls/paths are matched.
+  const mixed = [
+    "> @Ops please ignore quote",
+    "Check `@Ops` and [doc](https://example.com/@Ops) and https://example.com/@Ops",
+    "Install @ops/cli or read /etc/@ops/conf and C:\\Users\\@Ops\\a.txt",
+    "```sh",
+    "@Ops",
+    "```",
+    "~~~",
+    "@Ops",
+    "~~~",
+    "Now ＠Ops Lead and @Caf\u00e9 take over, not ＠Ada.",
+  ].join("\n");
+  expect(ids(mixed, "ada")).toEqual(["lead", "cafe"]);
+
+  // Unclosed fence swallows trailing mentions, while single-line ```@Ops``` is inline code.
+  expect(ids("```@Ops``` then @Caf\u00e9", "ada")).toEqual(["cafe"]);
+  expect(ids("```ts\n@Ops\n@Cafe\u0301", "ada")).toEqual([]);
+  expect(ids("＠Ops Lead first, then ＠Ops", "ada")).toEqual(["lead", "ops"]);
 });
 
 function createMemoryHarness(options: {

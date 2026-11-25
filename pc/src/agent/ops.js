@@ -13,6 +13,11 @@ const { createCodeOps } = require("./code-ops");
 const { classifyOpenTarget } = require("./open-target");
 const { callLocalMcp, discoverLocalMcpConfigs } = require("./mcp-host");
 const {
+  createPathLockQueue,
+  readFileNoFollow,
+  writeFileAtomicSafe,
+} = require("../safe-fs");
+const {
   getSharedWinPsHelper,
   disposeSharedWinPsHelper,
 } = require("./win-ps-helper");
@@ -21,6 +26,27 @@ const OUTPUT_CAP = 64 * 1024;
 const LIST_CAP = 500;
 
 class OpError extends Error {}
+
+function mapSafeFsError(err, file) {
+  if (err instanceof OpError) return err;
+  switch (err?.code) {
+    case "ENOENT":
+      return new OpError(`文件不存在：${file}`);
+    case "EISDIR":
+    case "ERR_SAFE_FS_NOT_FILE":
+      return new OpError(`不是文件：${file}`);
+    case "ELOOP":
+      return new OpError(`拒绝访问符号链接：${file}`);
+    case "ERR_SAFE_FS_OUTSIDE_ROOTS":
+      return new OpError(`路径不在允许的文件夹内：${file}`);
+    case "ERR_SAFE_FS_TOCTOU":
+      return new OpError(`文件在操作期间被外部修改或替换：${file}`);
+    case "ERR_SAFE_FS_TOO_LARGE":
+      return new OpError(err.message);
+    default:
+      return err;
+  }
+}
 
 function pathApi(platform) {
   return platform === "win32" ? path.win32 : path.posix;
@@ -259,7 +285,9 @@ function validateInputKey(raw) {
   const keys = String(raw ?? "").trim();
   if (!keys) throw new OpError("key 需要 keys，例如 {ENTER} 或 ^c。");
   if (keys.length > MAX_INPUT_KEY_LENGTH || hasControlChars(keys)) {
-    throw new OpError(`keys 格式不合法或超过 ${MAX_INPUT_KEY_LENGTH} 字符上限。`);
+    throw new OpError(
+      `keys 格式不合法或超过 ${MAX_INPUT_KEY_LENGTH} 字符上限。`,
+    );
   }
   return keys;
 }
@@ -312,7 +340,9 @@ function linuxInputArgs(args = {}) {
       return ["key", "--", keys];
     }
     case "focus": {
-      const target = validateFocusTarget(args.app ?? args.bundleId ?? args.title);
+      const target = validateFocusTarget(
+        args.app ?? args.bundleId ?? args.title,
+      );
       return [
         "search",
         "--name",
@@ -402,7 +432,9 @@ function winInputScript(args = {}) {
       return `Add-Type -AssemblyName System.Windows.Forms; $keys = ${psUtf8Literal(keys)}; [System.Windows.Forms.SendKeys]::SendWait($keys);`;
     }
     case "focus": {
-      const target = validateFocusTarget(args.app ?? args.bundleId ?? args.title);
+      const target = validateFocusTarget(
+        args.app ?? args.bundleId ?? args.title,
+      );
       return `$target = ${psUtf8Literal(target)}; $ws = New-Object -ComObject WScript.Shell; if (-not $ws.AppActivate($target)) { $p = Get-Process | Where-Object { $_.ProcessName.Equals($target, [System.StringComparison]::OrdinalIgnoreCase) -or ($_.MainWindowTitle -and $_.MainWindowTitle.IndexOf($target, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) } | Select-Object -First 1; if (-not $p) { throw '未找到目标窗口' }; $ws.AppActivate($p.Id) | Out-Null }`;
     }
     default:
@@ -596,7 +628,8 @@ function createOps(options = {}) {
   const winHelper = options.winHelper || null;
   const P = pathApi(platform);
   let memoryClipboard = "";
-  const code = createCodeOps({ platform, resolveInRoots });
+  const lockQueue = options.lockQueue || createPathLockQueue(platform);
+  const code = createCodeOps({ platform, resolveInRoots, lockQueue });
 
   /** 完全访问模式（ctx.fullAccess）：任意绝对路径；相对路径相对于第一个允许的文件夹或主目录。 */
   async function resolvePath(requested, ctx) {
@@ -702,49 +735,93 @@ function createOps(options = {}) {
     if (args.startLine !== undefined || args.endLine !== undefined)
       return code.table.read_range(args, ctx);
     const file = await resolvePath(args.path, ctx);
-    const stat = await fsp.stat(file).catch(() => null);
-    if (!stat) throw new OpError(`文件不存在：${file}`);
-    if (!stat.isFile()) throw new OpError(`不是文件：${file}`);
     const max = Math.min(
       Math.max(Number(args.maxBytes) || 262_144, 1),
       1_048_576,
     );
-    const handle = await fsp.open(file, "r");
+    let result;
     try {
-      const buffer = Buffer.alloc(Math.min(max, stat.size));
-      await handle.read(buffer, 0, buffer.length, 0);
-      const binary = looksBinary(buffer);
-      return {
-        path: file,
-        size: stat.size,
-        truncated: stat.size > max,
-        encoding: binary ? "base64" : "utf8",
-        content: binary ? buffer.toString("base64") : buffer.toString("utf8"),
-      };
-    } finally {
-      await handle.close();
+      result = await readFileNoFollow(file, {
+        maxBytes: max,
+        allowedRoots: ctx.fullAccess ? undefined : ctx.allowedRoots,
+        platform,
+      });
+    } catch (err) {
+      throw mapSafeFsError(err, file);
     }
+    const binary = looksBinary(result.buffer);
+    return {
+      path: file,
+      size: result.size,
+      truncated: result.truncated,
+      encoding: binary ? "base64" : "utf8",
+      content: binary
+        ? result.buffer.toString("base64")
+        : result.buffer.toString("utf8"),
+    };
   }
 
   async function writeFile(args, ctx) {
     const file = await resolvePath(args.path, ctx);
     const content = String(args.content ?? "");
-    await fsp.mkdir(P.dirname(file), { recursive: true });
-    let backup = null;
-    const exists = await fsp.stat(file).catch(() => null);
-    if (exists && !exists.isFile()) throw new OpError(`不是文件：${file}`);
-    if (exists && !args.append) {
-      backup = `${file}.chisabot-bak`;
-      await fsp.copyFile(file, backup);
-    }
-    if (args.append) await fsp.appendFile(file, content, "utf8");
-    else await fsp.writeFile(file, content, "utf8");
-    return {
-      path: file,
-      bytes: Buffer.byteLength(content),
-      appended: !!args.append,
-      backup,
-    };
+    const allowedRoots = ctx.fullAccess ? undefined : ctx.allowedRoots;
+    return lockQueue.run(file, async () => {
+      let existing = null;
+      try {
+        existing = await readFileNoFollow(file, {
+          allowedRoots,
+          platform,
+        });
+      } catch (err) {
+        if (err?.code !== "ENOENT") {
+          throw mapSafeFsError(err, file);
+        }
+      }
+      let backup = null;
+      if (existing && !args.append) {
+        backup = `${file}.chisabot-bak`;
+        try {
+          await writeFileAtomicSafe(backup, existing.buffer, {
+            lockQueue: null,
+            allowedRoots,
+            fsync: false,
+            platform,
+            mode:
+              platform !== "win32"
+                ? Number(existing.stat.mode) & 0o777
+                : undefined,
+          });
+        } catch (err) {
+          throw mapSafeFsError(err, backup);
+        }
+      }
+      const nextData = args.append
+        ? existing
+          ? Buffer.concat([existing.buffer, Buffer.from(content, "utf8")])
+          : content
+        : content;
+      try {
+        await writeFileAtomicSafe(file, nextData, {
+          lockQueue: null,
+          allowedRoots,
+          expectedStat: existing ? existing.stat : null,
+          mustNotExist: !existing,
+          platform,
+          mode:
+            existing && platform !== "win32"
+              ? Number(existing.stat.mode) & 0o777
+              : undefined,
+        });
+      } catch (err) {
+        throw mapSafeFsError(err, file);
+      }
+      return {
+        path: file,
+        bytes: Buffer.byteLength(content),
+        appended: !!args.append,
+        backup,
+      };
+    });
   }
 
   async function screenshot(args) {

@@ -41,12 +41,160 @@ const DEFAULT_PUSH_GAP_MS = 15 * 1000;
 const DEFAULT_WAKE_GAP_MS = 5 * 60 * 1000;
 
 function cleanMessage(error) {
-  const text = error?.message ? String(error.message) : String(error || "未知错误");
+  const text = error?.message
+    ? String(error.message)
+    : String(error || "未知错误");
   const first = text.split("\n")[0].replace(/\s+/g, " ").trim();
-  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|ECONNRESET|net::ERR_/i.test(first)) return "连不上更新服务器，请检查网络。";
-  if (/sha512 checksum mismatch/i.test(first)) return "下载的安装包校验失败，已丢弃，稍后会重新下载。";
-  if (/404|Cannot find latest\.yml|HttpError: 404/i.test(first)) return "更新服务器上还没有发布版本信息。";
+  if (
+    /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|ECONNRESET|net::ERR_/i.test(
+      first,
+    )
+  )
+    return "连不上更新服务器，请检查网络。";
+  if (/sha512 checksum mismatch/i.test(first))
+    return "下载的安装包校验失败，已丢弃，稍后会重新下载。";
+  if (/404|Cannot find latest(?:-mac)?\.yml|HttpError: 404/i.test(first))
+    return "更新服务器上还没有发布版本信息。";
+  if (isCodeSignatureOrShipItError(first))
+    return "应用代码签名校验未通过，请手动下载最新版本安装。";
   return first.slice(0, 160);
+}
+
+function isCodeSignatureOrShipItError(error) {
+  const text = error?.message ? String(error.message) : String(error || "");
+  return /shipit|squirrel\.mac|code\s*signature|codesign|code\s+failed\s+to\s+satisfy|code\s+requirement|did\s+not\s+pass\s+validation|errSecCS/i.test(
+    text,
+  );
+}
+
+function loadYamlParser() {
+  try {
+    return require("js-yaml");
+  } catch {
+    try {
+      return require(
+        require.resolve("js-yaml", {
+          paths: [path.dirname(require.resolve("electron-updater"))],
+        }),
+      );
+    } catch {
+      return null;
+    }
+  }
+}
+
+function unquoteYamlScalar(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (s.startsWith("'") && s.endsWith("'") && s.length >= 2) {
+    return s.slice(1, -1).replace(/''/g, "'");
+  }
+  if (s.startsWith('"') && s.endsWith('"') && s.length >= 2) {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return s.slice(1, -1);
+    }
+  }
+  if (s === "true") return true;
+  if (s === "false") return false;
+  if (s === "null" || s === "~") return null;
+  if (/^-?\d+$/.test(s) && !(s.length > 1 && s.startsWith("0"))) {
+    const num = Number(s);
+    if (Number.isSafeInteger(num)) return num;
+  }
+  return s;
+}
+
+function parseSimpleManifestYaml(text) {
+  const out = {};
+  let section = null;
+  let currentFile = null;
+  for (const rawLine of String(text || "").split(/\r?\n/)) {
+    if (!rawLine.trim() || /^\s*#/.test(rawLine)) continue;
+    const top = /^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/.exec(rawLine);
+    if (top) {
+      const [, key, rest] = top;
+      const val = rest.trim();
+      currentFile = null;
+      if (!val && key === "files") {
+        section = "files";
+        out.files = [];
+      } else if (!val && key === updateSignature.SIGS_FIELD) {
+        section = "sigs";
+        out[updateSignature.SIGS_FIELD] = {};
+      } else {
+        section = null;
+        out[key] = unquoteYamlScalar(val);
+      }
+      continue;
+    }
+    if (section === "files") {
+      const listStart = /^\s+-\s*(.*)$/.exec(rawLine);
+      if (listStart) {
+        currentFile = {};
+        out.files.push(currentFile);
+        const kv = /^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/.exec(listStart[1]);
+        if (kv) currentFile[kv[1]] = unquoteYamlScalar(kv[2]);
+        continue;
+      }
+      const itemProp = /^\s+([A-Za-z0-9_.-]+)\s*:\s*(.*)$/.exec(rawLine);
+      if (itemProp && currentFile) {
+        currentFile[itemProp[1]] = unquoteYamlScalar(itemProp[2]);
+      }
+      continue;
+    }
+    if (section === "sigs") {
+      const sigEntry = /^\s+('[^']*'|"[^"]*"|[^:\s]+)\s*:\s*(.*)$/.exec(
+        rawLine,
+      );
+      if (sigEntry) {
+        const k = String(unquoteYamlScalar(sigEntry[1]));
+        out[updateSignature.SIGS_FIELD][k] = unquoteYamlScalar(sigEntry[2]);
+      }
+    }
+  }
+  return out;
+}
+
+function parseManifestYaml(text) {
+  const yaml = loadYamlParser();
+  const parsed = yaml
+    ? yaml.load(String(text || ""))
+    : parseSimpleManifestYaml(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new updateSignature.UpdateSignatureError(
+      "ERR_MANIFEST",
+      "更新清单格式无效",
+    );
+  }
+  return parsed;
+}
+
+async function defaultFetchManifest(
+  feedUrl,
+  { platform, fetchImpl = fetch } = {},
+) {
+  const manifestName = platform === "darwin" ? "latest-mac.yml" : "latest.yml";
+  const base = String(feedUrl || "").endsWith("/")
+    ? String(feedUrl)
+    : `${feedUrl}/`;
+  const manifestUrl = new URL(manifestName, base).toString();
+  const signal =
+    typeof AbortSignal !== "undefined" &&
+    typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(10_000)
+      : undefined;
+  const response = await fetchImpl(manifestUrl, {
+    method: "GET",
+    headers: { Accept: "text/yaml, text/plain, */*" },
+    signal,
+  });
+  if (!response?.ok) {
+    throw new Error(`HttpError: ${response?.status || 0} ${manifestName}`);
+  }
+  const text = await response.text();
+  return parseManifestYaml(text);
 }
 
 /**
@@ -56,7 +204,8 @@ function cleanMessage(error) {
 function requiresFullInstall(info, localShell) {
   if (!info || typeof info !== "object") return false;
   if (info.fullInstall === true || info.fullInstall === "true") return true;
-  const remote = typeof info.chisabotShell === "string" ? info.chisabotShell.trim() : "";
+  const remote =
+    typeof info.chisabotShell === "string" ? info.chisabotShell.trim() : "";
   if (!remote) return false;
   return remote !== String(localShell || "");
 }
@@ -67,10 +216,14 @@ function requiresFullInstall(info, localShell) {
  *  - 远端或本机缺少客户端指纹（chisabotClient / localClient）→ 兼容旧版本，照常下载；
  *  - chisabotClient 与本机一致 → 本次发布只改了网页或服务器，PC 客户端未变，不下载安装包，直接走网页刷新。
  */
-function requiresClientDownload(info, { localShell = "", localClient = "" } = {}) {
+function requiresClientDownload(
+  info,
+  { localShell = "", localClient = "" } = {},
+) {
   if (!info || typeof info !== "object") return false;
   if (requiresFullInstall(info, localShell)) return true;
-  const remoteClient = typeof info.chisabotClient === "string" ? info.chisabotClient.trim() : "";
+  const remoteClient =
+    typeof info.chisabotClient === "string" ? info.chisabotClient.trim() : "";
   const currentClient = String(localClient || "").trim();
   if (!remoteClient || !currentClient) return true;
   return remoteClient !== currentClient;
@@ -78,12 +231,18 @@ function requiresClientDownload(info, { localShell = "", localClient = "" } = {}
 
 /** 语义化版本比较（0.1.131 > 0.1.9）：只比数字段，非数字段按字典序。返回 <0 / 0 / >0。 */
 function compareVersion(a, b) {
-  const pa = String(a || "").replace(/^v/i, "").split(".");
-  const pb = String(b || "").replace(/^v/i, "").split(".");
+  const pa = String(a || "")
+    .replace(/^v/i, "")
+    .split(".");
+  const pb = String(b || "")
+    .replace(/^v/i, "")
+    .split(".");
   const n = Math.max(pa.length, pb.length);
   for (let i = 0; i < n; i++) {
-    const sa = pa[i] || "0", sb = pb[i] || "0";
-    const na = Number(sa), nb = Number(sb);
+    const sa = pa[i] || "0",
+      sb = pb[i] || "0";
+    const na = Number(sa),
+      nb = Number(sb);
     if (Number.isNaN(na) || Number.isNaN(nb)) {
       if (sa !== sb) return sa < sb ? -1 : 1;
     } else if (na !== nb) return na - nb;
@@ -92,7 +251,10 @@ function compareVersion(a, b) {
 }
 
 function defaultSpawn(cmd, args) {
-  const child = childProcess.spawn(cmd, args, { detached: true, stdio: "ignore" });
+  const child = childProcess.spawn(cmd, args, {
+    detached: true,
+    stdio: "ignore",
+  });
   child.on("error", () => {});
   child.unref();
   return child;
@@ -119,9 +281,12 @@ function defaultQuit() {
  * 注意 codesign 的输出格式：证书签名写 `Signature size=<n>`（没有 Signature= 行），
  * adhoc 写 `Signature=adhoc`，未签名直接非 0 退出。
  */
-function defaultSpawnSync(cmd, args) {
+function defaultSpawnSync(cmd, args, options = {}) {
   try {
-    return require("node:child_process").spawnSync(cmd, args, { encoding: "utf8" });
+    return require("node:child_process").spawnSync(cmd, args, {
+      encoding: "utf8",
+      ...options,
+    });
   } catch {
     return null;
   }
@@ -129,10 +294,14 @@ function defaultSpawnSync(cmd, args) {
 
 function hasStableMacSignature({ execPath, spawnSync = defaultSpawnSync }) {
   const appRoot = path.join(path.dirname(execPath), "..", "..");
-  const res = spawnSync("codesign", ["-dv", "--verbose=2", appRoot]);
+  const res = spawnSync("/usr/bin/codesign", ["-dv", "--verbose=2", appRoot], {
+    timeout: 3500,
+  });
   if (!res || res.error || res.status !== 0) return false;
   const out = `${res.stdout || ""}\n${res.stderr || ""}`;
-  const sigLine = out.split(/\r?\n/).find((l) => /^Signature(?:=| size=)/.test(l));
+  const sigLine = out
+    .split(/\r?\n/)
+    .find((l) => /^Signature(?:=| size=)/.test(l));
   return Boolean(sigLine) && !/^Signature=adhoc\b/i.test(sigLine);
 }
 
@@ -142,22 +311,81 @@ function isInstalledBuild({ execPath, productName, exists = fs.existsSync }) {
   // electron-builder 的 NSIS 卸载程序按 executableName 命名；改名前（≤0.1.128）那两种写法也认，
   // 新 exe 万一落在旧安装目录里照样算安装版。
   const compact = String(productName).replace(/\s+/g, "");
-  const names = [`Uninstall ${productName}.exe`, `Uninstall ${compact}.exe`, "Uninstall ChisaBotPC.exe", "Uninstall ChisaBot PC.exe"];
+  const names = [
+    `Uninstall ${productName}.exe`,
+    `Uninstall ${compact}.exe`,
+    "Uninstall ChisaBotPC.exe",
+    "Uninstall ChisaBot PC.exe",
+  ];
   return [...new Set(names)].some((name) => exists(path.join(dir, name)));
 }
 
-function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion = "", isPackaged, platform, execPath, productName, shellHash = "", clientHash = "", updateKeys, verifyDownload, removeFile = defaultRemove, getAutoUpdate, onState, onAvailable, onDownloaded, onRejected, logger, spawn = defaultSpawn, spawnSync = defaultSpawnSync, quitApp = defaultQuit, timers = { setTimeout, setInterval, clearTimeout, clearInterval }, now = () => new Date() }) {
+function createUpdater({
+  autoUpdater,
+  feedUrl,
+  fallbackFeed = "",
+  currentVersion = "",
+  isPackaged,
+  platform,
+  execPath,
+  productName,
+  shellHash = "",
+  clientHash = "",
+  updateKeys,
+  verifyDownload,
+  fetchManifest,
+  fetchImpl = fetch,
+  removeFile = defaultRemove,
+  getAutoUpdate,
+  onState,
+  onAvailable,
+  onDownloaded,
+  onRejected,
+  logger,
+  spawn = defaultSpawn,
+  spawnSync = defaultSpawnSync,
+  quitApp = defaultQuit,
+  timers = { setTimeout, setInterval, clearTimeout, clearInterval },
+  now = () => new Date(),
+}) {
   // Windows：只有 NSIS 安装版能更新（安装目录里有卸载程序）；开发运行、免安装 zip 不行。
   // macOS：打包好的 .app 还得带证书签名——adhoc 签名过不了 Squirrel 的 requirement 校验。
   const supported = Boolean(
     isPackaged &&
       autoUpdater &&
-      (platform === "win32" ? isInstalledBuild({ execPath, productName }) : platform === "darwin" ? hasStableMacSignature({ execPath, spawnSync }) : false),
+      (platform === "win32"
+        ? isInstalledBuild({ execPath, productName })
+        : platform === "darwin"
+          ? hasStableMacSignature({ execPath, spawnSync })
+          : false),
   );
   const gateByClient = Boolean(String(clientHash || "").trim());
   // updateKeys：update-signature.loadKeys() 的结果。不给（旧调用方 / 测试）= 不验签。
   const signing = Boolean(updateKeys?.enforce);
-  const verify = verifyDownload || ((info, file) => updateSignature.verifyDownloadedUpdate({ info, file, keys: updateKeys.keys }));
+  const verify =
+    verifyDownload ||
+    ((info, file) =>
+      updateSignature.verifyDownloadedUpdate({
+        info,
+        file,
+        keys: updateKeys.keys,
+      }));
+  const loadManifest =
+    typeof fetchManifest === "function"
+      ? async (url) => {
+          const manifestName =
+            platform === "darwin" ? "latest-mac.yml" : "latest.yml";
+          const raw = await fetchManifest(url, { platform, manifestName });
+          const parsed = typeof raw === "string" ? parseManifestYaml(raw) : raw;
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new updateSignature.UpdateSignatureError(
+              "ERR_MANIFEST",
+              "更新清单格式无效",
+            );
+          }
+          return parsed;
+        }
+      : (url) => defaultFetchManifest(url, { platform, fetchImpl });
   let activeFeed = feedUrl || "";
   const state = { supported, status: "idle", feedUrl: activeFeed };
   if (updateKeys) state.signing = signing;
@@ -177,8 +405,44 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
     if (state.status !== "downloading") delete state.percent;
     if (state.status !== "error") delete state.error;
     if (!state.fullInstall) delete state.fullInstall;
+    if (!state.manualInstall) delete state.manualInstall;
     if (!state.feedStale) delete state.feedStale;
     onState?.({ ...state });
+  }
+
+  function handleAutoUpdaterError(
+    error,
+    { allowSupersedeFallback = false } = {},
+  ) {
+    if (isCodeSignatureOrShipItError(error)) {
+      installing = false;
+      const version = state.version || lastAvailableVersion || undefined;
+      logger?.warn?.(
+        `自动更新校验失败，已降级为手动下载：${cleanMessage(error)}`,
+      );
+      set({
+        status: "available",
+        version,
+        manualInstall: true,
+        fullInstall: Boolean(state.fullInstall),
+        checkedAt: now().toISOString(),
+      });
+      if (version) lastAvailableVersion = version;
+      return true;
+    }
+    if (allowSupersedeFallback && supersedeCheck) {
+      set({ status: "downloaded", checkedAt: now().toISOString() });
+      return false;
+    }
+    if (state.status === "downloaded" || state.status === "verifying")
+      return false;
+    set({
+      status: "error",
+      error: cleanMessage(error),
+      manualInstall: false,
+      checkedAt: now().toISOString(),
+    });
+    return false;
   }
 
   if (supported) {
@@ -190,14 +454,18 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
     autoUpdater.allowDowngrade = false;
     if (logger) autoUpdater.logger = logger;
     // 运行时指定更新源（覆盖打包时的 app-update.yml）；不给就沿用 app-update.yml。
-    if (activeFeed) autoUpdater.setFeedURL({ provider: "generic", url: activeFeed });
-    if (updateKeys?.problem) logger?.warn?.(`更新公钥表有问题，所有更新都会被拒绝：${updateKeys.problem}`);
+    if (activeFeed)
+      autoUpdater.setFeedURL({ provider: "generic", url: activeFeed });
+    if (updateKeys?.problem)
+      logger?.warn?.(
+        `更新公钥表有问题，所有更新都会被拒绝：${updateKeys.problem}`,
+      );
     // 安装包没有 Authenticode 签名：见文件头（没有 publisherName 时 electron-updater 本来就不调它）。sha512 校验照常。
     try {
       autoUpdater.verifyUpdateCodeSignature = async () => null;
     } catch {}
     autoUpdater.on("checking-for-update", () => {
-      if (!supersedeCheck) set({ status: "checking" });
+      if (!supersedeCheck) set({ status: "checking", manualInstall: false });
     });
     autoUpdater.on("update-available", (info) => {
       // 复查（已有待安装包）：源上还是同一版本就不重复下载，更高版本才顶掉待安装的。
@@ -206,23 +474,53 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
         set({ status: "downloaded", checkedAt: now().toISOString() });
         return;
       }
-      if (gateByClient && !requiresClientDownload(info, { localShell: shellHash, localClient: clientHash })) {
-        logger?.info?.(`远端版本 ${info?.version || ""} 客户端指纹未变（${clientHash}），跳过下载安装包，由网页刷新生效`);
-        set(pending ? { status: "downloaded", checkedAt: now().toISOString() } : { status: "none", version: undefined, fullInstall: false, checkedAt: now().toISOString() });
+      if (
+        gateByClient &&
+        !requiresClientDownload(info, {
+          localShell: shellHash,
+          localClient: clientHash,
+        })
+      ) {
+        logger?.info?.(
+          `远端版本 ${info?.version || ""} 客户端指纹未变（${clientHash}），跳过下载安装包，由网页刷新生效`,
+        );
+        set(
+          pending
+            ? { status: "downloaded", checkedAt: now().toISOString() }
+            : {
+                status: "none",
+                version: undefined,
+                fullInstall: false,
+                manualInstall: false,
+                checkedAt: now().toISOString(),
+              },
+        );
         return;
       }
-      set({ status: "downloading", version: info?.version, percent: 0, fullInstall: requiresFullInstall(info, shellHash) });
+      set({
+        status: "downloading",
+        version: info?.version,
+        percent: 0,
+        fullInstall: requiresFullInstall(info, shellHash),
+        manualInstall: false,
+      });
       if (info?.version && info.version !== lastAvailableVersion) {
         lastAvailableVersion = info.version;
-        onAvailable?.(info.version);
+        onAvailable?.(info.version, {
+          manualInstall: false,
+          fullInstall: Boolean(state.fullInstall),
+        });
       }
       // 复查时 autoDownload 被临时关掉，新版本要手动拉包。
-      if ((gateByClient || pending) && typeof autoUpdater.downloadUpdate === "function" && !downloading) {
+      if (
+        (gateByClient || pending) &&
+        typeof autoUpdater.downloadUpdate === "function" &&
+        !downloading
+      ) {
         downloading = Promise.resolve()
           .then(() => autoUpdater.downloadUpdate())
           .catch((error) => {
-            if (state.status === "downloaded" || state.status === "verifying") return;
-            set({ status: "error", error: cleanMessage(error), checkedAt: now().toISOString() });
+            handleAutoUpdaterError(error);
           })
           .finally(() => {
             downloading = null;
@@ -231,70 +529,248 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
     });
     autoUpdater.on("update-not-available", () => {
       // 复查时源上已没有更新：保留待安装状态，不能把可装的包丢掉。
-      if (supersedeCheck) return set({ status: "downloaded", checkedAt: now().toISOString() });
-      set({ status: "none", version: undefined, fullInstall: false, checkedAt: now().toISOString() });
+      if (supersedeCheck)
+        return set({ status: "downloaded", checkedAt: now().toISOString() });
+      set({
+        status: "none",
+        version: undefined,
+        fullInstall: false,
+        manualInstall: false,
+        checkedAt: now().toISOString(),
+      });
     });
     autoUpdater.on("download-progress", (progress) => {
       if (state.status === "downloaded" || state.status === "verifying") return;
-      set({ status: "downloading", percent: Math.max(0, Math.min(100, Number(progress?.percent) || 0)) });
+      set({
+        status: "downloading",
+        percent: Math.max(0, Math.min(100, Number(progress?.percent) || 0)),
+      });
     });
     autoUpdater.on("update-downloaded", (info) => {
-      const fullInstall = info ? requiresFullInstall(info, shellHash) : Boolean(state.fullInstall);
+      const fullInstall = info
+        ? requiresFullInstall(info, shellHash)
+        : Boolean(state.fullInstall);
       // 重新安装不能交给 electron-updater 的「退出时安装」（它一定带 --updated）；退出时由 installOnQuit 处理。
       if (fullInstall) autoUpdater.autoInstallOnAppQuit = false;
       const version = info?.version || state.version;
       if (!signing) {
-        set({ status: "downloaded", version, fullInstall, checkedAt: now().toISOString() });
+        set({
+          status: "downloaded",
+          version,
+          fullInstall,
+          manualInstall: false,
+          checkedAt: now().toISOString(),
+        });
         onDownloaded?.(state.version);
         return;
       }
       const seq = ++verifySeq;
       const file = info?.downloadedFile;
-      set({ status: "verifying", version, fullInstall });
+      set({ status: "verifying", version, fullInstall, manualInstall: false });
       verifying = Promise.resolve()
         .then(() => verify(info, file))
         .then(
           () => {
             if (seq !== verifySeq) return;
-            set({ status: "downloaded", version, fullInstall, checkedAt: now().toISOString() });
+            set({
+              status: "downloaded",
+              version,
+              fullInstall,
+              manualInstall: false,
+              checkedAt: now().toISOString(),
+            });
             onDownloaded?.(version);
           },
           (error) => {
             if (seq !== verifySeq) return;
             removeFile(file);
-            const reason = error instanceof updateSignature.UpdateSignatureError ? error.message : cleanMessage(error);
-            logger?.warn?.(`更新包签名校验失败（${error?.code || "ERR"}）：${version || ""} ${reason}`);
-            set({ status: "error", error: `更新包签名校验失败，已拒绝安装：${reason}`, fullInstall: false, checkedAt: now().toISOString() });
+            const reason =
+              error instanceof updateSignature.UpdateSignatureError
+                ? error.message
+                : cleanMessage(error);
+            logger?.warn?.(
+              `更新包签名校验失败（${error?.code || "ERR"}）：${version || ""} ${reason}`,
+            );
+            set({
+              status: "error",
+              error: `更新包签名校验失败，已拒绝安装：${reason}`,
+              fullInstall: false,
+              manualInstall: false,
+              checkedAt: now().toISOString(),
+            });
             onRejected?.({ version, code: error?.code || "ERR", reason });
           },
         );
     });
     autoUpdater.on("error", (error) => {
-      if (state.status === "downloaded" || state.status === "verifying") return;
-      set({ status: "error", error: cleanMessage(error), checkedAt: now().toISOString() });
+      handleAutoUpdaterError(error);
     });
   }
 
+  async function checkManual() {
+    if (checking) return checking;
+    lastCheckAt = now().getTime();
+    checking = (async () => {
+      try {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          set({ status: "checking", manualInstall: false });
+          const info = await loadManifest(activeFeed);
+          const feedVersion =
+            typeof info?.version === "string" ||
+            typeof info?.version === "number"
+              ? String(info.version).trim()
+              : "";
+          if (
+            feedVersion &&
+            currentVersion &&
+            compareVersion(feedVersion, currentVersion) < 0
+          ) {
+            set({ feedStale: { url: activeFeed, version: feedVersion } });
+            logger?.warn?.(
+              `更新源已失效：${activeFeed} 上最高 ${feedVersion}，低于当前版本 ${currentVersion}`,
+            );
+            if (fallbackFeed && fallbackFeed !== activeFeed) {
+              activeFeed = fallbackFeed;
+              set({ feedUrl: activeFeed });
+              logger?.warn?.(`已退回下一级更新源：${activeFeed}`);
+              continue;
+            }
+          } else if (state.feedStale && activeFeed === state.feedStale.url) {
+            set({ feedStale: undefined });
+          }
+
+          if (
+            !feedVersion ||
+            (currentVersion && compareVersion(feedVersion, currentVersion) <= 0)
+          ) {
+            set({
+              status: "none",
+              version: undefined,
+              fullInstall: false,
+              manualInstall: false,
+              checkedAt: now().toISOString(),
+            });
+            return { ...state };
+          }
+
+          if (signing) {
+            try {
+              updateSignature.verifyManifest(info, updateKeys.keys);
+            } catch (error) {
+              const reason =
+                error instanceof updateSignature.UpdateSignatureError
+                  ? error.message
+                  : cleanMessage(error);
+              logger?.warn?.(
+                `更新清单签名校验失败（${error?.code || "ERR"}）：${feedVersion} ${reason}`,
+              );
+              set({
+                status: "error",
+                error: `更新清单签名校验失败，已拒绝安装：${reason}`,
+                fullInstall: false,
+                manualInstall: false,
+                checkedAt: now().toISOString(),
+              });
+              onRejected?.({
+                version: feedVersion,
+                code: error?.code || "ERR",
+                reason,
+              });
+              return { ...state };
+            }
+          }
+
+          if (
+            !requiresClientDownload(info, {
+              localShell: shellHash,
+              localClient: clientHash,
+            })
+          ) {
+            logger?.info?.(
+              `远端版本 ${feedVersion} 客户端指纹未变（${clientHash}），跳过手动下载引导，由网页刷新生效`,
+            );
+            set({
+              status: "none",
+              version: undefined,
+              fullInstall: false,
+              manualInstall: false,
+              checkedAt: now().toISOString(),
+            });
+            return { ...state };
+          }
+
+          const fullInstall = requiresFullInstall(info, shellHash);
+          set({
+            status: "available",
+            version: feedVersion,
+            manualInstall: true,
+            fullInstall,
+            checkedAt: now().toISOString(),
+          });
+          if (feedVersion !== lastAvailableVersion) {
+            lastAvailableVersion = feedVersion;
+            onAvailable?.(feedVersion, { manualInstall: true, fullInstall });
+          }
+          return { ...state };
+        }
+        return { ...state };
+      } catch (error) {
+        set({
+          status: "error",
+          error: cleanMessage(error),
+          fullInstall: false,
+          manualInstall: false,
+          checkedAt: now().toISOString(),
+        });
+        return { ...state };
+      } finally {
+        checking = null;
+      }
+    })();
+    return checking;
+  }
+
   async function check() {
-    if (!supported) return { ...state };
-    if (state.status === "downloading" || state.status === "verifying") return { ...state };
+    if (!supported) {
+      if (
+        isPackaged &&
+        activeFeed &&
+        (platform === "win32" || platform === "darwin")
+      ) {
+        return checkManual();
+      }
+      return { ...state };
+    }
+    if (state.status === "downloading" || state.status === "verifying")
+      return { ...state };
     if (checking) return checking;
     lastCheckAt = now().getTime();
     supersedeCheck = state.status === "downloaded";
     if (supersedeCheck) autoUpdater.autoDownload = false;
     checking = (async () => {
-      if (!supersedeCheck) set({ status: "checking" });
+      if (!supersedeCheck) set({ status: "checking", manualInstall: false });
       let fellBack = false;
       try {
         const result = await autoUpdater.checkForUpdates();
-        if (state.status === "checking") set({ status: "none", checkedAt: now().toISOString() });
+        if (state.status === "checking")
+          set({
+            status: "none",
+            manualInstall: false,
+            checkedAt: now().toISOString(),
+          });
         // 失效源检测：源上 latest.yml 的版本比本机还低——不是「已是最新」，是源被遗弃了（发版迁走 /
         // 测试残留 / 手改 config.json 的 updateFeed）。本机覆盖来源时自动退回下一级源再查一次，
         // 并把这个状态露给「本机」标签，不再静默显示「已是最新」。
         const feedVersion = result?.updateInfo?.version;
-        if (feedVersion && currentVersion && compareVersion(feedVersion, currentVersion) < 0) {
+        if (
+          feedVersion &&
+          currentVersion &&
+          compareVersion(feedVersion, currentVersion) < 0
+        ) {
           set({ feedStale: { url: activeFeed, version: feedVersion } });
-          logger?.warn?.(`更新源已失效：${activeFeed} 上最高 ${feedVersion}，低于当前版本 ${currentVersion}`);
+          logger?.warn?.(
+            `更新源已失效：${activeFeed} 上最高 ${feedVersion}，低于当前版本 ${currentVersion}`,
+          );
           if (fallbackFeed && fallbackFeed !== activeFeed) {
             activeFeed = fallbackFeed;
             autoUpdater.setFeedURL({ provider: "generic", url: activeFeed });
@@ -306,9 +782,8 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
           set({ feedStale: undefined });
         }
       } catch (error) {
-        // 复查失败不清掉待安装状态。
-        if (supersedeCheck) set({ status: "downloaded", checkedAt: now().toISOString() });
-        else set({ status: "error", error: cleanMessage(error), checkedAt: now().toISOString() });
+        // 复查失败不清掉待安装状态；若捕获 ShipIt / code signature 错误则保留已降级的 manualInstall 状态。
+        handleAutoUpdaterError(error, { allowSupersedeFallback: true });
       } finally {
         supersedeCheck = false;
         autoUpdater.autoDownload = !gateByClient;
@@ -326,17 +801,35 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
    *  - 若提示版本号不高于当前已装/已下载版本则直接忽略；
    *  - 按 minGapMs 节流，避免频繁重连或窗口切换造成请求风暴。
    */
-  async function nudge({ version = "", reason = "", minGapMs = DEFAULT_PUSH_GAP_MS } = {}) {
+  async function nudge({
+    version = "",
+    reason = "",
+    minGapMs = DEFAULT_PUSH_GAP_MS,
+  } = {}) {
     if (!supported || !getAutoUpdate()) return { ...state };
-    if (checking || state.status === "downloading" || state.status === "verifying") return { ...state };
+    if (
+      checking ||
+      state.status === "downloading" ||
+      state.status === "verifying"
+    )
+      return { ...state };
     const hint = typeof version === "string" ? version.trim() : "";
     if (hint) {
-      if (currentVersion && compareVersion(hint, currentVersion) <= 0) return { ...state };
-      if (state.status === "downloaded" && state.version && compareVersion(hint, state.version) <= 0) return { ...state };
+      if (currentVersion && compareVersion(hint, currentVersion) <= 0)
+        return { ...state };
+      if (
+        state.status === "downloaded" &&
+        state.version &&
+        compareVersion(hint, state.version) <= 0
+      )
+        return { ...state };
     }
     const elapsed = lastCheckAt > 0 ? now().getTime() - lastCheckAt : Infinity;
     if (minGapMs > 0 && elapsed < minGapMs) return { ...state };
-    if (reason) logger?.info?.(`收到更新触发（${reason}${hint ? ` · ${hint}` : ""}），开始检查更新`);
+    if (reason)
+      logger?.info?.(
+        `收到更新触发（${reason}${hint ? ` · ${hint}` : ""}），开始检查更新`,
+      );
     return check();
   }
 
@@ -425,7 +918,35 @@ function createUpdater({ autoUpdater, feedUrl, fallbackFeed = "", currentVersion
     return true;
   }
 
-  return { get state() { return { ...state }; }, supported, signing, get feedUrl() { return activeFeed; }, check, nudge, schedule, stop, install, installOnQuit, settled: () => verifying };
+  return {
+    get state() {
+      return { ...state };
+    },
+    supported,
+    signing,
+    get feedUrl() {
+      return activeFeed;
+    },
+    check,
+    nudge,
+    schedule,
+    stop,
+    install,
+    installOnQuit,
+    settled: () => verifying,
+  };
 }
 
-module.exports = { createUpdater, cleanMessage, isInstalledBuild, hasStableMacSignature, requiresFullInstall, requiresClientDownload, compareVersion, FIRST_CHECK_MS, INTERVAL_MS, DEFAULT_PUSH_GAP_MS, DEFAULT_WAKE_GAP_MS };
+module.exports = {
+  createUpdater,
+  cleanMessage,
+  isInstalledBuild,
+  hasStableMacSignature,
+  requiresFullInstall,
+  requiresClientDownload,
+  compareVersion,
+  FIRST_CHECK_MS,
+  INTERVAL_MS,
+  DEFAULT_PUSH_GAP_MS,
+  DEFAULT_WAKE_GAP_MS,
+};

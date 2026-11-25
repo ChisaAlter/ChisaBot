@@ -60,6 +60,16 @@ async function createSubagentBridge(options) {
   const runner = resolveJsRunner();
 
   const server = http.createServer((req, res) => {
+    if (req.headers.origin !== undefined) {
+      res.writeHead(403, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          ok: false,
+          error: "Origin header is not allowed on subagent bridge",
+        }),
+      );
+      return;
+    }
     const auth = req.headers.authorization || "";
     if (req.method !== "POST" || auth !== `Bearer ${token}`) {
       res.writeHead(401, { "content-type": "application/json" });

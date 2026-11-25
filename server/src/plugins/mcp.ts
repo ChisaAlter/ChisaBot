@@ -17,6 +17,7 @@ import {
   formatMcpCallFailure,
   isMcpTimeoutOrNetworkError,
   listAllClientTools,
+  shouldFallbackToSse,
 } from "./mcp-enhancements";
 
 /**
@@ -561,18 +562,55 @@ async function withClient<T>(
         : "That MCP address could not be resolved.",
     );
   }
-  const transport = createMcpClientTransport({
-    target,
-    pinned,
-    transport: connection.transport,
-    headers,
-    makePinnedFetch: pinnedMcpFetch,
-  });
-  const client = new Client({ name: "chisabot", version: "1.0.0" });
+  const active: {
+    client: Client | null;
+    transport: ReturnType<typeof createMcpClientTransport> | null;
+  } = { client: null, transport: null };
 
-  try {
+  const connectWithMode = async (mode: "streamable-http" | "sse") => {
+    const transport = createMcpClientTransport({
+      target,
+      pinned,
+      transport: mode,
+      headers,
+      makePinnedFetch: pinnedMcpFetch,
+    });
+    const client = new Client({ name: "chisabot", version: "1.0.0" });
+    active.transport = transport;
+    active.client = client;
     // SDK RequestOptions.signal cancels connect / in-flight JSON-RPC (FIX-04 residual).
     await client.connect(transport, signal ? { signal } : undefined);
+    return client;
+  };
+
+  try {
+    let client: Client;
+    if (connection.transport === "auto") {
+      try {
+        client = await connectWithMode("streamable-http");
+      } catch (connectError) {
+        if (
+          isMcpAbortError(connectError) ||
+          signal?.aborted ||
+          !shouldFallbackToSse(connectError)
+        ) {
+          throw connectError;
+        }
+        await active.client?.close().catch(() => {});
+        await active.transport?.close().catch(() => {});
+        active.client = null;
+        active.transport = null;
+        if (signal?.aborted) {
+          throw connectError;
+        }
+        // 复用同一个已校验的 pinned 公网 IP 钉死连接降级为 SSE，绝不绕过 pinnedMcpFetch。
+        client = await connectWithMode("sse");
+      }
+    } else {
+      client = await connectWithMode(
+        connection.transport === "sse" ? "sse" : "streamable-http",
+      );
+    }
     return await use(client);
   } catch (error) {
     // Abort must stay AbortError so callers can distinguish Stop from vendor failure.
@@ -589,9 +627,10 @@ async function withClient<T>(
     // sentence rather than a stack.
     throw new McpServerError(vendorFailure(error));
   } finally {
-    await client.close().catch(() => {
+    await active.client?.close().catch(() => {
       // A server that will not say goodbye is not a failure of the work that just succeeded.
     });
+    await active.transport?.close().catch(() => {});
   }
 }
 

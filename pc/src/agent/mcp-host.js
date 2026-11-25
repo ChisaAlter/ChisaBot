@@ -8,6 +8,7 @@
  * 3. 本机 MCP 配置发现只读返回服务端清单与 key 名，不回传任何真实环境变量或 Header 密钥。
  */
 
+const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -21,6 +22,109 @@ const MAX_TIMEOUT_MS = 120_000;
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024;
 const MAX_LINE_BYTES = 2 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
+const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
+
+/**
+ * 固定字节上限的尾部环形 stderr 缓冲区：
+ * 持续保留最近 `maxBytes` 的尾端输出，并在发生滚动覆盖时标记 `truncated = true`。
+ */
+class StderrRingBuffer {
+  constructor(maxBytes = MAX_STDERR_BYTES) {
+    this.maxBytes =
+      Number.isFinite(maxBytes) && maxBytes > 0
+        ? Math.floor(maxBytes)
+        : MAX_STDERR_BYTES;
+    this._chunks = [];
+    this._bytes = 0;
+    this._truncated = false;
+    this._droppedBytes = 0;
+    this._totalBytes = 0;
+  }
+
+  get bytes() {
+    return this._bytes;
+  }
+
+  get truncated() {
+    return this._truncated;
+  }
+
+  get droppedBytes() {
+    return this._droppedBytes;
+  }
+
+  get totalBytes() {
+    return this._totalBytes;
+  }
+
+  append(chunk) {
+    if (chunk === null || chunk === undefined) return;
+    let buf;
+    if (Buffer.isBuffer(chunk)) {
+      buf = chunk;
+    } else if (chunk instanceof Uint8Array) {
+      buf = Buffer.from(chunk);
+    } else {
+      const str = String(chunk);
+      if (!str) return;
+      buf = Buffer.from(str, "utf8");
+    }
+    if (buf.length === 0) return;
+
+    this._totalBytes += buf.length;
+    if (buf.length >= this.maxBytes) {
+      const overflow = this._bytes + buf.length - this.maxBytes;
+      if (overflow > 0) {
+        this._truncated = true;
+        this._droppedBytes += overflow;
+      }
+      const tail = buf.subarray(buf.length - this.maxBytes);
+      this._chunks = [tail];
+      this._bytes = tail.length;
+      return;
+    }
+
+    this._chunks.push(buf);
+    this._bytes += buf.length;
+    while (this._bytes > this.maxBytes && this._chunks.length > 0) {
+      this._truncated = true;
+      const excess = this._bytes - this.maxBytes;
+      const head = this._chunks[0];
+      if (head.length <= excess) {
+        this._chunks.shift();
+        this._bytes -= head.length;
+        this._droppedBytes += head.length;
+      } else {
+        this._chunks[0] = head.subarray(excess);
+        this._bytes -= excess;
+        this._droppedBytes += excess;
+      }
+    }
+  }
+
+  toString() {
+    if (this._chunks.length === 0) return "";
+    let merged =
+      this._chunks.length === 1
+        ? this._chunks[0]
+        : Buffer.concat(this._chunks, this._bytes);
+    if (this._truncated && merged.length > 0) {
+      // 跳过前部被截断的 UTF-8 续字节（10xxxxxx），避免尾部首字符出现乱码替换符。
+      let offset = 0;
+      while (
+        offset < merged.length &&
+        offset < 3 &&
+        (merged[offset] & 0xc0) === 0x80
+      ) {
+        offset += 1;
+      }
+      if (offset > 0) {
+        merged = merged.subarray(offset);
+      }
+    }
+    return merged.toString("utf8");
+  }
+}
 
 const ALLOWED_ENV_KEYS_UPPER = new Set([
   "PATH",
@@ -294,8 +398,7 @@ async function callLocalMcp({
   return new Promise((resolve, reject) => {
     let settled = false;
     let totalStdoutBytes = 0;
-    let totalStderrBytes = 0;
-    let stderrText = "";
+    const stderrRing = new StderrRingBuffer(MAX_STDERR_BYTES);
     let lineBuffer = "";
     let sentActionRequest = false;
 
@@ -432,13 +535,7 @@ async function callLocalMcp({
     });
 
     child.stderr?.on?.("data", (chunk) => {
-      if (totalStderrBytes >= MAX_STDERR_BYTES) return;
-      const text =
-        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-      const remaining = MAX_STDERR_BYTES - totalStderrBytes;
-      const slice = text.slice(0, remaining);
-      totalStderrBytes += Buffer.byteLength(slice, "utf8");
-      stderrText += slice;
+      stderrRing.append(chunk);
     });
 
     child.on?.("error", (error) => fail(error));
@@ -449,9 +546,15 @@ async function callLocalMcp({
         handleJsonLine(rest);
       }
       if (!settled) {
-        const detail = stderrText.trim()
-          ? `：${stderrText.trim().slice(0, 400)}`
-          : "";
+        const rawStderr = stderrRing.toString().trim();
+        let detail = "";
+        if (rawStderr) {
+          const tail =
+            rawStderr.length > 400 ? `…${rawStderr.slice(-400)}` : rawStderr;
+          detail = stderrRing.truncated
+            ? `：[stderr 已滚动截断，保留尾部] ${tail}`
+            : `：${tail}`;
+        }
         fail(
           new Error(
             `本地 MCP 服务未返回响应即退出（code=${String(code ?? "null")}）${detail}`,
@@ -514,61 +617,374 @@ function redactCliArg(arg, prevArg) {
   return arg;
 }
 
-function extractEntriesFromConfig(source, parsed) {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
-  const candidates = [];
-  const rawMap =
-    (parsed.mcpServers &&
-      typeof parsed.mcpServers === "object" &&
-      !Array.isArray(parsed.mcpServers) &&
-      parsed.mcpServers) ||
-    (parsed.servers &&
-      typeof parsed.servers === "object" &&
-      !Array.isArray(parsed.servers) &&
-      parsed.servers) ||
-    null;
-  if (!rawMap) return candidates;
+/**
+ * 剥离 UTF-8 BOM、JSONC 单行/多行注释与尾逗号（严格跳过双引号字符串字面量内的 `//`、`/*` 与 `, }`）。
+ */
+function stripJsonCommentsAndBom(rawText) {
+  if (typeof rawText !== "string") return "";
+  const text = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
 
+  // Pass 1: 剥离 // 与 /* */ 注释，保留字符串字面量与换行位置
+  let noComments = "";
+  let inString = false;
+  let escaped = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (inLineComment) {
+      if (ch === "\n" || ch === "\r") {
+        inLineComment = false;
+        noComments += ch;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (ch === "*" && next === "/") {
+        inBlockComment = false;
+        i += 1;
+        noComments += " ";
+      } else if (ch === "\n" || ch === "\r") {
+        noComments += ch;
+      }
+      continue;
+    }
+
+    if (inString) {
+      noComments += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      noComments += ch;
+      continue;
+    }
+
+    if (ch === "/" && next === "/") {
+      inLineComment = true;
+      i += 1;
+      continue;
+    }
+
+    if (ch === "/" && next === "*") {
+      inBlockComment = true;
+      i += 1;
+      continue;
+    }
+
+    noComments += ch;
+  }
+
+  // Pass 2: 剥离对象/数组尾逗号（仅在双引号字符串外生效）
+  let output = "";
+  inString = false;
+  escaped = false;
+
+  for (let i = 0; i < noComments.length; i += 1) {
+    const ch = noComments[i];
+
+    if (inString) {
+      output += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      output += ch;
+      continue;
+    }
+
+    if (ch === ",") {
+      let j = i + 1;
+      while (j < noComments.length && /\s/.test(noComments[j])) {
+        j += 1;
+      }
+      if (noComments[j] === "}" || noComments[j] === "]") {
+        continue;
+      }
+    }
+
+    output += ch;
+  }
+
+  return output;
+}
+
+const UNRESOLVED_VAR_RE = /\$\{[^{}]+\}/;
+
+function expandWorkspaceVariables(text, workspaceDir) {
+  if (typeof text !== "string" || !workspaceDir) return text;
+  const folder = workspaceDir;
+  const basename = path.basename(folder);
+  return text
+    .replace(/\$\{workspaceFolder\}/g, () => folder)
+    .replace(/\$\{workspaceFolderBasename\}/g, () => basename);
+}
+
+function hasUnresolvedVariable(text) {
+  return typeof text === "string" && UNRESOLVED_VAR_RE.test(text);
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function collectServerMaps(container) {
+  if (!isPlainObject(container)) return [];
+  const maps = [];
+  for (const key of ["mcpServers", "servers", "mcp_servers"]) {
+    if (isPlainObject(container[key])) {
+      maps.push(container[key]);
+    }
+  }
+  return maps;
+}
+
+function normalizePathForMatch(targetPath, platform) {
+  const resolved = path.resolve(targetPath);
+  const trimmed =
+    resolved.length > 1 ? resolved.replace(/[\\/]+$/, "") : resolved;
+  return platform === "win32" ? trimmed.toLowerCase() : trimmed;
+}
+
+function findMatchingClaudeProjectConfigs(
+  parsed,
+  workspaceDir,
+  workspaceRootReal,
+  platform,
+) {
+  if (!isPlainObject(parsed.projects) || !workspaceDir) return [];
+  const matchKeys = new Set([normalizePathForMatch(workspaceDir, platform)]);
+  if (workspaceRootReal) {
+    matchKeys.add(normalizePathForMatch(workspaceRootReal, platform));
+  }
+  const matchedConfigs = [];
+  for (const [projectPath, projectConfig] of Object.entries(parsed.projects)) {
+    if (!isPlainObject(projectConfig)) continue;
+    if (matchKeys.has(normalizePathForMatch(projectPath, platform))) {
+      matchedConfigs.push(projectConfig);
+    }
+  }
+  return matchedConfigs;
+}
+
+function firstNonEmptyString(...values) {
+  for (const val of values) {
+    if (typeof val === "string" && val.trim()) {
+      return val.trim();
+    }
+  }
+  return undefined;
+}
+
+function extractEntriesFromServerMap(source, rawMap, workspaceDir) {
+  const candidates = [];
   for (const [name, entry] of Object.entries(rawMap)) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const rawUrl =
-      typeof entry.url === "string" && entry.url.trim()
-        ? entry.url.trim()
-        : undefined;
-    const rawCommand =
-      typeof entry.command === "string" && entry.command.trim()
-        ? entry.command.trim()
-        : undefined;
+    if (!isPlainObject(entry)) continue;
+
+    let needsConfig = false;
+    const rawUrl = firstNonEmptyString(
+      entry.url,
+      entry.httpUrl,
+      entry.serverUrl,
+      entry.sseUrl,
+    );
+    const expandedUrl = rawUrl
+      ? expandWorkspaceVariables(rawUrl, workspaceDir)
+      : undefined;
+    if (expandedUrl && hasUnresolvedVariable(expandedUrl)) {
+      needsConfig = true;
+    }
+
+    const rawCommand = firstNonEmptyString(entry.command);
+    const expandedCommand = rawCommand
+      ? expandWorkspaceVariables(rawCommand, workspaceDir)
+      : undefined;
+    if (expandedCommand && hasUnresolvedVariable(expandedCommand)) {
+      needsConfig = true;
+    }
+
+    if (typeof entry.cwd === "string" && entry.cwd.trim()) {
+      const expandedCwd = expandWorkspaceVariables(
+        entry.cwd.trim(),
+        workspaceDir,
+      );
+      if (hasUnresolvedVariable(expandedCwd)) {
+        needsConfig = true;
+      }
+    }
+
     const rawArgs = Array.isArray(entry.args)
       ? entry.args.filter((item) => typeof item === "string")
       : [];
-    const safeArgs = [];
-    for (let i = 0; i < rawArgs.length; i += 1) {
-      safeArgs.push(redactCliArg(rawArgs[i], i > 0 ? rawArgs[i - 1] : ""));
+    const expandedArgs = rawArgs.map((item) =>
+      expandWorkspaceVariables(item, workspaceDir),
+    );
+    for (const arg of expandedArgs) {
+      if (hasUnresolvedVariable(arg)) {
+        needsConfig = true;
+      }
     }
-    const envKeys =
-      entry.env && typeof entry.env === "object" && !Array.isArray(entry.env)
-        ? Object.keys(entry.env)
-        : [];
-    const headerKeys =
-      entry.headers &&
-      typeof entry.headers === "object" &&
-      !Array.isArray(entry.headers)
-        ? Object.keys(entry.headers)
-        : [];
+    const safeArgs = [];
+    for (let i = 0; i < expandedArgs.length; i += 1) {
+      safeArgs.push(
+        redactCliArg(expandedArgs[i], i > 0 ? expandedArgs[i - 1] : ""),
+      );
+    }
+
+    const envKeys = [];
+    if (isPlainObject(entry.env)) {
+      for (const [envKey, envVal] of Object.entries(entry.env)) {
+        envKeys.push(envKey);
+        if (typeof envVal === "string") {
+          const expandedVal = expandWorkspaceVariables(envVal, workspaceDir);
+          if (hasUnresolvedVariable(expandedVal)) {
+            needsConfig = true;
+          }
+        }
+      }
+    }
+
+    const headerKeys = [];
+    if (isPlainObject(entry.headers)) {
+      for (const [headerKey, headerVal] of Object.entries(entry.headers)) {
+        headerKeys.push(headerKey);
+        if (typeof headerVal === "string") {
+          const expandedVal = expandWorkspaceVariables(headerVal, workspaceDir);
+          if (hasUnresolvedVariable(expandedVal)) {
+            needsConfig = true;
+          }
+        }
+      }
+    }
 
     candidates.push({
       source,
       name,
-      transport: rawUrl ? "http" : "stdio",
-      ...(rawCommand ? { command: rawCommand } : {}),
+      transport: expandedUrl ? "http" : "stdio",
+      ...(expandedCommand ? { command: expandedCommand } : {}),
       ...(safeArgs.length > 0 ? { args: safeArgs } : {}),
-      ...(rawUrl ? { url: redactHttpUrl(rawUrl) } : {}),
+      ...(expandedUrl ? { url: redactHttpUrl(expandedUrl) } : {}),
       envKeys,
       ...(headerKeys.length > 0 ? { headerKeys } : {}),
+      ...(needsConfig ? { needsConfig: true } : {}),
     });
   }
   return candidates;
+}
+
+function extractEntriesFromConfig(source, parsed, options = {}) {
+  if (!isPlainObject(parsed)) return [];
+  const workspaceDir =
+    typeof options.workspaceDir === "string" && options.workspaceDir.trim()
+      ? options.workspaceDir.trim()
+      : undefined;
+  const workspaceRootReal =
+    typeof options.workspaceRootReal === "string" &&
+    options.workspaceRootReal.trim()
+      ? options.workspaceRootReal.trim()
+      : undefined;
+  const platform = options.platform || process.platform;
+
+  const byName = new Map();
+  for (const rawMap of collectServerMaps(parsed)) {
+    for (const item of extractEntriesFromServerMap(
+      source,
+      rawMap,
+      workspaceDir,
+    )) {
+      byName.set(item.name, item);
+    }
+  }
+
+  if (source === "claude-code" && workspaceDir) {
+    const projectConfigs = findMatchingClaudeProjectConfigs(
+      parsed,
+      workspaceDir,
+      workspaceRootReal,
+      platform,
+    );
+    for (const projectConfig of projectConfigs) {
+      for (const rawMap of collectServerMaps(projectConfig)) {
+        for (const item of extractEntriesFromServerMap(
+          source,
+          rawMap,
+          workspaceDir,
+        )) {
+          byName.set(item.name, item);
+        }
+      }
+    }
+  }
+
+  return [...byName.values()];
+}
+
+function isPathInside(targetPath, rootPath, platform = process.platform) {
+  const normTarget =
+    platform === "win32" ? targetPath.toLowerCase() : targetPath;
+  const normRoot = platform === "win32" ? rootPath.toLowerCase() : rootPath;
+  const rel = path.relative(normRoot, normTarget);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/**
+ * 安全只读打开本地配置文件：
+ * 1. `lstat` 拒绝 symlink 与非普通文件及超大文件；
+ * 2. 对工作区配置额外执行 `realpath` 校验，防止目录联接/符号链接逃逸出 `workspaceDir`；
+ * 3. 使用 `O_RDONLY | O_NOFOLLOW` 打开句柄并二次校验 `fh.stat()` 后读取文本。
+ */
+async function readConfigFileSafely(filePath, options = {}) {
+  const lstat = await fsp.lstat(filePath);
+  if (
+    lstat.isSymbolicLink() ||
+    !lstat.isFile() ||
+    lstat.size > MAX_CONFIG_BYTES
+  ) {
+    return null;
+  }
+
+  if (options.isWorkspace) {
+    if (!options.workspaceRootReal) return null;
+    const realFilePath = await fsp.realpath(filePath);
+    if (
+      !isPathInside(realFilePath, options.workspaceRootReal, options.platform)
+    ) {
+      return null;
+    }
+  }
+
+  const oNoFollow =
+    typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+  const fh = await fsp.open(filePath, fs.constants.O_RDONLY | oNoFollow);
+  try {
+    const fstat = await fh.stat();
+    if (!fstat.isFile() || fstat.size > MAX_CONFIG_BYTES) {
+      return null;
+    }
+    return await fh.readFile({ encoding: "utf8" });
+  } finally {
+    await fh.close().catch(() => {});
+  }
 }
 
 /**
@@ -587,7 +1003,13 @@ async function discoverLocalMcpConfigs(options = {}) {
   const xdgConfig =
     (!hasCustomHome ? process.env.XDG_CONFIG_HOME : "") ||
     pathImpl.join(home, ".config");
-  const workspaceDir = options.workspaceDir;
+  const rawWorkspaceDir =
+    typeof options.workspaceDir === "string" && options.workspaceDir.trim()
+      ? pathImpl.resolve(options.workspaceDir.trim())
+      : undefined;
+  const workspaceRootReal = rawWorkspaceDir
+    ? await fsp.realpath(rawWorkspaceDir).catch(() => null)
+    : null;
 
   const targets = [];
 
@@ -650,19 +1072,26 @@ async function discoverLocalMcpConfigs(options = {}) {
     filePath: pathImpl.join(home, ".cursor", "mcp.json"),
   });
 
-  if (workspaceDir && typeof workspaceDir === "string" && workspaceDir.trim()) {
-    const root = workspaceDir.trim();
+  if (rawWorkspaceDir) {
     targets.push({
       source: "vscode-workspace",
-      filePath: pathImpl.join(root, ".vscode", "mcp.json"),
+      filePath: pathImpl.join(rawWorkspaceDir, ".vscode", "mcp.json"),
+      isWorkspace: true,
     });
     targets.push({
       source: "cursor-workspace",
-      filePath: pathImpl.join(root, ".cursor", "mcp.json"),
+      filePath: pathImpl.join(rawWorkspaceDir, ".cursor", "mcp.json"),
+      isWorkspace: true,
     });
     targets.push({
       source: "claude-workspace",
-      filePath: pathImpl.join(root, ".mcp.json"),
+      filePath: pathImpl.join(rawWorkspaceDir, ".mcp.json"),
+      isWorkspace: true,
+    });
+    targets.push({
+      source: "workspace",
+      filePath: pathImpl.join(rawWorkspaceDir, "mcp.json"),
+      isWorkspace: true,
     });
   }
 
@@ -671,11 +1100,18 @@ async function discoverLocalMcpConfigs(options = {}) {
 
   for (const target of targets) {
     try {
-      const stat = await fsp.stat(target.filePath);
-      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
-      const text = await fsp.readFile(target.filePath, "utf8");
-      const parsed = JSON.parse(text);
-      const extracted = extractEntriesFromConfig(target.source, parsed);
+      const text = await readConfigFileSafely(target.filePath, {
+        isWorkspace: Boolean(target.isWorkspace),
+        workspaceRootReal,
+        platform,
+      });
+      if (text === null) continue;
+      const parsed = JSON.parse(stripJsonCommentsAndBom(text));
+      const extracted = extractEntriesFromConfig(target.source, parsed, {
+        workspaceDir: rawWorkspaceDir,
+        workspaceRootReal,
+        platform,
+      });
       foundFiles.push({ source: target.source, filePath: target.filePath });
       servers.push(...extracted);
     } catch {
@@ -687,7 +1123,11 @@ async function discoverLocalMcpConfigs(options = {}) {
 }
 
 module.exports = {
+  MAX_STDERR_BYTES,
   SHELL_METACHAR_ERROR,
+  StderrRingBuffer,
+  stripJsonCommentsAndBom,
+  extractEntriesFromConfig,
   parseCommandArgs,
   sanitizeMcpEnv,
   callLocalMcp,

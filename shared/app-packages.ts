@@ -40,7 +40,7 @@ export type AppRuntimeKind = (typeof APP_RUNTIME_KINDS)[number];
 export const APP_PACKAGE_STATUSES = ["draft", "installed", "disabled"] as const;
 export type AppPackageStatus = (typeof APP_PACKAGE_STATUSES)[number];
 
-export const MCP_TRANSPORT_MODES = ["streamable-http", "sse"] as const;
+export const MCP_TRANSPORT_MODES = ["auto", "streamable-http", "sse"] as const;
 export type McpTransportMode = (typeof MCP_TRANSPORT_MODES)[number];
 
 export type LocalizedText = {

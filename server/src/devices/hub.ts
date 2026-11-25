@@ -749,9 +749,7 @@ export function createDeviceHub(options: {
       extension = next;
     },
 
-    setLatestClientVersionProvider(
-      provider: (() => string | null) | null,
-    ) {
+    setLatestClientVersionProvider(provider: (() => string | null) | null) {
       getLatestClientVersion = provider;
     },
 
@@ -1020,11 +1018,19 @@ export function createDeviceHub(options: {
               : `用户在${who}拒绝了这次操作。`,
           );
         approvalNote = `已在${who}批准`;
-        // 审批期间配置可能变了（例如按了紧急停止）。
+        // 审批期间配置可能变了（例如按了紧急停止、关闭能力或移除允许目录）。
         const fresh = await store.get(record.id);
         if (input.signal?.aborted) return refuse("cancelled", TOOL_STOPPED_ZH);
         if (!fresh || fresh.revoked || fresh.paused)
           return refuse("refused", "审批期间设备已停止或被撤销。");
+        const freshCapability = capability
+          ? (fresh.capabilities as DeviceCapabilities)[capability]
+          : "allow";
+        if (freshCapability === "off")
+          return refuse(
+            "refused",
+            `审批期间「${OPERATION_LABEL[input.operation]}」能力已被关闭，操作未执行。`,
+          );
         if (outside) {
           const added = await addOutsideRoot(
             fresh,
@@ -1033,6 +1039,18 @@ export function createDeviceHub(options: {
           );
           if (added !== true) return refuse("refused", added);
           approvalNote = `${approvalNote}；已把 ${outside.folder} 加入允许的文件夹`;
+        } else {
+          const freshOutside = outsideRoots(
+            fresh.platform,
+            fresh.allowedRoots,
+            input.operation,
+            input.args,
+          );
+          if (freshOutside)
+            return refuse(
+              "refused",
+              `审批期间允许的文件夹已变更，${freshOutside.folder} 已不在允许的文件夹内，操作未执行。`,
+            );
         }
       }
 

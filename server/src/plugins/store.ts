@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import type { McpTransportMode } from "../../../shared/app-packages";
 import {
   BlockedUrlError,
   guardedFetchResponse,
@@ -18,6 +19,7 @@ import {
   type PolicyContext,
   policyInitiator,
 } from "../computer/policy";
+import type { ToolImagePart } from "../conversations/tool-images";
 import {
   type CredentialExecutor,
   type CredentialSecretReader,
@@ -49,13 +51,11 @@ import {
   skillTools,
 } from "../db/schema";
 import type { CheckPrivateShare } from "../proactive/private-share";
-import type { ToolImagePart } from "../conversations/tool-images";
 import {
   accessFor,
   type ServerAccess,
   ServerUnresolvableError,
 } from "./access";
-import type { McpEnhancementStore } from "./mcp-enhancements";
 import {
   type BrokerConnection,
   BrokerRefusalError,
@@ -83,6 +83,7 @@ import {
 } from "./composio";
 import { inspectToolArguments } from "./content-governance";
 import { type ListedTool, McpServerError } from "./mcp";
+import type { McpEnhancementStore } from "./mcp-enhancements";
 import { registerDynamicClient } from "./oauth";
 import { shareTargetOf } from "./share-target";
 import { transportFor } from "./transport";
@@ -1157,7 +1158,7 @@ export type PluginStoreOptions = {
     connection: {
       url: string;
       token?: string;
-      transport?: "streamable-http" | "sse";
+      transport?: McpTransportMode;
       extraHeaders?: Record<string, string>;
       actorId?: string;
       botId?: string;
@@ -4835,7 +4836,10 @@ export function createPluginStore(options: PluginStoreOptions) {
           : Promise.resolve(
               new Map<
                 string,
-                { disabledTools: ReadonlySet<string>; customInstructions: string }
+                {
+                  disabledTools: ReadonlySet<string>;
+                  customInstructions: string;
+                }
               >(),
             ),
         skillSlugs.length === 0

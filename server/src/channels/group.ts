@@ -595,28 +595,173 @@ export function groupTurnMessage(
   };
 }
 
+function maskSpanWithSpaces(chars: string[], start: number, end: number): void {
+  for (let index = start; index < end; index++) {
+    if (chars[index] !== "\n" && chars[index] !== "\r") {
+      chars[index] = " ";
+    }
+  }
+}
+
+/**
+ * Mask non-prose spans (fenced code blocks including unclosed fences, blockquotes,
+ * inline code spans, Markdown link targets, absolute URLs, and path fragments
+ * containing `@`/`＠`) with equal-length spaces before `@mention` extraction.
+ */
+export function maskNonProseMentions(text: string): string {
+  const chars = text.split("");
+  let offset = 0;
+  let fence: { char: "`" | "~"; length: number } | null = null;
+  const lines = text.split("\n");
+  for (const line of lines) {
+    const lineLen = line.length;
+    const stripped = line.endsWith("\r") ? line.slice(0, -1) : line;
+    if (fence) {
+      maskSpanWithSpaces(chars, offset, offset + lineLen);
+      const closeMatch = stripped.match(/^[ \t]*(`{3,}|~{3,})[ \t]*$/);
+      const closeRun = closeMatch?.[1];
+      if (
+        closeRun &&
+        closeRun[0] === fence.char &&
+        closeRun.length >= fence.length
+      ) {
+        fence = null;
+      }
+    } else {
+      const openTick = stripped.match(/^[ \t]*(`{3,})([^`]*)$/);
+      const openTilde = stripped.match(/^[ \t]*(~{3,})(.*)$/);
+      const tickRun = openTick?.[1];
+      const tildeRun = openTilde?.[1];
+      if (tickRun) {
+        fence = { char: "`", length: tickRun.length };
+        maskSpanWithSpaces(chars, offset, offset + lineLen);
+      } else if (tildeRun) {
+        fence = { char: "~", length: tildeRun.length };
+        maskSpanWithSpaces(chars, offset, offset + lineLen);
+      } else if (/^[ \t]*>/.test(stripped)) {
+        maskSpanWithSpaces(chars, offset, offset + lineLen);
+      }
+    }
+    offset += lineLen + 1;
+  }
+
+  let current = chars.join("");
+  let pos = 0;
+  while (pos < current.length) {
+    if (current[pos] !== "`") {
+      pos += 1;
+      continue;
+    }
+    let runEnd = pos + 1;
+    while (runEnd < current.length && current[runEnd] === "`") runEnd += 1;
+    const tickCount = runEnd - pos;
+    let scan = runEnd;
+    let closeEnd = -1;
+    while (scan < current.length) {
+      if (current[scan] !== "`") {
+        scan += 1;
+        continue;
+      }
+      let scanEnd = scan + 1;
+      while (scanEnd < current.length && current[scanEnd] === "`") scanEnd += 1;
+      if (scanEnd - scan === tickCount) {
+        closeEnd = scanEnd;
+        break;
+      }
+      scan = scanEnd;
+    }
+    if (closeEnd !== -1) {
+      maskSpanWithSpaces(chars, pos, closeEnd);
+      pos = closeEnd;
+    } else {
+      pos = runEnd;
+    }
+  }
+
+  current = chars.join("");
+  pos = 0;
+  while (pos < current.length - 1) {
+    const start = current.indexOf("](", pos);
+    if (start === -1) break;
+    let scan = start + 2;
+    let depth = 1;
+    let closed = false;
+    while (scan < current.length) {
+      const ch = current[scan];
+      if (ch === "\\" && scan + 1 < current.length) {
+        scan += 2;
+        continue;
+      }
+      if (ch === "\n") {
+        const rest = current.slice(scan + 1);
+        if (/^[ \t]*\r?\n/.test(rest)) break;
+      }
+      if (ch === "(") depth += 1;
+      else if (ch === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          scan += 1;
+          closed = true;
+          break;
+        }
+      }
+      scan += 1;
+    }
+    if (closed) {
+      maskSpanWithSpaces(chars, start, scan);
+      pos = scan;
+    } else {
+      pos = start + 2;
+    }
+  }
+
+  current = chars.join("");
+  for (const match of current.matchAll(/https?:\/\/[^\s<>"'`()[\]{}]+/gi)) {
+    const idx = match.index;
+    maskSpanWithSpaces(chars, idx, idx + match[0].length);
+  }
+
+  current = chars.join("");
+  const pathPatterns = [
+    /(?:[^\s"'`<>()[\]{}]*[\\/])+[@＠][^\s"'`<>()[\]{}]*/gu,
+    /(?<![\p{L}\p{N}_./\\-])[@＠][\p{L}\p{N}._-]+(?:[\\/][^\s"'`<>()[\]{}]+)+/gu,
+  ];
+  for (const pattern of pathPatterns) {
+    for (const match of current.matchAll(pattern)) {
+      const idx = match.index;
+      maskSpanWithSpaces(chars, idx, idx + match[0].length);
+    }
+  }
+
+  return chars.join("");
+}
+
 /**
  * The peers a reply addresses, in the order the reply names them.
  *
- * `@Name` with the whole name, case-insensitive, and not followed by more of a word, so a Bot called
- * "Ops" is not addressed by "@Opsgenie". Not preceded by one either, so "jo@sam.com" does not
- * address "Sam". Where two names start at the same `@`, the longer one is meant: "@Ops Lead"
- * addresses "Ops Lead" and not "Ops". Never the speaker itself.
+ * `@Name` (including full-width `＠`, NFC-normalized) with the whole name, case-insensitive, and
+ * not followed by more of a word, so a Bot called "Ops" is not addressed by "@Opsgenie". Not
+ * preceded by one either, so "jo@sam.com" does not address "Sam". Non-prose mentions (code blocks,
+ * inline code, blockquotes, link targets, URLs, and paths) are masked before matching. Where two
+ * names start at the same `@`, the longer one is meant: "@Ops Lead" addresses "Ops Lead" and not
+ * "Ops". Never the speaker itself.
  */
 export function mentionedPeers(
   reply: string,
   roster: readonly GroupBot[],
   speakerId: string,
 ): GroupBot[] {
+  const prose = maskNonProseMentions(reply.normalize("NFC"));
   // The speaker is matched too, so that its own longer name still hides a shorter peer's.
   const hits = roster.flatMap((bot) => {
-    if (!bot.name.trim()) return [];
-    const name = bot.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const normalizedName = bot.name.normalize("NFC").trim();
+    if (!normalizedName) return [];
+    const name = normalizedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const pattern = new RegExp(
-      `(?<![\\p{L}\\p{N}_])@${name}(?![\\p{L}\\p{N}_])`,
+      `(?<![\\p{L}\\p{N}_])[@＠]${name}(?![\\p{L}\\p{N}_])`,
       "giu",
     );
-    return Array.from(reply.matchAll(pattern), (match) => ({
+    return Array.from(prose.matchAll(pattern), (match) => ({
       bot,
       at: match.index,
       length: match[0].length,

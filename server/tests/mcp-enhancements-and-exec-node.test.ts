@@ -8,14 +8,17 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
-import type { AppVariables } from "../src/auth/guards";
+import { BlockedUrlError } from "../../shared/net/guarded-fetch";
 import {
   createExecutionNodeStore,
   createMemoryExecutionNodeStorage,
   ExecutionNodeError,
 } from "../src/admin/execution-node-store";
+import type { AppVariables } from "../src/auth/guards";
 import {
   NO_NETWORK_POLICY,
   withPolicyPushOnWake,
@@ -31,6 +34,7 @@ import {
 } from "../src/conversations/tool-images";
 import {
   dialAddress,
+  McpServerError,
   callTool as mcpCallTool,
   listTools as mcpListTools,
   pinnedMcpFetch,
@@ -45,7 +49,9 @@ import {
   isMcpTimeoutOrNetworkError,
   listAllMcpTools,
   MCP_NO_AUTO_RETRY_NOTICE,
+  shouldFallbackToSse,
 } from "../src/plugins/mcp-enhancements";
+import { McpTestServer } from "./support/mcp-server";
 
 const TEST_KEY = randomBytes(32).toString("base64");
 
@@ -917,5 +923,248 @@ describe("Wave 8 远程执行节点热配置、健康探活与零重启热切换
         "admin",
       ),
     ).rejects.toThrow("控制字符");
+  });
+
+  test("shouldFallbackToSse 仅对 400/404/405/406/501、Streamable 不支持或 Content-Type 不匹配返回 true，严格排除 401/403/Abort/Timeout/SSRF", () => {
+    for (const status of [400, 404, 405, 406, 501]) {
+      expect(
+        shouldFallbackToSse(
+          new StreamableHTTPError(status, `HTTP ${status} error`),
+        ),
+      ).toBe(true);
+      expect(
+        shouldFallbackToSse(
+          Object.assign(new Error("Request failed"), { status }),
+        ),
+      ).toBe(true);
+    }
+    expect(
+      shouldFallbackToSse(
+        new StreamableHTTPError(-1, "Unexpected content type: text/html"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackToSse(new Error("Server does not support Streamable HTTP")),
+    ).toBe(true);
+
+    // 严格排除 401 / 403 / Unauthorized / 5xx
+    expect(
+      shouldFallbackToSse(new StreamableHTTPError(401, "Unauthorized")),
+    ).toBe(false);
+    expect(shouldFallbackToSse(new StreamableHTTPError(403, "Forbidden"))).toBe(
+      false,
+    );
+    expect(shouldFallbackToSse(new UnauthorizedError("No auth"))).toBe(false);
+    expect(shouldFallbackToSse(new Error("HTTP 401 Unauthorized"))).toBe(false);
+    expect(shouldFallbackToSse(new Error("HTTP 403 Forbidden"))).toBe(false);
+    expect(
+      shouldFallbackToSse(new StreamableHTTPError(500, "Internal Error")),
+    ).toBe(false);
+    expect(
+      shouldFallbackToSse(new StreamableHTTPError(503, "Unavailable")),
+    ).toBe(false);
+
+    // 严格排除 Abort / Timeout / 网络中断 / SSRF / 重定向
+    const abortErr = new Error("The operation was aborted");
+    abortErr.name = "AbortError";
+    expect(shouldFallbackToSse(abortErr)).toBe(false);
+
+    const timeoutErr = new Error("Request timed out");
+    timeoutErr.name = "TimeoutError";
+    expect(shouldFallbackToSse(timeoutErr)).toBe(false);
+
+    expect(
+      shouldFallbackToSse(
+        Object.assign(new Error("connect ECONNREFUSED"), {
+          code: "ECONNREFUSED",
+        }),
+      ),
+    ).toBe(false);
+    expect(shouldFallbackToSse(new BlockedUrlError("不能访问内网地址"))).toBe(
+      false,
+    );
+    expect(
+      shouldFallbackToSse(
+        new McpServerError(
+          "The MCP endpoint redirected the request. Configure its final address instead.",
+        ),
+      ),
+    ).toBe(false);
+    expect(shouldFallbackToSse(null)).toBe(false);
+  });
+
+  test("transport: 'auto' 支持 Streamable HTTP 直连、仅 SSE 服务自动降级重连，且 401/403/重定向绝不降级", async () => {
+    // 1. 增强配置 store 持久化与校验支持 "auto"
+    const store = createMcpEnhancementStore({
+      storage: createMemoryMcpEnhancementStorage(),
+      encryptionKey: TEST_KEY,
+    });
+    await store.ensure();
+    const saved = await store.update(
+      "auto-srv",
+      { transport: "auto" },
+      "admin@example.com",
+    );
+    expect(saved.transport).toBe("auto");
+    expect((await store.resolveConnectionOverlay("auto-srv")).transport).toBe(
+      "auto",
+    );
+
+    // 2. 纯 Streamable HTTP 服务在 transport: "auto" 下直接成功
+    const streamableMock = new McpTestServer();
+    streamableMock
+      .addTool({
+        name: "ping_streamable",
+        description: "Ping via streamable HTTP",
+        inputSchema: { type: "object", properties: {} },
+      })
+      .onToolCall("ping_streamable", () => "pong-streamable");
+    const streamableUrl = await streamableMock.start();
+    try {
+      const sTools = await mcpListTools({
+        url: streamableUrl,
+        transport: "auto",
+        allowPrivateHost: true,
+      });
+      expect(sTools.map((t) => t.name)).toEqual(["ping_streamable"]);
+      const sCall = await mcpCallTool(
+        { url: streamableUrl, transport: "auto", allowPrivateHost: true },
+        "ping_streamable",
+        {},
+      );
+      expect(sCall.text).toBe("pong-streamable");
+    } finally {
+      await streamableMock.stop?.();
+    }
+
+    // 3. 仅 SSE 服务（POST /sse 返回 405）在 transport: "auto" 下自动关闭旧 client 后复用 pinned 连接降级为 SSE
+    let sseStreamRes: import("node:http").ServerResponse | null = null;
+    const seenMethods: string[] = [];
+    const seenHeaders: string[] = [];
+    const sseOnly = await startHttpServer((req, res) => {
+      seenMethods.push(`${req.method} ${req.url}`);
+      const h = req.headers["x-auto-hdr"];
+      if (typeof h === "string") seenHeaders.push(h);
+
+      if (req.method === "POST" && req.url === "/sse") {
+        res
+          .writeHead(405, { "content-type": "text/plain" })
+          .end("Method Not Allowed");
+        return;
+      }
+      if (req.method === "GET" && req.url === "/sse") {
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        sseStreamRes = res;
+        res.write("event: endpoint\ndata: /messages?sessionId=auto1\n\n");
+        return;
+      }
+      if (req.method === "POST" && req.url === "/messages?sessionId=auto1") {
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          const msg = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+            id?: unknown;
+            method?: string;
+          };
+          res.writeHead(202).end();
+          if (!sseStreamRes) return;
+          if (msg.method === "initialize") {
+            sseStreamRes.write(
+              `event: message\ndata: ${JSON.stringify({
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  protocolVersion: "2024-11-05",
+                  capabilities: { tools: {} },
+                  serverInfo: { name: "sse-auto-mock", version: "1.0.0" },
+                },
+              })}\n\n`,
+            );
+          } else if (msg.method === "tools/list") {
+            sseStreamRes.write(
+              `event: message\ndata: ${JSON.stringify({
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  tools: [
+                    {
+                      name: "auto_sse_tool",
+                      description: "Discovered via auto fallback",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                  ],
+                },
+              })}\n\n`,
+            );
+          } else if (msg.method === "tools/call") {
+            sseStreamRes.write(
+              `event: message\ndata: ${JSON.stringify({
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  content: [{ type: "text", text: "ok-via-sse-fallback" }],
+                },
+              })}\n\n`,
+            );
+          }
+        });
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const autoTools = await mcpListTools({
+      url: `${sseOnly.url}/sse`,
+      transport: "auto",
+      extraHeaders: { "X-Auto-Hdr": "val-1" },
+      allowPrivateHost: true,
+    });
+    expect(autoTools.map((t) => t.name)).toEqual(["auto_sse_tool"]);
+    expect(seenMethods).toContain("POST /sse");
+    expect(seenMethods).toContain("GET /sse");
+    expect(seenHeaders).toContain("val-1");
+
+    const autoCall = await mcpCallTool(
+      {
+        url: `${sseOnly.url}/sse`,
+        transport: "auto",
+        extraHeaders: { "X-Auto-Hdr": "val-1" },
+        allowPrivateHost: true,
+      },
+      "auto_sse_tool",
+      {},
+    );
+    expect(autoCall.text).toBe("ok-via-sse-fallback");
+
+    // 4. 401 / 403 / 307 重定向在 transport: "auto" 下绝不能触发 SSE 降级 GET 请求
+    for (const statusCode of [401, 403, 307]) {
+      let getCount = 0;
+      const gated = await startHttpServer((req, res) => {
+        if (req.method === "GET") {
+          getCount += 1;
+        }
+        if (statusCode === 307) {
+          res
+            .writeHead(307, { location: `${sseOnly.url}/sse` })
+            .end("redirect");
+          return;
+        }
+        res
+          .writeHead(statusCode, { "content-type": "application/json" })
+          .end(JSON.stringify({ error: { message: `denied ${statusCode}` } }));
+      });
+      await expect(
+        mcpListTools({
+          url: `${gated.url}/sse`,
+          transport: "auto",
+          allowPrivateHost: true,
+        }),
+      ).rejects.toThrow(statusCode === 307 ? "redirected" : String(statusCode));
+      expect(getCount).toBe(0);
+    }
   });
 });

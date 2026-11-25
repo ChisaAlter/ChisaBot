@@ -5,7 +5,13 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
-const { createUpdater, cleanMessage, isInstalledBuild, FIRST_CHECK_MS, INTERVAL_MS } = require("../src/updater");
+const {
+  createUpdater,
+  cleanMessage,
+  isInstalledBuild,
+  FIRST_CHECK_MS,
+  INTERVAL_MS,
+} = require("../src/updater");
 
 function fakeAutoUpdater(behavior = {}) {
   const emitter = new EventEmitter();
@@ -37,7 +43,8 @@ function fakeAutoUpdater(behavior = {}) {
     }
     return ["setup.exe"];
   };
-  emitter.quitAndInstall = (silent, runAfter) => emitter.installs.push([silent, runAfter]);
+  emitter.quitAndInstall = (silent, runAfter) =>
+    emitter.installs.push([silent, runAfter]);
   return emitter;
 }
 
@@ -56,10 +63,17 @@ function fakeTimers() {
   return t;
 }
 
-const installedExec = path.join(require("node:os").tmpdir(), "chisabot-pc-update-check", "ChisaBot.exe");
+const installedExec = path.join(
+  require("node:os").tmpdir(),
+  "chisabot-pc-update-check",
+  "ChisaBot.exe",
+);
 
 function make(options = {}) {
-  const autoUpdater = "autoUpdater" in options ? options.autoUpdater : fakeAutoUpdater(options.behavior);
+  const autoUpdater =
+    "autoUpdater" in options
+      ? options.autoUpdater
+      : fakeAutoUpdater(options.behavior);
   const states = [];
   const downloaded = [];
   let auto = options.auto ?? true;
@@ -81,7 +95,14 @@ function make(options = {}) {
     updateKeys: options.updateKeys,
     verifyDownload: options.verifyDownload,
     spawn: options.spawn,
-    spawnSync: options.spawnSync ?? (() => ({ status: 0, stdout: "", stderr: "Identifier=com.chisabot.app\nSignature size=4785\nAuthority=Developer ID Application: ChisaBot (TESTTEAM)\nTeamIdentifier=TESTTEAM\n" })),
+    spawnSync:
+      options.spawnSync ??
+      (() => ({
+        status: 0,
+        stdout: "",
+        stderr:
+          "Identifier=com.chisabot.app\nSignature size=4785\nAuthority=Developer ID Application: ChisaBot (TESTTEAM)\nTeamIdentifier=TESTTEAM\n",
+      })),
     quitApp: options.quitApp,
     getAutoUpdate: () => auto,
     onState: (s) => states.push(s),
@@ -89,39 +110,82 @@ function make(options = {}) {
     timers,
     now: () => new Date("2026-10-12T01:00:00Z"),
   });
-  return { updater, autoUpdater, states, downloaded, timers, setAuto: (v) => (auto = v) };
+  return {
+    updater,
+    autoUpdater,
+    states,
+    downloaded,
+    timers,
+    setAuto: (v) => (auto = v),
+  };
 }
 
 test("only an NSIS-installed packaged Windows build updates", () => {
-  assert.strictEqual(make({ isPackaged: false }).updater.supported, false, "开发运行");
-  assert.strictEqual(make({ platform: "linux" }).updater.supported, false, "非 Windows");
-  assert.strictEqual(make({ execPath: path.join(__dirname, "no-such-dir", "ChisaBot.exe") }).updater.supported, false, "免安装 zip（没有卸载程序）");
-  assert.strictEqual(make({ autoUpdater: null }).updater.supported, false, "没有 electron-updater");
+  assert.strictEqual(
+    make({ isPackaged: false }).updater.supported,
+    false,
+    "开发运行",
+  );
+  assert.strictEqual(
+    make({ platform: "linux" }).updater.supported,
+    false,
+    "非 Windows",
+  );
+  assert.strictEqual(
+    make({ execPath: path.join(__dirname, "no-such-dir", "ChisaBot.exe") })
+      .updater.supported,
+    false,
+    "免安装 zip（没有卸载程序）",
+  );
+  assert.strictEqual(
+    make({ autoUpdater: null }).updater.supported,
+    false,
+    "没有 electron-updater",
+  );
   assert.strictEqual(make().updater.supported, true);
-  assert.ok(isInstalledBuild({ execPath: "C:\\x\\ChisaBot.exe", productName: "ChisaBot", exists: (p) => p.endsWith("Uninstall ChisaBot.exe") }));
+  assert.ok(
+    isInstalledBuild({
+      execPath: "C:\\x\\ChisaBot.exe",
+      productName: "ChisaBot",
+      exists: (p) => p.endsWith("Uninstall ChisaBot.exe"),
+    }),
+  );
 });
 
 test("unsigned installer: Authenticode verification is a pass, sha512 stays electron-updater's", async () => {
   const { autoUpdater } = make();
   assert.strictEqual(typeof autoUpdater.verifyUpdateCodeSignature, "function");
-  assert.strictEqual(await autoUpdater.verifyUpdateCodeSignature(["x"], "C:\\t.exe"), null);
+  assert.strictEqual(
+    await autoUpdater.verifyUpdateCodeSignature(["x"], "C:\\t.exe"),
+    null,
+  );
   assert.strictEqual(autoUpdater.autoDownload, true);
   assert.strictEqual(autoUpdater.autoInstallOnAppQuit, true);
   assert.strictEqual(autoUpdater.allowDowngrade, false);
-  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
+  );
   assert.strictEqual(pkg.build.win.verifyUpdateCodeSignature, false);
   assert.deepStrictEqual(pkg.build.publish[0].provider, "generic");
-  assert.doesNotMatch(JSON.stringify(pkg.build.publish), /ayase|whaleisle/, "仓库里不写死任何人的域名；CI 用 -c.publish.url 覆盖");
+  assert.doesNotMatch(
+    JSON.stringify(pkg.build.publish),
+    /ayase|whaleisle/,
+    "仓库里不写死任何人的域名；CI 用 -c.publish.url 覆盖",
+  );
   assert.ok(pkg.dependencies["electron-updater"]);
 });
 
 test("found → downloading → downloaded calls onDownloaded once and install quits silently", async () => {
-  const { updater, autoUpdater, states, downloaded } = make({ behavior: { version: "0.1.1" } });
+  const { updater, autoUpdater, states, downloaded } = make({
+    behavior: { version: "0.1.1" },
+  });
   assert.strictEqual(updater.install(), false, "没下载好不能装");
   const result = await updater.check();
   assert.strictEqual(result.status, "downloaded");
   assert.strictEqual(result.version, "0.1.1");
-  assert.ok(states.some((s) => s.status === "downloading" && s.percent === 42.4));
+  assert.ok(
+    states.some((s) => s.status === "downloading" && s.percent === 42.4),
+  );
   assert.deepStrictEqual(downloaded, ["0.1.1"]);
   assert.strictEqual(updater.install(), true);
   assert.deepStrictEqual(autoUpdater.installs, [[true, true]]);
@@ -141,7 +205,11 @@ test("a newer feed version supersedes the pending download", async () => {
   const next = await updater.check();
   assert.strictEqual(next.status, "downloaded");
   assert.strictEqual(next.version, "0.1.164", "更新版本顶掉待安装的旧版");
-  assert.strictEqual(autoUpdater.downloads, 1, "复查时 autoDownload 关了，手动拉新包");
+  assert.strictEqual(
+    autoUpdater.downloads,
+    1,
+    "复查时 autoDownload 关了，手动拉新包",
+  );
   assert.deepStrictEqual(downloaded, ["0.1.160", "0.1.164"]);
   const settled = await updater.check();
   assert.strictEqual(settled.version, "0.1.164");
@@ -170,7 +238,10 @@ test("no update and errors become readable states", async () => {
   const state = await offline.updater.check();
   assert.strictEqual(state.status, "error");
   assert.strictEqual(state.error, "连不上更新服务器，请检查网络。");
-  assert.strictEqual(cleanMessage(new Error("sha512 checksum mismatch, expected x")), "下载的安装包校验失败，已丢弃，稍后会重新下载。");
+  assert.strictEqual(
+    cleanMessage(new Error("sha512 checksum mismatch, expected x")),
+    "下载的安装包校验失败，已丢弃，稍后会重新下载。",
+  );
 });
 
 test("stale feed (version lower than installed) is flagged and falls back to the next tier", async () => {
@@ -198,11 +269,20 @@ test("stale feed (version lower than installed) is flagged and falls back to the
   const state = await updater.check();
   assert.strictEqual(calls, 2, "退回后再查一次");
   assert.strictEqual(feeds[0], "https://stale.example/feed/");
-  assert.strictEqual(feeds[1], "https://github.com/me/chisabot/releases/latest/download/");
+  assert.strictEqual(
+    feeds[1],
+    "https://github.com/me/chisabot/releases/latest/download/",
+  );
   assert.strictEqual(state.status, "downloaded");
   assert.strictEqual(state.version, "0.1.131");
-  assert.deepStrictEqual(state.feedStale, { url: "https://stale.example/feed/", version: "0.1.125" });
-  assert.strictEqual(state.feedUrl, "https://github.com/me/chisabot/releases/latest/download/");
+  assert.deepStrictEqual(state.feedStale, {
+    url: "https://stale.example/feed/",
+    version: "0.1.125",
+  });
+  assert.strictEqual(
+    state.feedUrl,
+    "https://github.com/me/chisabot/releases/latest/download/",
+  );
   assert.deepStrictEqual(downloaded, ["0.1.131"]);
   assert.ok(states.some((s) => s.feedStale));
 });
@@ -215,12 +295,22 @@ test("stale feed without a fallback stays flagged instead of claiming 已是最�
     emitter.emit("update-not-available", {});
     return { updateInfo: { version: "0.1.125" } };
   };
-  const { updater } = make({ autoUpdater: emitter, feedUrl: "https://stale.example/feed/", currentVersion: "0.1.129" });
+  const { updater } = make({
+    autoUpdater: emitter,
+    feedUrl: "https://stale.example/feed/",
+    currentVersion: "0.1.129",
+  });
   const state = await updater.check();
   assert.strictEqual(state.status, "none");
-  assert.deepStrictEqual(state.feedStale, { url: "https://stale.example/feed/", version: "0.1.125" });
+  assert.deepStrictEqual(state.feedStale, {
+    url: "https://stale.example/feed/",
+    version: "0.1.125",
+  });
   await updater.check();
-  assert.strictEqual(updater.state.feedStale.url, "https://stale.example/feed/");
+  assert.strictEqual(
+    updater.state.feedStale.url,
+    "https://stale.example/feed/",
+  );
 });
 
 test("compareVersion orders numeric segments", () => {
@@ -240,18 +330,43 @@ test("scheduled checks follow the 自动更新 switch", () => {
   assert.strictEqual(on.autoUpdater.checks, 0, "关掉后定时器不再检查");
   const off = make({ auto: false });
   off.updater.schedule();
-  assert.strictEqual(off.timers.timeouts.length + off.timers.intervals.length, 0);
+  assert.strictEqual(
+    off.timers.timeouts.length + off.timers.intervals.length,
+    0,
+  );
 });
 
 test("update IPC goes through the source checks", () => {
-  const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
-  for (const ch of ["pc:check-update", "pc:install-update"]) assert.ok(main.includes(`handleWeb("${ch}"`), ch);
-  for (const ch of ["update:current", "update:answer", "update:retry", "update:download-latest"]) assert.ok(main.includes(`handleLocal("${ch}"`), ch);
-  const preload = fs.readFileSync(path.join(__dirname, "..", "src", "preload.js"), "utf8");
-  for (const symbol of ['"update:answer"', '"update:retry"', '"update:download-latest"', "onUpdateState", "onWindowMaximized"]) {
+  const main = fs.readFileSync(
+    path.join(__dirname, "..", "src", "main.js"),
+    "utf8",
+  );
+  for (const ch of ["pc:check-update", "pc:install-update"])
+    assert.ok(main.includes(`handleWeb("${ch}"`), ch);
+  for (const ch of [
+    "update:current",
+    "update:answer",
+    "update:retry",
+    "update:download-latest",
+  ])
+    assert.ok(main.includes(`handleLocal("${ch}"`), ch);
+  const preload = fs.readFileSync(
+    path.join(__dirname, "..", "src", "preload.js"),
+    "utf8",
+  );
+  for (const symbol of [
+    '"update:answer"',
+    '"update:retry"',
+    '"update:download-latest"',
+    "onUpdateState",
+    "onWindowMaximized",
+  ]) {
     assert.ok(preload.includes(symbol), symbol);
   }
-  const web = fs.readFileSync(path.join(__dirname, "..", "src", "web-preload.js"), "utf8");
+  const web = fs.readFileSync(
+    path.join(__dirname, "..", "src", "web-preload.js"),
+    "utf8",
+  );
   assert.ok(web.includes('ipcRenderer.invoke("pc:install-update")'));
 });
 
@@ -261,16 +376,32 @@ test("macOS: any packaged .app updates; fullInstall still uses quitAndInstall (S
     execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot",
     behavior: { version: "0.1.9" },
   });
-  assert.strictEqual(updater.supported, true, "打包版 .app 就能更新，不需要 Windows 的「安装版」判定");
+  assert.strictEqual(
+    updater.supported,
+    true,
+    "打包版 .app 就能更新，不需要 Windows 的「安装版」判定",
+  );
   const result = await updater.check();
   assert.strictEqual(result.status, "downloaded");
   assert.strictEqual(updater.install(), true);
-  assert.deepStrictEqual(autoUpdater.installs, [[true, true]], "quitAndInstall(true, true)");
+  assert.deepStrictEqual(
+    autoUpdater.installs,
+    [[true, true]],
+    "quitAndInstall(true, true)",
+  );
 
   // adhoc 签名过不了 Squirrel 的 requirement 校验（cdhash 随构建变化），不启用更新链
-  const adhoc = () => ({ status: 0, stdout: "", stderr: "Identifier=Electron\nSignature=adhoc\nTeamIdentifier=not set\n" });
+  const adhoc = () => ({
+    status: 0,
+    stdout: "",
+    stderr: "Identifier=Electron\nSignature=adhoc\nTeamIdentifier=not set\n",
+  });
   assert.strictEqual(
-    make({ platform: "darwin", execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot", spawnSync: adhoc }).updater.supported,
+    make({
+      platform: "darwin",
+      execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot",
+      spawnSync: adhoc,
+    }).updater.supported,
     false,
     "adhoc 签名的 .app 不启用在线更新",
   );
@@ -286,8 +417,14 @@ test("macOS: any packaged .app updates; fullInstall still uses quitAndInstall (S
       const e = fakeAutoUpdater();
       e.checkForUpdates = async () => {
         e.emit("checking-for-update");
-        e.emit("update-available", { version: "0.1.9", chisabotShell: "new-shell" });
-        e.emit("update-downloaded", { version: "0.1.9", chisabotShell: "new-shell" });
+        e.emit("update-available", {
+          version: "0.1.9",
+          chisabotShell: "new-shell",
+        });
+        e.emit("update-downloaded", {
+          version: "0.1.9",
+          chisabotShell: "new-shell",
+        });
         return {};
       };
       return e;
@@ -300,19 +437,47 @@ test("macOS: any packaged .app updates; fullInstall still uses quitAndInstall (S
 });
 
 test("macOS installOnQuit: unsigned quit installs itself (return false); signed holds the quit via quitAndInstall", async () => {
-  const darwinOpts = { platform: "darwin", execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot", behavior: { version: "0.1.9" } };
+  const darwinOpts = {
+    platform: "darwin",
+    execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot",
+    behavior: { version: "0.1.9" },
+  };
   const unsigned = make(darwinOpts);
   await unsigned.updater.check();
-  assert.strictEqual(unsigned.updater.installOnQuit(), false, "Squirrel 已经拿到更新，普通退出就装");
+  assert.strictEqual(
+    unsigned.updater.installOnQuit(),
+    false,
+    "Squirrel 已经拿到更新，普通退出就装",
+  );
 
-  const signed = make({ ...darwinOpts, updateKeys: { enforce: true, keys: new Map(), problem: "" }, verifyDownload: async () => {} });
+  const signed = make({
+    ...darwinOpts,
+    updateKeys: { enforce: true, keys: new Map(), problem: "" },
+    verifyDownload: async () => {},
+  });
   await signed.updater.check();
   await signed.updater.settled();
   assert.strictEqual(signed.updater.state.status, "downloaded");
-  assert.strictEqual(signed.updater.installOnQuit(), "hold", "调用方要 preventDefault 撑住退出");
-  assert.strictEqual(signed.autoUpdater.autoRunAppAfterInstall, false, "装好不重启");
-  assert.deepStrictEqual(signed.autoUpdater.installs, [[true, true]], "quitAndInstall 触发 Squirrel 拉本地包");
-  assert.strictEqual(signed.updater.installOnQuit(), false, "已在安装中的重复退出直接放行");
+  assert.strictEqual(
+    signed.updater.installOnQuit(),
+    "hold",
+    "调用方要 preventDefault 撑住退出",
+  );
+  assert.strictEqual(
+    signed.autoUpdater.autoRunAppAfterInstall,
+    false,
+    "装好不重启",
+  );
+  assert.deepStrictEqual(
+    signed.autoUpdater.installs,
+    [[true, true]],
+    "quitAndInstall 触发 Squirrel 拉本地包",
+  );
+  assert.strictEqual(
+    signed.updater.installOnQuit(),
+    false,
+    "已在安装中的重复退出直接放行",
+  );
 });
 
 test("nudge triggers check on push, throttles within minGapMs, skips same/older version and respects autoUpdate=false", async () => {
@@ -347,7 +512,11 @@ test("nudge triggers check on push, throttles within minGapMs, skips same/older 
 
   // 打开自动更新并收到 0.1.173 推送：立即检查、触发一次 onAvailable 并下载完成
   auto = true;
-  const res = await updater.nudge({ version: "0.1.173", reason: "release_watch", minGapMs: 15_000 });
+  const res = await updater.nudge({
+    version: "0.1.173",
+    reason: "release_watch",
+    minGapMs: 15_000,
+  });
   assert.strictEqual(autoUpdater.checks, 1);
   assert.strictEqual(res.status, "downloaded");
   assert.strictEqual(res.version, "0.1.173");
@@ -355,15 +524,154 @@ test("nudge triggers check on push, throttles within minGapMs, skips same/older 
 
   // 同版本已下载完成：再次推送直接跳过
   clock += 60_000;
-  await updater.nudge({ version: "0.1.173", reason: "release_watch", minGapMs: 15_000 });
+  await updater.nudge({
+    version: "0.1.173",
+    reason: "release_watch",
+    minGapMs: 15_000,
+  });
   assert.strictEqual(autoUpdater.checks, 1);
 
   // 更高版本 0.1.174 在节流窗口内（5s < 15s）不重查，过窗后才触发
   clock += 5_000;
-  await updater.nudge({ version: "0.1.174", reason: "release_watch", minGapMs: 15_000 });
+  await updater.nudge({
+    version: "0.1.174",
+    reason: "release_watch",
+    minGapMs: 15_000,
+  });
   assert.strictEqual(autoUpdater.checks, 2, "距上次检查已满 65s，应触发复查");
 
   clock += 5_000;
-  await updater.nudge({ version: "0.1.175", reason: "release_watch", minGapMs: 15_000 });
+  await updater.nudge({
+    version: "0.1.175",
+    reason: "release_watch",
+    minGapMs: 15_000,
+  });
   assert.strictEqual(autoUpdater.checks, 2, "5s 内被 minGapMs=15s 节流");
+});
+
+test("hasStableMacSignature invokes /usr/bin/codesign with timeout 3500", () => {
+  const { hasStableMacSignature } = require("../src/updater");
+  const calls = [];
+  const ok = hasStableMacSignature({
+    execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot",
+    spawnSync: (cmd, args, opts) => {
+      calls.push({ cmd, args, opts });
+      return { status: 0, stdout: "", stderr: "Signature size=4785\n" };
+    },
+  });
+  assert.strictEqual(ok, true);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cmd, "/usr/bin/codesign");
+  assert.deepStrictEqual(calls[0].opts, { timeout: 3500 });
+});
+
+test("manual update fallback checks latest-mac.yml/latest.yml when supported=false and flags manualInstall", async () => {
+  const seenUrls = [];
+  const available = [];
+  const adhocSpawn = () => ({
+    status: 0,
+    stdout: "",
+    stderr: "Signature=adhoc\n",
+  });
+  const updater = createUpdater({
+    autoUpdater: fakeAutoUpdater(),
+    feedUrl: "https://updates.example/feed",
+    fallbackFeed: "https://fallback.example/feed/",
+    currentVersion: "0.1.180",
+    isPackaged: true,
+    platform: "darwin",
+    execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot",
+    productName: "ChisaBot",
+    shellHash: "shell-1",
+    clientHash: "client-1",
+    spawnSync: adhocSpawn,
+    fetchImpl: async (url) => {
+      seenUrls.push(url);
+      if (url.startsWith("https://updates.example/")) {
+        return new Response(
+          "version: 0.1.170\npath: ChisaBot-0.1.170.zip\nsha512: aaa\n",
+          { status: 200 },
+        );
+      }
+      return new Response(
+        "version: 0.1.190\npath: ChisaBot-0.1.190-arm64-mac.zip\nsha512: bbb\nchisabotShell: shell-2\nchisabotClient: client-2\n",
+        { status: 200 },
+      );
+    },
+    getAutoUpdate: () => false,
+    onAvailable: (v, meta) => available.push({ v, meta }),
+    timers: fakeTimers(),
+    now: () => new Date("2026-11-24T00:00:00Z"),
+  });
+  assert.strictEqual(updater.supported, false);
+  const res = await updater.check();
+  assert.deepStrictEqual(seenUrls, [
+    "https://updates.example/feed/latest-mac.yml",
+    "https://fallback.example/feed/latest-mac.yml",
+  ]);
+  assert.strictEqual(res.status, "available");
+  assert.strictEqual(res.version, "0.1.190");
+  assert.strictEqual(res.manualInstall, true);
+  assert.strictEqual(res.fullInstall, true);
+  assert.deepStrictEqual(res.feedStale, {
+    url: "https://updates.example/feed",
+    version: "0.1.170",
+  });
+  assert.deepStrictEqual(available, [
+    { v: "0.1.190", meta: { manualInstall: true, fullInstall: true } },
+  ]);
+
+  // Windows portable zip without uninstaller skips manual download when clientHash & shellHash match
+  const winPortable = createUpdater({
+    autoUpdater: fakeAutoUpdater(),
+    feedUrl: "https://updates.example/win/",
+    currentVersion: "0.1.180",
+    isPackaged: true,
+    platform: "win32",
+    execPath: path.join(__dirname, "no-such-dir", "ChisaBot.exe"),
+    productName: "ChisaBot",
+    shellHash: "shell-1",
+    clientHash: "client-1",
+    fetchManifest: async (_feed, { manifestName }) => {
+      assert.strictEqual(manifestName, "latest.yml");
+      return {
+        version: "0.1.185",
+        path: "ChisaBot-0.1.185-x64-setup.exe",
+        sha512: "ccc",
+        chisabotShell: "shell-1",
+        chisabotClient: "client-1",
+      };
+    },
+    getAutoUpdate: () => false,
+    timers: fakeTimers(),
+  });
+  assert.strictEqual(winPortable.supported, false);
+  const skipped = await winPortable.check();
+  assert.strictEqual(skipped.status, "none");
+  assert.strictEqual(skipped.manualInstall, undefined);
+});
+
+test("auto-update downgrades to manualInstall=true on ShipIt or code signature error", async () => {
+  const emitter = new EventEmitter();
+  emitter.setFeedURL = () => {};
+  emitter.checkForUpdates = async () => {
+    emitter.emit("checking-for-update");
+    emitter.emit("update-available", { version: "0.1.195" });
+    const err = new Error(
+      "Code signature at URL file:///tmp/ChisaBot.app did not pass validation: code failed to satisfy specified code requirement(s)",
+    );
+    emitter.emit("error", err);
+    throw err;
+  };
+  const { updater } = make({
+    autoUpdater: emitter,
+    platform: "darwin",
+    execPath: "/Applications/ChisaBot.app/Contents/MacOS/ChisaBot",
+    currentVersion: "0.1.190",
+  });
+  const state = await updater.check();
+  assert.strictEqual(state.status, "available");
+  assert.strictEqual(state.version, "0.1.195");
+  assert.strictEqual(state.manualInstall, true);
+  assert.strictEqual(state.error, undefined);
 });

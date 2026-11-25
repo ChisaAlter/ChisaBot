@@ -675,4 +675,87 @@ class NativeLogicTest {
         assertEquals(0, effectiveBottomInsetPx(navBottom = 72, imeBottom = 840))
         assertEquals(0, effectiveBottomInsetPx(navBottom = -4, imeBottom = 0))
     }
+
+    @Test fun pairingInspectParsesAlternatesAndDeduplicates() {
+        val code = "cbp_${"a".repeat(32)}"
+        val uri = "chisabot://pair?server=https%3A%2F%2Fmain.example.com&code=$code" +
+            "&alt=http%3A%2F%2F192.168.1.5%3A3000%2Chttps%3A%2F%2Fbox.ts.net%2Chttp%3A%2F%2F100.64.0.9%3A3000%2Chttps%3A%2F%2Fmain.example.com%2Chttp%3A%2F%2Fpublic.invalid"
+        val res = Pairing.inspect(uri) as Pairing.Result.Ok
+        assertEquals("https://main.example.com", res.link.server)
+        assertEquals(
+            listOf("http://192.168.1.5:3000", "https://box.ts.net", "http://100.64.0.9:3000"),
+            res.link.alternates,
+        )
+    }
+
+    @Test fun isTailscaleOrLanHostRecognizesCgnatAndTsNet() {
+        assertTrue(GatewayAuth.isTailscaleOrLanHost("100.64.0.1"))
+        assertTrue(GatewayAuth.isTailscaleOrLanHost("100.127.255.254"))
+        assertTrue(GatewayAuth.isTailscaleOrLanHost("my-node.ts.net"))
+        assertTrue(GatewayAuth.isTailscaleOrLanHost("fd7a:115c:a1e0::1"))
+        assertTrue(GatewayAuth.isTailscaleOrLanHost("192.168.1.10"))
+        assertFalse(GatewayAuth.isTailscaleOrLanHost("100.63.255.254"))
+        assertFalse(GatewayAuth.isTailscaleOrLanHost("100.128.0.1"))
+        assertFalse(GatewayAuth.isTailscaleOrLanHost("ts.net"))
+        assertFalse(GatewayAuth.isTailscaleOrLanHost("example.com"))
+    }
+
+    @Test fun probeWithFallbackPrefersHttpsAndFallsBackToTailscaleOrLan() {
+        val ordered = GatewayAuth.candidateOrigins(
+            listOf(
+                "https://primary.example.com",
+                "http://192.168.1.5:3000",
+                "https://backup.ts.net",
+                "http://100.64.0.8:3000",
+                "https://primary.example.com/",
+                "http://bad-public.example.com",
+            ),
+        )
+        assertEquals(
+            listOf(
+                "https://primary.example.com",
+                "https://backup.ts.net",
+                "http://192.168.1.5:3000",
+                "http://100.64.0.8:3000",
+            ),
+            ordered,
+        )
+
+        val tried = mutableListOf<String>()
+        val (hit, session) = GatewayAuth.probeWithFallback(ordered) { origin ->
+            tried += origin
+            if (origin == "http://100.64.0.8:3000") GatewayAuth.Session(gateway = true, authenticated = false)
+            else throw GatewayAuth.LoginError("unreachable", "连接超时")
+        }
+        assertEquals("http://100.64.0.8:3000", hit)
+        assertTrue(session.gateway)
+        assertEquals(ordered, tried)
+    }
+
+    @Test fun resolvePairingOriginUsesProbeOnlyWhenAlternatesPresent() {
+        val code = "cbp_${"b".repeat(32)}"
+        var probed = false
+        val solo = Pairing.Link("https://solo.example.com", code)
+        assertEquals(
+            "https://solo.example.com",
+            resolvePairingOrigin(solo) { probed = true; it.first() },
+        )
+        assertFalse(probed)
+
+        val withAlts = Pairing.Link(
+            "https://main.example.com",
+            code,
+            listOf("http://192.168.1.5:3000", "https://node.ts.net"),
+        )
+        var captured = emptyList<String>()
+        val resolved = resolvePairingOrigin(withAlts) { origins ->
+            captured = origins
+            "https://node.ts.net"
+        }
+        assertEquals(
+            listOf("https://main.example.com", "http://192.168.1.5:3000", "https://node.ts.net"),
+            captured,
+        )
+        assertEquals("https://node.ts.net", resolved)
+    }
 }

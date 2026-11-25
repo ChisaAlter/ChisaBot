@@ -1478,4 +1478,339 @@ describe("Slack Socket Mode 原生适配器", () => {
       await adapter.stop();
     }
   });
+
+  test("Slack 延迟 ACK：控制帧/过滤事件立即 ACK，有效事件等待入库受理后 ACK，入库异常不 ACK 且允许重投，并发帧不阻塞", async () => {
+    let gateResolve: (() => void) | null = null;
+    let shouldFail = false;
+    const received: ImInbound[] = [];
+    const h = createAdapterHarness(
+      {},
+      { botToken: "xoxb-ok", appToken: "xapp-ok" },
+      {
+        "/auth.test": () => ({
+          ok: true,
+          user_id: "U_BOT",
+          bot_id: "B_BOT",
+          user: "chisa",
+        }),
+        "/apps.connections.open": () => ({
+          ok: true,
+          url: "wss://wss-primary.slack.com/link/?ticket=ack",
+        }),
+      },
+    );
+    h.ctx.onMessage = async (message) => {
+      if (gateResolve === null && shouldFail) {
+        throw new Error("db unavailable");
+      }
+      if (gateResolve) {
+        await new Promise<void>((resolve) => {
+          const prev = gateResolve;
+          gateResolve = () => {
+            prev?.();
+            resolve();
+          };
+        });
+      }
+      if (shouldFail) throw new Error("db unavailable");
+      received.push(message);
+    };
+
+    const adapter = new SlackAdapter(h.ctx);
+    await adapter.start();
+    try {
+      const socket = await waitFor(() => h.sockets[0]);
+      await waitFor(() =>
+        h.statuses.some((status) => status.state === "connected"),
+      );
+
+      // 1) 挂起入库受理，验证有效 events_api 未落库前绝不提前 ACK，同时控制帧/过滤事件仍可立即 ACK
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      h.ctx.onMessage = async (message) => {
+        if (message.messageId === "C_ACK:100.1") {
+          await firstGate;
+        }
+        if (shouldFail) throw new Error("db unavailable");
+        received.push(message);
+      };
+
+      socket.push({
+        envelope_id: "env-pending",
+        type: "events_api",
+        payload: {
+          event: {
+            type: "app_mention",
+            channel: "C_ACK",
+            user: "U_A",
+            text: "<@U_BOT> 第一条",
+            ts: "100.1",
+          },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(
+        socket.json().some((frame) => frame.envelope_id === "env-pending"),
+      ).toBe(false);
+
+      // 并发到达的 hello 与被过滤事件（bot_id）立即回发 ACK，不被 env-pending 阻塞
+      socket.push({ envelope_id: "env-hello", type: "hello" });
+      socket.push({
+        envelope_id: "env-ignored",
+        type: "events_api",
+        payload: {
+          event: {
+            type: "message",
+            channel: "C_ACK",
+            user: "U_OTHER",
+            bot_id: "B_OTHER",
+            text: "bot msg",
+            ts: "100.2",
+          },
+        },
+      });
+      await waitFor(
+        () =>
+          socket.json().some((f) => f.envelope_id === "env-hello") &&
+          socket.json().some((f) => f.envelope_id === "env-ignored"),
+      );
+      expect(
+        socket.json().some((frame) => frame.envelope_id === "env-pending"),
+      ).toBe(false);
+
+      // 放行入库后，env-pending 才收到 ACK
+      releaseFirst();
+      await waitFor(() =>
+        socket.json().some((frame) => frame.envelope_id === "env-pending"),
+      );
+      expect(received).toHaveLength(1);
+
+      // 2) 入库异常时不回发 ACK，且不清掉后续重投资格
+      shouldFail = true;
+      socket.push({
+        envelope_id: "env-fail-1",
+        type: "events_api",
+        payload: {
+          event: {
+            type: "app_mention",
+            channel: "C_ACK",
+            user: "U_A",
+            text: "<@U_BOT> 失败重试",
+            ts: "100.3",
+          },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(
+        socket.json().some((frame) => frame.envelope_id === "env-fail-1"),
+      ).toBe(false);
+
+      // Slack 重投同一条消息（新 envelope_id，同 channel:ts）→ 入库恢复后成功受理并 ACK
+      shouldFail = false;
+      socket.push({
+        envelope_id: "env-retry-2",
+        type: "events_api",
+        payload: {
+          event: {
+            type: "app_mention",
+            channel: "C_ACK",
+            user: "U_A",
+            text: "<@U_BOT> 失败重试",
+            ts: "100.3",
+          },
+        },
+      });
+      await waitFor(() =>
+        socket.json().some((frame) => frame.envelope_id === "env-retry-2"),
+      );
+      expect(received).toHaveLength(2);
+    } finally {
+      await adapter.stop();
+    }
+  });
+
+  test("Slack 频道并行 Thread 隔离：同频道不同 thread_ts 拥有独立会话且回复回到原 thread_ts，入库失败不发 ACK", async () => {
+    const db = createStatefulMockImDb({
+      id: "im_slack_th",
+      owner_user_id: "owner-s",
+      platform: "slack",
+      name: "Slack Bot",
+      agent_id: "bot-1",
+      enabled: true,
+      config: { ownerUserId: "U_BOSS", apiBase: "https://slack.test/api" },
+      secrets: await encryptSecret(
+        TEST_ENC_KEY,
+        JSON.stringify({ botToken: "xoxb-s", appToken: "xapp-s" }),
+      ),
+      allow_users: ["U_BOSS"],
+      owner_users: ["U_BOSS"],
+      allow_devices: false,
+      allow_private: false,
+    });
+
+    const sockets: FakeWs[] = [];
+    const turns: Parameters<TurnRunner>[0][] = [];
+    const posted: Array<Record<string, unknown>> = [];
+    let failAccept = false;
+    const origUnsafe = db.database.$client.unsafe.bind(db.database.$client);
+    db.database.$client.unsafe = (async (
+      query: string,
+      args: unknown[] = [],
+    ) => {
+      if (failAccept && query.includes("INSERT INTO chisabot_im_inbox")) {
+        throw new Error("inbox write failed");
+      }
+      return origUnsafe(query, args);
+    }) as typeof db.database.$client.unsafe;
+
+    const service = createImService({
+      database: db.database,
+      encryptionKey: TEST_ENC_KEY,
+      botAvailable: async () => true,
+      resolveDns: async () => [{ address: "93.184.216.34", family: 4 }],
+      runTurn: async (input) => {
+        turns.push(input);
+        return { replyText: `回复:${input.threadId}` };
+      },
+      fetch: async (url, init) => {
+        if (url.includes("/auth.test")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              user_id: "U_BOT",
+              bot_id: "B_BOT",
+              user: "chisa",
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/apps.connections.open")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              url: "wss://wss.slack.test/link/?ticket=t1",
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/chat.postMessage")) {
+          posted.push(parseJsonRecord(String(init?.body ?? "{}")));
+          return new Response(
+            JSON.stringify({ ok: true, ts: `1800.${posted.length}` }),
+            { status: 200 },
+          );
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      },
+      ws: (url) => {
+        const socket = new FakeWs(url);
+        sockets.push(socket);
+        return socket;
+      },
+    });
+
+    await service.startAll();
+    try {
+      const socket = await waitFor(() => sockets[0]);
+      await waitFor(
+        () => service.statusOf("im_slack_th")?.state === "connected",
+      );
+
+      // 1) 同频道两个显式 thread_ts 讨论各自隔离
+      socket.push({
+        envelope_id: "env-th-1",
+        type: "events_api",
+        payload: {
+          event: {
+            type: "app_mention",
+            channel: "C_DEV",
+            user: "U_BOSS",
+            text: "<@U_BOT> 线程 A 问题",
+            ts: "1700.11",
+            thread_ts: "1700.10",
+          },
+        },
+      });
+      socket.push({
+        envelope_id: "env-th-2",
+        type: "events_api",
+        payload: {
+          event: {
+            type: "app_mention",
+            channel: "C_DEV",
+            user: "U_BOSS",
+            text: "<@U_BOT> 线程 B 问题",
+            ts: "1700.21",
+            thread_ts: "1700.20",
+          },
+        },
+      });
+      // 2) 同频道顶层消息（无 thread_ts）走频道主会话，不与显式线程混串
+      socket.push({
+        envelope_id: "env-top-1",
+        type: "events_api",
+        payload: {
+          event: {
+            type: "app_mention",
+            channel: "C_DEV",
+            user: "U_BOSS",
+            text: "<@U_BOT> 频道顶层问题",
+            ts: "1700.30",
+          },
+        },
+      });
+
+      await waitFor(() => turns.length === 3 && posted.length === 3);
+      await waitFor(
+        () => socket.json().filter((frame) => frame.envelope_id).length === 3,
+      );
+
+      const thA = db.chats.get(
+        "im_slack_th|group:C_DEV:thread:1700.10",
+      )?.thread_id;
+      const thB = db.chats.get(
+        "im_slack_th|group:C_DEV:thread:1700.20",
+      )?.thread_id;
+      const top = db.chats.get("im_slack_th|group:C_DEV")?.thread_id;
+      expect(thA).toBeTruthy();
+      expect(thB).toBeTruthy();
+      expect(top).toBeTruthy();
+      expect(new Set([thA, thB, top]).size).toBe(3);
+
+      expect(
+        posted.find((p) => String(p.text).includes(String(thA))),
+      ).toMatchObject({ channel: "C_DEV", thread_ts: "1700.10" });
+      expect(
+        posted.find((p) => String(p.text).includes(String(thB))),
+      ).toMatchObject({ channel: "C_DEV", thread_ts: "1700.20" });
+      expect(
+        posted.find((p) => String(p.text).includes(String(top))),
+      ).toMatchObject({ channel: "C_DEV", thread_ts: "1700.30" });
+
+      // 3) delivery.accept 真实抛错时：服务拒绝且 SlackAdapter 不发 ACK
+      failAccept = true;
+      socket.push({
+        envelope_id: "env-db-fail",
+        type: "events_api",
+        payload: {
+          event: {
+            type: "app_mention",
+            channel: "C_DEV",
+            user: "U_BOSS",
+            text: "<@U_BOT> 落库失败测试",
+            ts: "1700.40",
+            thread_ts: "1700.40",
+          },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(
+        socket.json().some((frame) => frame.envelope_id === "env-db-fail"),
+      ).toBe(false);
+    } finally {
+      await service.stopAll();
+    }
+  });
 });

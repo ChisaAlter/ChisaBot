@@ -10,6 +10,7 @@
 const crypto = require("node:crypto");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
+const { renameWithRetry } = require("./safe-fs");
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024;
@@ -132,6 +133,7 @@ async function atomicChunkedDownload({
   expectedSha256,
   signal,
   onProgress,
+  renameOpts,
 }) {
   if (
     !Number.isSafeInteger(maxBytes) ||
@@ -258,7 +260,7 @@ async function atomicChunkedDownload({
     handle = null;
 
     signal?.throwIfAborted();
-    await fsp.rename(tempPath, resolvedDest);
+    await renameWithRetry(tempPath, resolvedDest, renameOpts);
     committed = true;
     return {
       ok: true,

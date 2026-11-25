@@ -29,7 +29,8 @@ import { dataText, LoopAdapter, randomId } from "./base";
  * 流程：
  * 1. `POST auth.test`（`botToken`）识别自身 `user_id` 与 `bot_id`，防自循环。
  * 2. `POST apps.connections.open`（`appToken`）申请 Socket Mode WSS 地址并建连。
- * 3. 收到带 `envelope_id` 的帧立即回发 `{ envelope_id }` ACK，解析 `events_api` 里的 `message` / `app_mention` 事件：
+ * 3. `hello`/`disconnect` 等控制帧或被过滤忽略的事件立即回发 `{ envelope_id }` ACK；有效 `events_api` 入站消息
+ *    等待入库受理完成后再回发 `{ envelope_id }` ACK（受理异常时不发 ACK 以便 Slack 重投）：
  *    - 私聊（`im`）自动触发；频道/多人会话仅响应 `app_mention` 或正文中 `@<botUserId>`。
  *    - 同一条消息若同时收到 `message` 与 `app_mention`，通过 `${channel}:${ts}` 去重只处理一次。
  * 4. 回复调用 `POST chat.postMessage`，支持 `thread_ts`，并在遇到 `channel_is_archived` / `cannot_dm_bot` 等窗口失效错误时抛出 `ImWindowExpiredError`。
@@ -142,8 +143,9 @@ export function parseSlackEvent(
     .map(classifySlackFile);
 
   const ts = asString(event.ts) ?? asString(event.event_ts) ?? "";
+  const explicitThreadTs = asString(event.thread_ts);
   const threadTs =
-    asString(event.thread_ts) ?? (isPrivate ? undefined : ts || undefined);
+    explicitThreadTs ?? (isPrivate ? undefined : ts || undefined);
   const messageId = ts ? `${channel}:${ts}` : randomId();
 
   return {
@@ -156,6 +158,9 @@ export function parseSlackEvent(
     reply: {
       channel,
       ...(threadTs ? { threadTs } : {}),
+      ...(explicitThreadTs && !isPrivate
+        ? { threadKey: explicitThreadTs }
+        : {}),
       ...(ts ? { ts } : {}),
     },
     ...(attachments.length ? { attachments } : {}),
@@ -266,21 +271,24 @@ export class SlackAdapter extends LoopAdapter {
     });
   }
 
-  private handle(text: string) {
+  private ackEnvelope(envelopeId: string | undefined) {
+    if (!envelopeId) return;
+    try {
+      this.sendJson({ envelope_id: envelopeId });
+    } catch {}
+  }
+
+  private async handle(text: string) {
     const frame = parseJsonRecord(text);
     const envelopeId = asString(frame.envelope_id);
-    if (envelopeId) {
-      try {
-        this.sendJson({ envelope_id: envelopeId });
-      } catch {}
-    }
-
     const frameType = asString(frame.type);
     if (frameType === "hello") {
+      this.ackEnvelope(envelopeId);
       this.ctx.log("info", "Slack Socket Mode 收到 hello 就绪帧");
       return;
     }
     if (frameType === "disconnect") {
+      this.ackEnvelope(envelopeId);
       const reason = asString(frame.reason) ?? "disconnect";
       this.ctx.log("info", `Slack Socket Mode 要求重连：${reason}`);
       this.socket?.close(4000, reason);
@@ -293,8 +301,15 @@ export class SlackAdapter extends LoopAdapter {
         this.botUserId,
         this.botId,
       );
-      if (inbound) this.emit(inbound);
+      if (!inbound) {
+        this.ackEnvelope(envelopeId);
+        return;
+      }
+      const accepted = await this.emit(inbound, { throwOnError: true });
+      if (accepted) this.ackEnvelope(envelopeId);
+      return;
     }
+    this.ackEnvelope(envelopeId);
   }
 
   async send(reply: ImReply): Promise<ImDeliveryReceipt | undefined> {

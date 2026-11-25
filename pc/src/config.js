@@ -7,6 +7,13 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
+const {
+  hardenFilePermissions,
+  hardenFilePermissionsSync,
+  readFileNoFollow,
+  renameWithRetrySync,
+  writeFileAtomicSafe,
+} = require("./safe-fs");
 
 const AUDIT_MAX_BYTES = 2 * 1024 * 1024;
 const AUDIT_KEEP_LINES = 2000;
@@ -31,7 +38,13 @@ const DEFAULTS = {
   /** 上次刷新快捷方式 / 图标缓存时的外壳指纹（src/shell-refresh.js）；和当前版本不同就再刷新一次。 */
   shellHash: "",
   /** 主窗口里网页的外观（深浅色 / 主题 / 材质 / 画布 / 时间天空），本机窗口跟着它走；dark 为 null 时跟随系统。 */
-  appearance: { dark: null, theme: "sky", material: "glass", canvas: "sky", sky: true },
+  appearance: {
+    dark: null,
+    theme: "sky",
+    material: "glass",
+    canvas: "sky",
+    sky: true,
+  },
   /** 硬件加速开关（重启客户端后生效）；遇到显卡兼容黑屏/花屏时可关闭。 */
   hardwareAcceleration: true,
   /** 渲染进程拼写检查开关（配合原生右键菜单拼写建议）。 */
@@ -84,12 +97,20 @@ function createConfig({ dir, safeStorage }) {
 
   /** 审计日志异步串行写盘队列 + 读合并状态。 */
   let auditDirReady = false;
+  let auditFileHardened = false;
   let auditBytes = null;
   let pendingAudit = [];
   let inflightAudit = [];
   let inflightBaseBytes = 0;
   let inflightTotalBytes = 0;
   let auditFlushPromise = null;
+
+  // 初始化阶段异步收敛配置目录、配置文件与既有审计日志权限（不阻塞同步启动热路径）
+  void (async () => {
+    await hardenFilePermissions(dir, 0o700).catch(() => {});
+    await hardenFilePermissions(file, 0o600).catch(() => {});
+    await hardenFilePermissions(auditFile, 0o600).catch(() => {});
+  })();
 
   function invalidateTokenCache() {
     hasCachedToken = false;
@@ -107,16 +128,20 @@ function createConfig({ dir, safeStorage }) {
 
   function save() {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    hardenFilePermissionsSync(dir, 0o700);
     const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
     let fd;
     let renamed = false;
     try {
       fd = fs.openSync(tmp, "wx", 0o600);
       fs.writeFileSync(fd, JSON.stringify(data, null, 2));
+      if (process.platform !== "win32") {
+        fs.fchmodSync(fd, 0o600);
+      }
       fs.fsyncSync(fd);
       fs.closeSync(fd);
       fd = undefined;
-      fs.renameSync(tmp, file);
+      renameWithRetrySync(tmp, file);
       renamed = true;
     } finally {
       if (fd !== undefined) {
@@ -132,9 +157,45 @@ function createConfig({ dir, safeStorage }) {
     }
   }
 
+  const encryptionBackend = () => {
+    try {
+      if (!safeStorage) return "none";
+      const selected =
+        typeof safeStorage.getSelectedStorageBackend === "function"
+          ? safeStorage.getSelectedStorageBackend()
+          : "";
+      if (selected === "basic_text") return "basic_text";
+      if (!safeStorage.isEncryptionAvailable?.()) {
+        return typeof selected === "string" && selected ? selected : "none";
+      }
+      if (typeof selected === "string" && selected) return selected;
+      if (process.platform === "win32") return "dpapi";
+      if (process.platform === "darwin") return "keychain";
+      return "keyring";
+    } catch {
+      return "none";
+    }
+  };
+
   const encryptionAvailable = () => {
     try {
-      return !!safeStorage && safeStorage.isEncryptionAvailable();
+      if (!safeStorage?.isEncryptionAvailable()) return false;
+      if (
+        typeof safeStorage.getSelectedStorageBackend === "function" &&
+        safeStorage.getSelectedStorageBackend() === "basic_text"
+      ) {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /** 允许解密既有密文（含历史 Linux basic_text 密文），而新写入令牌仍受 encryptionAvailable() 严格把关。 */
+  const canDecryptStorage = () => {
+    try {
+      return !!safeStorage && !!safeStorage.isEncryptionAvailable();
     } catch {
       return false;
     }
@@ -146,11 +207,15 @@ function createConfig({ dir, safeStorage }) {
       try {
         while (pendingAudit.length > 0) {
           if (!auditDirReady) {
-            await fsp.mkdir(dir, { recursive: true });
+            await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
+            await hardenFilePermissions(dir, 0o700);
             auditDirReady = true;
           }
           if (auditBytes === null) {
-            const st = await fsp.stat(auditFile).catch(() => null);
+            const st = await fsp.lstat(auditFile).catch(() => null);
+            if (st?.isSymbolicLink()) {
+              throw new Error("拒绝向符号链接写入审计日志");
+            }
             auditBytes = st ? st.size : 0;
           }
           const batch = pendingAudit;
@@ -160,16 +225,32 @@ function createConfig({ dir, safeStorage }) {
           inflightAudit = batch;
           inflightBaseBytes = auditBytes;
           inflightTotalBytes = chunkBytes;
-          await fsp.appendFile(auditFile, chunk, "utf8");
+          await fsp.appendFile(auditFile, chunk, {
+            encoding: "utf8",
+            mode: 0o600,
+          });
+          if (!auditFileHardened) {
+            await hardenFilePermissions(auditFile, 0o600);
+            auditFileHardened = true;
+          }
           auditBytes += chunkBytes;
           inflightAudit = [];
           inflightTotalBytes = 0;
 
           if (auditBytes > AUDIT_MAX_BYTES) {
-            const raw = await fsp.readFile(auditFile, "utf8");
-            const lines = raw.trim().split("\n").filter(Boolean);
+            const readRes = await readFileNoFollow(auditFile);
+            const lines = readRes.buffer
+              .toString("utf8")
+              .trim()
+              .split("\n")
+              .filter(Boolean);
             const rotated = `${lines.slice(-AUDIT_KEEP_LINES).join("\n")}\n`;
-            await fsp.writeFile(auditFile, rotated, "utf8");
+            await writeFileAtomicSafe(auditFile, rotated, {
+              mode: 0o600,
+              fsync: false,
+              expectedStat: readRes.stat,
+            });
+            await hardenFilePermissions(auditFile, 0o600);
             auditBytes = Buffer.byteLength(rotated, "utf8");
           }
         }
@@ -178,6 +259,7 @@ function createConfig({ dir, safeStorage }) {
         inflightTotalBytes = 0;
         auditBytes = null;
         auditDirReady = false;
+        auditFileHardened = false;
       } finally {
         auditFlushPromise = null;
         if (pendingAudit.length > 0) {
@@ -191,12 +273,15 @@ function createConfig({ dir, safeStorage }) {
   function flushAuditSync() {
     if (pendingAudit.length === 0 && inflightAudit.length === 0) return;
     try {
-      fs.mkdirSync(dir, { recursive: true });
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      hardenFilePermissionsSync(dir, 0o700);
       auditDirReady = true;
-      let diskSize = 0;
+      let auditLstat = null;
       try {
-        diskSize = fs.statSync(auditFile).size;
+        auditLstat = fs.lstatSync(auditFile);
       } catch {}
+      if (auditLstat?.isSymbolicLink()) return;
+      const diskSize = auditLstat ? auditLstat.size : 0;
       const toWrite = [];
       if (
         inflightAudit.length > 0 &&
@@ -212,7 +297,9 @@ function createConfig({ dir, safeStorage }) {
       }
       if (toWrite.length > 0) {
         const chunk = `${toWrite.map((item) => item.line).join("\n")}\n`;
-        fs.appendFileSync(auditFile, chunk, "utf8");
+        fs.appendFileSync(auditFile, chunk, { encoding: "utf8", mode: 0o600 });
+        hardenFilePermissionsSync(auditFile, 0o600);
+        auditFileHardened = true;
         auditBytes = diskSize + Buffer.byteLength(chunk, "utf8");
       }
     } catch {}
@@ -258,7 +345,7 @@ function createConfig({ dir, safeStorage }) {
       return { ...data };
     },
     getToken() {
-      if (data.tokenEnc && encryptionAvailable()) {
+      if (data.tokenEnc && canDecryptStorage()) {
         if (hasCachedToken && cachedTokenEnc === data.tokenEnc) {
           return cachedTokenValue;
         }
@@ -272,7 +359,7 @@ function createConfig({ dir, safeStorage }) {
           return decrypted;
         } catch {
           invalidateTokenCache();
-          return null;
+          return data.tokenPlain || null;
         }
       }
       invalidateTokenCache();
@@ -283,6 +370,8 @@ function createConfig({ dir, safeStorage }) {
       setToken(null);
     },
     tokenProtected: () => !!data.tokenEnc,
+    encryptionAvailable,
+    encryptionBackend,
     appendAudit(entry) {
       try {
         const line = JSON.stringify(entry);
@@ -291,7 +380,10 @@ function createConfig({ dir, safeStorage }) {
       } catch {}
     },
     flushAudit() {
-      return auditFlushPromise || (pendingAudit.length > 0 ? drainAuditQueue() : Promise.resolve());
+      return (
+        auditFlushPromise ||
+        (pendingAudit.length > 0 ? drainAuditQueue() : Promise.resolve())
+      );
     },
     flushAuditSync,
     readAudit(limit = 200) {
@@ -317,8 +409,12 @@ function createConfig({ dir, safeStorage }) {
           for (const item of pendingAudit) merged.push(item.line);
         }
         if (merged.length === 0) return [];
-        const take = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
-        return merged.slice(-take).reverse().map((line) => JSON.parse(line));
+        const take =
+          Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
+        return merged
+          .slice(-take)
+          .reverse()
+          .map((line) => JSON.parse(line));
       } catch {
         return [];
       }
