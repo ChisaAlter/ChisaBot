@@ -20,7 +20,7 @@ USER root
 WORKDIR /app
 EXPOSE 3001
 ENTRYPOINT ["/init"]
-HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 CMD bun -e "const r = await fetch('http://127.0.0.1:3001/health'); process.exit(r.ok ? 0 : 1)"
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 CMD curl -fsS --max-time 3 http://127.0.0.1:3001/health >/dev/null
 RUN rm -rf /app/app/dist /app/server/src /app/server/drizzle /app/server/scripts /app/shared /app/examples/zh-CN /app/agent-computer/src /app/pc/src/agent-runtime /app/runtime/dsh/src /app/deploy/dsh
 COPY --chown=apiuser:apiuser app/dist /app/app/dist
 COPY --chown=apiuser:apiuser server /app/server

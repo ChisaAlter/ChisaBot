@@ -30,7 +30,7 @@ async function fixture(t, mode = "ok") {
     const [command,path,flag]=process.argv.slice(2);
     if(command!=='reconcile'||flag!=='--replace')process.exit(2);
     const config=JSON.parse(await readFile(path,'utf8'));
-    await writeFile(new URL('./called.json',import.meta.url),JSON.stringify(config));
+    await writeFile(new URL('./called.json',import.meta.url),JSON.stringify({...config,lockWait:process.env.CHISABOT_ACCOUNTS_LOCK_WAIT ?? null}));
     if(${JSON.stringify(mode)}==='failure')process.exit(3);
     if(${JSON.stringify(mode)}==='concurrent')await writeFile(${JSON.stringify(path)},JSON.stringify({...config,image:'operator:choice',runtimeMemory:'1g'}));
     console.log(JSON.stringify({ready:2,preparing:0,updateRequired:0}));
@@ -59,10 +59,11 @@ test("successful replacement persists only the requested image after reconciler 
     ...f.config,
     image: "fixture:new",
   });
-  assert.equal(
-    JSON.parse(await readFile(join(f.directory, "called.json"), "utf8")).image,
-    "fixture:new",
+  const called = JSON.parse(
+    await readFile(join(f.directory, "called.json"), "utf8"),
   );
+  assert.equal(called.image, "fixture:new");
+  assert.equal(called.lockWait, "120");
 });
 test("failed partial replacement keeps original configured image for recovery", async (t) => {
   const f = await fixture(t, "failure");

@@ -38,6 +38,17 @@ done
 fail() { printf 'sync-nginx: FAIL: %s\n' "$*" >&2; exit 1; }
 ok() { printf 'sync-nginx: ok: %s\n' "$*"; }
 
+CLEANUP_PATHS=""
+cleanup() {
+  for p in $CLEANUP_PATHS; do
+    [ -n "$p" ] && rm -rf "$p"
+  done
+}
+trap cleanup EXIT
+register_cleanup() {
+  CLEANUP_PATHS="$CLEANUP_PATHS $1"
+}
+
 TEMPLATE="$REPO/deploy/public/nginx.conf"
 RENDER="$REPO/deploy/public/render-nginx.sh"
 test -f "$TEMPLATE" || fail "missing template $TEMPLATE"
@@ -74,8 +85,7 @@ assert_security_markers() {
 render_into() {
   out=$1
   tmpd=$(mktemp -d)
-  # shellcheck disable=SC2064
-  trap "rm -rf '$tmpd'" EXIT
+  register_cleanup "$tmpd"
   cp "$TEMPLATE" "$tmpd/nginx.conf"
   env_file=${ENV_FILE:-}
   if [ -z "$env_file" ] && [ -f "$PUBLIC_DIR/../.env" ]; then
@@ -112,6 +122,7 @@ case "$MODE" in
     assert_local_caller_clears "$TEMPLATE" "repo template"
     assert_security_markers "$TEMPLATE" "repo template"
     out=$(mktemp)
+    register_cleanup "$out"
     # Force synthetic path for CI determinism (ignore host .env)
     ENV_FILE= render_into "$out"
     grep -E 'ci\.example\.test|chisabot\.example\.com' "$out" >/dev/null \
@@ -163,6 +174,7 @@ case "$MODE" in
       ok "derived domain=$D ports=$P/$M from live nginx"
     fi
     out=$(mktemp)
+    register_cleanup "$out"
     render_into "$out"
     if [ "$DRY" = 1 ]; then
       ok "dry-run: would install to $PUBLIC_DIR (nginx -t + reload skipped)"

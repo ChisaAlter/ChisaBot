@@ -2,8 +2,8 @@
 # 健康检查（docs/online-update.md）：容器 healthy、没有重启、本机 /health 200、公网登录页 200（PUBLIC_HEALTH_URL 为空或是示例域名时跳过），
 # 给了构建号时 /api/version 必须是这一版。用法：health.sh <镜像> [构建号]
 set -uo pipefail
-. /opt/chisabot-updater/config.env
 U=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
+. "$U/config.env"
 # CR-P1-02：网关模式下本机管理员接口要带 X-ChisaBot-Local-Caller。
 LOCAL_CALLER=""
 if [ -f "${COMPOSE_DIR}/.env" ]; then

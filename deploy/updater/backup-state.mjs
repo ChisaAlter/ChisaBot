@@ -111,19 +111,41 @@ export async function completeBackup(path, metadata = {}) {
   return data;
 }
 
-async function completed(root, kind) {
+export async function failBackup(path, reason = "") {
+  const current = await manifest(path);
+  if (current?.state !== "pending")
+    throw new Error("Only this updater pending backup can be marked failed");
+  const data = {
+    ...current,
+    owner: OWNER,
+    schema: SCHEMA,
+    kind: current.kind,
+    state: "failed",
+    createdAt: current.createdAt,
+    failedAt: new Date().toISOString(),
+    ...(reason ? { reason } : {}),
+  };
+  await atomicJson(join(path, MARKER), data);
+  return data;
+}
+
+async function byState(root, kind, state) {
   const base = await realpath(root);
   const entries = [];
   for (const entry of await readdir(base, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
     const path = join(base, entry.name);
     const data = await manifest(path);
-    if (data?.kind !== kind || data.state !== "complete") continue;
+    if (data?.kind !== kind || data.state !== state) continue;
     entries.push({ path, data });
   }
   return entries.sort(
     (a, b) => Date.parse(b.data.createdAt) - Date.parse(a.data.createdAt),
   );
+}
+
+async function completed(root, kind) {
+  return byState(root, kind, "complete");
 }
 
 function count(value, name) {
@@ -139,11 +161,12 @@ function weekKey(date) {
   return day.toISOString().slice(0, 10);
 }
 
-/** Only marked, complete batches are eligible. Unknown/manual/partial/symlink entries always survive. */
+/** Only marked complete/failed batches are eligible. Unknown/manual/pending/symlink entries always survive. */
 export async function pruneBackups(root, kind, keep, weekly = 4) {
   count(keep, "Retention");
   if (kind === "full") count(weekly, "Weekly retention");
   const entries = await completed(root, kind);
+  const failedEntries = await byState(root, kind, "failed");
   const retained = new Set(
     kind === "full" ? [] : entries.slice(0, keep).map((e) => e.path),
   );
@@ -182,7 +205,27 @@ export async function pruneBackups(root, kind, keep, weekly = 4) {
     await rm(entry.path, { recursive: true });
     removed.push(entry.path);
   }
-  return { removed: removed.length, retained: entries.length - removed.length };
+  for (const entry of failedEntries) {
+    try {
+      await lstat(join(entry.path, ".keep"));
+      continue;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const current = await manifest(entry.path);
+    if (!current || current.kind !== kind || current.state !== "failed")
+      continue;
+    if (dirname(await realpath(entry.path)) !== base)
+      throw new Error("Backup deletion escaped its root");
+    await rm(entry.path, { recursive: true });
+    removed.push(entry.path);
+  }
+  return {
+    removed: removed.length,
+    retained:
+      entries.length -
+      removed.filter((p) => entries.some((e) => e.path === p)).length,
+  };
 }
 
 export async function backupStatus(
@@ -263,7 +306,10 @@ if (
   const [command, root, ...args] = process.argv.slice(2);
   if (!root) throw new Error("A backup directory is required");
   if (command === "begin") await beginBackup(root, args[0]);
-  else if (command === "complete") {
+  else if (command === "fail") {
+    const result = await failBackup(root, args[0] ?? "");
+    console.log(JSON.stringify({ status: result.state, kind: result.kind }));
+  } else if (command === "complete") {
     const metadata = args[0] ? JSON.parse(await readFile(args[0], "utf8")) : {};
     const result = await completeBackup(root, metadata);
     console.log(
@@ -308,5 +354,7 @@ if (
       completedAt: new Date().toISOString(),
     });
   } else
-    throw new Error("Expected begin|complete|prune|status|offsite-receipt");
+    throw new Error(
+      "Expected begin|complete|fail|prune|status|offsite-receipt",
+    );
 }

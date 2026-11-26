@@ -44,7 +44,14 @@ if (command === "replace") {
     const result = await execute(
       process.execPath,
       [script, "reconcile", path, "--replace"],
-      { maxBuffer: 8 * 1024 * 1024 },
+      {
+        env: {
+          ...process.env,
+          CHISABOT_ACCOUNTS_LOCK_WAIT:
+            process.env.CHISABOT_ACCOUNTS_LOCK_WAIT ?? "120",
+        },
+        maxBuffer: 8 * 1024 * 1024,
+      },
     );
     process.stdout.write(result.stdout);
     process.stderr.write(result.stderr);

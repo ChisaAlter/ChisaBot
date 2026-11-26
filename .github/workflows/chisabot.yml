@@ -20,9 +20,9 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        # pgvector variant of the same postgres:18 image: the full migration chain needs
-        # `CREATE EXTENSION vector` (drizzle/0000_schema.sql), same POSTGRES_* env contract.
-        image: pgvector/pgvector:pg18-bookworm
+        # Match production's PostgreSQL 16 + pgvector (Dockerfile & dsh-runtime): the full
+        # migration chain needs `CREATE EXTENSION vector` (drizzle/0000_schema.sql).
+        image: pgvector/pgvector:pg16-bookworm
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
@@ -39,23 +39,25 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'agent-computer/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
       # Hoisted, like the image (Dockerfile): shared/ is not a workspace and imports zod / @json-render
       # from the app and server trees; under the isolated linker those don't resolve from shared/.
       - run: bun install --frozen-lockfile --omit=peer --linker hoisted
       - run: cp .env.example .env
       - run: node scripts/check-zh-localization.cjs
+      - run: bun run generate:app-config
       - run: bun run --cwd server typecheck
-      # build first: it regenerates app/src/routeTree.gen.ts, which typecheck reads (the committed copy
-      # lags behind new routes because parallel PRs each add their own).
-      # Same as the image build (Dockerfile): with the hoisted tree vite sits at the root, and app's own
-      # build script names app/node_modules/vite.
-      - run: bun run generate:app-config && cd app && bun --bun ../node_modules/vite/bin/vite.js build
-      - run: bun run --cwd app typecheck
-      - name: Architecture and truth guards
+      - name: Architecture, truth and release script guards
         run: >-
           bun test
           app/tests/no-raw-fetch.test.ts
           app/tests/no-group-has.test.ts
+          app/tests/no-container-has.test.ts
           app/tests/no-mock-module.test.ts
           app/tests/no-raw-use-effect.test.ts
           server/tests/no-raw-fetch.test.ts
@@ -73,78 +75,22 @@ jobs:
           server/tests/no-cross-surface-imports.test.ts
           app/tests/formal-chat-ledger.test.ts
           server/tests/verify-ui-driver.test.ts
+          scripts/check-release-assets.test.ts
+          scripts/test-ci.test.ts
       - name: ChisaBench hot-path budget baseline
         run: bun run bench
-      - name: Server model, permission and runtime checks
-        run: >-
-          bun test
-          server/tests/config.test.ts
-          server/tests/agent-kernel-default.test.ts
-          server/tests/agent-model-policy.test.ts
-          server/tests/agent-model-runtime.test.ts
-          server/tests/agent-profile-policy.test.ts
-          server/tests/agent-resolver.test.ts
-          server/tests/agent-routes.test.ts
-          server/tests/group-routes.test.ts
-          server/tests/dynamic-model-runtime.test.ts
-          server/tests/model-catalog.test.ts
-          server/tests/model-connection-context.test.ts
-          server/tests/request-sanitize.test.ts
-          server/tests/deepseek-image-request.test.ts
-          server/tests/model-selection-routes.test.ts
-          server/tests/model-settings-routes.test.ts
-          server/tests/model-settings.test.ts
-          server/tests/computer-tool-outcome.test.ts
-          server/tests/agent-runtime-connection-refused.test.ts
-          server/tests/agent-runtime-connect-timeout.test.ts
-          server/tests/compose-network-drift.test.ts
-          server/tests/admin-smoke.test.ts
-          server/tests/im-adapters.test.ts
       # The DSH → AG-UI projection imports runtime/dsh (its own Node project), so install it first.
+      # dsh-* tests are excluded from `bun run test:server`, so these projection suites stay explicit here.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-dsh-${{ hashFiles('runtime/dsh/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-dsh-
       - name: DSH projection checks
         run: |
           npm ci --prefix runtime/dsh --no-audit --no-fund
           bun test server/tests/dsh-loop-stop-projection.test.ts server/tests/dsh-reasoning-projection.test.ts
-      # The chat regression set every ChisaBot PR runs on the server (the older model-chooser DOM tests
-      # need a live API and never ran here while typecheck was failing; see docs/slimming.md P3).
-      - name: Chat UI checks
-        working-directory: app
-        run: bun test tests/no-group-has.test.ts tests/stopped-turn.test.ts tests/bot-message-list.test.tsx tests/link-cards.test.tsx tests/rich-previews-extract.test.ts tests/ui-align.test.ts tests/connection-drop.test.ts tests/fold-narration.test.ts tests/chat-unify.test.ts tests/turn-unfinished.test.tsx tests/workspace-links.test.ts tests/agent-runtime-unreachable.test.ts
-      - name: Request, message identity and persistent queue checks
-        working-directory: app
-        env:
-          NODE_ENV: test
-        # Separate test processes keep SDK module registrations and DOM globals isolated.
-        run: |
-          bun test tests/client-deadline.test.ts tests/computer-tool-refusals.test.ts
-          bun test tests/hooks-primitives.test.tsx
-          bun test tests/message-node-identity.test.tsx tests/message-blank-release.test.ts
-          bun test tests/tail-first-paint.test.ts
-          bun test tests/message-scroll-reduced-motion.test.tsx
-          bun test tests/thread-inbox-paused.test.tsx tests/thread-inbox-concurrency.test.tsx tests/conversation-sync.test.ts
-          bun test tests/schedule-fired.test.tsx
-          bun test tests/schedule-edit.test.tsx
-          bun test tests/schedule-runs-query.test.ts
-          bun test tests/stop-queue.test.tsx
-          bun test tests/computer-activity-log.test.tsx tests/computer-activity.test.ts
-          bun test tests/computer-control-status.test.ts tests/browser-presence.test.ts
-          bun test tests/control-poll-single-source.test.tsx tests/control-backoff-timing.test.ts
-          bun test tests/control-tabs-leader.test.ts
-          bun test tests/keep-alive.test.tsx
-          bun test tests/computer-preview-visibility.test.tsx
-          bun test tests/sidebar-search-nav.test.ts tests/channel-pagination.test.tsx tests/channel-search.test.ts tests/focus-message.test.ts tests/scroll-within.test.ts tests/sidebar-shortcut-layouts.test.tsx
-          # CB-106：app/bunfig.toml 已自动加载 ./tests/preload.ts（DOM 下先求值 Base UI），无需再显式 --preload（CB-110）。
-          bun test tests/memory-delete-undo.test.tsx
-          bun test tests/memory-undo-toast-limit.test.tsx
-          # CB-111 P3：两个文件同进程、两种顺序都要过（模块级提示状态不串）。
-          bun test ../app/tests/memory-delete-undo.test.tsx ../app/tests/memory-undo-toast-limit.test.tsx
-          bun test ../app/tests/memory-undo-toast-limit.test.tsx ../app/tests/memory-delete-undo.test.tsx
-          # DF-30：电脑卡片外框不再 button 套「重试」button。
-          bun test tests/computer-frame-nested-button.test.tsx
-          # DF-13：service worker 导航失败区分离线 / 服务器慢（超时、502/503）并自动重试。
-          bun test tests/sw-navigation.test.ts
-          bun test tests/channel-avatar-mood.test.tsx
-          bun test tests/shape-avatar.test.tsx
       - name: Install actual computer service dependencies
         working-directory: agent-computer
         run: bun install --frozen-lockfile --omit=peer
@@ -156,27 +102,6 @@ jobs:
         env:
           DATABASE_URL: postgres://test:test@127.0.0.1:5432/chisabot_test
         run: bun server/scripts/migrate.ts
-      - name: Durable inbox and database recovery checks
-        env:
-          TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/chisabot_test
-          CHISABOT_COMPUTER_STOP_HTTP: "1"
-        run: |
-          bun test server/tests/database-deadline.integration.test.ts server/tests/database-recovery.test.ts
-          bun test server/tests/local-conversations-inbox.integration.test.ts server/tests/thread-inbox-paused.integration.test.ts server/tests/thread-inbox.test.ts
-          bun test server/tests/stop-queue.integration.test.ts
-          bun test server/tests/conversation-redaction.test.ts
-          bun test server/tests/computer-stop.test.ts
-          bun test server/tests/agent-runtime-unreachable.integration.test.ts
-          bun test server/tests/schedules-paused-next.integration.test.ts
-          bun test server/tests/schedules-runs-param.test.ts
-          bun test server/tests/schedules.test.ts
-          bun test server/tests/channel-search-hit-meta.test.ts
-          bun test server/tests/computer-activity-redact.test.ts server/tests/computer-activity-gateway.test.ts server/tests/computer-activity-store.integration.test.ts server/tests/devices-store-audit-redact.integration.test.ts
-          bun test server/tests/multi-user-unified-admin.test.ts server/tests/bot-avatars.test.ts
-          bun test server/tests/im-service.integration.test.ts server/tests/confirmations.test.ts
-      # CB-103：GET /control 一律 200 + state，截图让路回 409 user_control，接管中的拒绝记进活动记录。
-      - name: Computer control state checks (CB-103)
-        run: bun test server/tests/computer-routes.test.ts server/tests/computer-client.test.ts
       - name: Cloud browser native select (DESIGN.md §100)
         working-directory: agent-computer
         run: bun test tests/native-select.test.ts tests/aria-snapshot.test.ts
@@ -218,19 +143,8 @@ jobs:
           tests/workspace.test.ts
           tests/workspace-download.test.ts
           tests/workspace-origin.test.ts
-      - name: SSRF red-line (PRD-P1-06)
-        run: bun test server/tests/ssrf-redline.test.ts server/tests/guarded-fetch-ssrf.test.ts server/tests/personal-imap-egress.test.ts shared/ops-counters.test.ts shared/ops-codes.test.ts
-      - name: Trust-boundary network isolation red-line
-        run: bun test shared/trust-boundary.test.ts server/tests/trust-boundary-redline.test.ts
-      - name: Log-scrub red-line (PRD-P0-05)
-        run: bun test server/tests/log-scrub-redline.test.ts server/tests/conversation-public-error.test.ts
       - name: Nginx template sync check (apply-or-fail process)
         run: sh scripts/ops/sync-nginx.sh --check-repo
-      # 2026-11-09 重连循环：增量接入快照（snapshotSince）与封顶快照。应用侧的回归测试在 test:app 里。
-      - name: Connect snapshot checks (reconnect loop)
-        run: bun test shared/connect-snapshot.test.ts server/tests/connect-snapshot.test.ts
-      - name: Schedule honesty / partition (non-tram re-verify)
-        run: bun test shared/schedules.test.ts shared/activity-labels.test.ts
       - name: Login gateway and nginx render checks
         run: >-
           bun test
@@ -241,6 +155,7 @@ jobs:
       - name: Updater, backup and resource pinning checks (CB-100b)
         run: |
           for f in deploy/updater/*.sh; do bash -n "$f"; done
+          for f in scripts/ops/*.sh deploy/pin-resources.sh deploy/install-updater.sh; do sh -n "$f"; done
           bash deploy/updater/test-shell.sh
           bash deploy/updater/test-dsh-release.sh
           bash deploy/updater/test-complete-backup.sh
@@ -252,9 +167,8 @@ jobs:
           )
           node --test deploy/pin-resources.test.mjs deploy/updater/accounts-release.test.mjs deploy/updater/backup-config.test.mjs deploy/updater/backup-state.test.mjs
           python3 -m unittest discover -s deploy/updater -p "test_*.py"
-      # Everything the hand-picked lists miss: the whole server/shared suite minus the
-      # measured defect quarantine (scripts/test-quarantine.ts) and the dsh-* suites,
-      # which have their own job below.
+      # Full server/shared suite (runs every server/tests/*.test.ts & shared/**/*.test.ts
+      # minus dsh-* which runs in dsh-runtime and scripts/test-quarantine.ts).
       - name: Full server suite (minus quarantine)
         env:
           TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/chisabot_test
@@ -294,12 +208,17 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'agent-computer/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
       - run: bun install --frozen-lockfile --omit=peer --linker hoisted
       - name: Whole-repo Biome lint (0 error 0 warning)
         run: bun run lint
 
   # 完整的 app 测试（scripts/run-app-tests.ts：共享进程跑全部文件，名单里的文件各自单独进程跑）。
-  # 上面 web-and-models 里挑出来的那些子集照旧保留，这里是兜住其余文件的全量。
   app-tests:
     name: App tests (bun run test:app)
     runs-on: ubuntu-latest
@@ -311,9 +230,19 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'agent-computer/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
       - run: bun install --frozen-lockfile --omit=peer --linker hoisted
       - run: cp .env.example .env
       - run: bun run test:app
+      # CB-111 P3：两个文件同进程、反序也要过（模块级提示状态不串）。
+      - name: Memory undo toast order independence (CB-111 P3)
+        working-directory: app
+        run: bun test tests/memory-undo-toast-limit.test.tsx tests/memory-delete-undo.test.tsx
 
   # DSH 运行时（runtime/dsh）：独立的 Node 项目。真 Host + 假上游：模型回退、改绑、行动承诺催办、工具循环上限。
   dsh-runtime:
@@ -343,10 +272,17 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: runtime/dsh/package-lock.json
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'agent-computer/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
       - name: Install product dependencies
         working-directory: .
         run: bun install --frozen-lockfile --omit=peer --linker hoisted
@@ -376,7 +312,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: pc/package-lock.json
       - run: npm ci --no-audit --no-fund
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -400,7 +337,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: pc/package-lock.json
       - run: npm ci --no-audit --no-fund
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -419,10 +357,9 @@ jobs:
           fi
           echo "chisabot-node $printed built."
 
-  # vite 分块守卫（DESIGN.md §41.5）：调用方的 NODE_ENV（CI、测试脚本常带 NODE_ENV=test）不能改变生产构建的
-  # 模块解析结果，也不能让块之间互相静态 import 成环（development 条件的 dev/ 版文件曾让 browser ↔
-  # vendor-markdown 成环）。普通构建和 NODE_ENV=test 各打一次——chunkGuard 是构建插件，失败即让该步失败；
-  # 最后用 chunk-graph 测试对最后一份 dist 复核一遍（settings/admin 首屏不带 vendor-copilot / vendor-markdown）。
+  # vite 分块守卫（DESIGN.md §41.5）与前端 typecheck：
+  # 普通构建先重新生成 app/src/routeTree.gen.ts，紧接着做 app typecheck（避免 web-and-models 重复打 vite build）；
+  # 再以 NODE_ENV=test 打一次复核 chunkGuard，最后用 chunk-graph 测试对 dist 复核一遍。
   chunk-guard:
     name: App chunk guard build
     runs-on: ubuntu-latest
@@ -434,9 +371,17 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'agent-computer/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
       - run: bun install --frozen-lockfile --omit=peer --linker hoisted
+      - run: cp .env.example .env
       - run: bun run generate:app-config
       - run: cd app && bun --bun ../node_modules/vite/bin/vite.js build
+      - run: bun run --cwd app typecheck
       - run: cd app && NODE_ENV=test bun --bun ../node_modules/vite/bin/vite.js build
       - run: cd app && bun test tests/chunk-graph.test.ts
 
@@ -497,7 +442,6 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         with:
           gradle-version: "8.9"
-          cache-disabled: true
       - name: Run Android unit tests
         if: steps.changes.outputs.run == 'true'
         working-directory: android

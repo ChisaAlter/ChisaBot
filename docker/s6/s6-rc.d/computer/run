@@ -14,7 +14,8 @@
 # environment, and the failure is a config error naming a variable that is plainly set.
 set -eu
 if [ "${EMBEDDED_COMPUTER:-on}" != "on" ]; then
-  exec /bin/true
+  /command/s6-svc -O . 2>/dev/null || true
+  exec sleep infinity
 fi
 cd /app/agent-computer
 

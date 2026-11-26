@@ -36,6 +36,11 @@ const files = [...new Glob("app/tests/**/*.test.{ts,tsx}").scanSync(".")]
 const isolated = files.filter((file) => ISOLATED.includes(file));
 const rest = files.filter((file) => !ISOLATED.includes(file));
 
+if (files.length === 0) {
+  console.error("run-app-tests: 未发现任何 app/tests 测试文件。");
+  process.exit(1);
+}
+
 if (isolated.length !== ISOLATED.length) {
   console.error(
     `run-app-tests: 有隔离文件不见了（期望 ${ISOLATED.length}，找到 ${isolated.length}）。改过文件名就把 ISOLATED 一起改。`,
@@ -43,20 +48,60 @@ if (isolated.length !== ISOLATED.length) {
   process.exit(1);
 }
 
-function run(paths: string[], label: string): number {
-  if (paths.length === 0) return 0;
+async function run(
+  paths: string[],
+  label: string,
+): Promise<{ exitCode: number; passed: number }> {
+  if (paths.length === 0) return { exitCode: 0, passed: 0 };
   console.log(`\n▸ ${label}（${paths.length} 个文件）`);
-  const result = Bun.spawnSync({
-    cmd: [process.execPath, "test", ...paths],
+  const child = Bun.spawn([process.execPath, "test", ...paths], {
     env: process.env,
-    stdio: ["inherit", "inherit", "inherit"],
+    stdin: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  return result.exitCode ?? 1;
+  let output = "";
+  const drain = async (
+    stream: ReadableStream<Uint8Array>,
+    target: NodeJS.WriteStream,
+  ) => {
+    const decoder = new TextDecoder();
+    for await (const chunk of stream) {
+      const text = decoder.decode(chunk, { stream: true });
+      output += text;
+      target.write(text);
+    }
+    const tail = decoder.decode();
+    if (tail) {
+      output += tail;
+      target.write(tail);
+    }
+  };
+  await Promise.all([
+    drain(child.stdout, process.stdout),
+    drain(child.stderr, process.stderr),
+  ]);
+  const exitCode = (await child.exited) ?? 1;
+  const passed = Number(output.match(/\b(\d+) pass\b/)?.[1] ?? 0);
+  if (exitCode === 0 && passed === 0) {
+    console.error(
+      `run-app-tests: ${label} 退出码为 0 但未检测到任何通过的用例（0 pass），拒绝静默通过。`,
+    );
+    return { exitCode: 1, passed: 0 };
+  }
+  return { exitCode, passed };
 }
 
-const main = run(rest, "app 测试（共享进程）");
+const main = await run(rest, "app 测试（共享进程）");
+let totalPassed = main.passed;
 let alone = 0;
 for (const file of isolated) {
-  alone = run([file], `app 测试（独立进程：${file}）`) || alone;
+  const res = await run([file], `app 测试（独立进程：${file}）`);
+  totalPassed += res.passed;
+  if (res.exitCode !== 0) alone = res.exitCode;
 }
-process.exit(main !== 0 || alone !== 0 ? 1 : 0);
+if (totalPassed === 0) {
+  console.error("run-app-tests: 总通过用例数为 0，拒绝静默通过。");
+  process.exit(1);
+}
+process.exit(main.exitCode !== 0 || alone !== 0 ? 1 : 0);

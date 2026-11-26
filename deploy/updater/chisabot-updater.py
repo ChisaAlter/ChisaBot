@@ -338,7 +338,8 @@ class Updater(object):
                     behind = len(items)
         code, fp = run(["bash", os.path.join(U, "deps-fingerprint.sh"), main], timeout=30)
         try:
-            base = open(os.path.join(U, "base-deps.sha256")).read().strip()
+            with open(os.path.join(U, "base-deps.sha256")) as f:
+                base = f.read().strip()
         except IOError:
             base = ""
         reason = None
@@ -506,9 +507,9 @@ class Updater(object):
             job = {"id": req["id"], "action": "rollback", "status": "running", "step": "prepare", "startedAt": now_iso(),
                    "actor": actor, "log": []}
         audit({"event": "job_started", "id": job["id"], "action": action, "actor": actor, "target": job.get("targetCommit")})
-        log = open(os.path.join(JOBS, job["id"] + ".log"), "w")
-        # 自己一个会话：服务重启（KillMode=process）时更新脚本不会被一起杀掉。
-        self.child = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, preexec_fn=os.setsid, close_fds=True)
+        with open(os.path.join(JOBS, job["id"] + ".log"), "w") as log:
+            # 自己一个会话：服务重启（KillMode=process）时更新脚本不会被一起杀掉。
+            self.child = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, preexec_fn=os.setsid, close_fds=True)
         with self.lock:
             self.internal["job"] = job
         self.save_internal()
@@ -646,6 +647,12 @@ class Updater(object):
             return False
         return stamp != SELF_MTIME and not self.busy() and self.child is None and not self.checking
 
+    def should_refresh(self, now=None):
+        """只按 REFRESH_EVERY 周期刷新；start_check() 后台拉取期间不每 2s 触发刷新风暴。"""
+        if now is None:
+            now = time.time()
+        return (now - self.last_refresh) > REFRESH_EVERY
+
     def loop(self):
         for d in (REQ, STATE_DIR, JOBS):
             if not os.path.isdir(d):
@@ -660,11 +667,12 @@ class Updater(object):
                 # 先收下已结束的任务，再处理新请求：健康检查失败后立刻点「重试」才不会撞上过期的 running。
                 self.poll_job()
                 self.take_requests()
-                if time.time() - self.last_check > CHECK_EVERY:
+                now = time.time()
+                if not self.checking and (now - self.last_check) > CHECK_EVERY:
                     self.start_check()
-                if time.time() - self.last_magpie_check > MAGPIE_CHECK_EVERY:
+                if not self.magpie_checking and (now - self.last_magpie_check) > MAGPIE_CHECK_EVERY:
                     self.start_magpie_check()
-                if time.time() - self.last_check > CHECK_EVERY or time.time() - self.last_refresh > REFRESH_EVERY:
+                if self.should_refresh(now):
                     self.refresh()
             except Exception as error:  # 守护进程不因一次异常退出
                 sys.stderr.write("chisabot-updater: %r\n" % (error,))
@@ -686,6 +694,7 @@ if __name__ == "__main__":
         u.internal["source"] = u.fetch()
         u.save_internal()
         u.refresh()
-        print(open(STATE_FILE).read())
+        with open_text(STATE_FILE) as f:
+            print(f.read())
     else:
         Updater().loop()

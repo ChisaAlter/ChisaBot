@@ -6,8 +6,11 @@
 # 用法：post-deploy-smoke.sh [期望 buildId]
 # 环境：读 /opt/chisabot-updater/config.env 的 LOCAL_URL；从 compose .env 取网关密钥。
 set -uo pipefail
-. /opt/chisabot-updater/config.env
+U=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
+. "$U/config.env"
 EXPECT_BUILD="${1:-}"
+SMOKE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/cb-smoke.XXXXXX")
+trap 'rm -rf "$SMOKE_TMP"' EXIT
 LOCAL_CALLER=""
 if [ -f "${COMPOSE_DIR}/.env" ]; then
   LOCAL_CALLER=$(grep -E '^[[:space:]]*CHISABOT_GATEWAY_SECRET=' "${COMPOSE_DIR}/.env" | head -1 | sed 's/^[^=]*=//' | tr -d '\r' | sed 's/^["'\'']//;s/["'\'']$//')
@@ -19,9 +22,9 @@ fail() { echo "::error:: post-deploy-smoke: $*"; exit 1; }
 ok() { echo "post-deploy-smoke ok: $*"; }
 
 # 1) 公开 /health
-C=$(curl -s -o /tmp/cb-smoke-health.json -w '%{http_code}' --max-time 10 "$LOCAL_URL/health" || echo 000)
+C=$(curl -s -o "$SMOKE_TMP/health.json" -w '%{http_code}' --max-time 10 "$LOCAL_URL/health" || echo 000)
 [ "$C" = 200 ] || fail "/health → $C"
-grep -q '"status":"ok"' /tmp/cb-smoke-health.json || fail "/health body missing status=ok"
+grep -q '"status":"ok"' "$SMOKE_TMP/health.json" || fail "/health body missing status=ok"
 ok "/health 200"
 
 # 2) /api/version：有 version/buildId；不泄密钥
@@ -44,7 +47,7 @@ ok "/api/capabilities (no secrets)"
 
 # 4a) 网关模式：无 Local-Caller / 无会话时管理员面必须 401（刮数不得匿名）
 if [ -n "${LOCAL_CALLER}" ]; then
-  NCODE=$(curl -s -o /tmp/cb-smoke-admin-neg.json -w '%{http_code}' --max-time 10     "$LOCAL_URL/api/admin/health" || echo 000)
+  NCODE=$(curl -s -o "$SMOKE_TMP/admin-neg.json" -w '%{http_code}' --max-time 10     "$LOCAL_URL/api/admin/health" || echo 000)
   case "$NCODE" in
     401|403) ok "/api/admin/health unauthenticated → $NCODE (expected)" ;;
     *) fail "/api/admin/health without Local-Caller → $NCODE (expected 401/403 in gateway mode)" ;;
@@ -53,7 +56,7 @@ fi
 
 # 4) 聚合健康面（管理员 / Local-Caller）
 
-HCODE=$(curl -s -o /tmp/cb-smoke-admin-health.json -w '%{http_code}' --max-time 20 \
+HCODE=$(curl -s -o "$SMOKE_TMP/admin-health.json" -w '%{http_code}' --max-time 20 \
   "${HDR_CALLER[@]}" "$LOCAL_URL/api/admin/health" || echo 000)
 case "$HCODE" in
   200|503) ;;
@@ -67,7 +70,7 @@ case "$HCODE" in
   *) fail "/api/admin/health → $HCODE" ;;
 esac
 if [ "$HCODE" = 200 ] || [ "$HCODE" = 503 ]; then
-  HBODY=$(cat /tmp/cb-smoke-admin-health.json)
+  HBODY=$(cat "$SMOKE_TMP/admin-health.json")
   echo "aggregate health: $HBODY" | head -c 800; echo
   echo "$HBODY" | grep -q '"localCaller"' || fail "aggregate missing localCaller check"
   # Top-level ok only (nested checks.app.ok must not fool grep).
@@ -84,10 +87,10 @@ fi
 
 # 5) 可选：模型往返（默认告警；STRICT_MODEL_SMOKE=1 硬失败）
 if [ "${SKIP_MODEL_SMOKE:-0}" != 1 ]; then
-  SCODE=$(curl -s -o /tmp/cb-smoke-model.json -w '%{http_code}' --max-time 60 -X POST \
+  SCODE=$(curl -s -o "$SMOKE_TMP/model.json" -w '%{http_code}' --max-time 60 -X POST \
     -H 'content-type: application/json' "${HDR_CALLER[@]}" -d '{}' \
     "$LOCAL_URL/api/admin/smoke" || echo 000)
-  SBODY=$(cat /tmp/cb-smoke-model.json 2>/dev/null || echo "")
+  SBODY=$(cat "$SMOKE_TMP/model.json" 2>/dev/null || echo "")
   echo "model smoke HTTP $SCODE: $(echo "$SBODY" | head -c 400)"
   if echo "$SBODY" | grep -q '"ok":true' && echo "$SBODY" | grep -q '"persisted":false'; then
     ok "model smoke"

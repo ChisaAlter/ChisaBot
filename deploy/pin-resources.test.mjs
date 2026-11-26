@@ -23,20 +23,31 @@ const resourceScript = String.raw`
 source "$1"
 docker() {
   case "$*" in
-    'inspect chisabot-zh') [ "$SCENARIO" = live ] ;;
+    'inspect chisabot-zh') [ "$SCENARIO" = live ] || [ "$SCENARIO" = live-dsh ] ;;
     inspect\ -f*)
       case "$*" in
         */var/lib/postgresql*) echo tenant_database ;;
         */workspace*) echo tenant_workspace ;;
         */profiles*) echo tenant_profiles ;;
         */var/lib/chisabot-dsh*) echo tenant_dsh ;;
-        *NetworkSettings*) printf 'tenant_default\ntenant_magpie\n' ;;
+        *NetworkSettings*)
+          if [ "$SCENARIO" = live-dsh ]; then
+            printf 'chisabot-dsh-aaaa1111-net\nchisabot_magpie\ntenant_default\n'
+          else
+            printf 'tenant_default\ntenant_magpie\n'
+          fi ;;
         *) return 1 ;;
       esac ;;
     'network inspect tenant_default'|'network inspect my_net') return 0 ;;
     'network inspect new_net') return 1 ;;
     network\ inspect\ -f*)
-      case "$*" in *Subnet*) echo 172.19.0.0/16 ;; *Gateway*) echo 172.19.0.1 ;; *) return 1 ;; esac ;;
+      case "$*" in
+        *chisabot.runtime-owner*chisabot-dsh-aaaa1111-net*) echo user-1 ;;
+        *chisabot.runtime-owner*) echo '' ;;
+        *Subnet*) echo 172.19.0.0/16 ;;
+        *Gateway*) echo 172.19.0.1 ;;
+        *) return 1 ;;
+      esac ;;
     *) echo "Unexpected Docker mutation or command: $*" >&2; return 79 ;;
   esac
 }
@@ -101,6 +112,17 @@ test("explicit resource choices win over discovered container mounts and network
   const freshCustom = resources("fresh", "CHISABOT_NETWORK_NAME=new_net\n");
   assert.equal(freshCustom.status, 0, freshCustom.stderr);
   assert.equal(freshCustom.config, "CHISABOT_NETWORK_NAME=new_net\n");
+});
+
+test("multi-account DSH networks labelled chisabot.runtime-owner are never pinned as MAGPIE_NETWORK", () => {
+  const liveDsh = resources("live-dsh");
+  assert.equal(liveDsh.status, 0, liveDsh.stderr);
+  assert.match(liveDsh.config, /CHISABOT_NETWORK_NAME=tenant_default/);
+  assert.match(liveDsh.config, /MAGPIE_NETWORK=chisabot_magpie/);
+  assert.doesNotMatch(
+    liveDsh.config,
+    /MAGPIE_NETWORK=chisabot-dsh-aaaa1111-net/,
+  );
 });
 
 test("embedded database identity persists a fresh name, honours stored markers, and refuses unmarked existing clusters", () => {

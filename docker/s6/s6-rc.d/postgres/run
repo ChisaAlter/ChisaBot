@@ -1,16 +1,22 @@
 #!/command/with-contenv sh
 # The database, when this container is asked to be its own.
 #
-# `EMBEDDED_POSTGRES=on` turns it on. Off, this service exits 0 immediately and s6 leaves it alone,
-# which is how one image serves both shapes without two Dockerfiles.
+# `EMBEDDED_POSTGRES=on` turns it on. Off, this longrun marks itself once-only and sleeps quietly
+# (instead of exiting 0 and causing s6-supervise to respawn it every second).
 set -eu
 if [ "${EMBEDDED_POSTGRES:-off}" != "on" ]; then
-  exec /bin/true
+  /command/s6-svc -O . 2>/dev/null || true
+  exec sleep infinity
 fi
 exec s6-setuidgid postgres /usr/lib/postgresql/16/bin/postgres \
   -D /var/lib/postgresql/data \
   -c listen_addresses=127.0.0.1 \
   -c port=5432 \
+  -c "shared_buffers=${EMBEDDED_PG_SHARED_BUFFERS:-128MB}" \
+  -c "work_mem=${EMBEDDED_PG_WORK_MEM:-4MB}" \
+  -c "maintenance_work_mem=${EMBEDDED_PG_MAINTENANCE_WORK_MEM:-64MB}" \
+  -c "max_connections=${EMBEDDED_PG_MAX_CONNECTIONS:-100}" \
+  -c "max_wal_size=${EMBEDDED_PG_MAX_WAL_SIZE:-512MB}" \
   -c "jit=${EMBEDDED_PG_JIT:-off}" \
   -c "random_page_cost=${EMBEDDED_PG_RANDOM_PAGE_COST:-1.1}" \
   -c "checkpoint_completion_target=${EMBEDDED_PG_CHECKPOINT_COMPLETION_TARGET:-0.9}"

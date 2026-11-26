@@ -151,9 +151,44 @@ rule_del() {
   done
 }
 
+prune_stale_rules() {
+  keep_drops=$1
+  keep_returns=$2
+  rules_snapshot=$(iptables -t filter -S DOCKER-USER 2>/dev/null || true)
+  [ -n "$rules_snapshot" ] || return 0
+  printf '%s\n' "$rules_snapshot" | while IFS= read -r rline; do
+    case "$rline" in
+      *"--comment $COMMENT"*|*"--comment \"$COMMENT\""*) ;;
+      *) continue ;;
+    esac
+    old_dst=$(printf '%s\n' "$rline" | sed -n 's/.* -d \([0-9.]*\)\(\/32\)\{0,1\} .*/\1/p')
+    [ -n "$old_dst" ] || continue
+    case "$rline" in
+      *" -j DROP")
+        old_src=$(printf '%s\n' "$rline" | sed -n 's/.* -s \([0-9.]*\)\(\/32\)\{0,1\} .*/\1/p')
+        old_dport=$(printf '%s\n' "$rline" | sed -n 's/.* --dport \([0-9]*\) .*/\1/p')
+        [ -n "$old_src" ] && [ "$old_dport" = "$PORT" ] || continue
+        if ! printf '%s\n' "$keep_drops" | grep -Fxq "$old_src $old_dst"; then
+          rule_del -s "$old_src" -d "$old_dst" -p tcp --dport "$PORT" -m comment --comment "$COMMENT" -j DROP
+          ok "pruned stale DROP $old_src -> $old_dst:$PORT"
+        fi
+        ;;
+      *" -j RETURN")
+        if ! printf '%s\n' "$keep_returns" | grep -Fxq "$old_dst"; then
+          rule_del -d "$old_dst" -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "$COMMENT" -j RETURN
+          ok "pruned stale RETURN for $old_dst"
+        fi
+        ;;
+    esac
+  done
+}
+
 apply_or_remove() {
   action=$1
+  active_drops=""
+  active_returns=""
   if [ -z "$NETS" ]; then
+    prune_stale_rules "" ""
     ok "no user networks on $APP - nothing to isolate"
     return 0
   fi
@@ -180,6 +215,8 @@ apply_or_remove() {
         fi
         has_sidecar=1
         if [ "$action" = apply ]; then
+          active_drops="${active_drops}${peer_ip} ${app_ip}
+"
           rule_add -s "$peer_ip" -d "$app_ip" -p tcp --dport "$PORT" -m comment --comment "$COMMENT" -j DROP
           ok "DROP $peer_name($peer_ip) -> $APP($app_ip):$PORT on $net"
         else
@@ -191,6 +228,8 @@ $net_peers
 EOF
     fi
     if [ "$action" = apply ] && [ "$has_sidecar" = 1 ]; then
+      active_returns="${active_returns}${app_ip}
+"
       rule_add -d "$app_ip" -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "$COMMENT" -j RETURN
     else
       rule_del -d "$app_ip" -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "$COMMENT" -j RETURN
@@ -198,6 +237,7 @@ EOF
   done <<EOF
 $NETS
 EOF
+  prune_stale_rules "$active_drops" "$active_returns"
   ok "$action done (comment=$COMMENT port=$PORT)"
 }
 

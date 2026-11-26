@@ -156,61 +156,12 @@ RUN case "${TARGETARCH}" in \
 WORKDIR /app
 # Pre-create the empty directory skeleton owned by apiuser so every subsequent COPY --chown
 # writes directly as apiuser:apiuser without an overlayfs-doubling `chown -R /app` layer later.
-RUN mkdir -p /app/server /app/runtime/dsh /app/deploy/dsh /app/agent-computer /app/pc/src /app/scripts /app/app \
+RUN mkdir -p /app/server /app/examples /app/runtime/dsh /app/deploy/dsh /app/agent-computer /app/pc/src /app/scripts /app/app \
   && chown -R apiuser:apiuser /app
-
-# BOTH HALVES OF THE TREE COME FROM /prod. A workspace install is two directories, not one: the
-# packages it could hoist go to the root `node_modules`, and a per-workspace `node_modules` sits
-# beside each manifest holding the rest. The server's half used to be taken from /src, which is the
-# unpruned install, so the prune above bought nothing where the server actually resolves — and
-# a development dependency shipped as a symlink into a store the prune had
-# emptied, along with the two `.bin` shims pointing at it. Every dependency `server/package.json`
-# declares resolves from the /prod half; the ones it does not declare are absent now rather than
-# present and broken.
-COPY --chown=apiuser:apiuser --from=deps /prod/node_modules node_modules
-COPY --chown=apiuser:apiuser --from=deps /prod/server/node_modules server/node_modules
-COPY --chown=apiuser:apiuser --from=deps /src/package.json package.json
-COPY --chown=apiuser:apiuser --from=deps /src/bun.lock bun.lock
-COPY --chown=apiuser:apiuser --from=deps /prod/agent-computer/node_modules agent-computer/node_modules
-
-COPY --chown=apiuser:apiuser server server
-COPY --chown=apiuser:apiuser shared shared
-COPY --chown=apiuser:apiuser examples examples
-COPY --chown=apiuser:apiuser --from=dsh-deps /runtime/dsh/node_modules runtime/dsh/node_modules
-COPY --chown=apiuser:apiuser runtime/dsh/package.json runtime/dsh/package-lock.json runtime/dsh/
-COPY --chown=apiuser:apiuser runtime/dsh/src runtime/dsh/src
-COPY --chown=apiuser:apiuser deploy/dsh deploy/dsh
-RUN node deploy/dsh/compatibility.mjs --print > deploy/dsh/runtime-compat.json \
-  && chown apiuser:apiuser deploy/dsh/runtime-compat.json \
-  && bun -e 'await import("@ag-ui/client"); await import("./runtime/dsh/src/client.mjs")'
-RUN mkdir -p /var/lib/chisabot-dsh && chown apiuser:apiuser /var/lib/chisabot-dsh
-ENV CHISABOT_DSH_ROOT=/var/lib/chisabot-dsh
-COPY --chown=apiuser:apiuser agent-computer/src agent-computer/src
-COPY --chown=apiuser:apiuser pc/src/agent-runtime pc/src/agent-runtime
-COPY --chown=apiuser:apiuser agent-computer/package.json agent-computer/package.json
-
-# `bun run composio:smoke`, because the manifest copied above carries that entry and the question it
-# answers belongs here rather than on a laptop: it asks what THIS deployment's Composio key can see,
-# and that key is the one in this container's environment. It reads `server/src/plugins/composio*`,
-# which is already in the image, so the file itself was the only thing missing and the entry was an
-# instruction that could not be followed where it shipped.
-#
-# ONE FILE, NOT `scripts/`. The others there are the laptop's. `diagram` and `mock:knowledge` reach
-# for development fixtures and `roughjs`, which the prune above removes; `test:ci` runs a suite that
-# is not in the image; `generate:app-config` writes a file the build has already baked into
-# `app/dist`. Copying the directory ships four more entries with nothing to do here, to fix one that
-# has something to do.
-COPY --chown=apiuser:apiuser scripts/composio-smoke.ts scripts/composio-smoke.ts
-
-# The built app, served by the API on the same origin. There is no CORS in this server, so this is
-# not a convenience: two origins would simply fail.
-COPY --chown=apiuser:apiuser --from=app-build /src/app/dist app/dist
-ENV APP_DIST_DIR=/app/app/dist
-
-COPY docker/s6 /etc/s6-overlay
 
 # Single apt layer installing embedded PostgreSQL 16 + pgvector, Python + Office libs for the Bot's
 # shell (DESIGN.md §101.7), and sudo constrained strictly to `/usr/local/bin/chisabot-apt`.
+# Placed BEFORE all application COPY steps so source changes never invalidate this ~350MB+ apt layer.
 #
 # PostgreSQL stays OFF unless `EMBEDDED_POSTGRES=on` is set (leave it off for managed DATABASE_URL).
 # `sudo` is restricted to `/usr/local/bin/chisabot-apt` (not `NOPASSWD: ALL`): `pwuser` can run
@@ -266,21 +217,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # anything else, through the gateway: resolve, decide against the policy, write the audit row, then
 # act. A command is a decision like a click is.
 
-# Where a Bot's files live. Mount a volume here to keep them across a redeploy; without one they are
-# as durable as the container, which for a trial is the honest default.
-ENV WORKSPACE_DIR=/workspace
-ENV PROFILES_DIR=/profiles
-
-# The browser is on loopback inside this container and reachable from nowhere else.
-#
-# No private-host allowance is set for it, and none is needed. Reaching the sibling process goes
-# through `checkComputerAddress`, which decides on the protocol and the metadata floor and never
-# consults `AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS`. That switch governs where a *Bot* may browse and
-# which endpoint one may be registered against, so setting it here bought nothing for this address
-# and let a Bot reach whatever this container's network reaches, which on a default bridge is the
-# host's LAN.
-ENV AGENT_COMPUTER_URL=http://127.0.0.1:4100
-
 # NOTHING THAT MATTERS RUNS AS ROOT.
 #
 # s6 stays root because that is the only way it can drop each service to a different user, and they
@@ -308,12 +244,79 @@ ENV AGENT_COMPUTER_URL=http://127.0.0.1:4100
 # command, see shell.ts) — so an installed tool survives a restart with the Bot's files. Its bin is
 # APPENDED to PATH, not prepended: a package the Bot installs must not shadow the `node` and `bun`
 # this image runs on.
-RUN mkdir -p /usr/local/etc \
-  && npm config set prefix /workspace/.npm-global --global
+RUN mkdir -p /usr/local/etc /workspace /profiles /var/lib/chisabot-dsh \
+  && npm config set prefix /workspace/.npm-global --global \
+  && chown -R pwuser:pwuser /workspace /profiles \
+  && chown apiuser:apiuser /var/lib/chisabot-dsh
 ENV PATH="${PATH}:/workspace/.npm-global/bin"
+ENV CHISABOT_DSH_ROOT=/var/lib/chisabot-dsh
 
-RUN mkdir -p /workspace /profiles \
-  && chown -R pwuser:pwuser /workspace /profiles
+# BOTH HALVES OF THE TREE COME FROM /prod. A workspace install is two directories, not one: the
+# packages it could hoist go to the root `node_modules`, and a per-workspace `node_modules` sits
+# beside each manifest holding the rest. The server's half used to be taken from /src, which is the
+# unpruned install, so the prune above bought nothing where the server actually resolves — and
+# a development dependency shipped as a symlink into a store the prune had
+# emptied, along with the two `.bin` shims pointing at it. Every dependency `server/package.json`
+# declares resolves from the /prod half; the ones it does not declare are absent now rather than
+# present and broken.
+COPY --chown=apiuser:apiuser --from=deps /prod/node_modules node_modules
+COPY --chown=apiuser:apiuser --from=deps /prod/server/node_modules server/node_modules
+COPY --chown=apiuser:apiuser --from=deps /src/package.json package.json
+COPY --chown=apiuser:apiuser --from=deps /src/bun.lock bun.lock
+COPY --chown=apiuser:apiuser --from=deps /prod/agent-computer/node_modules agent-computer/node_modules
+COPY --chown=apiuser:apiuser --from=dsh-deps /runtime/dsh/node_modules runtime/dsh/node_modules
+
+# Only runtime server directories (src/drizzle/scripts/package.json); never ship server/tests into the image.
+COPY --chown=apiuser:apiuser server/package.json server/package.json
+COPY --chown=apiuser:apiuser server/src server/src
+COPY --chown=apiuser:apiuser server/drizzle server/drizzle
+COPY --chown=apiuser:apiuser server/scripts server/scripts
+COPY --chown=apiuser:apiuser shared shared
+COPY --chown=apiuser:apiuser examples/zh-CN examples/zh-CN
+COPY --chown=apiuser:apiuser runtime/dsh/package.json runtime/dsh/package-lock.json runtime/dsh/
+COPY --chown=apiuser:apiuser runtime/dsh/src runtime/dsh/src
+COPY --chown=apiuser:apiuser deploy/dsh deploy/dsh
+RUN node deploy/dsh/compatibility.mjs --print > deploy/dsh/runtime-compat.json \
+  && chown apiuser:apiuser deploy/dsh/runtime-compat.json \
+  && bun -e 'await import("@ag-ui/client"); await import("./runtime/dsh/src/client.mjs")'
+COPY --chown=apiuser:apiuser agent-computer/src agent-computer/src
+COPY --chown=apiuser:apiuser pc/src/agent-runtime pc/src/agent-runtime
+COPY --chown=apiuser:apiuser agent-computer/package.json agent-computer/package.json
+
+# `bun run composio:smoke`, because the manifest copied above carries that entry and the question it
+# answers belongs here rather than on a laptop: it asks what THIS deployment's Composio key can see,
+# and that key is the one in this container's environment. It reads `server/src/plugins/composio*`,
+# which is already in the image, so the file itself was the only thing missing and the entry was an
+# instruction that could not be followed where it shipped.
+#
+# ONE FILE, NOT `scripts/`. The others there are the laptop's. `diagram` and `mock:knowledge` reach
+# for development fixtures and `roughjs`, which the prune above removes; `test:ci` runs a suite that
+# is not in the image; `generate:app-config` writes a file the build has already baked into
+# `app/dist`. Copying the directory ships four more entries with nothing to do here, to fix one that
+# has something to do.
+COPY --chown=apiuser:apiuser scripts/composio-smoke.ts scripts/composio-smoke.ts
+
+# The built app, served by the API on the same origin. There is no CORS in this server, so this is
+# not a convenience: two origins would simply fail.
+COPY --chown=apiuser:apiuser --from=app-build /src/app/dist app/dist
+ENV APP_DIST_DIR=/app/app/dist
+
+COPY docker/s6 /etc/s6-overlay
+
+# Where a Bot's files live. Mount a volume here to keep them across a redeploy; without one they are
+# as durable as the container, which for a trial is the honest default.
+ENV WORKSPACE_DIR=/workspace
+ENV PROFILES_DIR=/profiles
+
+# The browser is on loopback inside this container and reachable from nowhere else.
+#
+# No private-host allowance is set for it, and none is needed. Reaching the sibling process goes
+# through `checkComputerAddress`, which decides on the protocol and the metadata floor and never
+# consults `AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS`. That switch governs where a *Bot* may browse and
+# which endpoint one may be registered against, so setting it here bought nothing for this address
+# and let a Bot reach whatever this container's network reaches, which on a default bridge is the
+# host's LAN.
+ENV AGENT_COMPUTER_URL=http://127.0.0.1:4100
 
 # Where the embedded database answers, when there is one. Overridden by whatever you set, so an
 # external database needs no special case: set DATABASE_URL and EMBEDDED_POSTGRES stays off.

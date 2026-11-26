@@ -130,29 +130,62 @@ try {
   if (error.code !== "EEXIST") throw error;
 }
 
+async function isApiInMaintenance() {
+  try {
+    const marker = await docker(
+      "exec",
+      "-e",
+      "PATH=/command:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      config.apiContainer,
+      "/command/with-contenv",
+      "/bin/sh",
+      "-c",
+      'd="$CHISABOT_DSH_ROOT"; [ -n "$d" ] || d=/var/lib/chisabot-dsh; test -f "$d/.maintenance" && echo 1 || echo 0',
+    );
+    return marker === "1";
+  } catch {
+    return false;
+  }
+}
+
+// Periodic non-replace reconciliation steps aside while an update/rollback holds .maintenance.
+if (command === "reconcile" && !replace && (await isApiInMaintenance())) {
+  console.log(JSON.stringify({ skipped: "maintenance" }));
+  process.exit(0);
+}
+
 // An OS lease keeps periodic and manual reconciliation from racing, without stale PID ownership.
 if (!process.env.CHISABOT_ACCOUNTS_LOCKED) {
   const wait = Number(process.env.CHISABOT_ACCOUNTS_LOCK_WAIT ?? 0);
   if (!Number.isSafeInteger(wait) || wait < 0 || wait > 300)
     throw new Error("Account lock wait must be 0–300 seconds.");
-  const child = await execute(
-    "flock",
-    [
-      ...(wait ? ["--wait", String(wait)] : ["--nonblock"]),
-      "--conflict-exit-code",
-      "73",
-      join(config.stateDirectory, ".reconcile.lock"),
-      process.execPath,
-      ...process.argv.slice(1),
-    ],
-    {
-      env: { ...process.env, CHISABOT_ACCOUNTS_LOCKED: "1" },
-      maxBuffer: 8 * 1024 * 1024,
-    },
-  );
-  process.stdout.write(child.stdout);
-  process.stderr.write(child.stderr);
-  process.exit(0);
+  try {
+    const child = await execute(
+      "flock",
+      [
+        ...(wait ? ["--wait", String(wait)] : ["--nonblock"]),
+        "--conflict-exit-code",
+        "73",
+        join(config.stateDirectory, ".reconcile.lock"),
+        process.execPath,
+        ...process.argv.slice(1),
+      ],
+      {
+        env: { ...process.env, CHISABOT_ACCOUNTS_LOCKED: "1" },
+        maxBuffer: 8 * 1024 * 1024,
+      },
+    );
+    process.stdout.write(child.stdout);
+    process.stderr.write(child.stderr);
+    process.exit(0);
+  } catch (error) {
+    if (error.stdout) process.stdout.write(error.stdout);
+    if (error.stderr) process.stderr.write(error.stderr);
+    if (error.code === 73) {
+      process.exit(73);
+    }
+    throw error;
+  }
 }
 async function inspect(kind, name) {
   try {

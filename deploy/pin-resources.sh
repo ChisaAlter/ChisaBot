@@ -26,7 +26,24 @@ pin_existing_resources() (
     resource_networks=$(docker inspect -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}' "$resource_container")
     resource_network=$(printf '%s\n' "$resource_networks" | sed -n '/_default$/p' | head -n 1)
     resource_set CHISABOT_NETWORK_NAME "$resource_network"
-    magpie_network=$(printf '%s\n' "$resource_networks" | sed '/_default$/d;/^$/d' | head -n 1)
+    # Exclude per-account DSH networks (labelled chisabot.runtime-owner) and prefer explicit magpie network names.
+    magpie_network=""
+    magpie_fallback=""
+    for cand in $(printf '%s\n' "$resource_networks" | sed '/_default$/d;/^$/d'); do
+      case "$cand" in bridge|host|none) continue ;; esac
+      cand_owner=$(docker network inspect -f '{{if .Labels}}{{index .Labels "chisabot.runtime-owner"}}{{end}}' "$cand" 2>/dev/null | tr -d '\r' || true)
+      case "$cand_owner" in ""|"<no value>") ;; *) continue ;; esac
+      case "$cand" in
+        *magpie*)
+          magpie_network=$cand
+          break
+          ;;
+        *)
+          [ -n "$magpie_fallback" ] || magpie_fallback=$cand
+          ;;
+      esac
+    done
+    [ -n "$magpie_network" ] || magpie_network=$magpie_fallback
     resource_set MAGPIE_NETWORK "$magpie_network"
   fi
   resource_network=$(resource_value CHISABOT_NETWORK_NAME)

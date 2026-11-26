@@ -39,7 +39,7 @@ services:
     security_opt:
       - no-new-privileges:true
     tmpfs:
-      - /tmp:size=64m,mode=1777
+      - /tmp:size=192m,mode=1777
       - /var/cache/nginx:size=32m,mode=0755
     volumes:
       - ${CHISABOT_NGINX_CONF:-./nginx.conf}:/etc/nginx/nginx.conf:ro

@@ -49,6 +49,10 @@ bash -c 'U="$1"; . "$U/config.env"; . "$U/dsh-release.sh"; CONTAINER="$2"; COMPO
 docker inspect -f '{{.State.Health.Status}} restarts={{.RestartCount}} image={{.Config.Image}}' @CONTAINER@
 curl -fsS -o /dev/null -w 'local /health %{http_code}\n' @LOCAL_URL@/health
 bash -c '. "$1/dsh-release.sh"; CONTAINER="$2"; dsh_readiness' -- @UPDATER_HOME@ @CONTAINER@
+if [ -f "@UPDATER_HOME@/isolate-sidecar-app.sh" ]; then
+  CHISABOT_APP_CONTAINER="@CONTAINER@" sh "@UPDATER_HOME@/isolate-sidecar-app.sh" --apply \
+    || echo "warning: sidecar isolation re-apply failed after rollback" >&2
+fi
 RELEASE_ALLOWED=1
 PUBLIC='@PUBLIC_HEALTH_URL@'
 [ -z "$PUBLIC" ] || curl -ksS -o /dev/null -w "$PUBLIC %{http_code}\n" "$PUBLIC" || true
