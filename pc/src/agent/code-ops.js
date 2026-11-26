@@ -29,10 +29,16 @@ const {
   renameWithRetry,
   resolveAllowedRoots,
   assertParentInRoots,
+  isWithinDir,
   statsMatch,
 } = require("../safe-fs");
 
 const OUT_CAP = 64 * 1024;
+const GIT_STDOUT_BUF_CAP = 512 * 1024;
+const GIT_STDERR_BUF_CAP = 64 * 1024;
+const PS_STDOUT_BUF_CAP = 2 * 1024 * 1024;
+const PS_TIMEOUT_MS = 15_000;
+const MAX_GIT_BACKUPS = 200;
 const JOB_BUFFER = 2 * 1024 * 1024;
 const MAX_JOBS = 20;
 const JOB_KEEP_MS = 60 * 60_000;
@@ -533,41 +539,156 @@ function createCodeOps(options = {}) {
 
   // ---------- 写 ----------
 
-  /** 文件所在的 git 工作区根（向上找 .git 目录；.git 是文件的 worktree / submodule 不算），找不到返回 null。 */
-  function gitRootOf(file) {
-    let dir = path.dirname(file);
+  /**
+   * 向上查找文件所在 git 仓库根：
+   * - 用 lstat 拒绝 `.git` 符号链接（防止恶意仓库通过 `.git` symlink 跨目录覆写备份）；
+   * - 若传入 resolvedRoots，则仅在允许根目录范围内查找 `.git`，避免越界写入父级仓库。
+   */
+  async function findSafeGitRoot(file, resolvedRoots) {
+    let dir = P.dirname(file);
     for (let i = 0; i < 64; i++) {
-      try {
-        if (fs.statSync(path.join(dir, ".git")).isDirectory()) return dir;
-      } catch {}
-      const parent = path.dirname(dir);
+      if (
+        resolvedRoots &&
+        !resolvedRoots.some((r) => isWithinDir(dir, r, platform))
+      ) {
+        return null;
+      }
+      const gitCandidate = P.join(dir, ".git");
+      const st = await fsp.lstat(gitCandidate).catch((err) => {
+        if (err?.code === "ENOENT" || err?.code === "ENOTDIR") return null;
+        throw err;
+      });
+      if (st) {
+        if (st.isSymbolicLink()) {
+          throw new OpError(`拒绝向符号链接 .git 写入备份：${gitCandidate}`);
+        }
+        if (st.isDirectory()) return dir;
+      }
+      const parent = P.dirname(dir);
       if (parent === dir) return null;
       dir = parent;
     }
     return null;
   }
 
+  /** 校验 backup 目标的祖先目录链（从 baseDir 起）不包含任何符号链接。 */
+  async function assertNoSymlinkSegments(baseDir, relPath) {
+    const baseSt = await fsp.lstat(baseDir).catch((err) => {
+      if (err?.code === "ENOENT") return null;
+      throw err;
+    });
+    if (baseSt) {
+      if (baseSt.isSymbolicLink()) {
+        throw new OpError(`拒绝向符号链接备份目录写入：${baseDir}`);
+      }
+      if (!baseSt.isDirectory()) {
+        throw new OpError(`备份目录路径不是文件夹：${baseDir}`);
+      }
+    }
+    const parts = relPath.split(/[\\/]+/).filter(Boolean);
+    // 最后一段为文件名本身（由 writeFileAtomicSafe 单独做 lstat 校验）
+    let cur = baseDir;
+    for (let i = 0; i < parts.length - 1; i++) {
+      cur = P.join(cur, parts[i]);
+      const st = await fsp.lstat(cur).catch((err) => {
+        if (err?.code === "ENOENT") return null;
+        throw err;
+      });
+      if (!st) break;
+      if (st.isSymbolicLink()) {
+        throw new OpError(`拒绝向符号链接备份目录写入：${cur}`);
+      }
+      if (!st.isDirectory()) {
+        throw new OpError(`备份路径中间段不是文件夹：${cur}`);
+      }
+    }
+  }
+
+  async function pruneGitBackups(backupsRoot) {
+    try {
+      const rootSt = await fsp.lstat(backupsRoot);
+      if (rootSt.isSymbolicLink() || !rootSt.isDirectory()) return;
+      const found = [];
+      const stack = [backupsRoot];
+      while (stack.length && found.length < MAX_GIT_BACKUPS + 256) {
+        const dir = stack.pop();
+        const entries = await fsp
+          .readdir(dir, { withFileTypes: true })
+          .catch(() => []);
+        for (const ent of entries) {
+          if (ent.isSymbolicLink()) continue;
+          const full = P.join(dir, ent.name);
+          if (ent.isDirectory()) stack.push(full);
+          else if (ent.isFile()) {
+            const st = await fsp.lstat(full).catch(() => null);
+            if (st && !st.isSymbolicLink()) {
+              found.push({ full, mtimeMs: st.mtimeMs });
+            }
+          }
+        }
+      }
+      if (found.length <= MAX_GIT_BACKUPS) return;
+      found.sort((a, b) => a.mtimeMs - b.mtimeMs);
+      const excess = found.length - MAX_GIT_BACKUPS;
+      for (let i = 0; i < excess; i++) {
+        await fsp.unlink(found[i].full).catch(() => {});
+      }
+    } catch {}
+  }
+
   /**
    * 改前备份。git 仓库里的文件备份到 <仓库>/.git/chisabot-backups/<相对路径>（不会变成未跟踪文件、不会被误提交），
    * 其它地方照旧放在旁边 <文件>.chisabot-bak。
    */
-  async function backupOf(file, bufferOverride = null) {
-    const root = gitRootOf(file);
+  async function backupOf(file, bufferOverride = null, { allowedRoots } = {}) {
+    let resolvedRoots = null;
+    if (allowedRoots !== undefined) {
+      try {
+        resolvedRoots = await resolveAllowedRoots(allowedRoots, platform);
+      } catch (err) {
+        throw mapSafeFsError(err, file);
+      }
+    }
+    const root = await findSafeGitRoot(file, resolvedRoots);
     let backup = `${file}.chisabot-bak`;
+    let backupsRoot = null;
     if (root) {
-      const rel = path.relative(root, file);
-      if (rel && !rel.startsWith("..") && !path.isAbsolute(rel))
-        backup = path.join(root, ".git", "chisabot-backups", rel);
+      const rel = P.relative(root, file);
+      if (rel && !rel.startsWith("..") && !P.isAbsolute(rel)) {
+        const gitDir = P.join(root, ".git");
+        const realRoot = await fsp.realpath(root);
+        const realGit = await fsp.realpath(gitDir);
+        if (!isWithinDir(realGit, realRoot, platform)) {
+          throw new OpError(`拒绝向越界的 .git 目录写入备份：${gitDir}`);
+        }
+        if (
+          resolvedRoots &&
+          !resolvedRoots.some((r) => isWithinDir(realGit, r, platform))
+        ) {
+          throw new OpError(`备份目录超出允许的工作区范围：${gitDir}`);
+        }
+        backupsRoot = P.join(gitDir, "chisabot-backups");
+        await assertNoSymlinkSegments(backupsRoot, rel);
+        backup = P.join(backupsRoot, rel);
+      }
     }
     const data =
       bufferOverride !== null
         ? bufferOverride
-        : (await readFileNoFollow(file, { platform })).buffer;
-    await writeFileAtomicSafe(backup, data, {
-      lockQueue: null,
-      fsync: false,
-      platform,
-    });
+        : (await readFileNoFollow(file, { allowedRoots, platform })).buffer;
+    try {
+      await writeFileAtomicSafe(backup, data, {
+        lockQueue: null,
+        allowedRoots,
+        fsync: false,
+        platform,
+      });
+    } catch (err) {
+      throw mapSafeFsError(err, backup);
+    }
+    if (backupsRoot) {
+      void pruneGitBackups(backupsRoot);
+    }
     return backup;
   }
 
@@ -685,7 +806,7 @@ function createCodeOps(options = {}) {
           diff: "",
           note: "替换前后内容相同，文件没有改动。",
         };
-      const backup = await backupOf(file, readRes.buffer);
+      const backup = await backupOf(file, readRes.buffer, { allowedRoots });
       try {
         await writeFileAtomicSafe(file, content, {
           lockQueue: null,
@@ -851,14 +972,18 @@ function createCodeOps(options = {}) {
           if (!cur || cur.isSymbolicLink() || !statsMatch(cur, p.stat)) {
             throw new OpError(`文件在删除前被外部修改或替换：${p.full}`);
           }
-          const backup = await backupOf(p.full, p.beforeBuffer);
+          const backup = await backupOf(p.full, p.beforeBuffer, {
+            allowedRoots,
+          });
           await fsp.unlink(p.full);
           results.push({ path: label, deleted: true, backup });
           continue;
         }
         let backup = null;
         if (!p.created)
-          backup = await backupOf(p.from || p.full, p.beforeBuffer);
+          backup = await backupOf(p.from || p.full, p.beforeBuffer, {
+            allowedRoots,
+          });
         try {
           await writeFileAtomicSafe(p.full, p.after, {
             lockQueue: null,
@@ -955,7 +1080,9 @@ function createCodeOps(options = {}) {
       let outBytes = 0;
       let errBytes = 0;
       let timedOut = false;
+      let settled = false;
       const maxBuf = noCap ? 8 * 1024 * 1024 : 1024 * 1024;
+      child.stdin?.on("error", () => {});
       const keep = (list, chunk, bytes) => {
         // 只留头 1MB 以内 + 最后的输出（见 capBuffer）
         list.push(chunk);
@@ -974,13 +1101,20 @@ function createCodeOps(options = {}) {
         : null;
       const onAbort = () => killTree(child, platform);
       signal?.addEventListener("abort", onAbort, { once: true });
-      child.on("error", (error) => {
+      const cleanup = () => {
         if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+      };
+      child.on("error", (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         reject(new OpError(`命令出错：${error.message}`));
       });
       child.on("close", (code) => {
-        if (timer) clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
+        if (settled) return;
+        settled = true;
+        cleanup();
         const [stdout, t1] = noCap
           ? [Buffer.concat(out).toString("utf8"), false]
           : capBuffer(Buffer.concat(out));
@@ -995,8 +1129,10 @@ function createCodeOps(options = {}) {
           durationMs: Date.now() - started,
         });
       });
-      if (input !== undefined) child.stdin.end(input);
-      else child.stdin.end();
+      try {
+        if (input !== undefined) child.stdin.end(input);
+        else child.stdin.end();
+      } catch {}
     });
   }
 
@@ -1420,6 +1556,10 @@ function createCodeOps(options = {}) {
     argv.push(...extra);
     const long = ["pull", "push", "fetch", "clone"].includes(sub);
     const result = await new Promise((resolve, reject) => {
+      if (ctx.signal?.aborted) {
+        reject(new OpError("已取消。"));
+        return;
+      }
       const child = spawn("git", argv, {
         cwd,
         env: {
@@ -1431,25 +1571,70 @@ function createCodeOps(options = {}) {
         windowsHide: true,
         detached: platform !== "win32",
       });
+      child.stdin?.on("error", () => {});
       const out = [];
       const err = [];
-      child.stdout.on("data", (c) => out.push(c));
-      child.stderr.on("data", (c) => err.push(c));
+      let outBytes = 0;
+      let errBytes = 0;
+      let outDropped = false;
+      let settled = false;
+      const pushCapped = (list, chunk, total, cap, onDrop) => {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+        if (buf.length > cap) {
+          onDrop?.();
+          const keepTail = buf.subarray(buf.length - Math.floor(cap / 2));
+          if (list.length === 0) {
+            list.push(buf.subarray(0, Math.floor(cap / 2)), keepTail);
+            return list[0].length + list[1].length;
+          }
+          list.splice(1);
+          list.push(keepTail);
+          return list[0].length + keepTail.length;
+        }
+        list.push(buf);
+        let next = total + buf.length;
+        while (next > cap && list.length > 2) {
+          onDrop?.();
+          next -= list.splice(1, 1)[0].length;
+        }
+        return next;
+      };
+      child.stdout.on("data", (c) => {
+        outBytes = pushCapped(out, c, outBytes, GIT_STDOUT_BUF_CAP, () => {
+          outDropped = true;
+        });
+      });
+      child.stderr.on("data", (c) => {
+        errBytes = pushCapped(err, c, errBytes, GIT_STDERR_BUF_CAP);
+      });
       const timer = setTimeout(
         () => killTree(child, platform),
         (long ? 300 : 60) * 1000,
       );
       const onAbort = () => killTree(child, platform);
       ctx.signal?.addEventListener("abort", onAbort, { once: true });
-      child.on("error", (e) => {
+      const cleanup = () => {
         clearTimeout(timer);
+        ctx.signal?.removeEventListener("abort", onAbort);
+      };
+      child.on("error", (e) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         reject(new OpError(`git 出错：${e.message}`));
       });
       child.on("close", (code) => {
-        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        cleanup();
         const [stdout, t1] = capBuffer(Buffer.concat(out), 96 * 1024);
         const [stderr] = capBuffer(Buffer.concat(err), 16 * 1024);
-        resolve({ exitCode: code, stdout, stderr, truncated: t1 });
+        resolve({
+          exitCode: code,
+          stdout,
+          stderr,
+          truncated: outDropped || t1,
+        });
       });
     });
     return {
@@ -1461,7 +1646,7 @@ function createCodeOps(options = {}) {
 
   // ---------- 进程列表 / 结束 ----------
 
-  async function processList(args) {
+  async function processList(args, ctx = {}) {
     const filter = String(args.filter || "").toLowerCase();
     const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 300);
     let list = [];
@@ -1471,7 +1656,7 @@ function createCodeOps(options = {}) {
           "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize," +
           "@{n='CommandLine';e={if ($_.CommandLine -and $_.CommandLine.Length -gt 300) { $_.CommandLine.Substring(0, 300) } else { $_.CommandLine }}}," +
           "@{n='CPU';e={$cpu[[int]$_.ProcessId]}} | ConvertTo-Json -Compress",
-        { timeoutMs: 30_000, noCap: true },
+        { timeoutMs: 30_000, noCap: true, signal: ctx.signal },
       );
       try {
         const rows = JSON.parse(r.stdout || "[]");
@@ -1490,15 +1675,53 @@ function createCodeOps(options = {}) {
       }
     } else {
       const r = await new Promise((resolve) => {
-        const child = spawn(
-          "ps",
-          ["-axo", "pid=,ppid=,user=,pcpu=,rss=,etime=,args="],
-          { env: { ...process.env, LC_ALL: "C" } },
-        );
+        if (ctx.signal?.aborted) {
+          resolve("");
+          return;
+        }
+        let child;
+        try {
+          child = spawn(
+            "ps",
+            ["-axo", "pid=,ppid=,user=,pcpu=,rss=,etime=,args="],
+            {
+              env: { ...process.env, LC_ALL: "C" },
+              detached: true,
+              stdio: ["ignore", "pipe", "ignore"],
+            },
+          );
+        } catch {
+          resolve("");
+          return;
+        }
         const out = [];
-        child.stdout.on("data", (c) => out.push(c));
-        child.on("close", () => resolve(Buffer.concat(out).toString("utf8")));
-        child.on("error", () => resolve(""));
+        let outBytes = 0;
+        let settled = false;
+        const timer = setTimeout(() => {
+          killTree(child, platform);
+        }, PS_TIMEOUT_MS);
+        const onAbort = () => killTree(child, platform);
+        ctx.signal?.addEventListener("abort", onAbort, { once: true });
+        const finish = (text) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          ctx.signal?.removeEventListener("abort", onAbort);
+          resolve(text);
+        };
+        child.stdout.on("data", (c) => {
+          const remain = PS_STDOUT_BUF_CAP - outBytes;
+          if (remain <= 0) return;
+          if (c.length <= remain) {
+            out.push(c);
+            outBytes += c.length;
+          } else {
+            out.push(c.subarray(0, remain));
+            outBytes += remain;
+          }
+        });
+        child.on("close", () => finish(Buffer.concat(out).toString("utf8")));
+        child.on("error", () => finish(""));
       });
       list = r
         .split("\n")

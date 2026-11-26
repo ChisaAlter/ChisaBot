@@ -79,13 +79,26 @@ function readConfigFileStrictSync(filePath) {
   }
 }
 
-function createConfig({ dir, safeStorage }) {
+function createConfig({
+  dir,
+  safeStorage,
+  asyncSave = false,
+  initialConfig = null,
+}) {
   const file = path.join(dir, "config.json");
   const auditFile = path.join(dir, "audit.jsonl");
   let data = { ...DEFAULTS };
-  try {
-    data = { ...DEFAULTS, ...JSON.parse(readConfigFileStrictSync(file)) };
-  } catch {}
+  if (
+    initialConfig &&
+    typeof initialConfig === "object" &&
+    !Array.isArray(initialConfig)
+  ) {
+    data = { ...DEFAULTS, ...initialConfig };
+  } else {
+    try {
+      data = { ...DEFAULTS, ...JSON.parse(readConfigFileStrictSync(file)) };
+    } catch {}
+  }
 
   /** 内存解密缓存：仅随当前加密密文命中，不落盘，令牌变更或清空时即时失效。 */
   let hasCachedToken = false;
@@ -95,7 +108,12 @@ function createConfig({ dir, safeStorage }) {
   /** 配置变更监听器（供主进程按变更刷新预编译出网策略等派生缓存）。 */
   const changeListeners = new Set();
 
-  /** 审计日志异步串行写盘队列 + 读合并状态。 */
+  /** 串行异步配置保存状态（仅 asyncSave 模式下激活，减少主进程事件循环同步阻塞）。 */
+  let configDirReady = false;
+  let pendingConfigText = null;
+  let configFlushPromise = null;
+
+  /** 审计日志异步串行写盘队列 + 读合并状态 + 磁盘行缓存。 */
   let auditDirReady = false;
   let auditFileHardened = false;
   let auditBytes = null;
@@ -104,6 +122,9 @@ function createConfig({ dir, safeStorage }) {
   let inflightBaseBytes = 0;
   let inflightTotalBytes = 0;
   let auditFlushPromise = null;
+  let cachedDiskAuditLines = null;
+  let cachedDiskAuditSize = -1;
+  let cachedDiskAuditMtimeMs = -1;
 
   // 初始化阶段异步收敛配置目录、配置文件与既有审计日志权限（不阻塞同步启动热路径）
   void (async () => {
@@ -126,15 +147,16 @@ function createConfig({ dir, safeStorage }) {
     }
   }
 
-  function save() {
+  function saveSync(serialized = JSON.stringify(data, null, 2)) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     hardenFilePermissionsSync(dir, 0o700);
+    configDirReady = true;
     const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
     let fd;
     let renamed = false;
     try {
       fd = fs.openSync(tmp, "wx", 0o600);
-      fs.writeFileSync(fd, JSON.stringify(data, null, 2));
+      fs.writeFileSync(fd, serialized);
       if (process.platform !== "win32") {
         fs.fchmodSync(fd, 0o600);
       }
@@ -155,6 +177,65 @@ function createConfig({ dir, safeStorage }) {
         } catch {}
       }
     }
+  }
+
+  function drainSaveQueue() {
+    if (configFlushPromise) return configFlushPromise;
+    configFlushPromise = (async () => {
+      try {
+        while (pendingConfigText !== null) {
+          const text = pendingConfigText;
+          pendingConfigText = null;
+          if (!configDirReady) {
+            await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
+            await hardenFilePermissions(dir, 0o700);
+            configDirReady = true;
+          }
+          await writeFileAtomicSafe(file, text, {
+            mode: 0o600,
+            fsync: false,
+          });
+          await hardenFilePermissions(file, 0o600).catch(() => {});
+        }
+      } catch {
+        configDirReady = false;
+      } finally {
+        configFlushPromise = null;
+        if (pendingConfigText !== null) {
+          void drainSaveQueue();
+        }
+      }
+    })();
+    return configFlushPromise;
+  }
+
+  function save() {
+    const serialized = JSON.stringify(data, null, 2);
+    if (!asyncSave) {
+      saveSync(serialized);
+      return;
+    }
+    pendingConfigText = serialized;
+    void drainSaveQueue();
+  }
+
+  function flushSave() {
+    return (
+      configFlushPromise ||
+      (pendingConfigText !== null ? drainSaveQueue() : Promise.resolve())
+    );
+  }
+
+  function flushSaveSync() {
+    if (pendingConfigText === null && !configFlushPromise) return;
+    const text =
+      pendingConfigText !== null
+        ? pendingConfigText
+        : JSON.stringify(data, null, 2);
+    pendingConfigText = null;
+    try {
+      saveSync(text);
+    } catch {}
   }
 
   const encryptionBackend = () => {
@@ -234,6 +315,12 @@ function createConfig({ dir, safeStorage }) {
             auditFileHardened = true;
           }
           auditBytes += chunkBytes;
+          if (cachedDiskAuditLines !== null) {
+            for (const item of batch) cachedDiskAuditLines.push(item.line);
+            cachedDiskAuditSize = auditBytes;
+            const postSt = await fsp.stat(auditFile).catch(() => null);
+            if (postSt) cachedDiskAuditMtimeMs = postSt.mtimeMs;
+          }
           inflightAudit = [];
           inflightTotalBytes = 0;
 
@@ -244,7 +331,8 @@ function createConfig({ dir, safeStorage }) {
               .trim()
               .split("\n")
               .filter(Boolean);
-            const rotated = `${lines.slice(-AUDIT_KEEP_LINES).join("\n")}\n`;
+            const kept = lines.slice(-AUDIT_KEEP_LINES);
+            const rotated = `${kept.join("\n")}\n`;
             await writeFileAtomicSafe(auditFile, rotated, {
               mode: 0o600,
               fsync: false,
@@ -252,6 +340,10 @@ function createConfig({ dir, safeStorage }) {
             });
             await hardenFilePermissions(auditFile, 0o600);
             auditBytes = Buffer.byteLength(rotated, "utf8");
+            cachedDiskAuditLines = kept;
+            cachedDiskAuditSize = auditBytes;
+            const postRotSt = await fsp.stat(auditFile).catch(() => null);
+            cachedDiskAuditMtimeMs = postRotSt ? postRotSt.mtimeMs : -1;
           }
         }
       } catch {
@@ -301,6 +393,9 @@ function createConfig({ dir, safeStorage }) {
         hardenFilePermissionsSync(auditFile, 0o600);
         auditFileHardened = true;
         auditBytes = diskSize + Buffer.byteLength(chunk, "utf8");
+        cachedDiskAuditLines = null;
+        cachedDiskAuditSize = -1;
+        cachedDiskAuditMtimeMs = -1;
       }
     } catch {}
   }
@@ -327,6 +422,7 @@ function createConfig({ dir, safeStorage }) {
   }
 
   async function securityAudit(opts = {}) {
+    await flushSave();
     const targetPlatform = opts?.platform || process.platform;
     const isWin = targetPlatform === "win32";
     const targets = [
@@ -441,6 +537,8 @@ function createConfig({ dir, safeStorage }) {
         void drainAuditQueue();
       } catch {}
     },
+    flush: flushSave,
+    flushSync: flushSaveSync,
     flushAudit() {
       return (
         auditFlushPromise ||
@@ -453,12 +551,83 @@ function createConfig({ dir, safeStorage }) {
         let diskLines = [];
         let diskSize = 0;
         try {
-          const buf = fs.readFileSync(auditFile);
-          diskSize = buf.length;
-          if (diskSize > 0) {
+          const st = fs.statSync(auditFile);
+          diskSize = st.size;
+          if (
+            cachedDiskAuditLines !== null &&
+            cachedDiskAuditSize === st.size &&
+            cachedDiskAuditMtimeMs === st.mtimeMs
+          ) {
+            diskLines = cachedDiskAuditLines;
+          } else if (diskSize > 0) {
+            const buf = fs.readFileSync(auditFile);
+            diskSize = buf.length;
             diskLines = buf.toString("utf8").trim().split("\n").filter(Boolean);
+            cachedDiskAuditLines = diskLines;
+            cachedDiskAuditSize = diskSize;
+            cachedDiskAuditMtimeMs = st.mtimeMs;
+          } else {
+            cachedDiskAuditLines = [];
+            cachedDiskAuditSize = 0;
+            cachedDiskAuditMtimeMs = st.mtimeMs;
           }
-        } catch {}
+        } catch {
+          cachedDiskAuditLines = [];
+          cachedDiskAuditSize = 0;
+          cachedDiskAuditMtimeMs = -1;
+        }
+
+        const merged = diskLines.slice();
+        if (
+          inflightAudit.length > 0 &&
+          diskSize < inflightBaseBytes + inflightTotalBytes
+        ) {
+          for (const item of inflightAudit) merged.push(item.line);
+        }
+        if (pendingAudit.length > 0) {
+          for (const item of pendingAudit) merged.push(item.line);
+        }
+        if (merged.length === 0) return [];
+        const take =
+          Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
+        return merged
+          .slice(-take)
+          .reverse()
+          .map((line) => JSON.parse(line));
+      } catch {
+        return [];
+      }
+    },
+    async readAuditAsync(limit = 200) {
+      try {
+        let diskLines = [];
+        let diskSize = 0;
+        try {
+          const st = await fsp.stat(auditFile);
+          diskSize = st.size;
+          if (
+            cachedDiskAuditLines !== null &&
+            cachedDiskAuditSize === st.size &&
+            cachedDiskAuditMtimeMs === st.mtimeMs
+          ) {
+            diskLines = cachedDiskAuditLines;
+          } else if (diskSize > 0) {
+            const buf = await fsp.readFile(auditFile);
+            diskSize = buf.length;
+            diskLines = buf.toString("utf8").trim().split("\n").filter(Boolean);
+            cachedDiskAuditLines = diskLines;
+            cachedDiskAuditSize = diskSize;
+            cachedDiskAuditMtimeMs = st.mtimeMs;
+          } else {
+            cachedDiskAuditLines = [];
+            cachedDiskAuditSize = 0;
+            cachedDiskAuditMtimeMs = st.mtimeMs;
+          }
+        } catch {
+          cachedDiskAuditLines = [];
+          cachedDiskAuditSize = 0;
+          cachedDiskAuditMtimeMs = -1;
+        }
 
         const merged = diskLines.slice();
         if (

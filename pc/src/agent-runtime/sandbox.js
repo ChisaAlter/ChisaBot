@@ -22,6 +22,8 @@ const COPY_LIMIT_BYTES = 800 * 1024 * 1024;
 const COPY_LIMIT_FILES = 60_000;
 const PATCH_PREVIEW = 24_000;
 const PREFLIGHT_TIMEOUT_MS = 5_000;
+const GIT_MAX_OUT_BYTES = 16 * 1024 * 1024;
+const GIT_MAX_ERR_BYTES = 256 * 1024;
 
 /** 统一路径分隔符为 `/`，消除 Windows `\` 在前缀/正则判断中的边界陷阱。 */
 function normalizePosixPath(rawPath, platform = process.platform) {
@@ -359,11 +361,33 @@ function tmpRoot() {
   return dir;
 }
 
-function git(args, { cwd, env, timeoutMs = 120_000, input } = {}) {
+function git(
+  args,
+  {
+    cwd,
+    env,
+    timeoutMs = 120_000,
+    input,
+    maxOutBytes = GIT_MAX_OUT_BYTES,
+    maxErrBytes = GIT_MAX_ERR_BYTES,
+    signal,
+  } = {},
+) {
   return new Promise((resolve) => {
-    let out = "";
-    let err = "";
+    if (signal?.aborted) {
+      resolve({ code: -1, out: "", err: "已取消", truncated: false });
+      return;
+    }
+    const outChunks = [];
+    const errChunks = [];
+    let outBytes = 0;
+    let errBytes = 0;
+    let outTruncated = false;
+    let errTruncated = false;
+    const outCap = Math.max(1024, Number(maxOutBytes) || GIT_MAX_OUT_BYTES);
+    const errCap = Math.max(1024, Number(maxErrBytes) || GIT_MAX_ERR_BYTES);
     let child;
+    let settled = false;
     try {
       child = spawn(
         "git",
@@ -376,26 +400,85 @@ function git(args, { cwd, env, timeoutMs = 120_000, input } = {}) {
         },
       );
     } catch (error) {
-      resolve({ code: -1, out: "", err: String(error?.message) });
+      resolve({
+        code: -1,
+        out: "",
+        err: String(error?.message),
+        truncated: false,
+      });
       return;
     }
+    child.stdin?.on("error", () => {});
+    const onAbort = () => {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+    };
     const timer = setTimeout(() => {
       try {
         child.kill("SIGKILL");
       } catch {}
     }, timeoutMs);
-    child.stdout.on("data", (d) => (out += d));
-    child.stderr.on("data", (d) => (err += d));
-    child.on("error", (error) => {
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const finalize = (result) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve({ code: -1, out, err: String(error?.message) });
+      signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+    child.stdout.on("data", (d) => {
+      const buf = Buffer.isBuffer(d) ? d : Buffer.from(String(d));
+      const remain = outCap - outBytes;
+      if (remain > 0) {
+        if (buf.length <= remain) {
+          outChunks.push(buf);
+          outBytes += buf.length;
+        } else {
+          outChunks.push(buf.subarray(0, remain));
+          outBytes += remain;
+          outTruncated = true;
+        }
+      } else {
+        outTruncated = true;
+      }
+    });
+    child.stderr.on("data", (d) => {
+      const buf = Buffer.isBuffer(d) ? d : Buffer.from(String(d));
+      const remain = errCap - errBytes;
+      if (remain > 0) {
+        if (buf.length <= remain) {
+          errChunks.push(buf);
+          errBytes += buf.length;
+        } else {
+          errChunks.push(buf.subarray(0, remain));
+          errBytes += remain;
+          errTruncated = true;
+        }
+      } else {
+        errTruncated = true;
+      }
+    });
+    child.on("error", (error) => {
+      finalize({
+        code: -1,
+        out: Buffer.concat(outChunks).toString("utf8"),
+        err: String(error?.message),
+        truncated: outTruncated || errTruncated,
+      });
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? -1, out, err });
+      finalize({
+        code: code ?? -1,
+        out: Buffer.concat(outChunks).toString("utf8"),
+        err: Buffer.concat(errChunks).toString("utf8"),
+        truncated: outTruncated || errTruncated,
+      });
     });
-    if (input) child.stdin.end(input);
-    else child.stdin.end();
+    try {
+      if (input) child.stdin.end(input);
+      else child.stdin.end();
+    } catch {}
   });
 }
 
@@ -627,9 +710,12 @@ async function diff(prep) {
   }
   let patch = "";
   if (files.length) {
-    const full = await git(["diff", "--cached", "-M", prep.base], { env });
+    const full = await git(["diff", "--cached", "-M", prep.base], {
+      env,
+      maxOutBytes: PATCH_PREVIEW * 4 + 4096,
+    });
     patch =
-      full.out.length > PATCH_PREVIEW
+      full.truncated || full.out.length > PATCH_PREVIEW
         ? `${full.out.slice(0, PATCH_PREVIEW)}\n…（补丁太长，后面省略）`
         : full.out;
   }
@@ -658,6 +744,11 @@ async function apply(prep) {
     return {
       ok: false,
       error: patch.err.trim().slice(0, 300) || "生成补丁失败。",
+    };
+  if (patch.truncated)
+    return {
+      ok: false,
+      error: "改动补丁超过 16 MB 上限，无法自动应用，请手动处理。",
     };
   if (!patch.out.trim()) return { ok: true };
   // 补丁里的路径相对快照的工作树根（worktree 根 / 副本根），对应原仓库根 / 原文件夹。

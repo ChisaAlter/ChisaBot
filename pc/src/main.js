@@ -140,7 +140,7 @@ function getUpdatePlacementMod() {
   return updatePlacementMod;
 }
 
-function disposeResidentWinHelper() {
+function disposeResidentWinHelper(opts = {}) {
   if (!winPsHelperMod) {
     try {
       const resolved = require.resolve("./agent/win-ps-helper");
@@ -149,7 +149,11 @@ function disposeResidentWinHelper() {
       winPsHelperMod = null;
     }
   }
-  winPsHelperMod?.disposeSharedWinPsHelper?.({ sync: true });
+  winPsHelperMod?.disposeSharedWinPsHelper?.({
+    sync: true,
+    permanent: true,
+    ...opts,
+  });
 }
 
 const PARTITION = "persist:chisabot";
@@ -685,16 +689,24 @@ function handleDeepLinkUrl(rawUrl) {
 }
 
 function openChat(pathname, options) {
-  const { serverUrl } = config.get();
-  if (!serverUrl) return openLogin();
-  if (!options?.prewarmOnly && windows.chat && !windows.chat.isDestroyed()) {
+  const disposeUnusedPrewarm = () => {
     if (
       options?.prewarmedWin &&
       !options.prewarmedWin.isDestroyed() &&
       options.prewarmedWin !== windows.chat
     ) {
-      options.prewarmedWin.destroy();
+      try {
+        options.prewarmedWin.destroy();
+      } catch {}
     }
+  };
+  const { serverUrl } = config.get();
+  if (!serverUrl) {
+    disposeUnusedPrewarm();
+    return openLogin();
+  }
+  if (!options?.prewarmOnly && windows.chat && !windows.chat.isDestroyed()) {
+    disposeUnusedPrewarm();
     const effectivePath = pathname || pendingDeepLink?.pathname || null;
     const target = effectivePath ? `${serverOrigin()}${effectivePath}` : null;
     if (target && !chatOffline) windows.chat.loadURL(target);
@@ -731,262 +743,287 @@ function openChat(pathname, options) {
             spellcheck: config.get().spellcheck !== false,
           },
         });
-  win.setMenu(null);
-  if (options?.prewarmOnly) return win;
-  const effectivePath = pathname || pendingDeepLink?.pathname || null;
-  const target = effectivePath ? `${serverOrigin()}${effectivePath}` : null;
-  chatDomReady = false;
-  win.webContents.on("context-menu", (_event, params) => {
-    const template = desktopPrefs.buildContextMenuTemplate(params, {
-      openExternal: (url) => shell.openExternal(url),
-      writeClipboard: (text) => clipboard.writeText(text),
-      replaceMisspelling: (word) => win.webContents.replaceMisspelling(word),
-    });
-    if (template.length > 0) {
-      Menu.buildFromTemplate(template).popup({ window: win });
-    }
-  });
-  let chatShown = false;
-  let chatShowTimer = null;
-  const revealChatWindow = () => {
-    if (chatShown || win.isDestroyed()) return;
-    chatShown = true;
-    if (chatShowTimer && typeof clearTimeout === "function") {
-      clearTimeout(chatShowTimer);
-      chatShowTimer = null;
-    }
-    win.show();
-  };
-  if (typeof setTimeout === "function") {
-    chatShowTimer = setTimeout(revealChatWindow, 1500);
-    chatShowTimer?.unref?.();
-  }
-  win.once("ready-to-show", revealChatWindow);
-  chatOffline = Boolean(options?.offline);
-  if (chatOffline) {
-    if (pathname) lastWebPath = pathname;
-    showOffline(win, "连不上服务器");
-  } else {
-    win.loadURL(target || serverUrl);
-  }
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    // 同一服务器的弹窗（例如连接账号的授权窗口）照常打开；本机桥只认主窗口，弹窗里拿不到。
-    if (isServerUrl(url))
-      return {
-        action: "allow",
-        overrideBrowserWindowOptions: {
-          autoHideMenuBar: true,
-          icon: WINDOW_ICON,
-        },
+  try {
+    win.setMenu(null);
+    if (options?.prewarmOnly) {
+      const clearPrewarmRef = () => {
+        if (prewarmedChatWindow === win) prewarmedChatWindow = null;
       };
-    if (/^https?:/i.test(url)) shell.openExternal(url);
-    return { action: "deny" };
-  });
-  // 服务器的网页登录页不在客户端里出现：会话过期时服务器会 302 到 /login，这里换成本机登录页。
-  win.webContents.on("will-redirect", (event, url) => {
-    if (!loginUrl(url)) return;
-    event.preventDefault();
-    setImmediate(sessionExpired);
-  });
-  win.webContents.on("will-navigate", (event, url) => {
-    if (loginUrl(url)) {
+      win.once("closed", clearPrewarmRef);
+      win.webContents.once("render-process-gone", () => {
+        clearPrewarmRef();
+        if (!win.isDestroyed() && win !== windows.chat) {
+          try {
+            win.destroy();
+          } catch {}
+        }
+      });
+      return win;
+    }
+    const effectivePath = pathname || pendingDeepLink?.pathname || null;
+    const target = effectivePath ? `${serverOrigin()}${effectivePath}` : null;
+    chatDomReady = false;
+    win.webContents.on("context-menu", (_event, params) => {
+      const template = desktopPrefs.buildContextMenuTemplate(params, {
+        openExternal: (url) => shell.openExternal(url),
+        writeClipboard: (text) => clipboard.writeText(text),
+        replaceMisspelling: (word) => win.webContents.replaceMisspelling(word),
+      });
+      if (template.length > 0) {
+        Menu.buildFromTemplate(template).popup({ window: win });
+      }
+    });
+    let chatShown = false;
+    let chatShowTimer = null;
+    const revealChatWindow = () => {
+      if (chatShown || win.isDestroyed()) return;
+      chatShown = true;
+      if (chatShowTimer && typeof clearTimeout === "function") {
+        clearTimeout(chatShowTimer);
+        chatShowTimer = null;
+      }
+      win.show();
+    };
+    if (typeof setTimeout === "function") {
+      chatShowTimer = setTimeout(revealChatWindow, 1500);
+      chatShowTimer?.unref?.();
+    }
+    win.once("ready-to-show", revealChatWindow);
+    chatOffline = Boolean(options?.offline);
+    if (chatOffline) {
+      if (pathname) lastWebPath = pathname;
+      showOffline(win, "连不上服务器");
+    } else {
+      win.loadURL(target || serverUrl);
+    }
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      // 同一服务器的弹窗（例如连接账号的授权窗口）照常打开；本机桥只认主窗口，弹窗里拿不到。
+      if (isServerUrl(url))
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            autoHideMenuBar: true,
+            icon: WINDOW_ICON,
+          },
+        };
+      if (/^https?:/i.test(url)) shell.openExternal(url);
+      return { action: "deny" };
+    });
+    // 服务器的网页登录页不在客户端里出现：会话过期时服务器会 302 到 /login，这里换成本机登录页。
+    win.webContents.on("will-redirect", (event, url) => {
+      if (!loginUrl(url)) return;
       event.preventDefault();
       setImmediate(sessionExpired);
-      return;
-    }
-    if (isServerUrl(url) || url.startsWith(UI_URL)) return;
-    event.preventDefault();
-    if (/^https?:/i.test(url)) shell.openExternal(url);
-  });
-  win.webContents.on("did-finish-load", () => {
-    if (isServerUrl(win.webContents.getURL())) {
-      chatDomReady = true;
-      flushPendingDeepLink();
-    }
-  });
-  win.webContents.on("did-navigate", (_event, url) => {
-    if (loginUrl(url)) return setImmediate(sessionExpired);
-    if (isServerUrl(url)) {
-      rememberWebPath(url);
-      chatOffline = false;
-      clearInterval(chatRetryTimer);
-      cancelChatRetry();
-      // 网页刚从服务器加载成功 = 网络和服务器都通：节点如果还在退避等待，马上重连（服务器重启 / 更新之后尤其如此）。
-      agent?.reconnectNow();
-    }
-  });
-  win.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
-    if (!isMainFrame) return;
-    if (loginUrl(url)) return setImmediate(sessionExpired);
-    if (isServerUrl(url)) rememberWebPath(url);
-  });
-  // 载不出网页（断网、服务器维护）时换成本机的离线页：同样的天空和玻璃，紧急停止照样能按，恢复后自动回到原页面。
-  win.webContents.on(
-    "did-fail-load",
-    (_event, code, description, url, isMainFrame) => {
-      if (!isMainFrame || code === -3 || !isServerUrl(url)) return;
-      try {
+    });
+    win.webContents.on("will-navigate", (event, url) => {
+      if (loginUrl(url)) {
+        event.preventDefault();
+        setImmediate(sessionExpired);
+        return;
+      }
+      if (isServerUrl(url) || url.startsWith(UI_URL)) return;
+      event.preventDefault();
+      if (/^https?:/i.test(url)) shell.openExternal(url);
+    });
+    win.webContents.on("did-finish-load", () => {
+      if (isServerUrl(win.webContents.getURL())) {
+        chatDomReady = true;
+        flushPendingDeepLink();
+      }
+    });
+    win.webContents.on("did-navigate", (_event, url) => {
+      if (loginUrl(url)) return setImmediate(sessionExpired);
+      if (isServerUrl(url)) {
         rememberWebPath(url);
-      } catch {}
-      showOffline(win, description || String(code));
-    },
-  );
-  const crashTimestamps = [];
-  let crashReloadTimer = null;
-  win.webContents.on("render-process-gone", (_event, details) => {
-    const reason = details?.reason || "unknown";
-    if (reason !== "clean-exit") {
+        chatOffline = false;
+        clearInterval(chatRetryTimer);
+        cancelChatRetry();
+        // 网页刚从服务器加载成功 = 网络和服务器都通：节点如果还在退避等待，马上重连（服务器重启 / 更新之后尤其如此）。
+        agent?.reconnectNow();
+      }
+    });
+    win.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
+      if (!isMainFrame) return;
+      if (loginUrl(url)) return setImmediate(sessionExpired);
+      if (isServerUrl(url)) rememberWebPath(url);
+    });
+    // 载不出网页（断网、服务器维护）时换成本机的离线页：同样的天空和玻璃，紧急停止照样能按，恢复后自动回到原页面。
+    win.webContents.on(
+      "did-fail-load",
+      (_event, code, description, url, isMainFrame) => {
+        if (!isMainFrame || code === -3 || !isServerUrl(url)) return;
+        try {
+          rememberWebPath(url);
+        } catch {}
+        showOffline(win, description || String(code));
+      },
+    );
+    const crashTimestamps = [];
+    let crashReloadTimer = null;
+    win.webContents.on("render-process-gone", (_event, details) => {
+      const reason = details?.reason || "unknown";
+      if (reason !== "clean-exit") {
+        if (typeof diagnosticsLog !== "undefined") {
+          diagnosticsLog?.record?.({
+            category: "system",
+            level: "error",
+            event: "render_process_gone",
+            message: `主窗口渲染进程异常退出（${reason}）`,
+            detail: { reason, exitCode: details?.exitCode },
+          });
+        }
+        const nowMs = Date.now();
+        while (
+          crashTimestamps.length > 0 &&
+          nowMs - crashTimestamps[0] > 60_000
+        ) {
+          crashTimestamps.shift();
+        }
+        crashTimestamps.push(nowMs);
+        if (
+          crashTimestamps.length <= 2 &&
+          typeof setTimeout === "function" &&
+          typeof win.webContents.reload === "function"
+        ) {
+          if (crashReloadTimer && typeof clearTimeout === "function") {
+            clearTimeout(crashReloadTimer);
+          }
+          crashReloadTimer = setTimeout(() => {
+            crashReloadTimer = null;
+            if (!win.isDestroyed()) {
+              try {
+                win.webContents.reload();
+              } catch {
+                showOffline(win, "页面进程意外退出");
+              }
+            }
+          }, 600);
+          crashReloadTimer?.unref?.();
+          return;
+        }
+      }
+      showOffline(
+        win,
+        reason === "clean-exit"
+          ? "页面已关闭"
+          : `页面进程意外退出（${reason}）`,
+      );
+    });
+    win.on("unresponsive", () => {
       if (typeof diagnosticsLog !== "undefined") {
         diagnosticsLog?.record?.({
           category: "system",
-          level: "error",
-          event: "render_process_gone",
-          message: `主窗口渲染进程异常退出（${reason}）`,
-          detail: { reason, exitCode: details?.exitCode },
+          level: "warn",
+          event: "window_unresponsive",
+          message: "主窗口渲染进程无响应",
         });
       }
-      const nowMs = Date.now();
-      while (
-        crashTimestamps.length > 0 &&
-        nowMs - crashTimestamps[0] > 60_000
-      ) {
-        crashTimestamps.shift();
-      }
-      crashTimestamps.push(nowMs);
-      if (
-        crashTimestamps.length <= 2 &&
-        typeof setTimeout === "function" &&
-        typeof win.webContents.reload === "function"
-      ) {
-        if (crashReloadTimer && typeof clearTimeout === "function") {
-          clearTimeout(crashReloadTimer);
-        }
-        crashReloadTimer = setTimeout(() => {
-          crashReloadTimer = null;
-          if (!win.isDestroyed()) {
-            try {
-              win.webContents.reload();
-            } catch {
-              showOffline(win, "页面进程意外退出");
-            }
-          }
-        }, 600);
-        crashReloadTimer?.unref?.();
-        return;
-      }
-    }
-    showOffline(
-      win,
-      reason === "clean-exit" ? "页面已关闭" : `页面进程意外退出（${reason}）`,
-    );
-  });
-  win.on("unresponsive", () => {
-    if (typeof diagnosticsLog !== "undefined") {
-      diagnosticsLog?.record?.({
-        category: "system",
-        level: "warn",
-        event: "window_unresponsive",
-        message: "主窗口渲染进程无响应",
-      });
-    }
-  });
-  win.webContents.on("did-start-loading", () => {
-    lastSentWindowState.delete(win);
-  });
-  // 小窗模式（DESIGN.md §36）：先注册 watch，用户手动最大化时先离小窗再统一发一次去重后的 window:state。
-  compactWindows().watch(win);
-  const sendMaximized = () => {
-    if (win.isDestroyed()) return;
-    // 小窗原子进出期间 unmaximize()/maximize() 的中间态由 compactController.onChange 一次性合批下发，避免前端收到双份 IPC 与 --edge-clip-r 抖动。
-    if (compactWindows().isTransitioning(win)) return;
-    sendWindowState(win, {
-      compact: compactWindows().isCompact(win),
-      maximized: win.isMaximized() || win.isFullScreen(),
-      transitioning: false,
     });
-  };
-  for (const name of [
-    "maximize",
-    "unmaximize",
-    "enter-full-screen",
-    "leave-full-screen",
-  ])
-    win.on(name, sendMaximized);
-  win.on("focus", () => {
-    if (updater)
-      void updater.nudge({
-        reason: "focus",
-        minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS,
+    win.webContents.on("did-start-loading", () => {
+      lastSentWindowState.delete(win);
+    });
+    // 小窗模式（DESIGN.md §36）：先注册 watch，用户手动最大化时先离小窗再统一发一次去重后的 window:state。
+    compactWindows().watch(win);
+    const sendMaximized = () => {
+      if (win.isDestroyed()) return;
+      // 小窗原子进出期间 unmaximize()/maximize() 的中间态由 compactController.onChange 一次性合批下发，避免前端收到双份 IPC 与 --edge-clip-r 抖动。
+      if (compactWindows().isTransitioning(win)) return;
+      sendWindowState(win, {
+        compact: compactWindows().isCompact(win),
+        maximized: win.isMaximized() || win.isFullScreen(),
+        transitioning: false,
       });
-  });
-  win.webContents.on("before-input-event", (event, input) => {
-    if (
-      input.type !== "keyDown" ||
-      !(input.control || input.meta) ||
-      !input.shift ||
-      input.alt
-    )
-      return;
-    if (String(input.key).toLowerCase() !== "m") return;
-    event.preventDefault();
-    compactWindows().toggle(win);
-  });
-  let hidingFromFullScreen = false;
-  let fullScreenHideTimer = null;
-  const clearFullScreenHideTimer = () => {
-    if (fullScreenHideTimer && typeof clearTimeout === "function") {
-      clearTimeout(fullScreenHideTimer);
-      fullScreenHideTimer = null;
-    }
-  };
-  win.on("close", (event) => {
-    if (!quitting) {
-      event.preventDefault();
+    };
+    for (const name of [
+      "maximize",
+      "unmaximize",
+      "enter-full-screen",
+      "leave-full-screen",
+    ])
+      win.on(name, sendMaximized);
+    win.on("focus", () => {
+      if (updater)
+        void updater.nudge({
+          reason: "focus",
+          minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS,
+        });
+    });
+    win.webContents.on("before-input-event", (event, input) => {
       if (
-        typeof process !== "undefined" &&
-        process.platform === "darwin" &&
-        typeof win.isFullScreen === "function" &&
-        win.isFullScreen()
-      ) {
-        if (hidingFromFullScreen) return;
-        hidingFromFullScreen = true;
-        const finishHide = () => {
-          hidingFromFullScreen = false;
-          clearFullScreenHideTimer();
-          win.removeListener?.("leave-full-screen", finishHide);
-          if (!win.isDestroyed() && !quitting) {
-            win.hide?.();
-          }
-        };
-        win.once("leave-full-screen", finishHide);
-        if (typeof setTimeout === "function") {
-          fullScreenHideTimer = setTimeout(finishHide, 900);
-          fullScreenHideTimer?.unref?.();
-        }
-        win.setFullScreen?.(false);
+        input.type !== "keyDown" ||
+        !(input.control || input.meta) ||
+        !input.shift ||
+        input.alt
+      )
         return;
+      if (String(input.key).toLowerCase() !== "m") return;
+      event.preventDefault();
+      compactWindows().toggle(win);
+    });
+    let hidingFromFullScreen = false;
+    let fullScreenHideTimer = null;
+    const clearFullScreenHideTimer = () => {
+      if (fullScreenHideTimer && typeof clearTimeout === "function") {
+        clearTimeout(fullScreenHideTimer);
+        fullScreenHideTimer = null;
       }
-      win.hide?.();
+    };
+    win.on("close", (event) => {
+      if (!quitting) {
+        event.preventDefault();
+        if (
+          typeof process !== "undefined" &&
+          process.platform === "darwin" &&
+          typeof win.isFullScreen === "function" &&
+          win.isFullScreen()
+        ) {
+          if (hidingFromFullScreen) return;
+          hidingFromFullScreen = true;
+          const finishHide = () => {
+            hidingFromFullScreen = false;
+            clearFullScreenHideTimer();
+            win.removeListener?.("leave-full-screen", finishHide);
+            if (!win.isDestroyed() && !quitting) {
+              win.hide?.();
+            }
+          };
+          win.once("leave-full-screen", finishHide);
+          if (typeof setTimeout === "function") {
+            fullScreenHideTimer = setTimeout(finishHide, 900);
+            fullScreenHideTimer?.unref?.();
+          }
+          win.setFullScreen?.(false);
+          return;
+        }
+        win.hide?.();
+      }
+    });
+    win.on("closed", () => {
+      chatDomReady = false;
+      hidingFromFullScreen = false;
+      clearFullScreenHideTimer();
+      if (chatShowTimer && typeof clearTimeout === "function") {
+        clearTimeout(chatShowTimer);
+        chatShowTimer = null;
+      }
+      if (crashReloadTimer && typeof clearTimeout === "function") {
+        clearTimeout(crashReloadTimer);
+        crashReloadTimer = null;
+      }
+      windows.chat = null;
+      clearInterval(chatRetryTimer);
+      cancelChatRetry();
+    });
+    windows.chat = win;
+    return win;
+  } catch (error) {
+    if (win && !win.isDestroyed() && win !== windows.chat) {
+      try {
+        win.destroy();
+      } catch {}
     }
-  });
-  win.on("closed", () => {
-    chatDomReady = false;
-    hidingFromFullScreen = false;
-    clearFullScreenHideTimer();
-    if (chatShowTimer && typeof clearTimeout === "function") {
-      clearTimeout(chatShowTimer);
-      chatShowTimer = null;
-    }
-    if (crashReloadTimer && typeof clearTimeout === "function") {
-      clearTimeout(crashReloadTimer);
-      crashReloadTimer = null;
-    }
-    windows.chat = null;
-    clearInterval(chatRetryTimer);
-    cancelChatRetry();
-  });
-  windows.chat = win;
-  return win;
+    throw error;
+  }
 }
 
 function showOffline(win, reason) {
@@ -1115,7 +1152,7 @@ function statusText() {
   }
 }
 
-function refreshTray() {
+function refreshTray({ forceBroadcast = false } = {}) {
   if (!tray) return;
   const kind = statusKind();
   const text = statusText();
@@ -1129,7 +1166,8 @@ function refreshTray() {
   const updManual = Boolean(updater?.state.manualInstall);
   // 托盘菜单不跟随 download-progress 逐小数点重建：实时百分比由独立更新进度窗口展示。
   const nextTrayKey = `${kind}|${text}|${paused ? 1 : 0}|${hasServer ? 1 : 0}|${enroll ? 1 : 0}|${fullAccess ? 1 : 0}|${updStatus}|${updVersion}|${updManual ? 1 : 0}`;
-  if (nextTrayKey !== lastTrayKey) {
+  const changed = nextTrayKey !== lastTrayKey;
+  if (changed) {
     lastTrayKey = nextTrayKey;
     if (kind !== lastTrayIconKind) {
       lastTrayIconKind = kind;
@@ -1225,7 +1263,9 @@ function refreshTray() {
       ]),
     );
   }
-  broadcast();
+  if (changed || forceBroadcast) {
+    broadcast();
+  }
 }
 
 // ---------- 节点 ----------
@@ -1946,13 +1986,15 @@ function startUpdater() {
   updater.schedule();
   // 「稍后」≈ 永远不装：客户端常驻托盘几乎不退出，autoInstallOnAppQuit 轮不到。
   // 待安装状态按周期重弹提示窗，直到装上或被更新版本顶掉（CB-137）。
-  setInterval(() => {
+  if (updateRemindTimer) clearInterval(updateRemindTimer);
+  updateRemindTimer = setInterval(() => {
     if (
       updater?.state.status === "downloaded" &&
       Date.now() - updatePromptAt >= UPDATE_REMIND_MS
     )
       promptUpdate(updater.state.version);
-  }, UPDATE_REMIND_TICK_MS).unref();
+  }, UPDATE_REMIND_TICK_MS);
+  updateRemindTimer.unref?.();
   return updater;
 }
 
@@ -1964,6 +2006,7 @@ function ensureUpdaterStarted() {
 const UPDATE_REMIND_MS = 4 * 60 * 60 * 1000;
 const UPDATE_REMIND_TICK_MS = 30 * 60 * 1000;
 let updatePromptAt = 0;
+let updateRemindTimer = null;
 
 function promptUpdate(version) {
   updatePromptAt = Date.now();
@@ -2099,8 +2142,17 @@ function installUpdateNow() {
     summary: `${how} ${updater.state.version || ""}`,
   });
   quitting = true;
+  updater?.stop?.();
+  if (updateRemindTimer) {
+    clearInterval(updateRemindTimer);
+    updateRemindTimer = null;
+  }
   agent?.stop();
-  setTimeout(() => updater.install(), 50);
+  disposeResidentWinHelper();
+  config?.flushSync?.();
+  config?.flushAuditSync?.();
+  const installTimer = setTimeout(() => updater.install(), 50);
+  installTimer.unref?.();
   return true;
 }
 
@@ -2568,7 +2620,7 @@ async function setLocal(patch) {
       summary: `桌面壳偏好已更新：${Object.keys(desktopPatch).join("、")}`,
     });
   }
-  refreshTray();
+  refreshTray({ forceBroadcast: true });
   return webLocalState();
 }
 
@@ -2955,6 +3007,13 @@ function runAsyncQuitCleanup() {
       );
     }
   }
+  if (typeof config?.flush === "function") {
+    tasks.push(
+      Promise.resolve()
+        .then(() => config.flush())
+        .catch(() => {}),
+    );
+  }
   if (typeof config?.flushAudit === "function") {
     tasks.push(
       Promise.resolve()
@@ -2976,6 +3035,7 @@ function runAsyncQuitCleanup() {
 app.on("before-quit", (event) => {
   quitting = true;
   if (quitCleanupDone) {
+    config?.flushSync?.();
     config?.flushAuditSync?.();
     return;
   }
@@ -2985,6 +3045,11 @@ app.on("before-quit", (event) => {
   }
   quitCleanupStarted = true;
   disposePrewarmedChatWindow();
+  updater?.stop?.();
+  if (updateRemindTimer) {
+    clearInterval(updateRemindTimer);
+    updateRemindTimer = null;
+  }
   try {
     globalShortcut?.unregisterAll?.();
   } catch {}
@@ -3007,6 +3072,7 @@ app.on("before-quit", (event) => {
     quitHoldActive = true;
     event.preventDefault();
     void runAsyncQuitCleanup().finally(() => {
+      config?.flushSync?.();
       config?.flushAuditSync?.();
       quitCleanupDone = true;
     });
@@ -3014,14 +3080,17 @@ app.on("before-quit", (event) => {
   }
   if (
     !activeAgentRuntime?.runtime &&
+    typeof config?.flush !== "function" &&
     typeof config?.flushAudit !== "function"
   ) {
     quitCleanupDone = true;
+    config?.flushSync?.();
     config?.flushAuditSync?.();
     return;
   }
   event.preventDefault();
   void runAsyncQuitCleanup().finally(() => {
+    config?.flushSync?.();
     config?.flushAuditSync?.();
     quitCleanupDone = true;
     if (!quitHoldActive) app.quit();
@@ -3204,6 +3273,7 @@ const localWeb = createLocalWebController({
   bundleDir: path.join(__dirname, "web-bundle"),
   localVersion: pkg.version,
   getServerOrigin: serverOrigin,
+  asyncIndex: true,
   onModeChange: ({ origin, mode, prevMode, serverVersion }) => {
     broadcast();
     if (
@@ -3319,7 +3389,13 @@ app.whenReady().then(() => {
         minGapMs: getUpdaterMod().DEFAULT_WAKE_GAP_MS,
       });
   });
-  config = createConfig({ dir: app.getPath("userData"), safeStorage });
+  const userDataDir = app.getPath("userData");
+  config = createConfig({
+    dir: userDataDir,
+    safeStorage,
+    asyncSave: true,
+    initialConfig: desktopPrefs.takeBootstrapRawConfig(userDataDir),
+  });
   refreshEgressPolicy();
   config.onChange(() => refreshEgressPolicy());
   try {
@@ -3365,10 +3441,20 @@ app.whenReady().then(() => {
   } else {
     openLogin();
   }
-  // 将更新器初始化延后至主窗口开始加载之后，避免阻塞冷启动首帧（尤其是 macOS codesign 检查）。
+  // 将更新器初始化延后至主窗口开始加载之后，避免阻塞冷启动首帧；macOS 先异步预热 codesign 签名缓存。
   setTimeout(() => {
-    try {
-      ensureUpdaterStarted();
-    } catch {}
+    const startDeferred = () => {
+      try {
+        ensureUpdaterStarted();
+      } catch {}
+    };
+    if (process.platform === "darwin" && app.isPackaged) {
+      void getUpdaterMod()
+        .probeStableMacSignatureAsync({ execPath: process.execPath })
+        .catch(() => false)
+        .finally(startDeferred);
+      return;
+    }
+    startDeferred();
   }, 1500).unref();
 });

@@ -16,6 +16,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const RESPONSE_PREFIX = "CBPS:";
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+const DEFAULT_MAX_STDOUT_BYTES = 16 * 1024 * 1024;
 const MAX_ENCODED_CMD_CHARS = 28_000;
 const ALLOWED_COMMANDS = new Set([
   "ping",
@@ -326,13 +327,57 @@ function buildResidentHelperScript() {
     "    }",
     "    return null;",
     "  }",
+    "  public static HashSet<string> CollectLegacyDefaultActionRuntimeIds(long winHwnd, int maxVisited) {",
+    "    var result = new HashSet<string>(StringComparer.Ordinal);",
+    "    if (winHwnd == 0 || maxVisited <= 0) return result;",
+    "    try {",
+    "      var uia = GetUia3();",
+    "      if (uia == null) return result;",
+    "      ICbUia3Element root;",
+    "      if (uia.ElementFromHandle(new IntPtr(winHwnd), out root) != 0 || root == null) return result;",
+    "      ICbUia3Walker walker;",
+    "      if (uia.get_ControlViewWalker(out walker) != 0 || walker == null) return result;",
+    "      var q = new Queue<ICbUia3Element>();",
+    "      q.Enqueue(root);",
+    "      int visited = 0;",
+    "      while (q.Count > 0 && visited < maxVisited) {",
+    "        var cur = q.Dequeue();",
+    "        visited++;",
+    "        try {",
+    "          object patObj;",
+    "          if (cur.GetCurrentPattern(10018, out patObj) == 0 && patObj != null) {",
+    "            var leg = patObj as ICbLegacyIAccessiblePattern;",
+    "            if (leg != null) {",
+    "              string defAct = null;",
+    "              if (leg.get_CurrentDefaultAction(out defAct) == 0 && !string.IsNullOrEmpty(defAct)) {",
+    "                int[] rid = null;",
+    "                if (cur.GetRuntimeId(out rid) == 0 && rid != null && rid.Length > 0) {",
+    "                  result.Add(string.Join(\".\", rid));",
+    "                }",
+    "              }",
+    "            }",
+    "          }",
+    "        } catch {}",
+    "        ICbUia3Element child = null;",
+    "        if (walker.GetFirstChildElement(cur, out child) == 0 && child != null) {",
+    "          while (child != null && (visited + q.Count) < maxVisited) {",
+    "            q.Enqueue(child);",
+    "            ICbUia3Element next = null;",
+    "            if (walker.GetNextSiblingElement(child, out next) != 0) break;",
+    "            child = next;",
+    "          }",
+    "        }",
+    "      }",
+    "    } catch {}",
+    "    return result;",
+    "  }",
     "  public static bool HasLegacyDefaultAction(long winHwnd, int[] targetRid, long elemHwnd) {",
     "    try {",
     "      var uia = GetUia3();",
     "      if (uia == null) return false;",
     "      ICbUia3Element el = null;",
     "      if (elemHwnd != 0) { uia.ElementFromHandle(new IntPtr(elemHwnd), out el); }",
-    "      if (el == null) { el = FindUia3ByRuntimeId(winHwnd, targetRid, 800); }",
+    "      if (el == null && winHwnd != 0 && targetRid != null && targetRid.Length > 0) { el = FindUia3ByRuntimeId(winHwnd, targetRid, 800); }",
     "      if (el == null) return false;",
     "      object patObj;",
     "      if (el.GetCurrentPattern(10018, out patObj) != 0 || patObj == null) return false;",
@@ -761,6 +806,8 @@ function buildResidentHelperScript() {
     "  $queue.Enqueue(@{ el = $picked; depth = 0 })",
     "  $visited = 0",
     "  $hitNodeLimit = $false",
+    "  $legacyRidSet = $null",
+    "  $legacyHwndBudget = 64",
     "  while ($queue.Count -gt 0 -and $visited -lt $maxVisited) {",
     "    $item = $queue.Dequeue()",
     "    $el = $item.el",
@@ -848,7 +895,17 @@ function buildResidentHelperScript() {
     "        $ridStr = ''",
     "        try { $elRidArr = [int[]]$el.GetRuntimeId(); if ($null -ne $elRidArr -and $elRidArr.Length -gt 0) { $ridStr = ($elRidArr -join '.') } } catch {}",
     "        if (-not $pats.Contains('invoke') -and ($elHwnd -ne 0 -or $script:cbInteractiveRoles.Contains($role))) {",
-    "          if ([CBWin]::HasLegacyDefaultAction($hwnd, $elRidArr, $elHwnd)) { [void]$pats.Add('legacy_default') }",
+    "          if ($elHwnd -ne 0) {",
+    "            if ($legacyHwndBudget -gt 0) {",
+    "              $legacyHwndBudget--",
+    "              if ([CBWin]::HasLegacyDefaultAction(0, $null, $elHwnd)) { [void]$pats.Add('legacy_default') }",
+    "            }",
+    "          } elseif ($ridStr) {",
+    "            if ($null -eq $legacyRidSet) {",
+    "              $legacyRidSet = [CBWin]::CollectLegacyDefaultActionRuntimeIds($hwnd, [Math]::Min(800, $maxVisited))",
+    "            }",
+    "            if ($null -ne $legacyRidSet -and $legacyRidSet.Contains($ridStr)) { [void]$pats.Add('legacy_default') }",
+    "          }",
     "        }",
     "        $hasExecPat = $false",
     "        foreach ($pn in $pats) { if ($script:cbExecPatterns.Contains($pn)) { $hasExecPat = $true; break } }",
@@ -1291,6 +1348,10 @@ function createWinPsHelper(options = {}) {
     200,
     Number(options.defaultTimeoutMs) || DEFAULT_REQUEST_TIMEOUT_MS,
   );
+  const maxStdoutBytes = Math.max(
+    1024,
+    Number(options.maxStdoutBytes) || DEFAULT_MAX_STDOUT_BYTES,
+  );
 
   let child = null;
   let childScriptFile = null;
@@ -1362,13 +1423,17 @@ function createWinPsHelper(options = {}) {
     }
   }
 
-  function failActiveTransport(reason) {
+  function failActiveTransport(reason, { retryable = true } = {}) {
     const req = activeRequest;
     activeRequest = null;
     if (req) {
       clearTimeout(req.timer);
       req.signal?.removeEventListener("abort", req.onAbort);
-      req.reject(new HelperTransportError(reason));
+      req.reject(
+        retryable
+          ? new HelperTransportError(reason)
+          : new HelperCommandError(reason),
+      );
     }
     terminateChild({ graceful: false });
     pump();
@@ -1440,7 +1505,18 @@ function createWinPsHelper(options = {}) {
     proc.stderr?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk) => {
       if (child !== proc) return;
-      stdoutBuf += chunk;
+      const text = String(chunk);
+      if (
+        Buffer.byteLength(stdoutBuf, "utf8") + Buffer.byteLength(text, "utf8") >
+        maxStdoutBytes
+      ) {
+        stdoutBuf = "";
+        failActiveTransport("Windows helper 输出超过安全上限", {
+          retryable: false,
+        });
+        return;
+      }
+      stdoutBuf += text;
       let idx = stdoutBuf.indexOf("\n");
       while (idx >= 0) {
         const line = stdoutBuf.slice(0, idx);
@@ -1560,18 +1636,19 @@ function createWinPsHelper(options = {}) {
 
   /**
    * 发送白名单结构化 JSON 命令；遇管道异常自动重启并单次重试。
+   * 显式 dispose() 后的实例永久不可复活（空闲超时回收仍可按需重建子进程）。
    */
   async function request(cmd, payload = {}, opts = {}) {
     if (!ALLOWED_COMMANDS.has(cmd)) {
       throw new HelperCommandError(`拒绝未授权的 Windows helper 命令：${cmd}`);
     }
     if (disposed) {
-      disposed = false;
+      throw new HelperTransportError("Windows helper 已关闭");
     }
     try {
       return await sendOnce(cmd, payload, opts);
     } catch (error) {
-      if (error?.isTransportError && !opts.signal?.aborted) {
+      if (error?.isTransportError && !disposed && !opts.signal?.aborted) {
         return sendOnce(cmd, payload, opts);
       }
       throw error;
@@ -1606,16 +1683,20 @@ function createWinPsHelper(options = {}) {
 }
 
 let sharedHelper = null;
+let sharedPermanentlyDisposed = false;
 let exitHookRegistered = false;
 
 function getSharedWinPsHelper() {
   if (!sharedHelper) {
     sharedHelper = createWinPsHelper();
+    if (sharedPermanentlyDisposed) {
+      sharedHelper.dispose({ sync: false });
+    }
     if (!exitHookRegistered) {
       exitHookRegistered = true;
       process.once("exit", () => {
         try {
-          sharedHelper?.dispose({ sync: true });
+          disposeSharedWinPsHelper({ sync: true, permanent: true });
         } catch {}
       });
     }
@@ -1624,14 +1705,22 @@ function getSharedWinPsHelper() {
 }
 
 function disposeSharedWinPsHelper(opts = {}) {
+  const permanent = Boolean(opts.permanent);
+  if (permanent) {
+    sharedPermanentlyDisposed = true;
+  }
   if (sharedHelper) {
     sharedHelper.dispose(opts);
+    if (!permanent) {
+      sharedHelper = null;
+    }
   }
 }
 
 module.exports = {
   RESPONSE_PREFIX,
   ALLOWED_COMMANDS,
+  DEFAULT_MAX_STDOUT_BYTES,
   HelperTransportError,
   HelperCommandError,
   buildResidentHelperScript,

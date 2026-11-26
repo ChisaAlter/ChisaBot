@@ -76,6 +76,8 @@ const MAX_LINES = 3000;
 const LINE_CAP = 2000;
 const MAX_RETAINED_SESSIONS = 16;
 const DEFAULT_SESSION_TTL_MS = 30 * 60_000;
+const MAX_PREPARED_WORKSPACES = 8;
+const DEFAULT_PREPARED_TTL_MS = 6 * 60 * 60_000;
 
 /** 支持通过真实外部会话 ID 续接上下文的外部驱动（builtin 走内存 builtinMessages，其余如 opencode/gemini/aider/custom 不支持 --resume）。 */
 const RESUMABLE_EXTERNAL_DRIVERS = new Set([
@@ -157,8 +159,17 @@ function createAgentRuntime(options) {
     1_000,
     Number(options.sessionTtlMs) || DEFAULT_SESSION_TTL_MS,
   );
+  const maxPrepared = Math.max(
+    1,
+    Number(options.maxPrepared) || MAX_PREPARED_WORKSPACES,
+  );
+  const preparedTtlMs = Math.max(
+    1_000,
+    Number(options.preparedTtlMs) || DEFAULT_PREPARED_TTL_MS,
+  );
   const tasks = new Map(); // taskId -> { controller, child }
   const prepared = new Map(); // taskId -> prep（等用户应用 / 放弃）
+  const preparedAt = new Map(); // taskId -> timestamp
   const sessions = new Map(); // taskId -> { prep, sessionId, builtinMessages, lastUsedAt }
   const llmPending = new Map();
   const approvalPending = new Map();
@@ -170,7 +181,45 @@ function createAgentRuntime(options) {
   const outbox = [];
   let detection = null;
 
+  function prunePrepared(now = Date.now()) {
+    const evict = (oldTaskId) => {
+      const oldPrep = prepared.get(oldTaskId);
+      prepared.delete(oldTaskId);
+      preparedAt.delete(oldTaskId);
+      if (!oldPrep) return;
+      const retained = sessions.get(oldTaskId);
+      if (retained && retained.prep === oldPrep) {
+        retained.prep = null;
+      }
+      void oldPrep.cleanup().catch(() => {});
+    };
+
+    for (const [oldTaskId] of [...prepared.entries()]) {
+      if (tasks.has(oldTaskId)) continue;
+      const ts = preparedAt.get(oldTaskId) || 0;
+      if (ts > 0 && now - ts > preparedTtlMs) {
+        evict(oldTaskId);
+      }
+    }
+    if (prepared.size <= maxPrepared) return;
+    const ordered = [...prepared.keys()].sort(
+      (a, b) => (preparedAt.get(a) || 0) - (preparedAt.get(b) || 0),
+    );
+    while (prepared.size > maxPrepared && ordered.length) {
+      const oldTaskId = ordered.shift();
+      if (tasks.has(oldTaskId)) continue;
+      evict(oldTaskId);
+    }
+  }
+
+  function rememberPrepared(taskId, prep) {
+    prepared.set(taskId, prep);
+    preparedAt.set(taskId, Date.now());
+    prunePrepared();
+  }
+
   function pruneSessions(now = Date.now()) {
+    prunePrepared(now);
     for (const [oldTaskId, entry] of [...sessions.entries()]) {
       if (tasks.has(oldTaskId)) continue;
       if (now - entry.lastUsedAt <= sessionTtlMs) continue;
@@ -700,8 +749,11 @@ function createAgentRuntime(options) {
       }
       const taskState = tasks.get(message.taskId);
       if (taskState) taskState.child = child;
+      child.stdin?.on("error", () => {});
       if (command.stdin !== null && command.stdin !== undefined) {
-        child.stdin.end(command.stdin);
+        try {
+          child.stdin.end(command.stdin);
+        } catch {}
       }
       const stdout = lineSplitter((line) => command.parser.line(line, emit));
       let stderrLines = 0;
@@ -722,13 +774,16 @@ function createAgentRuntime(options) {
       }, message.timeoutMs);
       const onAbort = () => killTree(child);
       controller.signal.addEventListener("abort", onAbort, { once: true });
-      child.on("error", (error) => {
+      const cleanupListeners = () => {
         clearTimeout(timer);
+        controller.signal.removeEventListener("abort", onAbort);
+      };
+      child.on("error", (error) => {
+        cleanupListeners();
         reject(new Error(`无法启动 ${name}：${error.message}`));
       });
       child.on("close", (code) => {
-        clearTimeout(timer);
-        controller.signal.removeEventListener("abort", onAbort);
+        cleanupListeners();
         stdout.end();
         stderr.end();
         const result = command.parser.result();
@@ -1106,7 +1161,7 @@ function createAgentRuntime(options) {
           : new Error("已停止");
       emit("status", "正在统计改动", "正在统计改动");
       const diff = await sandbox.diff(prep).catch(() => null);
-      if (diff?.pending && diff.files.length) prepared.set(taskId, prep);
+      if (diff?.pending && diff.files.length) rememberPrepared(taskId, prep);
       const finalSessionId = isBuiltin
         ? normalizeResumeSessionId(result.sessionId) || startedSessionId
         : supportsExternalResume
@@ -1169,7 +1224,8 @@ function createAgentRuntime(options) {
           await prep.cleanup().catch(() => {});
         } else {
           diff = stopped ? null : await sandbox.diff(prep).catch(() => null);
-          if (diff?.pending && diff.files.length) prepared.set(taskId, prep);
+          if (diff?.pending && diff.files.length)
+            rememberPrepared(taskId, prep);
           if (canRetainSession) {
             // 暂停或失败时保留可续接的 worktree / session 供显式 continue 续接（不丢失已有上下文与文件）。
             sessions.set(taskId, {
@@ -1235,6 +1291,7 @@ function createAgentRuntime(options) {
       }
     }
     prepared.delete(taskId);
+    preparedAt.delete(taskId);
     const retained = sessions.get(taskId);
     if (retained && retained.prep === prep) {
       retained.prep = null;
@@ -1349,6 +1406,7 @@ function createAgentRuntime(options) {
       }
       sessions.clear();
       prepared.clear();
+      preparedAt.clear();
       for (const prep of cleanups) {
         await prep.cleanup().catch(() => {});
       }

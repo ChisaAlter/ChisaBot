@@ -30,6 +30,24 @@ function deriveUpdateView(info) {
   }
 
   if (status === "available") {
+    if (info?.manualInstall) {
+      return {
+        status,
+        action: "发现新版本",
+        brand: "ChisaBot",
+        subtitle: version
+          ? `ChisaBot ${version} 需要手动下载安装，你的机器人全程继续运行`
+          : "新版本需要手动下载安装，你的机器人全程继续运行",
+        progressMode: "hidden",
+        percent: 0,
+        percentText: "",
+        actionKind: "manual",
+        primaryLabel: "手动下载安装",
+        fullInstall,
+        manualInstall: true,
+        downloadUrl,
+      };
+    }
     return {
       status,
       action: "正在更新",
@@ -149,7 +167,7 @@ if (typeof document !== "undefined") {
     const $ = (id) => document.getElementById(id);
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     let restartRunner = null;
-    let boundFullInstall = null;
+    let boundActionMode = null;
     let focusedReadyOnce = false;
     let lastStatus = null;
 
@@ -167,17 +185,25 @@ if (typeof document !== "undefined") {
       }
     }
 
-    function ensureRestartRunner(fullInstall) {
+    function ensureRestartRunner(actionMode) {
       const btn = $("restart");
       if (!btn) return null;
-      if (restartRunner && boundFullInstall === fullInstall) return restartRunner;
-      boundFullInstall = fullInstall;
-      btn.textContent = fullInstall ? "重新安装" : "立即重启";
+      if (restartRunner && boundActionMode === actionMode) return restartRunner;
+      boundActionMode = actionMode;
+      const isManual = actionMode === "manual";
+      const isFull = actionMode === "full";
+      btn.textContent = isManual
+        ? "手动下载安装"
+        : isFull
+          ? "重新安装"
+          : "立即重启";
       restartRunner = asyncButton(
         btn,
-        fullInstall
-          ? { pending: "正在准备…", success: "正在重新安装", error: "安装失败" }
-          : { pending: "正在重启…", success: "正在安装", error: "重启失败" },
+        isManual
+          ? { pending: "正在打开…", success: "已打开下载页", error: "打开失败" }
+          : isFull
+            ? { pending: "正在准备…", success: "正在重新安装", error: "安装失败" }
+            : { pending: "正在重启…", success: "正在安装", error: "重启失败" },
       );
       return restartRunner;
     }
@@ -222,6 +248,8 @@ if (typeof document !== "undefined") {
 
       const showActions = view.actionKind !== "none";
       const showReady = view.actionKind === "ready";
+      const showManual = view.actionKind === "manual";
+      const showPrimary = showReady || showManual;
       const showError = view.actionKind === "error";
       const showIdle = view.actionKind === "idle";
       if (actionsWrapEl) {
@@ -229,13 +257,14 @@ if (typeof document !== "undefined") {
         actionsWrapEl.inert = !showActions;
         actionsWrapEl.setAttribute("aria-hidden", String(!showActions));
       }
-      laterEl.classList.toggle("hidden", !showReady);
-      restartEl.classList.toggle("hidden", !showReady);
+      laterEl.classList.toggle("hidden", !showPrimary);
+      restartEl.classList.toggle("hidden", !showPrimary);
       retryEl.classList.toggle("hidden", !showError);
       closeOkEl.classList.toggle("hidden", !showIdle);
 
-      if (showReady) {
-        ensureRestartRunner(view.fullInstall);
+      if (showPrimary) {
+        const mode = showManual ? "manual" : view.fullInstall ? "full" : "normal";
+        ensureRestartRunner(mode);
         if (!focusedReadyOnce) {
           focusedReadyOnce = true;
           restartEl.focus();
@@ -255,9 +284,14 @@ if (typeof document !== "undefined") {
     });
 
     $("restart").addEventListener("click", () => {
-      const runner = ensureRestartRunner(Boolean(boundFullInstall));
+      const mode = boundActionMode || "normal";
+      const runner = ensureRestartRunner(mode);
       if (!runner) return;
-      runner(() => window.chisa.invoke("update:answer", { restart: true }), { keepSuccess: true }).catch(() => {});
+      const payload =
+        mode === "manual" ? { manualInstall: true } : { restart: true };
+      runner(() => window.chisa.invoke("update:answer", payload), {
+        keepSuccess: mode !== "manual",
+      }).catch(() => {});
     });
     $("later").addEventListener("click", () => window.chisa.invoke("update:answer", { restart: false }));
     $("retry").addEventListener("click", () => {

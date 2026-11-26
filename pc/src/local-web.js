@@ -250,6 +250,38 @@ function safeStatus(statusCode) {
   return code;
 }
 
+/** 异步预建本地 bundle 文件路由索引表（规范化 POSIX 路径 → 绝对文件路径），消除冷启顶层同步目录遍历。 */
+async function buildBundleFileIndexAsync(bundleDir) {
+  if (!bundleDir) return null;
+  const rootDir = path.resolve(bundleDir);
+  const index = new Map();
+  const walk = async (dir, posixPrefix) => {
+    let entries;
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const subdirs = [];
+    for (const entry of entries) {
+      const name = typeof entry === "string" ? entry : entry.name;
+      if (!name || name === "." || name === "..") continue;
+      const full = path.join(dir, name);
+      const nextPosix = `${posixPrefix}/${name}`;
+      if (entry.isDirectory()) {
+        subdirs.push([full, nextPosix]);
+      } else if (entry.isFile()) {
+        index.set(nextPosix, full);
+      }
+    }
+    if (subdirs.length > 0) {
+      await Promise.all(subdirs.map(([sub, pfx]) => walk(sub, pfx)));
+    }
+  };
+  await walk(rootDir, "");
+  return index;
+}
+
 function createLocalWebController({
   bundleDir,
   localVersion = "",
@@ -257,6 +289,7 @@ function createLocalWebController({
   onModeChange,
   fsImpl = fs,
   netImpl,
+  asyncIndex = false,
 } = {}) {
   const resolvedBundleDir = bundleDir ? path.resolve(bundleDir) : "";
   const { hasLocalBundle, bundledVersion } = readBundleMeta(
@@ -264,9 +297,17 @@ function createLocalWebController({
     localVersion,
     fsImpl,
   );
-  const bundleIndex = hasLocalBundle
-    ? buildBundleFileIndex(resolvedBundleDir, fsImpl)
-    : null;
+  let bundleIndex =
+    hasLocalBundle && !asyncIndex
+      ? buildBundleFileIndex(resolvedBundleDir, fsImpl)
+      : null;
+  if (hasLocalBundle && asyncIndex && fsImpl === fs) {
+    void buildBundleFileIndexAsync(resolvedBundleDir)
+      .then((built) => {
+        if (built) bundleIndex = built;
+      })
+      .catch(() => {});
+  }
   const indexHtmlPath = hasLocalBundle
     ? bundleIndex?.get("/index.html") || path.join(resolvedBundleDir, "index.html")
     : "";
@@ -537,6 +578,9 @@ function createLocalWebController({
       });
 
       let settled = false;
+      let activeController = null;
+      let activeRes = null;
+      let streamClosed = false;
       nr.on("redirect", (statusCode, _method, redirectUrl, responseHeaders) => {
         if (settled) return;
         settled = true;
@@ -556,6 +600,7 @@ function createLocalWebController({
       nr.on("response", (res) => {
         if (settled) return;
         settled = true;
+        activeRes = res;
         const enc = readHeader(res.headers, "content-encoding")
           .trim()
           .toLowerCase();
@@ -568,6 +613,7 @@ function createLocalWebController({
         });
 
         if (NO_BODY_STATUS.has(status) || method === "HEAD") {
+          streamClosed = true;
           res.on("data", () => {});
           resolve(new Response(null, { status, headers: outHeaders }));
           return;
@@ -579,7 +625,9 @@ function createLocalWebController({
 
         const stream = new ReadableStream({
           start(controller) {
+            activeController = controller;
             res.on("data", (chunk) => {
+              if (streamClosed) return;
               if (
                 versionChunks &&
                 versionBytes + chunk.length <= MAX_VERSION_SNIFF_BYTES
@@ -593,6 +641,9 @@ function createLocalWebController({
               } catch {}
             });
             res.on("end", () => {
+              if (streamClosed) return;
+              streamClosed = true;
+              activeController = null;
               if (versionChunks && versionChunks.length > 0) {
                 try {
                   const parsed = JSON.parse(
@@ -608,12 +659,17 @@ function createLocalWebController({
               } catch {}
             });
             res.on("error", (err) => {
+              if (streamClosed) return;
+              streamClosed = true;
+              activeController = null;
               try {
                 controller.error(err);
               } catch {}
             });
           },
           cancel() {
+            streamClosed = true;
+            activeController = null;
             try {
               nr.abort();
             } catch {}
@@ -624,9 +680,24 @@ function createLocalWebController({
       });
 
       nr.on("error", (err) => {
-        if (settled) return;
-        settled = true;
-        reject(err);
+        if (!settled) {
+          settled = true;
+          reject(err);
+          return;
+        }
+        if (!streamClosed) {
+          streamClosed = true;
+          const ctrl = activeController;
+          activeController = null;
+          if (ctrl) {
+            try {
+              ctrl.error(err);
+            } catch {}
+          }
+          try {
+            activeRes?.destroy?.(err);
+          } catch {}
+        }
       });
 
       if (bodyBuf && bodyBuf.length > 0) nr.write(bodyBuf);

@@ -67,6 +67,40 @@ function normalizeAllowedDomains(rawList) {
   return out;
 }
 
+const bootstrapRawConfigCache = new Map();
+
+function readConfigFileStrictBootstrap(filePath) {
+  const before = fs.lstatSync(filePath, { bigint: true });
+  if (before.isSymbolicLink() || !before.isFile()) return null;
+  if (process.platform !== "win32" && (Number(before.mode) & 0o777) !== 0o600) {
+    return null;
+  }
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
+  const fd = fs.openSync(filePath, flags);
+  try {
+    const info = fs.fstatSync(fd, { bigint: true });
+    if (before.dev !== info.dev || before.ino !== info.ino || !info.isFile()) {
+      return null;
+    }
+    if (process.platform !== "win32" && (Number(info.mode) & 0o777) !== 0o600) {
+      return null;
+    }
+    return JSON.parse(fs.readFileSync(fd, "utf8"));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** 取出冷启阶段安全读取的原始 config.json 解析结果（一次性消费，避免冷启二次同步读盘）。 */
+function takeBootstrapRawConfig(userDataDir) {
+  if (typeof userDataDir !== "string" || !userDataDir.trim()) return null;
+  const key = path.resolve(userDataDir);
+  if (!bootstrapRawConfigCache.has(key)) return null;
+  const cached = bootstrapRawConfigCache.get(key);
+  bootstrapRawConfigCache.delete(key);
+  return cached;
+}
+
 /** 在 `app.whenReady()` 之前同步读取持久化配置，用于硬件加速与时区初始化。 */
 function readBootstrapDesktopPrefs(userDataDir) {
   const result = {
@@ -79,8 +113,12 @@ function readBootstrapDesktopPrefs(userDataDir) {
   try {
     const file = path.join(userDataDir, "config.json");
     if (!fs.existsSync(file)) return result;
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    const strictParsed = readConfigFileStrictBootstrap(file);
+    const parsed = strictParsed || JSON.parse(fs.readFileSync(file, "utf8"));
     if (!parsed || typeof parsed !== "object") return result;
+    if (strictParsed && typeof strictParsed === "object") {
+      bootstrapRawConfigCache.set(path.resolve(userDataDir), strictParsed);
+    }
     if (typeof parsed.hardwareAcceleration === "boolean") {
       result.hardwareAcceleration = parsed.hardwareAcceleration;
     }
@@ -361,6 +399,7 @@ module.exports = {
   isValidTimezone,
   normalizeAllowedDomains,
   readBootstrapDesktopPrefs,
+  takeBootstrapRawConfig,
   sanitizeDesktopPrefsPatch,
   buildContextMenuTemplate,
   compileEgressPolicy,
