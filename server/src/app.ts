@@ -1538,8 +1538,8 @@ export function createApp(
      * MEASURES A DIFFERENT THING FROM EVERY OTHER ONE. See that constant.
      */
     const channelAttachments = new Hono<{ Variables: AppVariables }>();
-    channelAttachments.use(
-      "*",
+    channelAttachments.post(
+      "/:channelId/attachments",
       bodyLimit({
         maxSize: UPLOAD_BODY_LIMIT_BYTES,
         /*

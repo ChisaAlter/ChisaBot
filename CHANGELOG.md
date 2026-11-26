@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.1.191 — 2026-11-26
+
+全端版本 `0.1.191`，Android `versionCode 371`：修复大于 512 KiB 图片/附件上传被同前缀通配 `bodyLimit` 拦截返回 `413` 的缺陷（同步解除 `/api/bots` 资料库大文件上传遮蔽），纳入定时任务结构化条件基线与边沿触发（`67e070c`）、云端浏览器限流提示与点击接管（`9e88ea2`）、Android `VoiceCallAudioManager` 同源桥（`619c357`）、DSH 泄漏/循环/命令预算护栏（`33a0c95`）及浏览器审批时间窗域绑定与记忆防污染加固（`1e90265`）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `40004bb3640818a0`；无新增数据库迁移。
+
+- **修复大图片/大文件上传被同前缀通配 `bodyLimit` 拦截返回 `413`**：
+  - 将 `/api/channels` 的 512 KiB 限制与 `/api/bots` 的 128 KiB 限制从通配 `routes.use("*")` 收窄为按需挂载到各写路由的 `requireUser` 之前，同时将 `/api/channels/:channelId/attachments` 的 8 MiB + 64 KiB 限制收窄到上传路径本身，恢复 8 MiB 频道图片/附件与 20 MiB Bot 资料库上传并新增 `server/tests/route-body-limit-coexistence.test.ts` 共存回归测试（无新增数据库迁移）。
+- **定时任务条件触发、云端浏览器接管、DSH 护栏与安全加固（`1e90265`–`67e070c`）**：
+  - 定时任务新增结构化条件基线、边沿触发、冷却期控制与 BFS 形式化验证；云端浏览器新增限流提示、API 风险检测与实时画面点击接管；DSH 与服务端新增工具调用泄漏/循环/命令预算护栏、实时插话追踪及规则化 `StopSummary`；修补浏览器审批时间窗域绑定与污点隔离、记忆写入口防污染并收口 Harness 开关；Android 接入 `VoiceCallAudioManager` 同源桥并优化听写排障提示。
+
 ## 0.1.190 — 2026-11-25
 
 全端版本 `0.1.190`，Android `versionCode 370`：移除聊天直连子代理入口并增强任务卡片续聊与补丁预览（#589），上线后台无感电脑操控全链路与 `agent-desktop` 旁路驱动（#591）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `4315e3bde1bc9a04`；无新增数据库迁移。

@@ -1193,13 +1193,10 @@ export function createChannelRoutes(
   },
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
-  routes.use(
-    "*",
-    bodyLimit({
-      maxSize: 512 * 1024,
-      onError: (context) => context.json({ error: "频道请求体过大。" }, 413),
-    }),
-  );
+  const channelBodyLimit = bodyLimit({
+    maxSize: 512 * 1024,
+    onError: (context) => context.json({ error: "频道请求体过大。" }, 413),
+  });
 
   /**
    * Write the one audit row this file ever writes, tolerantly.
@@ -1278,7 +1275,7 @@ export function createChannelRoutes(
     );
   }
 
-  routes.post("/", requireUser, async (context) => {
+  routes.post("/", channelBodyLimit, requireUser, async (context) => {
     const parsed = parseChannelInput(
       await context.req.json().catch(() => null),
       { allowEmptyAgentIds: Boolean(primaryAgentResolver) },
@@ -1360,136 +1357,168 @@ export function createChannelRoutes(
     }
   });
 
-  routes.post("/:channelId/activity", requireUser, async (context) => {
-    const parsed = parseActivityInput(
-      await context.req.json().catch(() => null),
-    );
-    if (!parsed.ok) return context.json({ error: parsed.error }, 400);
-    // A whitespace channel id would reach the store and answer 500 on some backends instead of
-    // a 400 for a malformed call.
-    const channelId = context.req.param("channelId");
-    if (!channelId.trim()) {
-      return context.json({ error: "A channel id is required." }, 400);
-    }
-
-    try {
-      await store.recordActivity(context.var.actor, channelId, parsed.value);
-      return context.body(null, 204);
-    } catch (error) {
-      return mapStoreError(context, error);
-    }
-  });
-
-  routes.post("/:channelId/busy", requireUser, async (context) => {
-    const body = (await context.req.json().catch(() => null)) as {
-      busy?: unknown;
-    } | null;
-    if (typeof body?.busy !== "boolean") {
-      return context.json({ error: "busy must be true or false" }, 400);
-    }
-    if (!context.req.param("channelId").trim()) {
-      return context.json({ error: "A channel id is required." }, 400);
-    }
-
-    try {
-      await store.signalChannelBusy(
-        context.var.actor,
-        context.req.param("channelId"),
-        body.busy,
+  routes.post(
+    "/:channelId/activity",
+    channelBodyLimit,
+    requireUser,
+    async (context) => {
+      const parsed = parseActivityInput(
+        await context.req.json().catch(() => null),
       );
-      return context.body(null, 204);
-    } catch (error) {
-      return mapStoreError(context, error);
-    }
-  });
+      if (!parsed.ok) return context.json({ error: parsed.error }, 400);
+      // A whitespace channel id would reach the store and answer 500 on some backends instead of
+      // a 400 for a malformed call.
+      const channelId = context.req.param("channelId");
+      if (!channelId.trim()) {
+        return context.json({ error: "A channel id is required." }, 400);
+      }
 
-  routes.put("/:channelId/pin", requireUser, async (context) => {
-    const body = await context.req.json().catch(() => null);
-    if (!isChannelInputObject(body)) {
-      return context.json({ error: "Pin input must be a JSON object." }, 400);
-    }
-    const { pinned } = body as { pinned?: unknown };
-    if (typeof pinned !== "boolean") {
-      return context.json({ error: "Pinned must be true or false." }, 400);
-    }
-
-    try {
-      await store.setPinned(
-        context.var.actor,
-        context.req.param("channelId"),
-        pinned,
-      );
-      return context.json({ pinned });
-    } catch (error) {
-      return mapStoreError(context, error);
-    }
-  });
-
-  routes.put("/:channelId/read", requireUser, async (context) => {
-    try {
-      await store.markRead(context.var.actor, context.req.param("channelId"));
-      return context.body(null, 204);
-    } catch (error) {
-      return mapStoreError(context, error);
-    }
-  });
-
-  routes.delete("/:channelId", requireUser, async (context) => {
-    const channelId = context.req.param("channelId");
-    /*
-     * `?draft=1`：新话题页提前建的草稿对话，没发就离开时由界面来删（A1）。「是草稿」只记在那个标签页的
-     * sessionStorage 里，复制出来的标签页、或者机器人已经在里面说过话时，界面以为的草稿其实是真对话——
-     * 所以服务端再确认一次：仍是空草稿才删，否则 409、什么都不动。这种删除不写 `channel.deleted` 审计、
-     * 不发通知（它从来没出现在谁的列表里）。
-     */
-    if (context.req.query("draft") === "1") {
       try {
-        const outcome = store.deleteEmptyDraft
-          ? await store.deleteEmptyDraft(context.var.actor, channelId)
-          : "kept";
-        if (outcome === "deleted") return context.body(null, 204);
-        return context.json(
-          { error: "This conversation is not an empty draft, so it was kept." },
-          409,
-        );
+        await store.recordActivity(context.var.actor, channelId, parsed.value);
+        return context.body(null, 204);
       } catch (error) {
         return mapStoreError(context, error);
       }
-    }
-    try {
-      const deleted = await store.softDelete(context.var.actor, channelId);
-      // A repeat is still 204, but it deleted nothing, and the trail records acts, not attempts.
-      if (deleted !== false) await recordDeleted(context, channelId);
-      return context.body(null, 204);
-    } catch (error) {
-      return mapStoreError(context, error);
-    }
-  });
+    },
+  );
+
+  routes.post(
+    "/:channelId/busy",
+    channelBodyLimit,
+    requireUser,
+    async (context) => {
+      const body = (await context.req.json().catch(() => null)) as {
+        busy?: unknown;
+      } | null;
+      if (typeof body?.busy !== "boolean") {
+        return context.json({ error: "busy must be true or false" }, 400);
+      }
+      if (!context.req.param("channelId").trim()) {
+        return context.json({ error: "A channel id is required." }, 400);
+      }
+
+      try {
+        await store.signalChannelBusy(
+          context.var.actor,
+          context.req.param("channelId"),
+          body.busy,
+        );
+        return context.body(null, 204);
+      } catch (error) {
+        return mapStoreError(context, error);
+      }
+    },
+  );
+
+  routes.put(
+    "/:channelId/pin",
+    channelBodyLimit,
+    requireUser,
+    async (context) => {
+      const body = await context.req.json().catch(() => null);
+      if (!isChannelInputObject(body)) {
+        return context.json({ error: "Pin input must be a JSON object." }, 400);
+      }
+      const { pinned } = body as { pinned?: unknown };
+      if (typeof pinned !== "boolean") {
+        return context.json({ error: "Pinned must be true or false." }, 400);
+      }
+
+      try {
+        await store.setPinned(
+          context.var.actor,
+          context.req.param("channelId"),
+          pinned,
+        );
+        return context.json({ pinned });
+      } catch (error) {
+        return mapStoreError(context, error);
+      }
+    },
+  );
+
+  routes.put(
+    "/:channelId/read",
+    channelBodyLimit,
+    requireUser,
+    async (context) => {
+      try {
+        await store.markRead(context.var.actor, context.req.param("channelId"));
+        return context.body(null, 204);
+      } catch (error) {
+        return mapStoreError(context, error);
+      }
+    },
+  );
+
+  routes.delete(
+    "/:channelId",
+    channelBodyLimit,
+    requireUser,
+    async (context) => {
+      const channelId = context.req.param("channelId");
+      /*
+       * `?draft=1`：新话题页提前建的草稿对话，没发就离开时由界面来删（A1）。「是草稿」只记在那个标签页的
+       * sessionStorage 里，复制出来的标签页、或者机器人已经在里面说过话时，界面以为的草稿其实是真对话——
+       * 所以服务端再确认一次：仍是空草稿才删，否则 409、什么都不动。这种删除不写 `channel.deleted` 审计、
+       * 不发通知（它从来没出现在谁的列表里）。
+       */
+      if (context.req.query("draft") === "1") {
+        try {
+          const outcome = store.deleteEmptyDraft
+            ? await store.deleteEmptyDraft(context.var.actor, channelId)
+            : "kept";
+          if (outcome === "deleted") return context.body(null, 204);
+          return context.json(
+            {
+              error: "This conversation is not an empty draft, so it was kept.",
+            },
+            409,
+          );
+        } catch (error) {
+          return mapStoreError(context, error);
+        }
+      }
+      try {
+        const deleted = await store.softDelete(context.var.actor, channelId);
+        // A repeat is still 204, but it deleted nothing, and the trail records acts, not attempts.
+        if (deleted !== false) await recordDeleted(context, channelId);
+        return context.body(null, 204);
+      } catch (error) {
+        return mapStoreError(context, error);
+      }
+    },
+  );
 
   // 「历史对话」/ 旧 `/bot` 链接：在频道聊天里打开一条已有对话（CB-046）。
-  routes.post("/open-thread", requireUser, async (context) => {
-    const body = (await context.req.json().catch(() => null)) as {
-      agentId?: unknown;
-      threadId?: unknown;
-    } | null;
-    const agentId = typeof body?.agentId === "string" ? body.agentId : "";
-    const threadId = typeof body?.threadId === "string" ? body.threadId : "";
-    if (!agentId || !threadId)
-      return context.json({ error: "缺少机器人或对话" }, 400);
-    if (!store.openThread)
-      return context.json({ error: "Channel not found." }, 404);
-    try {
-      const channel = await store.openThread(
-        context.var.actor,
-        agentId,
-        threadId,
-      );
-      if (!channel) return context.json({ error: "没有这条对话" }, 404);
-      return context.json({ channel: channelDto(channel) });
-    } catch (error) {
-      return mapStoreError(context, error);
-    }
-  });
+  routes.post(
+    "/open-thread",
+    channelBodyLimit,
+    requireUser,
+    async (context) => {
+      const body = (await context.req.json().catch(() => null)) as {
+        agentId?: unknown;
+        threadId?: unknown;
+      } | null;
+      const agentId = typeof body?.agentId === "string" ? body.agentId : "";
+      const threadId = typeof body?.threadId === "string" ? body.threadId : "";
+      if (!agentId || !threadId)
+        return context.json({ error: "缺少机器人或对话" }, 400);
+      if (!store.openThread)
+        return context.json({ error: "Channel not found." }, 404);
+      try {
+        const channel = await store.openThread(
+          context.var.actor,
+          agentId,
+          threadId,
+        );
+        if (!channel) return context.json({ error: "没有这条对话" }, 404);
+        return context.json({ channel: channelDto(channel) });
+      } catch (error) {
+        return mapStoreError(context, error);
+      }
+    },
+  );
 
   routes.get("/:channelId", requireUser, async (context) => {
     try {

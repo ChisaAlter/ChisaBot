@@ -52,13 +52,10 @@ export function createBotLifecycleRoutes(
   const { lifecycle, reset, activity, wakeUps, profiles, auditStore } =
     services;
   const routes = new Hono<{ Variables: AppVariables }>();
-  routes.use(
-    "*",
-    bodyLimit({
-      maxSize: 128 * 1024,
-      onError: (context) => context.json({ error: "请求体过大。" }, 413),
-    }),
-  );
+  const lifecycleBodyLimit = bodyLimit({
+    maxSize: 128 * 1024,
+    onError: (context) => context.json({ error: "请求体过大。" }, 413),
+  });
   type C = Context<{ Variables: AppVariables }>;
 
   const record = async (
@@ -141,30 +138,35 @@ export function createBotLifecycleRoutes(
     context.json({ routing: await lifecycle.routing(context.var.actor.id) }),
   );
 
-  routes.put("/routing/:kind", requireUser, async (context) => {
-    const kind = context.req.param("kind") as UpdateKind;
-    if (!UPDATE_KINDS.includes(kind))
-      return context.json({ error: "Unknown kind of update." }, 400);
-    const { transports } = await body(context);
-    const value =
-      transports === "all"
-        ? "all"
-        : Array.isArray(transports) &&
-            transports.every((transport) =>
-              UPDATE_TRANSPORTS.includes(transport as UpdateTransport),
-            )
-          ? (transports as UpdateTransport[])
-          : null;
-    if (value === null)
-      return context.json(
-        { error: "Choose slack, sms and push, or all of them." },
-        400,
-      );
-    await lifecycle.setRouting(context.var.actor.id, kind, value);
-    return context.json({
-      routing: await lifecycle.routing(context.var.actor.id),
-    });
-  });
+  routes.put(
+    "/routing/:kind",
+    lifecycleBodyLimit,
+    requireUser,
+    async (context) => {
+      const kind = context.req.param("kind") as UpdateKind;
+      if (!UPDATE_KINDS.includes(kind))
+        return context.json({ error: "Unknown kind of update." }, 400);
+      const { transports } = await body(context);
+      const value =
+        transports === "all"
+          ? "all"
+          : Array.isArray(transports) &&
+              transports.every((transport) =>
+                UPDATE_TRANSPORTS.includes(transport as UpdateTransport),
+              )
+            ? (transports as UpdateTransport[])
+            : null;
+      if (value === null)
+        return context.json(
+          { error: "Choose slack, sms and push, or all of them." },
+          400,
+        );
+      await lifecycle.setRouting(context.var.actor.id, kind, value);
+      return context.json({
+        routing: await lifecycle.routing(context.var.actor.id),
+      });
+    },
+  );
 
   routes.get("/:agentId/lifecycle", requireUser, async (context) => {
     const agent = await reachable(context);
@@ -174,43 +176,58 @@ export function createBotLifecycleRoutes(
     });
   });
 
-  routes.post("/:agentId/pause", requireUser, async (context) => {
-    const agent = await reachable(context);
-    if (agent instanceof Response) return agent;
-    const stopped = await lifecycle.pause(context.var.actor.id, agent.id);
-    await record(context, "bot.paused", agent.id, { stoppedTurns: stopped });
-    return context.json({
-      lifecycle: await lifecycle.get(context.var.actor.id, agent.id),
-      stoppedTurns: stopped,
-    });
-  });
+  routes.post(
+    "/:agentId/pause",
+    lifecycleBodyLimit,
+    requireUser,
+    async (context) => {
+      const agent = await reachable(context);
+      if (agent instanceof Response) return agent;
+      const stopped = await lifecycle.pause(context.var.actor.id, agent.id);
+      await record(context, "bot.paused", agent.id, { stoppedTurns: stopped });
+      return context.json({
+        lifecycle: await lifecycle.get(context.var.actor.id, agent.id),
+        stoppedTurns: stopped,
+      });
+    },
+  );
 
-  routes.post("/:agentId/resume", requireUser, async (context) => {
-    const agent = await reachable(context);
-    if (agent instanceof Response) return agent;
-    await lifecycle.resume(context.var.actor.id, agent.id);
-    await record(context, "bot.resumed", agent.id);
-    return context.json({
-      lifecycle: await lifecycle.get(context.var.actor.id, agent.id),
-    });
-  });
+  routes.post(
+    "/:agentId/resume",
+    lifecycleBodyLimit,
+    requireUser,
+    async (context) => {
+      const agent = await reachable(context);
+      if (agent instanceof Response) return agent;
+      await lifecycle.resume(context.var.actor.id, agent.id);
+      await record(context, "bot.resumed", agent.id);
+      return context.json({
+        lifecycle: await lifecycle.get(context.var.actor.id, agent.id),
+      });
+    },
+  );
 
-  routes.put("/:agentId/notifications", requireUser, async (context) => {
-    const agent = await reachable(context);
-    if (agent instanceof Response) return agent;
-    const { notify } = await body(context);
-    if (!NOTIFY_VALUES.includes(notify as BotNotify))
-      return context.json({ error: "Choose all, needs_input or none." }, 400);
-    await lifecycle.setNotify(
-      context.var.actor.id,
-      agent.id,
-      notify as BotNotify,
-    );
-    await record(context, "bot.notifications_changed", agent.id, { notify });
-    return context.json({
-      lifecycle: await lifecycle.get(context.var.actor.id, agent.id),
-    });
-  });
+  routes.put(
+    "/:agentId/notifications",
+    lifecycleBodyLimit,
+    requireUser,
+    async (context) => {
+      const agent = await reachable(context);
+      if (agent instanceof Response) return agent;
+      const { notify } = await body(context);
+      if (!NOTIFY_VALUES.includes(notify as BotNotify))
+        return context.json({ error: "Choose all, needs_input or none." }, 400);
+      await lifecycle.setNotify(
+        context.var.actor.id,
+        agent.id,
+        notify as BotNotify,
+      );
+      await record(context, "bot.notifications_changed", agent.id, { notify });
+      return context.json({
+        lifecycle: await lifecycle.get(context.var.actor.id, agent.id),
+      });
+    },
+  );
 
   /** The notice: what a reset would delete, per kind, before anything is. */
   routes.get("/:agentId/reset", requireUser, async (context) => {
@@ -221,19 +238,24 @@ export function createBotLifecycleRoutes(
     });
   });
 
-  routes.post("/:agentId/reset", requireUser, async (context) => {
-    const agent = await reachable(context);
-    if (agent instanceof Response) return agent;
-    const { confirm } = await body(context);
-    if (confirm !== true)
-      return context.json(
-        { error: "A reset deletes data. Confirm it explicitly." },
-        400,
-      );
-    const deleted = await reset.execute(context.var.actor, agent.id);
-    await record(context, "bot.reset", agent.id, { deleted });
-    return context.json({ deleted });
-  });
+  routes.post(
+    "/:agentId/reset",
+    lifecycleBodyLimit,
+    requireUser,
+    async (context) => {
+      const agent = await reachable(context);
+      if (agent instanceof Response) return agent;
+      const { confirm } = await body(context);
+      if (confirm !== true)
+        return context.json(
+          { error: "A reset deletes data. Confirm it explicitly." },
+          400,
+        );
+      const deleted = await reset.execute(context.var.actor, agent.id);
+      await record(context, "bot.reset", agent.id, { deleted });
+      return context.json({ deleted });
+    },
+  );
 
   routes.get("/:agentId/activity", requireUser, async (context) => {
     const agent = await reachable(context);
@@ -245,6 +267,7 @@ export function createBotLifecycleRoutes(
 
   routes.post(
     "/:agentId/activity/handoffs/stop",
+    lifecycleBodyLimit,
     requireUser,
     async (context) => {
       const agent = await reachable(context);
@@ -270,20 +293,29 @@ export function createBotLifecycleRoutes(
     },
   );
 
-  routes.post("/:agentId/follow-ups/cancel", requireUser, async (context) => {
-    const agent = await reachable(context);
-    if (agent instanceof Response) return agent;
-    const { id } = await body(context);
-    if (typeof id !== "string" || !id)
-      return context.json({ error: "Which follow-up?" }, 400);
-    const cancelled = await wakeUps.cancel(context.var.actor.id, agent.id, id);
-    if (!cancelled)
-      return context.json(
-        { error: "That follow-up has already run or was cancelled." },
-        404,
+  routes.post(
+    "/:agentId/follow-ups/cancel",
+    lifecycleBodyLimit,
+    requireUser,
+    async (context) => {
+      const agent = await reachable(context);
+      if (agent instanceof Response) return agent;
+      const { id } = await body(context);
+      if (typeof id !== "string" || !id)
+        return context.json({ error: "Which follow-up?" }, 400);
+      const cancelled = await wakeUps.cancel(
+        context.var.actor.id,
+        agent.id,
+        id,
       );
-    return context.json({ cancelled: true });
-  });
+      if (!cancelled)
+        return context.json(
+          { error: "That follow-up has already run or was cancelled." },
+          404,
+        );
+      return context.json({ cancelled: true });
+    },
+  );
 
   return routes;
 }
