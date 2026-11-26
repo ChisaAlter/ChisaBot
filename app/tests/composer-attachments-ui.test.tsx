@@ -165,9 +165,7 @@ test("a composer with no channel keeps the button that says so, and takes no fil
 
   // The old affordance, untouched: nothing to offer and it says so, rather than a live button
   // that would open a picker with nowhere to upload to.
-  const placeholder = getByLabelText(
-    "更多消息选项不可用",
-  ) as HTMLButtonElement;
+  const placeholder = getByLabelText("更多消息选项不可用") as HTMLButtonElement;
   expect(placeholder.disabled).toBe(true);
   expect(queryByLabelText("附加文件")).toBeNull();
   expect(container.querySelector('input[type="file"]')).toBeNull();
@@ -283,9 +281,7 @@ test("a disabled composer takes no dropped file, and offers no way to pick one",
 
   // Visibly shut rather than merely ignored: a button that opens a picker whose file will be
   // dropped on the floor is worse than one that says it cannot.
-  expect((getByLabelText("附加文件") as HTMLButtonElement).disabled).toBe(
-    true,
-  );
+  expect((getByLabelText("附加文件") as HTMLButtonElement).disabled).toBe(true);
   expect(
     (container.querySelector('input[type="file"]') as HTMLInputElement)
       .disabled,
@@ -449,4 +445,128 @@ test("does not warn on a small file the server read as text", async () => {
   await uploaded(view, "notes.png");
 
   expect(container.textContent).not.toContain("可能被截断");
+});
+
+test("composer supports clicking staged images to preview in Lightbox and switching between them", async () => {
+  serverSniffs("image/png");
+  let nextId = 0;
+  global.fetch = (async (path: string, init: RequestInit) => {
+    if (init?.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    const body = init.body as FormData;
+    const file = body.get("file") as File;
+    nextId += 1;
+    uploads.push({ path, name: file.name });
+    return new Response(
+      JSON.stringify({
+        id: `att-${nextId}`,
+        name: file.name,
+        mimeType: "image/png",
+      }),
+      { status: 201, headers: { "content-type": "application/json" } },
+    );
+  }) as unknown as typeof fetch;
+
+  const view = render(
+    <Composer channelId="channel-1" compact onSubmit={() => {}} />,
+  );
+  const { container, getByLabelText, getByRole, queryByRole } = view;
+  const form = container.querySelector("form") as HTMLFormElement;
+
+  drop(form, [
+    new File(["img1"], "one.png", { type: "image/png" }),
+    new File(["img2"], "two.png", { type: "image/png" }),
+  ]);
+  await uploaded(view, "two.png");
+
+  fireEvent.click(getByLabelText("预览 two.png"));
+  const dialog = getByRole("dialog");
+  expect(dialog.querySelector("img.rp-lightbox-img")?.getAttribute("src")).toBe(
+    "/api/attachments/att-2",
+  );
+  expect(dialog.querySelector(".rp-lightbox-count")?.textContent).toBe("2 / 2");
+
+  fireEvent.click(getByLabelText("上一张"));
+  expect(dialog.querySelector("img.rp-lightbox-img")?.getAttribute("src")).toBe(
+    "/api/attachments/att-1",
+  );
+
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() => expect(queryByRole("dialog") === null).toBe(true));
+
+  fireEvent.click(getByLabelText("移除 one.png"));
+  await waitFor(() =>
+    expect(queryByRole("button", { name: "预览 one.png" })).toBeNull(),
+  );
+  expect(queryByRole("dialog") === null).toBe(true);
+});
+
+test("composer generates a local previewUrl while an image upload is in flight and revokes it on removal", async () => {
+  const realCreateObjectURL = URL.createObjectURL;
+  const realRevokeObjectURL = URL.revokeObjectURL;
+  const created: string[] = [];
+  const revoked: string[] = [];
+  URL.createObjectURL = () => {
+    const next = `blob:http://localhost/local-${created.length + 1}`;
+    created.push(next);
+    return next;
+  };
+  URL.revokeObjectURL = (url: string) => {
+    revoked.push(url);
+  };
+
+  let finishUpload: () => void = () => {};
+  global.fetch = (async (_path: string, init: RequestInit) => {
+    if (init?.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    await new Promise<void>((resolve) => {
+      finishUpload = resolve;
+    });
+    const body = init.body as FormData;
+    const file = body.get("file") as File;
+    return new Response(
+      JSON.stringify({
+        id: "att-late",
+        name: file.name,
+        mimeType: "image/png",
+      }),
+      { status: 201, headers: { "content-type": "application/json" } },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    const view = render(
+      <Composer channelId="channel-1" compact onSubmit={() => {}} />,
+    );
+    const { container, getByLabelText, getByRole, queryByRole } = view;
+    const form = container.querySelector("form") as HTMLFormElement;
+
+    drop(form, [new File(["raw"], "pending-photo.png", { type: "image/png" })]);
+
+    const previewBtn = await waitFor(() =>
+      getByLabelText("预览 pending-photo.png"),
+    );
+    expect(previewBtn.querySelector("img")?.getAttribute("src")).toBe(
+      "blob:http://localhost/local-1",
+    );
+
+    fireEvent.click(previewBtn);
+    expect(
+      getByRole("dialog")
+        .querySelector("img.rp-lightbox-img")
+        ?.getAttribute("src"),
+    ).toBe("blob:http://localhost/local-1");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(queryByRole("dialog") === null).toBe(true));
+
+    fireEvent.click(getByLabelText("移除 pending-photo.png"));
+    expect(revoked).toContain("blob:http://localhost/local-1");
+  } finally {
+    finishUpload();
+    URL.createObjectURL = realCreateObjectURL;
+    URL.revokeObjectURL = realRevokeObjectURL;
+  }
 });
