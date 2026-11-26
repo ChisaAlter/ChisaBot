@@ -25,7 +25,7 @@ const {
   killTree,
   spawnCommand,
 } = require("./acp-client");
-const { parseProxyList, createProxyAgent } = require("../agent/proxy");
+const { parseProxyList, createProxyAgent } = require("./proxy");
 
 const DEFAULT_MANIFEST_BASE_URL =
   "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app";
