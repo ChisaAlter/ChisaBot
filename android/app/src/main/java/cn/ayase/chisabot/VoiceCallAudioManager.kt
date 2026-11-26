@@ -2,11 +2,38 @@ package cn.ayase.chisabot
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
+import androidx.annotation.RequiresApi
+
+/**
+ * 为 API 31+ `AudioManager.setCommunicationDevice` 选择目标通信音频设备类型：
+ * 优先外部耳机（蓝牙 SCO / BLE 耳机 / 有线耳机 / USB 耳机），未连接外设时按 [speakerphoneOn] 切扬声器或听筒。
+ */
+internal fun selectPreferredCommunicationDeviceType(
+    availableTypes: Collection<Int>,
+    speakerphoneOn: Boolean,
+): Int? {
+    val externalOrder = intArrayOf(
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        AudioDeviceInfo.TYPE_BLE_HEADSET,
+        AudioDeviceInfo.TYPE_WIRED_HEADSET,
+        AudioDeviceInfo.TYPE_USB_HEADSET,
+    )
+    for (type in externalOrder) {
+        if (type in availableTypes) return type
+    }
+    val preferred = if (speakerphoneOn) {
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+    } else {
+        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+    }
+    return preferred.takeIf { it in availableTypes }
+}
 
 /**
  * Android 端实时语音通话原生音频增强与焦点管理器：
@@ -62,8 +89,10 @@ class VoiceCallAudioManager(context: Context) {
         }
 
         previousMode = audioManager.mode
-        @Suppress("DEPRECATION")
-        previousSpeakerphoneOn = audioManager.isSpeakerphoneOn
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            @Suppress("DEPRECATION")
+            previousSpeakerphoneOn = audioManager.isSpeakerphoneOn
+        }
 
         val granted = requestVoiceFocus()
         if (!granted) {
@@ -123,11 +152,15 @@ class VoiceCallAudioManager(context: Context) {
         )
     }
 
-    /** 切换免提扬声器路由（未连接耳机/蓝牙时生效）。 */
+    /** 切换免提扬声器路由（未连接耳机/蓝牙时生效；API 31+ 使用 setCommunicationDevice）。 */
     @Synchronized
     fun setSpeakerphone(enabled: Boolean) {
-        @Suppress("DEPRECATION")
-        audioManager.isSpeakerphoneOn = enabled
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            applyCommunicationDeviceApi31(enabled)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.isSpeakerphoneOn = enabled
+        }
     }
 
     /** 释放所有硬件音频特效、归还音频焦点并恢复通话前的系统音频模式。 */
@@ -140,13 +173,37 @@ class VoiceCallAudioManager(context: Context) {
         }
         active = false
         try {
-            @Suppress("DEPRECATION")
-            audioManager.isSpeakerphoneOn = previousSpeakerphoneOn
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                clearCommunicationDeviceApi31()
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.isSpeakerphoneOn = previousSpeakerphoneOn
+            }
             audioManager.mode = previousMode
         } catch (_: Throwable) {
             // 忽略音频服务销毁阶段的状态恢复异常
         }
         abandonVoiceFocus()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun applyCommunicationDeviceApi31(speakerphoneOn: Boolean) {
+        val devices = audioManager.availableCommunicationDevices
+        val preferredType = selectPreferredCommunicationDeviceType(
+            availableTypes = devices.map { it.type },
+            speakerphoneOn = speakerphoneOn,
+        )
+        val target = preferredType?.let { type -> devices.firstOrNull { it.type == type } }
+        if (target != null) {
+            runCatching { audioManager.setCommunicationDevice(target) }
+        } else {
+            runCatching { audioManager.clearCommunicationDevice() }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun clearCommunicationDeviceApi31() {
+        runCatching { audioManager.clearCommunicationDevice() }
     }
 
     private fun detachEffects() {

@@ -1,7 +1,9 @@
 package cn.ayase.chisabot
 
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.ConnectException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
@@ -91,6 +93,25 @@ object GatewayAuth {
         return LoginError("unreachable", "地址无法连接，请检查地址和网络。")
     }
 
+    internal const val MAX_RESPONSE_BYTES = 1024 * 1024
+
+    /** 有界读取 HTTP 响应体（默认上限 1 MiB），防止恶意或异常超大响应触发 OOM。 */
+    internal fun readResponseBodyBounded(stream: InputStream, maxBytes: Int = MAX_RESPONSE_BYTES): String {
+        val out = ByteArrayOutputStream()
+        val buf = ByteArray(16 * 1024)
+        var total = 0
+        while (true) {
+            val n = stream.read(buf)
+            if (n < 0) break
+            total += n
+            if (total > maxBytes) {
+                throw LoginError("invalid", "服务器响应体积过大，请检查服务器地址。")
+            }
+            out.write(buf, 0, n)
+        }
+        return out.toByteArray().toString(Charsets.UTF_8)
+    }
+
     private class Reply(val status: Int, val body: String, val setCookies: List<String>)
 
     private fun request(
@@ -127,7 +148,7 @@ object GatewayAuth {
             }
             val status = conn.responseCode
             val stream = if (status >= 400) conn.errorStream else conn.inputStream
-            val body = stream?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+            val body = stream?.use { readResponseBodyBounded(it) }.orEmpty()
             val cookies = conn.headerFields.entries
                 .filter { it.key != null && it.key.equals("Set-Cookie", true) }
                 .flatMap { it.value }
