@@ -1,5 +1,11 @@
 ## Unreleased
 
+## 0.1.191 — 2026-11-26
+
+- 全端发版：`0.1.191`，Android `versionCode 371`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `40004bb3640818a0`；无新增数据库迁移。
+- **修复频道图片与 Bot 资料库大文件上传 `413` 拦截**：移除 `/api/channels`（512 KiB）与 `/api/bots`（128 KiB）通配 `bodyLimit` 对后续挂载的大文件上传路由的遮蔽，改为按写路由精确挂载并收窄附件路由上限作用域，新增无库依赖共存回归测试（`server/src/{channels/routes,app,agents/lifecycle-routes}.ts` · `server/tests/route-body-limit-coexistence.test.ts`）。
+- **定时条件基线、云端浏览器接管、DSH 护栏、安全加固与 Android 语音桥（`1e90265`–`67e070c`）**：新增定时任务结构化条件基线/边沿触发/冷却与 BFS 形式化验证、云端浏览器限流提示/API 风险检测/点击接管、DSH 泄漏/循环/预算护栏与 `StopSummary`、浏览器审批时间窗域绑定与记忆防污染加固，以及 Android `VoiceCallAudioManager` 同源桥与听写排障提示（`shared/schedules.ts` · `server/src/{schedules,computer,confirmations,memory-notes,agents}/*` · `runtime/dsh/src/*` · `agent-computer/src/*` · `app/src/{components/computer,lib/voice,lib/dictation}/*` · `android/.../{VoiceAudioBridge,ui/WebScreen}.kt`）。
+
 ## 0.1.190 — 2026-11-25
 
 - 全端发版：`0.1.190`，Android `versionCode 370`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `4315e3bde1bc9a04`；无新增数据库迁移。
