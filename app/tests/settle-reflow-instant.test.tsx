@@ -18,15 +18,17 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import { BotBubbles } from "@/components/chat/bot-bubbles";
+import { LONG_MESSAGE_FOLD_THRESHOLD } from "@/lib/chat/fold-long-message";
 import { settleReactWork } from "./settle-react-work";
 
 /**
- * 验证竖屏/窄窗滚动回跳的纵深防御修复：
- * 1) SettleAtEnd 以 border-box 观测 content、按内容盒净宽判定 reflowed()，换行贴底走 behavior:"instant"，
- *    避免 clientWidth 盲区注入 .chat-slack 与平滑回追动画；
- * 2) MessageScroller.handleResize 改用 behavior:"instant"，且滚动期间复用 content padding 缓存不再触发
- *    getComputedStyle 强排；
- * 3) ChatTranscript 外层 memo 兼容 AG-UI 对 messages 数组的就地修改，不漏渲染新消息与流式追加。
+ * 验证聊天滚动单一事实源（Single Source of Truth）不变量：
+ * 1) SettleAtEnd 以 border-box 同时观测 content 与 viewport，维护 data-cb-pinned="true"（带脏检查），
+ *    在 pinned 态下任意换行/增高/收缩均同步 instant 落底，零 .scroll-smooth、零 minHeight floor、零 .chat-slack 震荡；
+ * 2) 仅真实用户输入退出 pinned，内容收缩 clamp 绝不翻转 pinned；
+ * 3) MessageScroller.handleResize 改用 behavior:"instant"，且滚动期间复用 content padding 缓存；
+ * 4) BotBubbles 流式生成过的长消息结束后不自动塌缩。
  */
 
 type ObservedEntry = {
@@ -117,8 +119,8 @@ function createClient() {
   });
 }
 
-describe("SettleAtEnd 换行即时贴底与 MessageScroller 零强排缓存", () => {
-  test("padding-inline 变更（clientWidth 不变）被 reflowed 识别，贴底走 instant 且流式不注入留白", async () => {
+describe("SettleAtEnd 单一事实源贴底与 MessageScroller 零强排缓存", () => {
+  test("SettleAtEnd 以 border-box 观测 content 与 viewport，维护 data-cb-pinned，换行与流式收缩均同步 instant 落底且零留白震荡", async () => {
     const messages: Message[] = [
       { id: "u1", role: "user", content: "第一句提问" },
       { id: "a1", role: "assistant", content: "第一段长回答内容" },
@@ -144,12 +146,22 @@ describe("SettleAtEnd 换行即时贴底与 MessageScroller 零强排缓存", ()
     expect(slack).not.toBeNull();
     if (!viewport || !content || !slack) return;
 
-    // 断言 SettleAtEnd 以 border-box 观测 content，确保 padding-bottom / padding-right 均能唤醒回调
+    // 视口禁止挂 scroll-smooth，初始贴底态挂 data-cb-pinned="true"
+    expect(viewport.className).not.toContain("scroll-smooth");
+    expect(viewport.getAttribute("data-cb-pinned")).toBe("true");
+
+    // 断言 SettleAtEnd 以 border-box 同时观测 content 与 viewport
     const contentObservers = observedEntries.filter(
       (item) => item.target === content,
     );
+    const viewportObservers = observedEntries.filter(
+      (item) => item.target === viewport,
+    );
     expect(
       contentObservers.some((item) => item.options?.box === "border-box"),
+    ).toBe(true);
+    expect(
+      viewportObservers.some((item) => item.options?.box === "border-box"),
     ).toBe(true);
 
     let scrollHeight = 2000;
@@ -191,7 +203,7 @@ describe("SettleAtEnd 换行即时贴底与 MessageScroller 零强排缓存", ()
       }
     }) as typeof viewport.scrollTo;
 
-    // 1. 仅 padding-right 变化（clientWidth 恒 410），contentBoxSize.inlineSize 从初始值变为 364，内容折行长高 +400px
+    // 1. 仅 padding-right 变化（clientWidth 恒 410），内容折行长高 +400px -> 同步 instant 落底
     scrollHeight = 2400;
     offsetHeight = 2400;
     act(() => {
@@ -200,8 +212,9 @@ describe("SettleAtEnd 换行即时贴底与 MessageScroller 零强排缓存", ()
     expect(scrollCalls.length).toBeGreaterThan(0);
     expect(scrollCalls.every((call) => call.behavior === "instant")).toBe(true);
     expect(scrollTop).toBe(1900);
+    expect(viewport.getAttribute("data-cb-pinned")).toBe("true");
 
-    // 2. 连续第二帧变窄（模拟左栏展开过渡）：因上一帧同步落底，seen.atBottom 仍为 true，第二帧继续 instant 贴底
+    // 2. 连续第二帧变窄：同步落底保持 pinned，第二帧继续 instant 贴底
     scrollCalls.length = 0;
     scrollHeight = 2700;
     offsetHeight = 2700;
@@ -212,27 +225,24 @@ describe("SettleAtEnd 换行即时贴底与 MessageScroller 零强排缓存", ()
     expect(scrollCalls.every((call) => call.behavior === "instant")).toBe(true);
     expect(scrollTop).toBe(2200);
 
-    // 3. 流式态（busy=true）下内宽变宽使高度骤减 -500px：reflowed 清掉旧 2700px floor 且不注入 500px 固定留白
+    // 3. 流式态（busy=true）下高度骤减 -500px：不注入 .chat-slack，不写 content.style.minHeight，也不翻转 pinned
     view.rerender(
       <QueryClientProvider client={client}>
         <ChatTranscript busy messages={messages} scrollKey="settle-reflow-1" />
       </QueryClientProvider>,
     );
     await settleReactWork();
+    scrollCalls.length = 0;
     scrollHeight = 2200;
     offsetHeight = 2200;
     scrollTop = 1700;
     act(() => {
       fireResize(content, 378, 2200);
     });
-    // 若 reflowed 漏判，L1429 会注入 500px 固定留白或保留旧 2700px floor；修复后仅弹性重挂到新高度 2200px 且 height 为 0px
-    expect(slack.style.height === "" || slack.style.height === "0px").toBe(
-      true,
-    );
-    expect(
-      content.style.minHeight === "" ||
-        content.style.minHeight === "max(100%, 2200px)",
-    ).toBe(true);
+    expect(slack.style.display).toBe("none");
+    expect(content.style.minHeight).toBe("");
+    expect(viewport.getAttribute("data-cb-pinned")).toBe("true");
+    expect(scrollTop).toBe(1700);
   });
 
   test("MessageScroller.handleResize 使用 instant，且滚动热路径零重复调用 getComputedStyle", async () => {
@@ -362,17 +372,15 @@ describe("SettleAtEnd 换行即时贴底与 MessageScroller 零强排缓存", ()
     expect(view.container.textContent).toContain("首段流式回复已更新");
   });
 
-  test("SettleAtEnd.onScroll 常规无留白滚动零脏写 data-cb-release 且缓存 spacer 零重复 querySelector", async () => {
+  test("pinned 状态机不变量：脏检查零重复写属性、仅真实用户输入退出、发送/回底恢复且流式长消息结束后不自动折叠", async () => {
     const messages: Message[] = [
       { id: "s1", role: "user", content: "第一条历史消息" },
       { id: "s2", role: "assistant", content: "第一条历史回复" },
-      { id: "s3", role: "user", content: "第二条历史消息" },
-      { id: "s4", role: "assistant", content: "第二条历史回复" },
     ];
     const client = createClient();
     const view = render(
       <QueryClientProvider client={client}>
-        <ChatTranscript messages={messages} scrollKey="scroll-zero-dirty" />
+        <ChatTranscript messages={messages} scrollKey="scroll-pin-invariant" />
       </QueryClientProvider>,
     );
     await settleReactWork();
@@ -383,22 +391,20 @@ describe("SettleAtEnd 换行即时贴底与 MessageScroller 零强排缓存", ()
     const content = view.container.querySelector<HTMLElement>(
       '[data-testid="chat-transcript"]',
     );
-    const spacer = content?.querySelector<HTMLElement>(
-      "[data-message-scroller-spacer]",
-    );
     expect(viewport).not.toBeNull();
     expect(content).not.toBeNull();
-    expect(spacer).not.toBeNull();
-    if (!viewport || !content || !spacer) return;
+    if (!viewport || !content) return;
 
-    let scrollTop = 1200;
+    let scrollHeight = 2400;
+    const clientHeight = 600;
+    let scrollTop = 1800;
     Object.defineProperty(viewport, "scrollHeight", {
       configurable: true,
-      get: () => 2400,
+      get: () => scrollHeight,
     });
     Object.defineProperty(viewport, "clientHeight", {
       configurable: true,
-      get: () => 600,
+      get: () => clientHeight,
     });
     Object.defineProperty(viewport, "scrollTop", {
       configurable: true,
@@ -407,63 +413,110 @@ describe("SettleAtEnd 换行即时贴底与 MessageScroller 零强排缓存", ()
         scrollTop = value;
       },
     });
-    Object.defineProperty(content, "clientWidth", {
-      configurable: true,
-      get: () => 560,
-    });
-    Object.defineProperty(content, "offsetHeight", {
-      configurable: true,
-      get: () => 2400,
-    });
-    // 确保 spacer 处于隐藏态（常规无留白滚动）
-    spacer.hidden = true;
-    delete viewport.dataset.cbRelease;
+    const scrollCalls: Array<{ top?: number; behavior?: ScrollBehavior }> = [];
+    viewport.scrollTo = ((arg: ScrollToOptions | number) => {
+      if (typeof arg === "object" && arg !== null) {
+        scrollCalls.push({ top: arg.top, behavior: arg.behavior });
+        if (typeof arg.top === "number") scrollTop = arg.top;
+      }
+    }) as typeof viewport.scrollTo;
 
-    // 预热一次滚动使 spacer 引用进入缓存
-    viewport.dispatchEvent(new Event("scroll"));
+    expect(viewport.getAttribute("data-cb-pinned")).toBe("true");
 
-    let cbReleaseWrites = 0;
+    let pinAttrWrites = 0;
     const origSetAttr = viewport.setAttribute.bind(viewport);
+    const origRemoveAttr = viewport.removeAttribute.bind(viewport);
     viewport.setAttribute = ((name: string, value: string) => {
-      if (name === "data-cb-release") cbReleaseWrites += 1;
+      if (name === "data-cb-pinned") pinAttrWrites += 1;
       origSetAttr(name, value);
     }) as typeof viewport.setAttribute;
-
-    let spacerQueries = 0;
-    const origQuerySelector = content.querySelector.bind(content);
-    content.querySelector = ((selector: string) => {
-      if (selector.includes("data-message-scroller-spacer")) {
-        spacerQueries += 1;
-      }
-      return origQuerySelector(selector);
-    }) as typeof content.querySelector;
+    viewport.removeAttribute = ((name: string) => {
+      if (name === "data-cb-pinned") pinAttrWrites += 1;
+      origRemoveAttr(name);
+    }) as typeof viewport.removeAttribute;
 
     try {
-      for (let i = 0; i < 12; i += 1) {
-        scrollTop = 1200 - i * 40;
+      // 1. 持续贴底期间触发多次 ResizeObserver / scroll：带脏检查零重复写 data-cb-pinned
+      for (let i = 0; i < 6; i += 1) {
+        scrollHeight = 2400 + i * 20;
+        act(() => {
+          fireResize(content, 560, scrollHeight);
+        });
         viewport.dispatchEvent(new Event("scroll"));
       }
-      expect(cbReleaseWrites).toBe(0);
-      expect(viewport.dataset.cbRelease).toBeUndefined();
-      expect(spacerQueries).toBe(0);
+      expect(pinAttrWrites).toBe(0);
+      expect(scrollTop).toBe(2500 - 600);
 
-      // 存在真实留白（spacer 可见）且未滚过留白区时，仍按契约记录 data-cb-release，且滚动期间 gap:* 不逐帧脏写
-      spacer.hidden = false;
-      Object.defineProperty(spacer, "offsetHeight", {
-        configurable: true,
-        get: () => 300,
-      });
-      // scrollTop + clientHeight (1500 + 600 = 2100) >= scrollHeight - blank - 1 (2400 - 300 - 1 = 2099)
-      // 且 contentGap = 2400 - 1500 - 600 - 300 = 0；先测 gap > 4（scrollTop = 1490 -> contentGap = 10 -> 但 1490+600=2090 < 2099 会被上翻收掉），
-      // 改为 scrollHeight=2400, clientHeight=600, spacer=300, scrollTop=1500 触发真实 release:300
+      // 2. 非用户输入的内容收缩 clamp（scrollTop 被浏览器夹小）绝不退出 pinned
+      scrollHeight = 2100;
       scrollTop = 1500;
       viewport.dispatchEvent(new Event("scroll"));
-      expect(viewport.getAttribute("data-cb-release")).toBe("release:300");
-      expect(cbReleaseWrites).toBe(1);
+      expect(viewport.getAttribute("data-cb-pinned")).toBe("true");
+      expect(pinAttrWrites).toBe(0);
+
+      // 3. 向下滚轮（deltaY >= 0）不退出 pinned；向上滚轮（deltaY < 0）退出 pinned
+      viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: 120 }));
+      expect(viewport.getAttribute("data-cb-pinned")).toBe("true");
+      viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }));
+      expect(viewport.hasAttribute("data-cb-pinned")).toBe(false);
+
+      // 4. 退出 pinned 后，内容增高绝不强拉 scrollTop
+      scrollCalls.length = 0;
+      scrollTop = 900;
+      scrollHeight = 2600;
+      act(() => {
+        fireResize(content, 560, 2600);
+      });
+      expect(scrollTop).toBe(900);
+      expect(scrollCalls).toHaveLength(0);
+
+      // 5. 主动滚回底缘 <= 4px 重新进入 pinned
+      viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: 200 }));
+      scrollTop = 1998;
+      viewport.dispatchEvent(new Event("scroll"));
+      expect(viewport.getAttribute("data-cb-pinned")).toBe("true");
+
+      // 6. 键盘 ArrowUp 退出 pinned，发送新用户消息重新进入 pinned 并同步 instant 落底
+      viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+      expect(viewport.hasAttribute("data-cb-pinned")).toBe(false);
+      scrollTop = 700;
+      scrollHeight = 2800;
+      view.rerender(
+        <QueryClientProvider client={client}>
+          <ChatTranscript
+            messages={[
+              ...messages,
+              { id: "s3", role: "user", content: "继续问" },
+            ]}
+            scrollKey="scroll-pin-invariant"
+          />
+        </QueryClientProvider>,
+      );
+      await settleReactWork();
+      expect(viewport.getAttribute("data-cb-pinned")).toBe("true");
+      expect(scrollTop).toBe(2200);
     } finally {
       viewport.setAttribute = origSetAttr;
-      content.querySelector = origQuerySelector;
+      viewport.removeAttribute = origRemoveAttr;
     }
+
+    // 7. BotBubbles 流式生成过的超长回答在 streaming=false 后不自动折叠塌缩；历史长消息正常折叠
+    const huge = "这一段是很长的测试回复正文。".repeat(
+      Math.ceil((LONG_MESSAGE_FOLD_THRESHOLD + 500) / 14),
+    );
+    const liveView = render(<BotBubbles streaming text={huge} />);
+    expect(
+      liveView.container.querySelector('[data-testid="expand-long-message"]'),
+    ).toBeNull();
+    liveView.rerender(<BotBubbles streaming={false} text={huge} />);
+    expect(
+      liveView.container.querySelector('[data-testid="expand-long-message"]'),
+    ).toBeNull();
+
+    const historyView = render(<BotBubbles streaming={false} text={huge} />);
+    expect(
+      historyView.container.querySelector('[data-testid="expand-long-message"]'),
+    ).not.toBeNull();
   });
 
   test("Arriving 历史消息渲染普通 div（保留 data-slot）且无 translateY 内联样式", async () => {

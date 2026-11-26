@@ -169,6 +169,9 @@ export function ComposerDock({
     }
     if (scrollPad) {
       scrollPad.style.paddingBottom = `calc(24px + ${nextInset}px)`;
+      pane
+        .querySelector('[data-slot="message-scroller-viewport"]')
+        ?.dispatchEvent(new Event("chisabot:composer-inset-sync"));
     }
     appliedScrollPadRef.current = scrollPad;
     if (
@@ -261,12 +264,13 @@ export function ComposerDock({
     };
     scheduleSyncRef.current = () => scheduleSync(false);
 
-    // 内容高变化（编辑、附件条、横条⇄卡片）→ rAF 合并重算 inset；
-    // 面板尺寸变化 → 把已存的悬浮框夹回面板内 + 重算 inset。
+    // 内容高变化（编辑、附件条、横条⇄卡片）→ 同步更新 padding-bottom（lastInsetRef 有脏检查），
+    // 消除发送清空输入框后晚一帧 rAF 收缩导致的 clamp 弹跳；其余 pill/clamp 仍由 rAF 合并处理。
     ro =
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(() => {
+            syncInset();
             scheduleSync(true);
           });
 

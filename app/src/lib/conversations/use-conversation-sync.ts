@@ -67,6 +67,38 @@ function deepEqualSnapshotValue(a: unknown, b: unknown): boolean {
   return definedA === definedB;
 }
 
+type ComparableMsg = {
+  id: string;
+  role?: unknown;
+  content?: unknown;
+  toolCallId?: unknown;
+  toolCalls?: unknown;
+  activityType?: unknown;
+};
+
+/**
+ * 判断两组消息列表在渲染核心结构（数量、id、role、核心内容）上是否等价，
+ * 用于在回合结束 600ms/800ms 同步拉取合并前短路无意义的 setMessages，避免整列重排跳动。
+ */
+export function messagesStructurallyEqual(
+  a: readonly ComparableMsg[],
+  b: readonly ComparableMsg[],
+): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const left = a[i];
+    const right = b[i];
+    if (!left || !right) return false;
+    if (left.id !== right.id || left.role !== right.role) return false;
+    if (!deepEqualSnapshotValue(left.content, right.content)) return false;
+    if (left.toolCallId !== right.toolCallId) return false;
+    if (!deepEqualSnapshotValue(left.toolCalls, right.toolCalls)) return false;
+    if (left.activityType !== right.activityType) return false;
+  }
+  return true;
+}
+
 /** 把快照里这台没有的消息按快照里的位置插进来（跟在它前面最近一条这台也有的消息后面）；这台已有的不动、不删。 */
 export function mergeSnapshot<T extends Msg>(
   local: readonly T[],
@@ -624,12 +656,20 @@ export function useConversationSync(
                 tail.reset.add(`tool:${call.id}`);
             }
           }
+          const current = messages as readonly ComparableMsg[];
+          const next = mergeSnapshot<ComparableMsg>(
+            current,
+            e.messages as readonly ComparableMsg[],
+            snapshotContinuations,
+          );
+          if (
+            next === current ||
+            messagesStructurallyEqual(next, current)
+          ) {
+            return { stopPropagation: true };
+          }
           return {
-            messages: mergeSnapshot(
-              messages as never,
-              e.messages as never,
-              snapshotContinuations,
-            ) as never,
+            messages: next as never,
             stopPropagation: true,
           };
         }

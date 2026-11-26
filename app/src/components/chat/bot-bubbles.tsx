@@ -183,10 +183,15 @@ export const BotBubbles = memo(function BotBubbles({
   const effectiveReplyText = replyToText ?? replyTo?.text;
   const effectiveReplyId = replyToId ?? replyTo?.id;
   const display = useDisplayText(text, streaming);
+  const streamedRef = useRef(Boolean(streaming));
+  if (streaming) streamedRef.current = true;
   const [expanded, setExpanded] = useState(false);
   const foldState = useMemo(
     () =>
-      !streaming && !expanded && display.length > LONG_MESSAGE_FOLD_THRESHOLD
+      !streaming &&
+      !streamedRef.current &&
+      !expanded &&
+      display.length > LONG_MESSAGE_FOLD_THRESHOLD
         ? foldLongMessage(display)
         : null,
     [display, expanded, streaming],

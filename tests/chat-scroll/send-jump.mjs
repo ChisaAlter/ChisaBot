@@ -54,7 +54,26 @@ await ctx.addInitScript(
     } catch {}
     const w = window;
     w.__samples = [];
+    w.__microSamples = [];
     w.__events = [];
+    w.__smoothCalls = 0;
+    for (const fn of ["scrollTo", "scroll"]) {
+      const orig = Element.prototype[fn];
+      if (!orig) continue;
+      Element.prototype[fn] = function (...args) {
+        const opt = args[0];
+        if (
+          w.__sampling &&
+          this.dataset?.slot === "message-scroller-viewport" &&
+          opt &&
+          typeof opt === "object" &&
+          opt.behavior === "smooth"
+        ) {
+          w.__smoothCalls += 1;
+        }
+        return orig.apply(this, args);
+      };
+    }
     w.__findScroller = () => {
       const list = document.querySelector(
         "[data-testid=kept-page][data-visible=true] [data-testid=chat-transcript]",
@@ -140,6 +159,28 @@ await ctx.addInitScript(
         childList: true,
         subtree: true,
       });
+      const recordMicro = (source) => {
+        if (!w.__sampling || !s) return;
+        const a = anchorId
+          ? s.querySelector(
+              `[data-testid=kept-page][data-visible=true] [data-message-id="${CSS.escape(anchorId)}"]`,
+            )
+          : null;
+        const sr = s.getBoundingClientRect();
+        const ar = a?.getBoundingClientRect();
+        w.__microSamples.push({
+          t: Math.round(performance.now()),
+          source,
+          top: Math.round(s.scrollTop),
+          aTop: ar ? Math.round(ar.top - sr.top) : null,
+        });
+      };
+      s.addEventListener("scroll", () => recordMicro("scroll"), {
+        passive: true,
+      });
+      if (typeof ResizeObserver !== "undefined" && lastList) {
+        new ResizeObserver(() => recordMicro("ro")).observe(lastList);
+      }
     };
     const tick = () => {
       if (w.__sampling) {
@@ -379,23 +420,48 @@ if (process.env.TWICE === "1") {
 }
 await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/9-end.png` });
-const { samples, events, anchorId } = await page.evaluate(() => ({
-  samples: window.__samples,
-  events: window.__events,
-  anchorId: window.__anchorId,
-}));
+const { samples, microSamples, events, anchorId, smoothCalls } =
+  await page.evaluate(() => ({
+    samples: window.__samples,
+    microSamples: window.__microSamples,
+    events: window.__events,
+    anchorId: window.__anchorId,
+    smoothCalls: window.__smoothCalls,
+  }));
 const pre = samples.filter((x) => x.t < tSend);
 const post = [
   ...(pre.length ? [pre[pre.length - 1]] : []),
   ...samples.filter((x) => x.t >= tSend),
 ];
+const postMicro = microSamples.filter((x) => x.t >= tSend);
 fs.writeFileSync(
   `${out}/samples.json`,
-  JSON.stringify({ tSend, anchorId, samples, events }),
+  JSON.stringify({ tSend, anchorId, samples, microSamples, events }),
 );
+function countReversals(list, key, minStep = 2) {
+  let lastDir = 0;
+  let prev = null;
+  let rev = 0;
+  for (const item of list) {
+    const val = item[key];
+    if (val == null) continue;
+    if (prev != null) {
+      const diff = val - prev;
+      if (Math.abs(diff) >= minStep) {
+        const dir = diff > 0 ? 1 : -1;
+        if (lastDir !== 0 && dir !== lastDir) rev += 1;
+        lastDir = dir;
+        prev = val;
+      }
+    } else {
+      prev = val;
+    }
+  }
+  return rev;
+}
 // Analysis (no user input after send): fail if, between two consecutive frames, scrollTop drops > 24px, the anchor message
-// moves DOWN on screen > 24px (older history slides into view) or UP > 120px (faster than the stick-to-bottom spring ever
-// moves), or the scroller itself moves on screen (sTop changes: something above it appeared / vanished).
+// moves DOWN on screen > 24px (older history slides into view) or UP > 120px/frame, any smooth scroll occurs,
+// or bidirectional >= 2px ping-pong reversals occur on scrollTop / anchor.
 const ups = [],
   anchorDowns = [];
 for (let i = 1; i < post.length; i++) {
@@ -420,8 +486,7 @@ for (let i = 1; i < post.length; i++) {
     b = post[i];
   // 往上 120px 是「每帧（60fps）」的上限：机器慢、两次采样隔了几帧时按隔了几帧放宽（速度不变）。往下、scrollTop 回退照旧按帧严格算。
   const frames = Math.max(1, (b.t - a.t) / 16.7);
-  // 发送时把新消息平滑滚到顶（scroll-behavior: smooth 开着的那几帧）是设计好的动画，不算往上跳；往下跳、回退照旧算。
-  const upLimit = a.smooth || b.smooth ? Infinity : 120 * frames;
+  const upLimit = 120 * frames;
   if (
     a.aScr != null &&
     b.aScr != null &&
@@ -439,6 +504,13 @@ for (let i = 1; i < post.length; i++) {
       top1: b.top,
     });
 }
+const smoothFrames = post.filter((x) => x.smooth).length;
+const topReversals = process.env.SCROLLUP
+  ? 0
+  : Math.max(
+      countReversals(post, "top", 2),
+      countReversals(postMicro, "top", 2),
+    );
 log("SCREENJUMPS", JSON.stringify(scr.slice(0, 15)));
 const minTop = Math.min(...post.map((x) => x.top));
 const minFirstVis = Math.min(
@@ -454,6 +526,9 @@ log(
     screenJumps: scr.length,
     screenDownJumps: scr.filter((x) => x.to > x.from).length,
     anchorDownJumps: anchorDowns.length,
+    smoothFrames,
+    smoothCalls,
+    topReversals,
     minTopAfterSend: minTop,
     firstVisAtSend: post[0]?.firstVis,
     minFirstVis,
@@ -480,12 +555,18 @@ if (removed.length)
 const bad =
   scr.length +
   ups.length +
+  smoothFrames +
+  smoothCalls +
+  topReversals +
   (process.env.ALLOW_REMOVE === "1" ? 0 : removed.length);
 log(
   bad ? "FAIL send-jump" : "PASS send-jump",
   JSON.stringify({
     screenJumps: scr.length,
     upJumps: ups.length,
+    smoothFrames,
+    smoothCalls,
+    topReversals,
     removed: removed.length,
   }),
 );

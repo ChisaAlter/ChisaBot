@@ -5080,16 +5080,26 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 
 /* ── 第四轮（2026-10-13）：有了结果就收起过程话；用户停掉的那一轮末尾挂「已停止」 ── */
 
+/* 贴底态由 SettleAtEnd 维护 data-cb-pinned="true"，关闭浏览器原生滚动锚定防与 JS 锁底互搏；上滑看历史或 tail-first 补历史时保持 auto。 */
+[data-slot="message-scroller-viewport"][data-cb-pinned="true"] {
+  overflow-anchor: none;
+}
+
 /* §94.6：最下面那一格（留白、「思考中」、排队的消息）不当滚动锚点，见 chat-transcript.tsx chat-tail。 */
 .chat-tail > *,
 .chat-status-slot > * {
   overflow-anchor: none;
 }
 
-/* §94.7：状态行固定槽——「思考中」/ 干活胶囊 / 暂停 /「已停止」在这格 38px 里出现换样收起，列高不变，
- * 钉在底部时不再整段往上挪（以前胶囊从 0 长高，scrollTop 跟着 +38px）。38px = 胶囊高（9 + 20 行高 + 9）。 */
+/* §94.7：状态行固定槽——使用单格 grid 同格叠放，消除退场替身与新胶囊并存瞬间的双倍高度跳变。 */
 .chat-status-slot {
+  display: grid;
+  align-items: start;
   min-height: 38px;
+}
+
+.chat-status-slot > * {
+  grid-area: 1 / 1;
 }
 
 .chat-stopped-mark {
