@@ -76,8 +76,11 @@ export function hasPendingApprovals(
   data: ApprovalInboxData | undefined,
 ): boolean {
   if (!data) return false;
-  if (data.questions.length > 0) return true;
-  return data.requests.some((request) => request.status === "pending");
+  if (Array.isArray(data.questions) && data.questions.length > 0) return true;
+  return (
+    Array.isArray(data.requests) &&
+    data.requests.some((request) => request.status === "pending")
+  );
 }
 
 export const approvalInboxOptions = (options?: {
