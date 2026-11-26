@@ -96,6 +96,11 @@ class MainActivity : ComponentActivity() {
         updater.onResume()
     }
 
+    override fun onDestroy() {
+        if (::updater.isInitialized) updater.close()
+        super.onDestroy()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)

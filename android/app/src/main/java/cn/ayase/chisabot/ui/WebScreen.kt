@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import android.provider.MediaStore
 import android.os.Environment
@@ -75,6 +76,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import cn.ayase.chisabot.AppViewModel
 import cn.ayase.chisabot.BuildConfig
 import cn.ayase.chisabot.ShareDraft
@@ -85,6 +89,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Collections
 
 /**
  * 与桌面共用 React 应用，按 WebView 的真实手机 viewport 响应式布局。
@@ -165,19 +170,41 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                 ?: cameraUri?.let { arrayOf(it) }
         } else null
         fileCallback?.onReceiveValue(selected); fileCallback = null
-        if (selected == null) cameraFile?.delete()
+        val activeCameraUri = cameraUri
+        val usedCameraFile = activeCameraUri != null && selected?.any { it == activeCameraUri } == true
+        if (!usedCameraFile) cameraFile?.delete()
         cameraUri = null; cameraFile = null
     }
     // 网页要麦克风（语音输入）且系统还没给 RECORD_AUDIO 时，先问系统；拒绝就拒绝网页的请求。
     // 被拒时要告诉用户：这次拒绝给一句提示；选了「不再询问」（拒绝后系统不再给理由提示）就弹框引导去应用设置。
     val context = LocalContext.current
-    val voiceCallAudioManager = remember(context.applicationContext) {
-        VoiceCallAudioManager(context.applicationContext)
+    val appContext = context.applicationContext
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val voiceCallAudioManager = remember(appContext) {
+        VoiceCallAudioManager(appContext)
     }
-    val pendingDownloadIds = remember { mutableSetOf<Long>() }
+    LaunchedEffect(appContext) {
+        withContext(Dispatchers.IO) {
+            cleanupStaleCameraCache(File(appContext.cacheDir, "camera"))
+        }
+    }
+    DisposableEffect(lifecycleOwner, web) {
+        val currentWeb = web ?: return@DisposableEffect onDispose {}
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> currentWeb.onResume()
+                Lifecycle.Event.ON_PAUSE -> currentWeb.onPause()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+    val pendingDownloadIds = remember { Collections.synchronizedSet(mutableSetOf<Long>()) }
     // 用系统 ACTION_DOWNLOAD_COMPLETE 广播替代每秒轮询 DownloadManager，消除 60 次 IPC 并兼容 >60s 大文件下载。
-    DisposableEffect(context) {
-        val appContext = context.applicationContext
+    DisposableEffect(appContext) {
         val manager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -197,7 +224,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                     }
                     if (state?.first == DownloadManager.STATUS_FAILED) {
                         android.util.Log.w("ChisaDownload", "Download failed: ${state.second}")
-                        Toast.makeText(context, "下载失败，请检查网络后重试。", Toast.LENGTH_LONG).show()
+                        Toast.makeText(appContext, "下载失败，请检查网络后重试。", Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -221,20 +248,22 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
         if (result.resultCode == Activity.RESULT_OK && destination != null && export != null) scope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(destination, "w")?.use { it.write(export.bytes) }
+                    appContext.contentResolver.openOutputStream(destination, "w")?.use { it.write(export.bytes) }
                         ?: throw IllegalStateException("无法写入这个位置。")
                 }
-            }.onSuccess { Toast.makeText(context, "已保存 ${export.name}", Toast.LENGTH_SHORT).show() }
-                .onFailure { Toast.makeText(context, "保存失败，请重新选择位置。", Toast.LENGTH_LONG).show() }
+            }.onSuccess { Toast.makeText(appContext, "已保存 ${export.name}", Toast.LENGTH_SHORT).show() }
+                .onFailure { Toast.makeText(appContext, "保存失败，请重新选择位置。", Toast.LENGTH_LONG).show() }
         }
     }
     fun chooseFile(params: WebChromeClient.FileChooserParams) {
         val mime = params.acceptTypes.filter { it.isNotBlank() }
         val intent = params.createIntent().apply { addCategory(Intent.CATEGORY_OPENABLE) }
         if (mime.any { it.startsWith("image/") } && ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-            val file = File.createTempFile("capture-", ".jpg", File(context.cacheDir, "camera").apply { mkdirs() })
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+            val cameraDir = File(appContext.cacheDir, "camera").apply { mkdirs() }
+            val file = File.createTempFile("capture-", ".jpg", cameraDir)
+            val uri = FileProvider.getUriForFile(appContext, "${appContext.packageName}.files", file)
             cameraFile = file; cameraUri = uri
+            scope.launch(Dispatchers.IO) { cleanupStaleCameraCache(cameraDir, keepFile = file) }
             val capture = Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, uri)
                 .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (params.isCaptureEnabled) picker.launch(capture)
@@ -270,6 +299,8 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
             micRequest?.let { runCatching { it.deny() } }
             micRequest = null
             fileCallback?.onReceiveValue(null); fileCallback = null
+            cameraFile?.let { runCatching { it.delete() } }
+            cameraFile = null; cameraUri = null
         }
     }
     DisposableEffect(voiceCallAudioManager) {
@@ -318,6 +349,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
         val desiredVisibility = if (loadError == null) View.VISIBLE else View.INVISIBLE
         var lastBgColor by remember(origin) { mutableStateOf<Int?>(null) }
         val webDestroyed = remember(origin) { java.util.concurrent.atomic.AtomicBoolean(false) }
+        val mainFrameUrlHolder = remember(origin) { MainFrameUrlHolder() }
         Box(Modifier.fillMaxSize().imePadding()) {
             AndroidView(
                 factory = { ctx ->
@@ -345,6 +377,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 @JavascriptInterface
                                 fun setTheme(mode: String?) {
                                     post {
+                                        if (webDestroyed.get()) return@post
                                         if (originKey(this@apply.url) != originKey(origin)) return@post
                                         val next = normalizeWebTheme(mode) ?: return@post
                                         if (next != vm.themeMode) vm.setTheme(next)
@@ -353,6 +386,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 @JavascriptInterface
                                 fun setThemeMode(mode: String?) {
                                     post {
+                                        if (webDestroyed.get()) return@post
                                         if (originKey(this@apply.url) != originKey(origin)) return@post
                                         val next = normalizeWebThemeMode(mode) ?: return@post
                                         if (next != vm.themeMode) vm.setTheme(next)
@@ -365,7 +399,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                             VoiceAudioBridge(
                                 audioManager = voiceCallAudioManager,
                                 allowedOrigin = origin,
-                                currentMainFrameUrl = { readMainFrameUrl(this@apply) { webDestroyed.get() } },
+                                currentMainFrameUrl = { if (webDestroyed.get()) null else mainFrameUrlHolder.url },
                             ),
                             "__chisabotVoiceAudioNative",
                         )
@@ -400,6 +434,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 return true
                             }
                             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                                mainFrameUrlHolder.url = url
                                 loadError = null
                                 pageReady = false
                                 if (originKey(url) != originKey(origin)) {
@@ -407,6 +442,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 }
                             }
                             override fun onPageCommitVisible(view: WebView, url: String) {
+                                mainFrameUrlHolder.url = url
                                 syncTheme(view, latestTheme)
                                 if (originKey(url) == originKey(origin)) {
                                     syncAndroidSafeInsets(view, latestInsets)
@@ -417,6 +453,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 }
                             }
                             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+                                mainFrameUrlHolder.url = url
                                 if (originKey(url)?.let { it == originKey(origin) } == true) {
                                     val uri = Uri.parse(url)
                                     if (isWebSignOutPath(uri.path)) {
@@ -430,6 +467,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 }
                             }
                             override fun onPageFinished(view: WebView, url: String) {
+                                mainFrameUrlHolder.url = url
                                 syncTheme(view, latestTheme)
                                 if (originKey(url) == originKey(origin)) {
                                     syncAndroidSafeInsets(view, latestInsets)
@@ -489,27 +527,35 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                         pendingExport = export
                                         saveExport.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
                                             .setType(webExportPickerMime(export.name, export.mime)).putExtra(Intent.EXTRA_TITLE, export.name))
-                                    } catch (error: Exception) { Toast.makeText(context, error.message ?: "无法保存导出内容，请重试。", Toast.LENGTH_LONG).show() }
+                                    } catch (error: Exception) { Toast.makeText(appContext, error.message ?: "无法保存导出内容，请重试。", Toast.LENGTH_LONG).show() }
                                     finally { readingExport = false }
                                 }
                             } else if (Uri.parse(url).scheme !in setOf("http", "https")) {
-                                Toast.makeText(context, "无法下载这个链接。", Toast.LENGTH_LONG).show()
+                                Toast.makeText(appContext, "无法下载这个链接。", Toast.LENGTH_LONG).show()
                             } else runCatching {
                                 val name = webDownloadName(url, disposition, mime)
+                                val hasWriteStorage = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+                                    ContextCompat.checkSelfPermission(appContext, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
                                 val request = DownloadManager.Request(Uri.parse(url)).setTitle(name).setMimeType(mime)
                                     .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                                    .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
                                     .addRequestHeader("User-Agent", ua)
+                                if (shouldUsePublicDownloadsDir(Build.VERSION.SDK_INT, hasWriteStorage)) {
+                                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
+                                } else {
+                                    // API <= 28 未授予 WRITE_EXTERNAL_STORAGE 时降级到应用私有外部下载目录，避免 SecurityException 崩溃。
+                                    request.setDestinationInExternalFilesDir(appContext, Environment.DIRECTORY_DOWNLOADS, name)
+                                }
                                 if (originKey(url) == originKey(origin)) CookieManager.getInstance().getCookie(url)?.let { request.addRequestHeader("Cookie", it) }
-                                val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                                val manager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
                                 val id = manager.enqueue(request)
                                 pendingDownloadIds.add(id)
-                                Toast.makeText(context, "已开始下载 $name", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(appContext, "已开始下载 $name", Toast.LENGTH_SHORT).show()
                             }.onFailure {
                                 android.util.Log.w("ChisaDownload", "Download admission failed", it)
-                                Toast.makeText(context, "下载未开始，请重试。", Toast.LENGTH_LONG).show()
+                                Toast.makeText(appContext, "下载未开始，请重试。", Toast.LENGTH_LONG).show()
                             }
                         }
+                        mainFrameUrlHolder.url = origin + path
                         loadUrl(origin + path)
                         web = this
                     }
@@ -527,11 +573,20 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                 },
                 // imePadding：edge-to-edge 下 adjustResize 不再缩 WebView，键盘高度只从 insets 来（CB-098）。
                 modifier = Modifier.fillMaxSize(),
-                onRelease = {
+                onRelease = { view ->
                     webDestroyed.set(true)
+                    mainFrameUrlHolder.url = null
+                    if (web === view) web = null
                     runCatching { voiceCallAudioManager.release() }
-                    it.stopLoading()
-                    it.destroy()
+                    runCatching { view.removeJavascriptInterface("ChisaAndroid") }
+                    runCatching { view.removeJavascriptInterface("__chisabotVoiceAudioNative") }
+                    view.webViewClient = WebViewClient()
+                    view.webChromeClient = null
+                    view.setDownloadListener(null)
+                    view.stopLoading()
+                    runCatching { view.onPause() }
+                    (view.parent as? ViewGroup)?.removeView(view)
+                    view.destroy()
                 },
             )
             androidx.compose.animation.AnimatedVisibility(visible = progress in 1..99, exit = fadeOut(tween(200))) {
@@ -643,27 +698,44 @@ internal fun micResourcesToGrant(requestOrigin: String?, appOrigin: String, reso
 /** 「协议://主机:端口」，主机小写、默认端口补齐；解析不了返回 null。 */
 private fun originKey(origin: String?): String? = normalizeVoiceOriginKey(origin)
 
-/** 在主线程安全读取 WebView 当前主框架 URL，供受限 JS 桥在 JavaBridge 线程做同源校验。 */
-private fun readMainFrameUrl(view: WebView, isDestroyed: () -> Boolean): String? {
-    if (isDestroyed()) return null
-    val mainLooper = android.os.Looper.getMainLooper()
-    if (android.os.Looper.myLooper() == mainLooper) {
-        return runCatching { view.url }.getOrNull()
-    }
-    val latch = java.util.concurrent.CountDownLatch(1)
-    var currentUrl: String? = null
-    val posted = android.os.Handler(mainLooper).post {
-        if (!isDestroyed()) {
-            currentUrl = runCatching { view.url }.getOrNull()
-        }
-        latch.countDown()
-    }
-    if (!posted) return null
-    val completed = runCatching {
-        latch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
-    }.getOrDefault(false)
-    return if (completed) currentUrl else null
+/** 供 WebViewClient 实时写入、JavaBridge 线程零阻塞读取当前主框架 URL。 */
+private class MainFrameUrlHolder {
+    @Volatile
+    var url: String? = null
 }
+
+internal const val CAMERA_CACHE_MAX_AGE_MS = 30L * 60L * 1000L
+
+/** 清理 cache/camera/ 下过期临时拍照文件（capture-*.jpg / photo-*.jpg），跳过正在使用的 [keepFile]。 */
+internal fun cleanupStaleCameraCache(
+    cameraDir: File,
+    nowMs: Long = System.currentTimeMillis(),
+    maxAgeMs: Long = CAMERA_CACHE_MAX_AGE_MS,
+    keepFile: File? = null,
+): Int {
+    if (!cameraDir.isDirectory) return 0
+    val keepCanonical = runCatching { keepFile?.canonicalPath }.getOrNull()
+    var deleted = 0
+    cameraDir.listFiles()?.forEach { file ->
+        if (!file.isFile) return@forEach
+        val name = file.name
+        val isTempCamera = (name.startsWith("capture-") || name.startsWith("photo-")) && name.endsWith(".jpg")
+        if (!isTempCamera) return@forEach
+        val fileCanonical = runCatching { file.canonicalPath }.getOrNull()
+        if (keepCanonical != null && keepCanonical == fileCanonical) return@forEach
+        val ageMs = nowMs - file.lastModified()
+        if (ageMs >= maxAgeMs && runCatching { file.delete() }.getOrDefault(false)) {
+            deleted++
+        }
+    }
+    return deleted
+}
+
+/** API 29+ 或 API <= 28 已具备 WRITE_EXTERNAL_STORAGE 权限时写入公共 Downloads，否则降级应用私有外部目录。 */
+internal fun shouldUsePublicDownloadsDir(
+    sdkInt: Int,
+    hasWriteExternalStoragePermission: Boolean,
+): Boolean = sdkInt >= Build.VERSION_CODES.Q || hasWriteExternalStoragePermission
 
 /** 仅向同源顶层页面暴露 `window.chisabotVoiceAudio`，透传受同源守卫的原生音频能力。 */
 private fun installVoiceAudioBridge(view: WebView) {

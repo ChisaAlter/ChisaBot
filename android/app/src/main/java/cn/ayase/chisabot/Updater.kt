@@ -14,16 +14,74 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+
+private val SAFE_UPDATE_VERSION_REGEX = Regex("^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")
+private const val MAX_UPDATE_FEED_BYTES = 1024 * 1024
+
+/** 校验更新源或 APK 下载地址必须为合法 https:// URL，禁止明文 HTTP 与内嵌凭据。 */
+internal fun requireHttpsUpdateUrl(raw: String, label: String = "更新地址"): URL {
+    val trimmed = raw.trim()
+    val parsed = runCatching { URL(trimmed) }.getOrNull()
+        ?: throw IllegalArgumentException("$label 格式无效")
+    if (!parsed.protocol.equals("https", ignoreCase = true) || parsed.host.isNullOrBlank()) {
+        throw IllegalArgumentException("$label 仅允许 https:// 地址")
+    }
+    if (parsed.userInfo != null) {
+        throw IllegalArgumentException("$label 不允许包含账号密码")
+    }
+    return parsed
+}
+
+/** 校验更新版本号满足安全白名单且不含路径穿越片段 `..`。 */
+internal fun validateUpdateVersion(version: String): String {
+    val v = version.trim()
+    if (!SAFE_UPDATE_VERSION_REGEX.matches(v) || v.contains("..")) {
+        throw IllegalArgumentException("非法的更新版本号")
+    }
+    return v
+}
+
+/** 解析更新 APK 落盘路径并校验 canonicalPath 严格位于 [updatesDir] 目录内，防止路径穿越。 */
+internal fun resolveSafeUpdateApkFile(updatesDir: File, version: String): File {
+    val safeVersion = validateUpdateVersion(version)
+    val baseCanonical = updatesDir.canonicalFile
+    val targetCanonical = File(baseCanonical, "ChisaBot-Android-$safeVersion.apk").canonicalFile
+    val basePrefix = if (baseCanonical.path.endsWith(File.separator)) baseCanonical.path else baseCanonical.path + File.separator
+    if (targetCanonical.parentFile != baseCanonical || !targetCanonical.path.startsWith(basePrefix)) {
+        throw SecurityException("更新包目标路径越界")
+    }
+    return targetCanonical
+}
+
+private fun readUtf8Bounded(input: InputStream, maxBytes: Int, label: String): String {
+    val out = ByteArrayOutputStream()
+    val buf = ByteArray(16 * 1024)
+    var total = 0
+    while (true) {
+        val n = input.read(buf)
+        if (n < 0) break
+        total += n
+        if (total > maxBytes) throw IllegalStateException("$label 响应体积超过限制")
+        out.write(buf, 0, n)
+    }
+    return out.toByteArray().toString(Charsets.UTF_8)
+}
 
 /**
  * APK 在线更新。更新源是一个 JSON（BuildConfig.UPDATE_FEED：构建期 CHISABOT_ANDROID_UPDATE_FEED，
@@ -36,20 +94,57 @@ class Updater(private val activity: Activity) {
 
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var waitingForPermission: File? = null
+    private var activeDialog: AlertDialog? = null
     @Volatile private var downloading = false
+    @Volatile private var closed = false
 
-    private fun alive(): Boolean = !activity.isFinishing && !activity.isDestroyed
+    private fun alive(): Boolean = !closed && !activity.isFinishing && !activity.isDestroyed
+
+    private fun dismissActiveDialog() {
+        val dlg = activeDialog
+        activeDialog = null
+        if (dlg != null && dlg.isShowing) {
+            runCatching { dlg.dismiss() }
+        }
+    }
+
+    private fun showDialog(dialog: AlertDialog): AlertDialog {
+        dismissActiveDialog()
+        activeDialog = dialog
+        dialog.setOnDismissListener {
+            if (activeDialog === dialog) activeDialog = null
+        }
+        dialog.show()
+        return dialog
+    }
+
+    /** Activity 销毁时取消所有后台协程并释放 Dialog / Activity 引用，防止内存泄漏。 */
+    fun close() {
+        closed = true
+        downloading = false
+        waitingForPermission = null
+        dismissActiveDialog()
+        ioScope.cancel()
+    }
+
+    fun cancel() = close()
 
     data class Release(val version: String, val code: Int, val url: String, val sha256: String, val notes: String)
 
     fun check(silent: Boolean) {
-        if (downloading) return
+        if (closed || downloading) return
         if (BuildConfig.UPDATE_FEED.isBlank()) {
             if (!silent) toast("这个版本没有配置更新源")
             return
         }
         ioScope.launch {
-            val release = runCatching { fetch() }.getOrNull()
+            val release = try {
+                fetch()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                null
+            }
             withContext(Dispatchers.Main) {
                 if (!alive()) return@withContext
                 when {
@@ -62,6 +157,7 @@ class Updater(private val activity: Activity) {
     }
 
     fun onResume() {
+        if (!alive()) return
         val apk = waitingForPermission ?: return
         if (canInstall()) {
             waitingForPermission = null
@@ -70,7 +166,7 @@ class Updater(private val activity: Activity) {
     }
 
     private fun fetch(): Release {
-        val feed = URL(BuildConfig.UPDATE_FEED)
+        val feed = requireHttpsUpdateUrl(BuildConfig.UPDATE_FEED, "更新源")
         val conn = (feed.openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000
             readTimeout = 10_000
@@ -78,15 +174,18 @@ class Updater(private val activity: Activity) {
             setRequestProperty("Cache-Control", "no-cache")
         }
         val text = try {
-            conn.inputStream.bufferedReader().use { it.readText() }
+            requireHttpsUpdateUrl(conn.url.toString(), "更新源")
+            conn.inputStream.use { readUtf8Bounded(it, MAX_UPDATE_FEED_BYTES, "更新源") }
         } finally {
             conn.disconnect()
         }
         val j = JSONObject(text)
+        val version = validateUpdateVersion(j.getString("version"))
+        val resolvedApkUrl = requireHttpsUpdateUrl(URL(feed, j.getString("url")).toString(), "更新包地址").toString()
         return Release(
-            version = j.getString("version"),
+            version = version,
             code = j.getInt("versionCode"),
-            url = URL(feed, j.getString("url")).toString(),
+            url = resolvedApkUrl,
             sha256 = j.getString("sha256").lowercase(),
             notes = j.optString("notes", ""),
         )
@@ -94,7 +193,7 @@ class Updater(private val activity: Activity) {
 
     private fun prompt(r: Release) {
         if (!alive() || downloading) return
-        AlertDialog.Builder(activity)
+        val dialog = AlertDialog.Builder(activity)
             .setTitle("ChisaBot ${r.version} 可用")
             .setMessage(buildString {
                 append("当前版本 ${BuildConfig.VERSION_NAME}")
@@ -102,7 +201,8 @@ class Updater(private val activity: Activity) {
             })
             .setPositiveButton("下载并安装") { _, _ -> download(r) }
             .setNegativeButton("稍后", null)
-            .show()
+            .create()
+        showDialog(dialog)
     }
 
     private fun download(r: Release) {
@@ -117,31 +217,38 @@ class Updater(private val activity: Activity) {
             addView(label)
             addView(bar)
         }
-        val dialog = AlertDialog.Builder(activity)
-            .setTitle("下载 ChisaBot ${r.version}")
-            .setView(box)
-            .setCancelable(false)
-            .show()
+        val dialog = showDialog(
+            AlertDialog.Builder(activity)
+                .setTitle("下载 ChisaBot ${r.version}")
+                .setView(box)
+                .setCancelable(false)
+                .create(),
+        )
 
         ioScope.launch {
             val dir = File(activity.cacheDir, "updates").apply { mkdirs() }
             dir.listFiles()?.forEach { it.delete() }
-            val out = File(dir, "ChisaBot-Android-${r.version}.apk")
-            val result = runCatching {
-                val conn = (URL(r.url).openConnection() as HttpURLConnection).apply {
+            var out: File? = null
+            val finalResult: Result<String?> = try {
+                val apkUrl = requireHttpsUpdateUrl(r.url, "更新包地址")
+                val target = resolveSafeUpdateApkFile(dir, r.version)
+                out = target
+                val conn = (apkUrl.openConnection() as HttpURLConnection).apply {
                     connectTimeout = 15_000
                     readTimeout = 30_000
                 }
                 val md = MessageDigest.getInstance("SHA-256")
                 try {
+                    requireHttpsUpdateUrl(conn.url.toString(), "更新包地址")
                     val total = conn.contentLengthLong
                     conn.inputStream.use { input ->
-                        out.outputStream().use { output ->
+                        target.outputStream().use { output ->
                             val buf = ByteArray(64 * 1024)
                             var done = 0L
                             var last = -1
                             var lastUiAt = 0L
                             while (true) {
+                                currentCoroutineContext().ensureActive()
                                 val n = input.read(buf)
                                 if (n < 0) break
                                 output.write(buf, 0, n)
@@ -170,21 +277,30 @@ class Updater(private val activity: Activity) {
                 val hex = md.digest().joinToString("") { "%02x".format(it) }
                 check(hex == r.sha256) { "校验失败（sha256 不一致）" }
                 // 将 getPackageArchiveInfo APK 证书解析放在 Dispatchers.IO，避免阻塞 UI 线程 100–500ms。
-                signatureProblem(out)
+                Result.success(signatureProblem(target))
+            } catch (e: CancellationException) {
+                out?.delete()
+                throw e
+            } catch (t: Throwable) {
+                Result.failure(t)
             }
             withContext(Dispatchers.Main) {
                 downloading = false
-                if (alive() && dialog.isShowing) runCatching { dialog.dismiss() }
-                if (!alive()) return@withContext
-                result.onSuccess { sigError ->
-                    if (sigError != null) {
-                        out.delete()
-                        toast(sigError)
+                if (activeDialog === dialog) dismissActiveDialog() else if (alive() && dialog.isShowing) runCatching { dialog.dismiss() }
+                if (!alive()) {
+                    out?.delete()
+                    return@withContext
+                }
+                finalResult.onSuccess { sigError ->
+                    val target = out
+                    if (sigError != null || target == null) {
+                        target?.delete()
+                        toast(sigError ?: "更新下载失败")
                     } else {
-                        launchInstaller(out)
+                        launchInstaller(target)
                     }
                 }.onFailure {
-                    out.delete()
+                    out?.delete()
                     toast("更新下载失败：${it.message}")
                 }
             }
@@ -214,7 +330,7 @@ class Updater(private val activity: Activity) {
         if (!alive()) return
         if (!canInstall()) {
             waitingForPermission = apk
-            AlertDialog.Builder(activity)
+            val dialog = AlertDialog.Builder(activity)
                 .setTitle("需要安装权限")
                 .setMessage("请允许 ChisaBot 安装应用，返回后会自动继续安装更新。")
                 .setPositiveButton("去设置") { _, _ ->
@@ -223,7 +339,8 @@ class Updater(private val activity: Activity) {
                     )
                 }
                 .setNegativeButton("取消") { _, _ -> waitingForPermission = null }
-                .show()
+                .create()
+            showDialog(dialog)
             return
         }
         val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.files", apk)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **全量审查 M6 — Android 原生壳内存泄漏、主线程 I/O 与更新安全加固**：
+  - `Updater.kt` 与 `MainActivity.kt` 补齐 `close()`/`cancel()` 在 `onDestroy` 释放 `AlertDialog`、取消 `ioScope` 并清理半截 APK；新增 `requireHttpsUpdateUrl()` 强制 HTTPS 无凭据更新源与下载链接，新增 `validateUpdateVersion()` 与 `resolveSafeUpdateApkFile()` `canonicalPath` 校验防止路径穿越。
+  - `WebScreen.kt` 改用 `MainFrameUrlHolder` `@Volatile` 实时维护主框架 URL，彻底删除 `VoiceAudioBridge` 500ms `CountDownLatch` 阻塞；接入 `LifecycleEventObserver` 补齐 `webView.onPause()`/`onResume()`、`onRelease` 有序销毁及过期拍照缓存清理；`DownloadManager` 改用 `applicationContext` 隔离广播并对 API ≤ 28 未授存储权限时降级写入应用私有下载目录避免崩溃。
+  - `AppViewModel.kt` 将 `contentResolver` 读取与 `CookieManager` 清理/落盘移至 `Dispatchers.IO`（加 `chatGeneration` 守卫防串会话），`runTurn()` `finally` 状态复位包裹 `NonCancellable`；`GatewayAuth.kt` 限制响应读取上限 1 MiB，`VoiceCallAudioManager.kt` 在 API 31+ 接入 `setCommunicationDevice`；新增 `HardeningLogicTest` 单元测试（67/67 pass，纯 Android 原生改动，无新增数据库迁移）。
+
 - **全量审查 M4 — Web 前端首屏打包瘦身、闲置轮询降频与渲染内存优化**：
   - **首屏打包与预加载瘦身**：将 `AgentProfile`、`GroupChatView`、`SideChatDrawer` 与 10 组重型工具渲染器（含 `RenderUiTool`、`PersonalSourcesTool` 等）及 `ConfirmHost` 剥离出聊天首屏静态闭包改为按需懒加载；`route-preload.ts` 过滤小于 12 KB 碎片传递依赖并新增 `MAX_PRELOAD_CHUNKS = 30` 门禁，聊天首屏 `<link rel="modulepreload">` 由 **87 降至 21（-75.9%）**，首屏静态闭包 JS 减少 **-327.8 KB raw / -117.0 KB gz（-22 块）**。
   - **闲置轮询与时钟门控**：`taskCenterSnapshotOptions` 与 `approvalInboxOptions` 空闲态分别由 5s / 10s 降至 **60s** 并禁用后台轮询；9 处 KeepAlive 内轮询统一接入非重渲 `useKeptVisibility()`，离线设备停止 30s 轮询；`desktop-window.ts` 250ms 裁剪定时器在最大化/隐藏态停表，`use-now.ts` 与 `relative-time.ts`（改为单模块共享 60s 时钟）接入 `document.hidden` 暂停与切回即刻刷新。

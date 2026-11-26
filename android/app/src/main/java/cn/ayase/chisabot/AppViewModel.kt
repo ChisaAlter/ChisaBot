@@ -30,10 +30,12 @@ import cn.ayase.chisabot.net.Api
 import cn.ayase.chisabot.net.Unauthorized
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -365,22 +367,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun logout() {
         val o = origin()
         val token = deviceToken
-        // 先取出会话再清本机 Cookie，否则异步退出请求往往拿到 null，服务器会话没有被撤销。
-        val cookie = o?.let { CookieManager.getInstance().getCookie("$it/") }
+        synchronized(authStateLock) {
+            prefs.edit().putBoolean("loggedIn", false).apply()
+            clearDeviceBinding()
+            lastRenewSucceededAt = 0L
+        }
+        stopRun()
+        stack.clear(); stack += Screen.Login
         viewModelScope.launch(Dispatchers.IO) {
+            val cm = runCatching { CookieManager.getInstance() }.getOrNull()
+            // 先取出会话再清本机 Cookie，否则异步退出请求往往拿到 null，服务器会话没有被撤销。
+            val cookie = o?.let { runCatching { cm?.getCookie("$it/") }.getOrNull() }
+            val shouldClearCookies = synchronized(authStateLock) { !prefs.getBoolean("loggedIn", false) }
+            if (shouldClearCookies && cm != null) {
+                runCatching {
+                    cm.removeAllCookies {
+                        viewModelScope.launch(Dispatchers.IO) { runCatching { cm.flush() } }
+                    }
+                    cm.flush()
+                }
+            }
             if (o != null) {
                 if (token != null) GatewayAuth.unenroll(o, token)
                 GatewayAuth.logout(o, cookie)
             }
         }
-        synchronized(authStateLock) {
-            prefs.edit().putBoolean("loggedIn", false).apply()
-            clearDeviceBinding()
-            lastRenewSucceededAt = 0L
-            CookieManager.getInstance().removeAllCookies(null)
-        }
-        stopRun()
-        stack.clear(); stack += Screen.Login
     }
 
     /** 会话失效（服务器把我们带回登录）：不解除绑定，只回登录页；有设备令牌时下次请求会先静默续期。 */
@@ -464,6 +475,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun openChat(bot: Bot) {
         stopRun()
         chatBot = bot; threadId = null; channelId = null; messages = emptyList(); runError = null; chatLoadError = null
+        workStarted.clear(); workEnded.clear()
         confirms = emptyMap(); files.clear(); confirmJob?.cancel()
         push(Screen.Chat(bot))
         loadChat(bot)
@@ -631,16 +643,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (generation == chatGeneration && threadId == t && liveCall?.isCanceled() != true) runError = "连接断了：${e.message ?: e.javaClass.simpleName}"
             }
         } finally {
-            withContext(Dispatchers.Main) {
+            withContext(NonCancellable + Dispatchers.Main) {
                 if (generation != chatGeneration) return@withContext
                 running = false
                 stopping = false
                 liveCall = null
-                kickConfirms()
-                // 读一次服务器存下的历史，让本机和别的设备一致（含 MESSAGES_SNAPSHOT 之外的整理）
-                if (threadId == t) runCatching { api.get("/api/conversations/threads/$t/messages").a("messages") }.getOrNull()?.let {
-                    val parsed = parseHistory(it)
-                    if (generation == chatGeneration && threadId == t && !running && parsed.isNotEmpty()) messages = parsed
+            }
+            if (currentCoroutineContext().isActive && generation == chatGeneration) {
+                withContext(Dispatchers.Main) {
+                    if (generation != chatGeneration) return@withContext
+                    kickConfirms()
+                    // 读一次服务器存下的历史，让本机和别的设备一致（含 MESSAGES_SNAPSHOT 之外的整理）
+                    if (threadId == t) runCatching { api.get("/api/conversations/threads/$t/messages").a("messages") }.getOrNull()?.let {
+                        val parsed = parseHistory(it)
+                        if (generation == chatGeneration && threadId == t && !running && parsed.isNotEmpty()) messages = parsed
+                    }
                 }
             }
         }
@@ -741,33 +758,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 选好的文件 / 照片 → 检查类型和大小 → 逐个上传。 */
+    private data class ResolvedPickedFile(
+        val uri: Uri,
+        val name: String,
+        val size: Long,
+        val mime: String,
+    )
+
+    /** 选好的文件 / 照片 → 在 IO 线程解析元数据 → 检查类型和大小 → 逐个上传。 */
     fun addFiles(uris: List<Uri>) {
         val bot = chatBot ?: return
         val api = api ?: return
-        for (uri in uris) {
-            if (files.size >= 8) { notice = "一条消息最多带 8 个附件"; break }
-            var name = "文件"; var size = -1L
-            runCatching {
-                ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
-                    if (c.moveToFirst()) {
-                        c.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = c.getString(it) ?: name }
-                        c.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 }?.let { if (!c.isNull(it)) size = c.getLong(it) }
+        if (uris.isEmpty()) return
+        val generation = chatGeneration
+        viewModelScope.launch {
+            val resolved = withContext(Dispatchers.IO) {
+                uris.map { uri ->
+                    var name = "文件"
+                    var size = -1L
+                    runCatching {
+                        ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                            if (c.moveToFirst()) {
+                                c.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = c.getString(it) ?: name }
+                                c.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 }?.let { if (!c.isNull(it)) size = c.getLong(it) }
+                            }
+                        }
                     }
+                    if (uri.scheme == "file") name = uri.lastPathSegment ?: name
+                    val mime = guessMime(name, runCatching { ctx.contentResolver.getType(uri) }.getOrNull())
+                    ResolvedPickedFile(uri, name, size, mime)
                 }
             }
-            if (uri.scheme == "file") name = uri.lastPathSegment ?: name
-            val mime = guessMime(name, ctx.contentResolver.getType(uri))
-            val image = mime in imageMimes
-            val localId = UUID.randomUUID().toString()
-            val reject = when {
-                !image && mime !in textMimes -> if (mime.startsWith("image/")) "不支持这种图片格式（可以发 PNG、JPEG、GIF、WebP）" else "不支持这种文件（可以发图片和文本类文件：txt、md、csv、json）"
-                image && size > 8L * 1024 * 1024 -> "图片超过 8 MB"
-                !image && size > 1024L * 1024 -> "文本文件超过 1 MB"
-                else -> null
+            if (generation != chatGeneration || chatBot?.id != bot.id) return@launch
+            for (item in resolved) {
+                if (files.size >= 8) { notice = "一条消息最多带 8 个附件"; break }
+                val image = item.mime in imageMimes
+                val localId = UUID.randomUUID().toString()
+                val reject = when {
+                    !image && item.mime !in textMimes -> if (item.mime.startsWith("image/")) "不支持这种图片格式（可以发 PNG、JPEG、GIF、WebP）" else "不支持这种文件（可以发图片和文本类文件：txt、md、csv、json）"
+                    image && item.size > 8L * 1024 * 1024 -> "图片超过 8 MB"
+                    !image && item.size > 1024L * 1024 -> "文本文件超过 1 MB"
+                    else -> null
+                }
+                files += PendingFile(localId, item.uri.toString(), item.name, item.mime, image, item.size, if (reject != null) "failed" else "uploading", error = reject)
+                if (reject == null) viewModelScope.launch { upload(api, bot, localId, item.uri) }
             }
-            files += PendingFile(localId, uri.toString(), name, mime, image, size, if (reject != null) "failed" else "uploading", error = reject)
-            if (reject == null) viewModelScope.launch { upload(api, bot, localId, uri) }
         }
     }
 
