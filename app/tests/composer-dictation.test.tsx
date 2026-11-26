@@ -71,14 +71,10 @@ for (const variant of ["compact", "default"] as const) {
         const expand = view.queryByRole("button", { name: "展开输入框选项" });
         if (expand) fireEvent.click(expand);
         fireEvent.click(view.getByRole("button", { name: "语音输入" }));
-        await waitFor(() =>
-          expect(view.getByText("正在监听")).toBeDefined(),
-        );
+        await waitFor(() => expect(view.getByText("正在监听")).toBeDefined());
         expect(view.queryByRole("textbox", { name: "消息" })).toBeNull();
         expect(view.queryByRole("button", { name: "语音输入" })).toBeNull();
-        expect(
-          view.getByRole("img", { name: "实时音频波形" }),
-        ).toBeDefined();
+        expect(view.getByRole("img", { name: "实时音频波形" })).toBeDefined();
         const form = view.container.querySelector("form");
         if (!form) throw new Error("Missing composer form");
         fireEvent.submit(form);
@@ -96,8 +92,7 @@ for (const variant of ["compact", "default"] as const) {
         }
         fireEvent.click(
           view.getByRole("button", {
-            name:
-              action === "stop" ? "停止并转成文字" : "转成文字并发送",
+            name: action === "stop" ? "停止并转成文字" : "转成文字并发送",
           }),
         );
         await waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
@@ -174,3 +169,48 @@ for (const variant of ["compact", "default"] as const) {
     });
   }
 }
+
+test("android dictation: NotAllowedError shows updated Android guidance and allows retry via 「重新录音」", async () => {
+  queryClient.setQueryData(deploymentKeys.capabilities(), {
+    generativeUi: true,
+    transcription: true,
+  });
+  const audio = new Blob(["recording"], { type: "audio/webm" });
+  const supported = spyOn(recording, "recordingSupported").mockReturnValue(
+    true,
+  );
+  let attempts = 0;
+  const start = spyOn(recording, "startRecording").mockImplementation(() => {
+    attempts++;
+    if (attempts === 1) {
+      return Promise.reject(new DOMException("denied", "NotAllowedError"));
+    }
+    return Promise.resolve({
+      finish: async () => audio,
+      cancel() {},
+    });
+  });
+  document.documentElement.setAttribute("data-android-app", "1");
+  try {
+    const view = render(<Composer />);
+    fireEvent.click(view.getByRole("button", { name: "语音输入" }));
+    await waitFor(() =>
+      expect(view.getByRole("alert").textContent).toBe(
+        recording.MIC_DENIED_ANDROID_MESSAGE,
+      ),
+    );
+    expect(view.getByRole("alert").textContent).not.toContain(
+      "暂时还不支持语音输入",
+    );
+    expect(view.getByRole("alert").textContent).toContain("重新录音");
+    fireEvent.click(view.getByRole("button", { name: "重新录音" }));
+    await waitFor(() => expect(view.getByText("正在监听")).toBeDefined());
+    expect(attempts).toBe(2);
+    fireEvent.click(view.getByRole("button", { name: "取消语音输入" }));
+  } finally {
+    cleanup();
+    document.documentElement.removeAttribute("data-android-app");
+    supported.mockRestore();
+    start.mockRestore();
+  }
+});

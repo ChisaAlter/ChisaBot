@@ -236,17 +236,42 @@ export function buildVoiceWebSocketUrl(
   return `${protocol}//${targetLoc.host}${normalizedPath}`;
 }
 
+type VoiceAudioBridgeHint = {
+  audioProcessing?: VoiceAudioProcessing;
+  constraints?: MediaTrackConstraints;
+};
+
 type DesktopVoiceAudioBridge = {
-  getPreferredConstraints?: () => Promise<{
-    audioProcessing?: VoiceAudioProcessing;
-    constraints?: MediaTrackConstraints;
-  }>;
+  getPreferredConstraints?: () =>
+    | Promise<VoiceAudioBridgeHint | null | undefined>
+    | VoiceAudioBridgeHint
+    | string
+    | null
+    | undefined;
+  acquireCommunicationAudio?: (
+    speakerphoneOn?: boolean,
+  ) => Promise<boolean> | boolean;
+  releaseCommunicationAudio?: () => Promise<void> | void;
 };
 
 function readDesktopVoiceBridge(): DesktopVoiceAudioBridge | undefined {
   if (typeof window === "undefined") return undefined;
   return (window as unknown as { chisabotVoiceAudio?: DesktopVoiceAudioBridge })
     .chisabotVoiceAudio;
+}
+
+function parseVoiceAudioBridgeHint(raw: unknown): VoiceAudioBridgeHint | null {
+  if (typeof raw === "string") {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return parsed && typeof parsed === "object"
+        ? (parsed as VoiceAudioBridgeHint)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return raw && typeof raw === "object" ? (raw as VoiceAudioBridgeHint) : null;
 }
 
 /** 检测当前客户端支持的回声消除能力；不支持 echoCancellation 时降级为 legacy 触发服务端半双工门控。 */
@@ -464,6 +489,8 @@ export class VoiceCallClient {
   private pcmBuffer: number[] = [];
   private muted = false;
   private disposed = false;
+  private communicationAudioAcquired = false;
+  private activeVoiceBridge: DesktopVoiceAudioBridge | null = null;
   private sampleRate = VOICE_SAMPLE_RATE;
   private audioProcessing: VoiceAudioProcessing = "web-aec-v1";
 
@@ -494,65 +521,81 @@ export class VoiceCallClient {
       throw new Error("当前浏览器不支持实时音频采集与播放。");
     }
 
-    // 1. 协商回声消除能力与首选麦克风约束（Electron 桌面端优先读硬件 AEC3 约束）。
-    let preferredProcessing = detectAudioProcessingMode();
-    let audioConstraints: MediaTrackConstraints = {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      channelCount: 1,
-      sampleRate: { ideal: VOICE_SAMPLE_RATE },
-    };
+    let connected = false;
+    try {
+      // 1. 协商回声消除能力与首选麦克风约束（Electron 桌面端 / Android 原生端优先读硬件 AEC3 约束）。
+      let preferredProcessing = detectAudioProcessingMode();
+      let audioConstraints: MediaTrackConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: { ideal: VOICE_SAMPLE_RATE },
+      };
 
-    const desktopBridge = readDesktopVoiceBridge();
-    if (desktopBridge?.getPreferredConstraints) {
+      const desktopBridge = readDesktopVoiceBridge();
+      if (desktopBridge?.getPreferredConstraints) {
+        try {
+          const hint = parseVoiceAudioBridgeHint(
+            await desktopBridge.getPreferredConstraints(),
+          );
+          if (hint?.audioProcessing) {
+            preferredProcessing = hint.audioProcessing;
+          }
+          if (hint?.constraints) {
+            audioConstraints = { ...audioConstraints, ...hint.constraints };
+          }
+        } catch {
+          // 忽略原生音频桥读取异常，平滑回退到浏览器 Web AEC
+        }
+      }
+
+      // 2. 通话建立前申请原生通信音频模式与焦点（仅提供该接口的端侧如 Android 调用，桌面端保持兼容）。
+      if (typeof desktopBridge?.acquireCommunicationAudio === "function") {
+        this.activeVoiceBridge = desktopBridge;
+        this.communicationAudioAcquired = true;
+        try {
+          await desktopBridge.acquireCommunicationAudio(true);
+        } catch {
+          // 忽略原生通信音频获取异常，平滑回退到浏览器默认音频路由
+        }
+        if (options.signal?.aborted || this.disposed) {
+          throw new DOMException("Voice call cancelled", "AbortError");
+        }
+      }
+
+      // 3. 先请求麦克风权限并预热 AudioContext（必须在用户点击手势链内触发，防止自动播放拦截）。
+      let stream: MediaStream;
       try {
-        const hint = await desktopBridge.getPreferredConstraints();
-        if (hint.audioProcessing) {
-          preferredProcessing = hint.audioProcessing;
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: audioConstraints,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "NotAllowedError") {
+          throw new Error(
+            "麦克风权限被拒绝，请在浏览器设置中允许访问麦克风后重试。",
+          );
         }
-        if (hint.constraints) {
-          audioConstraints = { ...audioConstraints, ...hint.constraints };
+        if (error instanceof DOMException && error.name === "NotFoundError") {
+          throw new Error("未检测到可用麦克风设备。");
         }
-      } catch {
-        // 忽略桌面桥读取异常，平滑回退到浏览器 Web AEC
+        throw new Error("无法启动麦克风采集，请检查音频设备连接。");
       }
-    }
 
-    // 2. 先请求麦克风权限并预热 AudioContext（必须在用户点击手势链内触发，防止自动播放拦截）。
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints,
-      });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "NotAllowedError") {
-        throw new Error(
-          "麦克风权限被拒绝，请在浏览器设置中允许访问麦克风后重试。",
-        );
+      if (options.signal?.aborted || this.disposed) {
+        for (const track of stream.getTracks()) track.stop();
+        throw new DOMException("Voice call cancelled", "AbortError");
       }
-      if (error instanceof DOMException && error.name === "NotFoundError") {
-        throw new Error("未检测到可用麦克风设备。");
-      }
-      throw new Error("无法启动麦克风采集，请检查音频设备连接。");
-    }
 
-    if (options.signal?.aborted || this.disposed) {
-      for (const track of stream.getTracks()) track.stop();
-      throw new DOMException("Voice call cancelled", "AbortError");
-    }
+      this.stream = stream;
+      const effectiveProcessing = resolveAudioProcessingFromTrack(
+        preferredProcessing,
+        stream,
+      );
+      this.audioProcessing = effectiveProcessing;
 
-    this.stream = stream;
-    const effectiveProcessing = resolveAudioProcessingFromTrack(
-      preferredProcessing,
-      stream,
-    );
-    this.audioProcessing = effectiveProcessing;
-
-    // 3. 申请 60s 一次性通话票据。
-    let ticket: VoiceSessionTicketResponse;
-    try {
-      ticket = await createVoiceSessionTicket(
+      // 4. 申请 60s 一次性通话票据。
+      const ticket = await createVoiceSessionTicket(
         {
           botId: options.botId,
           ...(options.channelId ? { channelId: options.channelId } : {}),
@@ -562,116 +605,119 @@ export class VoiceCallClient {
         },
         options.signal,
       );
-    } catch (error) {
-      this.cleanup();
-      throw error;
-    }
 
-    if (options.signal?.aborted || this.disposed) {
-      this.cleanup();
-      throw new DOMException("Voice call cancelled", "AbortError");
-    }
+      if (options.signal?.aborted || this.disposed) {
+        throw new DOMException("Voice call cancelled", "AbortError");
+      }
 
-    this.sampleRate = ticket.sampleRate;
-    this.audioProcessing = ticket.audioProcessing;
+      this.sampleRate = ticket.sampleRate;
+      this.audioProcessing = ticket.audioProcessing;
 
-    // 4. 初始化采集与播放 AudioContext。
-    const captureContext = new AudioContextCtor({
-      sampleRate: this.sampleRate,
-    });
-    const playbackContext = new AudioContextCtor({
-      sampleRate: this.sampleRate,
-    });
-    this.captureContext = captureContext;
-    this.playbackContext = playbackContext;
-    this.playbackQueue = new VoiceAudioPlaybackQueue({
-      context: playbackContext,
-      sampleRate: this.sampleRate,
-      onItemDrained: (itemId) => {
-        this.sendEvent({ type: "playback.done", itemId });
-      },
-      onAmplitude: (level) => {
-        this.callbacks.onPlaybackAmplitude(level);
-      },
-    });
+      // 5. 初始化采集与播放 AudioContext。
+      const captureContext = new AudioContextCtor({
+        sampleRate: this.sampleRate,
+      });
+      const playbackContext = new AudioContextCtor({
+        sampleRate: this.sampleRate,
+      });
+      this.captureContext = captureContext;
+      this.playbackContext = playbackContext;
+      this.playbackQueue = new VoiceAudioPlaybackQueue({
+        context: playbackContext,
+        sampleRate: this.sampleRate,
+        onItemDrained: (itemId) => {
+          this.sendEvent({ type: "playback.done", itemId });
+        },
+        onAmplitude: (level) => {
+          this.callbacks.onPlaybackAmplitude(level);
+        },
+      });
 
-    // 5. 建立 WebSocket 连接（通过子协议携带一次性票据）。
-    const wsUrl = buildVoiceWebSocketUrl(ticket.websocketPath);
-    const protocol = `${VOICE_WS_PROTOCOL_PREFIX}${ticket.ticket}`;
+      // 6. 建立 WebSocket 连接（通过子协议携带一次性票据）。
+      const wsUrl = buildVoiceWebSocketUrl(ticket.websocketPath);
+      const protocol = `${VOICE_WS_PROTOCOL_PREFIX}${ticket.ticket}`;
 
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const ws = new WebSocket(wsUrl, [protocol]);
-      this.ws = ws;
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const ws = new WebSocket(wsUrl, [protocol]);
+        this.ws = ws;
 
-      const onAbort = () => {
-        if (!settled) {
-          settled = true;
-          reject(new DOMException("Voice call cancelled", "AbortError"));
-        }
-        this.cleanup();
-      };
-      options.signal?.addEventListener("abort", onAbort, { once: true });
-
-      ws.onopen = () => {
-        options.signal?.removeEventListener("abort", onAbort);
-        if (this.disposed) {
-          ws.close(1000);
-          return;
-        }
-        this.startMicCapture(captureContext, stream);
-        this.startHeartbeat();
-        if (!settled) {
-          settled = true;
-          resolve();
-        }
-      };
-
-      ws.onmessage = (event) => {
-        if (typeof event.data !== "string") return;
-        let parsedJson: unknown;
-        try {
-          parsedJson = JSON.parse(event.data);
-        } catch {
-          return;
-        }
-        const serverEvent = parseVoiceServerEvent(parsedJson);
-        if (!serverEvent) return;
-        this.handleServerEvent(serverEvent);
-      };
-
-      ws.onerror = () => {
-        options.signal?.removeEventListener("abort", onAbort);
-        if (!settled) {
-          settled = true;
+        const onAbort = () => {
+          if (!settled) {
+            settled = true;
+            reject(new DOMException("Voice call cancelled", "AbortError"));
+          }
           this.cleanup();
-          reject(new Error("无法建立语音通话实时连接，请检查网络后重试。"));
-        } else if (!this.disposed) {
-          this.callbacks.onError("语音连接发生网络异常。");
-        }
-      };
+        };
+        options.signal?.addEventListener("abort", onAbort, { once: true });
 
-      ws.onclose = (closeEvent) => {
-        options.signal?.removeEventListener("abort", onAbort);
-        const wasDisposed = this.disposed;
+        ws.onopen = () => {
+          options.signal?.removeEventListener("abort", onAbort);
+          if (this.disposed) {
+            ws.close(1000);
+            return;
+          }
+          this.startMicCapture(captureContext, stream);
+          this.startHeartbeat();
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+
+        ws.onmessage = (event) => {
+          if (typeof event.data !== "string") return;
+          let parsedJson: unknown;
+          try {
+            parsedJson = JSON.parse(event.data);
+          } catch {
+            return;
+          }
+          const serverEvent = parseVoiceServerEvent(parsedJson);
+          if (!serverEvent) return;
+          this.handleServerEvent(serverEvent);
+        };
+
+        ws.onerror = () => {
+          options.signal?.removeEventListener("abort", onAbort);
+          if (!settled) {
+            settled = true;
+            this.cleanup();
+            reject(new Error("无法建立语音通话实时连接，请检查网络后重试。"));
+          } else if (!this.disposed) {
+            this.callbacks.onError("语音连接发生网络异常。");
+          }
+        };
+
+        ws.onclose = (closeEvent) => {
+          options.signal?.removeEventListener("abort", onAbort);
+          const wasDisposed = this.disposed;
+          this.cleanup();
+          if (!settled) {
+            settled = true;
+            reject(
+              new Error(
+                closeEvent.reason || "语音连接在握手阶段被服务端关闭。",
+              ),
+            );
+            return;
+          }
+          if (!wasDisposed) {
+            this.callbacks.onClose(
+              closeEvent.reason ||
+                (closeEvent.code === 1000 ? "通话已结束" : "语音连接已断开"),
+            );
+          }
+        };
+      });
+
+      connected = true;
+      return ticket;
+    } finally {
+      if (!connected) {
         this.cleanup();
-        if (!settled) {
-          settled = true;
-          reject(
-            new Error(closeEvent.reason || "语音连接在握手阶段被服务端关闭。"),
-          );
-          return;
-        }
-        if (!wasDisposed) {
-          this.callbacks.onClose(
-            closeEvent.reason ||
-              (closeEvent.code === 1000 ? "通话已结束" : "语音连接已断开"),
-          );
-        }
-      };
-    });
-
-    return ticket;
+      }
+    }
   }
 
   /** 手动触发打断：立即清空本地扬声器缓冲并通知服务端中止在途推理与 TTS。 */
@@ -767,77 +813,94 @@ export class VoiceCallClient {
     silenceGain.connect(context.destination);
   }
 
+  private releaseCommunicationAudio(): void {
+    if (!this.communicationAudioAcquired) return;
+    this.communicationAudioAcquired = false;
+    const bridge = this.activeVoiceBridge ?? readDesktopVoiceBridge();
+    this.activeVoiceBridge = null;
+    if (typeof bridge?.releaseCommunicationAudio !== "function") return;
+    try {
+      void Promise.resolve(bridge.releaseCommunicationAudio()).catch(() => {});
+    } catch {
+      // 忽略原生通信音频释放异常
+    }
+  }
+
   private cleanup(): void {
-    if (this.pingTimer) {
-      clearInterval(this.pingTimer);
-      this.pingTimer = null;
-    }
-
-    this.playbackQueue?.flush();
-    this.playbackQueue = null;
-
-    if (this.processorNode) {
-      this.processorNode.onaudioprocess = null;
-      try {
-        this.processorNode.disconnect();
-      } catch {
-        // 忽略清理异常
+    try {
+      if (this.pingTimer) {
+        clearInterval(this.pingTimer);
+        this.pingTimer = null;
       }
-      this.processorNode = null;
-    }
-    if (this.sourceNode) {
-      try {
-        this.sourceNode.disconnect();
-      } catch {
-        // 忽略清理异常
-      }
-      this.sourceNode = null;
-    }
-    if (this.silenceGain) {
-      try {
-        this.silenceGain.disconnect();
-      } catch {
-        // 忽略清理异常
-      }
-      this.silenceGain = null;
-    }
 
-    if (this.stream) {
-      for (const track of this.stream.getTracks()) {
+      this.playbackQueue?.flush();
+      this.playbackQueue = null;
+
+      if (this.processorNode) {
+        this.processorNode.onaudioprocess = null;
         try {
-          track.stop();
+          this.processorNode.disconnect();
         } catch {
-          // 忽略轨道停止异常
+          // 忽略清理异常
+        }
+        this.processorNode = null;
+      }
+      if (this.sourceNode) {
+        try {
+          this.sourceNode.disconnect();
+        } catch {
+          // 忽略清理异常
+        }
+        this.sourceNode = null;
+      }
+      if (this.silenceGain) {
+        try {
+          this.silenceGain.disconnect();
+        } catch {
+          // 忽略清理异常
+        }
+        this.silenceGain = null;
+      }
+
+      if (this.stream) {
+        for (const track of this.stream.getTracks()) {
+          try {
+            track.stop();
+          } catch {
+            // 忽略轨道停止异常
+          }
+        }
+        this.stream = null;
+      }
+
+      if (this.captureContext) {
+        void this.captureContext.close().catch(() => {});
+        this.captureContext = null;
+      }
+      if (this.playbackContext) {
+        void this.playbackContext.close().catch(() => {});
+        this.playbackContext = null;
+      }
+
+      const socket = this.ws;
+      this.ws = null;
+      if (
+        socket &&
+        (socket.readyState === WebSocket.OPEN ||
+          socket.readyState === WebSocket.CONNECTING)
+      ) {
+        try {
+          socket.close(1000);
+        } catch {
+          // 忽略关闭异常
         }
       }
-      this.stream = null;
-    }
 
-    if (this.captureContext) {
-      void this.captureContext.close().catch(() => {});
-      this.captureContext = null;
+      this.pcmBuffer = [];
+      this.callbacks.onMicAmplitude(0);
+      this.callbacks.onPlaybackAmplitude(0);
+    } finally {
+      this.releaseCommunicationAudio();
     }
-    if (this.playbackContext) {
-      void this.playbackContext.close().catch(() => {});
-      this.playbackContext = null;
-    }
-
-    const socket = this.ws;
-    this.ws = null;
-    if (
-      socket &&
-      (socket.readyState === WebSocket.OPEN ||
-        socket.readyState === WebSocket.CONNECTING)
-    ) {
-      try {
-        socket.close(1000);
-      } catch {
-        // 忽略关闭异常
-      }
-    }
-
-    this.pcmBuffer = [];
-    this.callbacks.onMicAmplitude(0);
-    this.callbacks.onPlaybackAmplitude(0);
   }
 }

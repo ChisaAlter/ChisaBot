@@ -17,21 +17,20 @@ export interface Recording {
 /**
  * Where to turn the microphone back on, since nothing will ask a second time by itself. One sentence
  * per place the app runs, because the way back differs: a browser has the lock icon in its address
- * bar, and the PC app has no address bar at all (the switch is in Windows' privacy settings, and the
- * one that blocks a desktop app is 「允许桌面应用访问麦克风」).
- *
- * THE ANDROID APP HAS NO WAY BACK YET, so it is not sent looking for one: its WebView does not
- * implement `onPermissionRequest` and the manifest does not declare `RECORD_AUDIO`, so neither
- * Chrome's site settings nor the app's permission page can turn the microphone on. It says plainly
- * that voice input is not supported there yet. When the Android side grants the microphone (a
- * separate client PR), this becomes real instructions.
+ * bar, the PC app uses Windows privacy settings (「允许桌面应用访问麦克风」), and the Android app
+ * guides the user through the system microphone switch, app permission, and busy-device check.
  */
 export const MIC_DENIED_MESSAGE =
   "麦克风权限被拒绝了。点地址栏左边的锁形图标，把「麦克风」改成「允许」后点「重新录音」；手机上请到系统设置里允许浏览器使用麦克风。";
 export const MIC_DENIED_PC_MESSAGE =
   "麦克风权限被拒绝了。请到 Windows「设置 → 隐私和安全性 → 麦克风」里打开「允许桌面应用访问麦克风」，再点「重新录音」。";
 export const MIC_DENIED_ANDROID_MESSAGE =
-  "安卓 App 暂时还不支持语音输入。要用语音输入，请在 PC 客户端或浏览器里打开 ChisaBot。";
+  "麦克风权限被拒绝了。请先检查系统麦克风总开关 → 应用权限里的「麦克风」→ 确认没有被其他通话或录音应用占用，然后点「重新录音」。";
+export const MIC_BUSY_MESSAGE =
+  "麦克风正被其他通话或录音应用占用，暂时无法录音。请关闭占用应用后点「重新录音」。";
+export const MIC_UNAVAILABLE_MESSAGE =
+  "未检测到可用的麦克风设备，或当前设备不可用。请检查麦克风连接与系统麦克风总开关后点「重新录音」。";
+export const MIC_START_FAILED_MESSAGE = "没能开始录音，检查一下麦克风再试。";
 
 export type MicPlatform = "browser" | "pc" | "android";
 
@@ -58,6 +57,36 @@ export function micDeniedMessage(
   if (platform === "pc") return MIC_DENIED_PC_MESSAGE;
   if (platform === "android") return MIC_DENIED_ANDROID_MESSAGE;
   return MIC_DENIED_MESSAGE;
+}
+
+function readErrorName(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    typeof error.name === "string"
+  ) {
+    return error.name;
+  }
+  return "";
+}
+
+/** 将录音权限或采集设备异常映射为清晰可操作的中文排障提示。 */
+export function micCaptureErrorMessage(
+  error: unknown,
+  platform: MicPlatform = micPlatform(),
+): string {
+  const name = readErrorName(error);
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return micDeniedMessage(platform);
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return MIC_BUSY_MESSAGE;
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return MIC_UNAVAILABLE_MESSAGE;
+  }
+  return MIC_START_FAILED_MESSAGE;
 }
 
 export const DICTATION_UPLOAD_OFFLINE_MESSAGE =
@@ -101,7 +130,25 @@ export async function startRecording(
     (type) => MediaRecorder.isTypeSupported(type),
   );
   if (!mimeType) throw new Error("此浏览器无法录制支持的音频格式。");
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (error) {
+    const name = readErrorName(error);
+    if (
+      name === "NotAllowedError" ||
+      name === "PermissionDeniedError" ||
+      name === "NotReadableError" ||
+      name === "TrackStartError" ||
+      name === "NotFoundError" ||
+      name === "DevicesNotFoundError"
+    ) {
+      const mapped = new Error(micCaptureErrorMessage(error));
+      mapped.name = name === "PermissionDeniedError" ? "NotAllowedError" : name;
+      throw mapped;
+    }
+    throw error;
+  }
   const release = () => {
     for (const track of stream.getTracks()) track.stop();
   };

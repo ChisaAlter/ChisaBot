@@ -78,6 +78,9 @@ import androidx.core.content.FileProvider
 import cn.ayase.chisabot.AppViewModel
 import cn.ayase.chisabot.BuildConfig
 import cn.ayase.chisabot.ShareDraft
+import cn.ayase.chisabot.VoiceAudioBridge
+import cn.ayase.chisabot.VoiceCallAudioManager
+import cn.ayase.chisabot.normalizeVoiceOriginKey
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -168,6 +171,9 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
     // 网页要麦克风（语音输入）且系统还没给 RECORD_AUDIO 时，先问系统；拒绝就拒绝网页的请求。
     // 被拒时要告诉用户：这次拒绝给一句提示；选了「不再询问」（拒绝后系统不再给理由提示）就弹框引导去应用设置。
     val context = LocalContext.current
+    val voiceCallAudioManager = remember(context.applicationContext) {
+        VoiceCallAudioManager(context.applicationContext)
+    }
     val pendingDownloadIds = remember { mutableSetOf<Long>() }
     // 用系统 ACTION_DOWNLOAD_COMPLETE 广播替代每秒轮询 DownloadManager，消除 60 次 IPC 并兼容 >60s 大文件下载。
     DisposableEffect(context) {
@@ -258,12 +264,17 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
             else Toast.makeText(context, MIC_DENIED_ONCE_MESSAGE, Toast.LENGTH_LONG).show()
         }
     }
-    // 页面关闭（离开这一屏、WebView 销毁）时，还在等系统弹框的网页请求直接拒掉，别挂着。
+    // 页面关闭（离开这一屏、WebView 销毁）时，还在等系统弹框的网页请求直接拒掉，别挂着；同时释放语音通话音频焦点与模式。
     DisposableEffect(Unit) {
         onDispose {
             micRequest?.let { runCatching { it.deny() } }
             micRequest = null
             fileCallback?.onReceiveValue(null); fileCallback = null
+        }
+    }
+    DisposableEffect(voiceCallAudioManager) {
+        onDispose {
+            runCatching { voiceCallAudioManager.release() }
         }
     }
     if (showMicSettings) {
@@ -306,6 +317,7 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
         val desiredBgColor = if (sky.dark) android.graphics.Color.rgb(13, 22, 36) else android.graphics.Color.rgb(247, 249, 252)
         val desiredVisibility = if (loadError == null) View.VISIBLE else View.INVISIBLE
         var lastBgColor by remember(origin) { mutableStateOf<Int?>(null) }
+        val webDestroyed = remember(origin) { java.util.concurrent.atomic.AtomicBoolean(false) }
         Box(Modifier.fillMaxSize().imePadding()) {
             AndroidView(
                 factory = { ctx ->
@@ -349,6 +361,14 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                             },
                             "ChisaAndroid",
                         )
+                        addJavascriptInterface(
+                            VoiceAudioBridge(
+                                audioManager = voiceCallAudioManager,
+                                allowedOrigin = origin,
+                                currentMainFrameUrl = { readMainFrameUrl(this@apply) { webDestroyed.get() } },
+                            ),
+                            "__chisabotVoiceAudioNative",
+                        )
                         fun recoverLogin() {
                             if (renewing) return
                             renewing = true
@@ -365,39 +385,60 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                                 val same = originKey(url.toString())?.let { it == originKey(origin) } == true
                                 if (same) {
                                     if (isWebSignOutPath(url.path)) {
+                                        runCatching { voiceCallAudioManager.release() }
                                         vm.logout()
                                         return true
                                     }
                                     return false
                                 }
-                                if (request.isForMainFrame && url.scheme in setOf("https", "http", "mailto", "tel", "chisabot")) {
-                                    runCatching { view.context.startActivity(Intent(Intent.ACTION_VIEW, url)) }
+                                if (request.isForMainFrame) {
+                                    runCatching { voiceCallAudioManager.release() }
+                                    if (url.scheme in setOf("https", "http", "mailto", "tel", "chisabot")) {
+                                        runCatching { view.context.startActivity(Intent(Intent.ACTION_VIEW, url)) }
+                                    }
                                 }
                                 return true
                             }
-                            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) { loadError = null; pageReady = false }
+                            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                                loadError = null
+                                pageReady = false
+                                if (originKey(url) != originKey(origin)) {
+                                    runCatching { voiceCallAudioManager.release() }
+                                }
+                            }
                             override fun onPageCommitVisible(view: WebView, url: String) {
                                 syncTheme(view, latestTheme)
                                 if (originKey(url) == originKey(origin)) {
                                     syncAndroidSafeInsets(view, latestInsets)
+                                    installVoiceAudioBridge(view)
+                                } else {
+                                    runCatching { voiceCallAudioManager.release() }
+                                    uninstallVoiceAudioBridge(view)
                                 }
                             }
                             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
                                 if (originKey(url)?.let { it == originKey(origin) } == true) {
                                     val uri = Uri.parse(url)
                                     if (isWebSignOutPath(uri.path)) {
+                                        runCatching { voiceCallAudioManager.release() }
                                         vm.logout()
                                         return
                                     }
                                     vm.rememberWebPath((uri.encodedPath?.takeIf { it.isNotBlank() } ?: "/") + (uri.encodedQuery?.let { "?$it" } ?: "") + (uri.encodedFragment?.let { "#$it" } ?: ""))
+                                } else {
+                                    runCatching { voiceCallAudioManager.release() }
                                 }
                             }
                             override fun onPageFinished(view: WebView, url: String) {
                                 syncTheme(view, latestTheme)
                                 if (originKey(url) == originKey(origin)) {
                                     syncAndroidSafeInsets(view, latestInsets)
+                                    installVoiceAudioBridge(view)
                                     installWebExportCapture(view)
                                     pageReady = true
+                                } else {
+                                    runCatching { voiceCallAudioManager.release() }
+                                    uninstallVoiceAudioBridge(view)
                                 }
                                 scope.launch(Dispatchers.IO) { CookieManager.getInstance().flush() }
                                 if (originKey(url) == originKey(origin) && Uri.parse(url).path?.startsWith("/login") == true) recoverLogin()
@@ -486,7 +527,12 @@ fun WebScreen(vm: AppViewModel, path: String, title: String) {
                 },
                 // imePadding：edge-to-edge 下 adjustResize 不再缩 WebView，键盘高度只从 insets 来（CB-098）。
                 modifier = Modifier.fillMaxSize(),
-                onRelease = { it.stopLoading(); it.destroy() },
+                onRelease = {
+                    webDestroyed.set(true)
+                    runCatching { voiceCallAudioManager.release() }
+                    it.stopLoading()
+                    it.destroy()
+                },
             )
             androidx.compose.animation.AnimatedVisibility(visible = progress in 1..99, exit = fadeOut(tween(200))) {
                 LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth().statusBarsPadding().height(2.dp), color = sky.accent, trackColor = Color.Transparent)
@@ -595,13 +641,49 @@ internal fun micResourcesToGrant(requestOrigin: String?, appOrigin: String, reso
 }
 
 /** 「协议://主机:端口」，主机小写、默认端口补齐；解析不了返回 null。 */
-private fun originKey(origin: String?): String? {
-    val uri = runCatching { java.net.URI(origin?.trim().orEmpty()) }.getOrNull() ?: return null
-    val scheme = uri.scheme?.lowercase() ?: return null
-    val host = uri.host?.lowercase() ?: return null
-    if (scheme != "https" && scheme != "http") return null
-    val port = if (uri.port != -1) uri.port else if (scheme == "https") 443 else 80
-    return "$scheme://$host:$port"
+private fun originKey(origin: String?): String? = normalizeVoiceOriginKey(origin)
+
+/** 在主线程安全读取 WebView 当前主框架 URL，供受限 JS 桥在 JavaBridge 线程做同源校验。 */
+private fun readMainFrameUrl(view: WebView, isDestroyed: () -> Boolean): String? {
+    if (isDestroyed()) return null
+    val mainLooper = android.os.Looper.getMainLooper()
+    if (android.os.Looper.myLooper() == mainLooper) {
+        return runCatching { view.url }.getOrNull()
+    }
+    val latch = java.util.concurrent.CountDownLatch(1)
+    var currentUrl: String? = null
+    val posted = android.os.Handler(mainLooper).post {
+        if (!isDestroyed()) {
+            currentUrl = runCatching { view.url }.getOrNull()
+        }
+        latch.countDown()
+    }
+    if (!posted) return null
+    val completed = runCatching {
+        latch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }.getOrDefault(false)
+    return if (completed) currentUrl else null
+}
+
+/** 仅向同源顶层页面暴露 `window.chisabotVoiceAudio`，透传受同源守卫的原生音频能力。 */
+private fun installVoiceAudioBridge(view: WebView) {
+    view.evaluateJavascript(
+        "(function(){try{var n=window.__chisabotVoiceAudioNative;if(!n||window!==window.top)return;" +
+            "window.chisabotVoiceAudio={" +
+            "getPreferredConstraints:function(){var raw=n.getPreferredConstraints();return raw?JSON.parse(raw):null;}," +
+            "acquireCommunicationAudio:function(speakerphoneOn){return Boolean(n.acquireCommunicationAudio(speakerphoneOn===undefined?true:Boolean(speakerphoneOn)));}," +
+            "releaseCommunicationAudio:function(){n.releaseCommunicationAudio();}" +
+            "};}catch(e){}})()",
+        null,
+    )
+}
+
+/** 页面跳离同源时移除网页侧 `window.chisabotVoiceAudio` 桥。 */
+private fun uninstallVoiceAudioBridge(view: WebView) {
+    view.evaluateJavascript(
+        "(function(){try{delete window.chisabotVoiceAudio;}catch(e){window.chisabotVoiceAudio=undefined;}})()",
+        null,
+    )
 }
 
 /** 这次拒绝了麦克风（下次还会问）时的提示，语气同网页侧 MIC_DENIED_*_MESSAGE（#410）。 */

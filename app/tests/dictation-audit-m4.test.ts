@@ -4,11 +4,16 @@ import {
   DICTATION_UPLOAD_NETWORK_MESSAGE,
   DICTATION_UPLOAD_OFFLINE_MESSAGE,
   DictationError,
+  MIC_BUSY_MESSAGE,
   MIC_DENIED_ANDROID_MESSAGE,
   MIC_DENIED_MESSAGE,
   MIC_DENIED_PC_MESSAGE,
+  MIC_START_FAILED_MESSAGE,
+  MIC_UNAVAILABLE_MESSAGE,
+  micCaptureErrorMessage,
   micDeniedMessage,
   micPlatform,
+  startRecording,
   transcribeRecording,
 } from "@/lib/dictation/recording";
 import {
@@ -165,15 +170,70 @@ test("the denied-microphone sentence matches where the app runs", () => {
     expect(micPlatform()).toBe("android");
     expect(micDeniedMessage()).toBe(MIC_DENIED_ANDROID_MESSAGE);
     expect(MIC_DENIED_ANDROID_MESSAGE).not.toContain("地址栏");
-    // The WebView cannot get the microphone at all yet (no onPermissionRequest, no RECORD_AUDIO),
-    // so no setting can fix it: say it is not supported and where it does work, not where to click.
-    expect(MIC_DENIED_ANDROID_MESSAGE).toContain("暂时还不支持语音输入");
-    expect(MIC_DENIED_ANDROID_MESSAGE).not.toContain("网站设置");
-    expect(MIC_DENIED_ANDROID_MESSAGE).not.toContain("权限");
-    expect(MIC_DENIED_ANDROID_MESSAGE).not.toContain("重新录音");
+    expect(MIC_DENIED_ANDROID_MESSAGE).not.toContain("暂时还不支持语音输入");
+    expect(MIC_DENIED_ANDROID_MESSAGE).toContain("麦克风总开关");
+    expect(MIC_DENIED_ANDROID_MESSAGE).toContain("权限");
+    expect(MIC_DENIED_ANDROID_MESSAGE).toContain("占用");
+    expect(MIC_DENIED_ANDROID_MESSAGE).toContain("重新录音");
   } finally {
     doc.document = realDocument;
     g.window = realWindow;
+  }
+});
+
+test("micCaptureErrorMessage and startRecording distinguish busy and unavailable microphones", async () => {
+  expect(
+    micCaptureErrorMessage(new DOMException("busy", "NotReadableError")),
+  ).toBe(MIC_BUSY_MESSAGE);
+  expect(
+    micCaptureErrorMessage(new DOMException("busy", "TrackStartError")),
+  ).toBe(MIC_BUSY_MESSAGE);
+  expect(
+    micCaptureErrorMessage(new DOMException("none", "NotFoundError")),
+  ).toBe(MIC_UNAVAILABLE_MESSAGE);
+  expect(
+    micCaptureErrorMessage(new DOMException("none", "DevicesNotFoundError")),
+  ).toBe(MIC_UNAVAILABLE_MESSAGE);
+  expect(
+    micCaptureErrorMessage(
+      new DOMException("denied", "NotAllowedError"),
+      "android",
+    ),
+  ).toBe(MIC_DENIED_ANDROID_MESSAGE);
+  expect(micCaptureErrorMessage(new Error("other"))).toBe(
+    MIC_START_FAILED_MESSAGE,
+  );
+
+  const gTyped = globalThis as unknown as {
+    MediaRecorder?: unknown;
+    navigator: { mediaDevices?: unknown };
+  };
+  const realMediaRecorder = gTyped.MediaRecorder;
+  const realMediaDevices = gTyped.navigator.mediaDevices;
+  try {
+    gTyped.MediaRecorder = { isTypeSupported: () => true };
+    gTyped.navigator.mediaDevices = {
+      getUserMedia: async () => {
+        throw new DOMException("in use", "NotReadableError");
+      },
+    };
+    const busyErr = await startRecording(() => {}).catch((e: unknown) => e);
+    expect(busyErr).toBeInstanceOf(Error);
+    expect((busyErr as Error).name).toBe("NotReadableError");
+    expect((busyErr as Error).message).toBe(MIC_BUSY_MESSAGE);
+
+    gTyped.navigator.mediaDevices = {
+      getUserMedia: async () => {
+        throw new DOMException("missing", "NotFoundError");
+      },
+    };
+    const missingErr = await startRecording(() => {}).catch((e: unknown) => e);
+    expect(missingErr).toBeInstanceOf(Error);
+    expect((missingErr as Error).name).toBe("NotFoundError");
+    expect((missingErr as Error).message).toBe(MIC_UNAVAILABLE_MESSAGE);
+  } finally {
+    gTyped.MediaRecorder = realMediaRecorder;
+    gTyped.navigator.mediaDevices = realMediaDevices;
   }
 });
 
