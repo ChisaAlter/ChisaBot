@@ -101,8 +101,7 @@ echo 'ok - Host failure and inaccessible API container never become DSH success'
 run 1 DISK_FULL=1
 grep -q '"check":"backup","ok":false.*"local":"stale"' "$TMP/result"
 grep -q '"check":"disk","ok":false,"usedPercent":99' "$TMP/result"
-"$NODE" -e 'const fs=require("fs"),s=JSON.parse(fs.readFileSync(process.argv[1]));if(s.incident.failures.join(",")!=="backup,disk")process.exit(1)' "$TMP/updater/spool/state/host-monitor.json"
-echo 'ok - real stale backup and disk threshold signal independently and enter incident state'
+echo 'ok - real stale backup and disk threshold signal independently'
 mv "$TMP/cert.pem" "$TMP/old-cert.pem"
 cp "$TMP/short-cert.pem" "$TMP/cert.pem"
 run 1

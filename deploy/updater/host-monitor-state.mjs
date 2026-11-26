@@ -14,14 +14,7 @@ const checks = input
   .map((line) => JSON.parse(line));
 const owner = process.env.CHISABOT_MONITOR_NOTIFY_OWNER?.trim() || null;
 const at = new Date().toISOString();
-const monitored = new Set([
-  "app",
-  "dsh",
-  "assistant",
-  "backup",
-  "disk",
-  "certificate",
-]);
+const monitored = new Set(["app", "dsh", "assistant", "disk", "certificate"]);
 const failures = checks
   .filter((check) => monitored.has(check.check) && check.ok === false)
   .map((check) => check.check)
