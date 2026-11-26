@@ -10,16 +10,19 @@ import { SkyBackground } from "@/components/sky-background";
 import { DesktopStrip } from "@/components/layout/desktop-strip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ConfirmHost } from "@/components/ui/confirm";
 import { AfterIdle, lazyPart } from "@/components/ui/lazy-part";
 import { PageLoaderHost } from "@/components/ui/page-loader";
 import { Toaster } from "@/components/ui/toast";
 import type { RouterContext } from "../router-context";
 
 /*
- * 根部低频提示横幅（有新版本、PWA 安装指引、PC 节点断连）不阻塞首屏渲染：
- * 首屏画完且浏览器空闲后再下载挂载（与 `_authed.tsx` 同模式，DESIGN.md §41.5）。
+ * 根部低频提示横幅与全局确认弹窗宿主不阻塞首屏渲染：
+ * 首屏画完且浏览器空闲后再下载挂载（与 `_authed.tsx` 同模式，DESIGN.md §41.5），
+ * 将 `@base-ui/react` Dialog 闭包移出同步入口 `index-*.js`。
  */
+const ConfirmHost = lazyPart(() =>
+  import("@/components/ui/confirm").then((m) => m.ConfirmHost),
+);
 const UpdateBanner = lazyPart(() =>
   import("@/components/update-banner").then((m) => m.UpdateBanner),
 );
@@ -145,10 +148,10 @@ function RootComponent() {
         <TooltipProvider>
           {/* Standalone pages and 404s need the same foreground layer as the app shell. */}
           <div className="relative z-10"><Outlet /></div>
-          <ConfirmHost />
           <PageLoaderHost />
           <Toaster />
           <AfterIdle>
+            <ConfirmHost />
             <UpdateBanner />
             <InstallHint />
             <PcLinkHint />

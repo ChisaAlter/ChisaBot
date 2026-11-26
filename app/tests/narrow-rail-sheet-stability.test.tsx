@@ -219,10 +219,24 @@ describe("窄窗面板抽屉与右栏轮询门控", () => {
     expect(document.body.hasAttribute("data-has-narrow-rail")).toBe(false);
   });
 
-  test("任务快照与工作流库查询在 poll=false 时暂停后台轮询，默认保持原节奏", () => {
+  test("任务快照与工作流库查询在 poll=false 时暂停后台轮询，默认按活跃/空闲自适应节奏", () => {
     const activeSnapshot = taskCenterSnapshotOptions();
     const pausedSnapshot = taskCenterSnapshotOptions({ poll: false });
-    expect(activeSnapshot.refetchInterval).toBe(5_000);
+    expect(typeof activeSnapshot.refetchInterval).toBe("function");
+    const snapInterval = activeSnapshot.refetchInterval as (q: {
+      state: {
+        data?: {
+          counts?: Record<string, number>;
+          decisionCounts?: { pending: number };
+        };
+      };
+    }) => number | false;
+    expect(snapInterval({ state: { data: { counts: { running: 1 } } } })).toBe(
+      5_000,
+    );
+    expect(snapInterval({ state: { data: { counts: { running: 0 } } } })).toBe(
+      60_000,
+    );
     expect(activeSnapshot.refetchIntervalInBackground).toBe(false);
     expect(pausedSnapshot.refetchInterval).toBe(false);
     expect(pausedSnapshot.refetchIntervalInBackground).toBe(false);

@@ -10071,6 +10071,7 @@ html[data-resizing] :is(
   }
 }
 
+html[data-motion-rest="1"] .agent-orb::before,
 html[data-motion-rest="1"] :is(
   .tool-line-running,
   .model-pill-shimmer,
@@ -10098,7 +10099,17 @@ html[data-motion-rest="1"] :is(
   .jr-product-ph.is-loading,
   .sa[data-mood="working"] .sa-body,
   .sa[data-mood="working"] .sa-eyes,
-  .sa[data-mood="working"] .sa-open
+  .sa[data-mood="working"] .sa-open,
+  .agent-orb-sheen,
+  .rs-spinner,
+  .lc-skel-breathe,
+  .lc-skel .lc-skel-block,
+  .lc-skel .lc-skel-bar,
+  .p3-dots,
+  .live-panel-spin,
+  .worker-icon.is-running svg,
+  .animate-pulse,
+  .animate-bounce
 ) {
   animation-play-state: paused;
 }

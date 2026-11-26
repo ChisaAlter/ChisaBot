@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRef } from "react";
 import { useExternalConnection } from "@/hooks";
 import { objectConnectionKey } from "@/lib/connection-key";
+import { useKeptVisibility } from "@/lib/kept-visible";
 import { tryClient } from "../client";
 import {
   applyInboxState,
@@ -52,6 +53,7 @@ export function useThreadInbox(
   optionsRef.current = options;
   const flushRef = useRef<(() => void) | null>(null);
   const queryClient = useQueryClient();
+  const visibility = useKeptVisibility();
 
   useExternalConnection(
     threadId
@@ -201,7 +203,7 @@ export function useThreadInbox(
 
   useExternalConnection(
     threadId && pullServerTurns
-      ? `${threadId}:${objectConnectionKey(agent)}:${objectConnectionKey(queryClient)}`
+      ? `${threadId}:${objectConnectionKey(agent)}:${objectConnectionKey(queryClient)}:${objectConnectionKey(visibility)}`
       : false,
     (_key, signal) => {
       if (!threadId) return;
@@ -289,8 +291,11 @@ export function useThreadInbox(
           // A timed-out or malformed snapshot cannot erase the readable local conversation.
         }
       };
+      const isHidden = () =>
+        !visibility.get() ||
+        (typeof document !== "undefined" && document.hidden === true);
       const tick = async () => {
-        if (busy || signal.aborted || agent.isRunning) return;
+        if (busy || signal.aborted || agent.isRunning || isHidden()) return;
         if (!serverRunning && !workersNeedSync()) return;
         busy = true;
         try {
@@ -305,9 +310,35 @@ export function useThreadInbox(
           busy = false;
         }
       };
-      const timer = setInterval(() => void tick(), 1200);
+      let timer: ReturnType<typeof setInterval> | undefined;
+      const stopTimer = () => {
+        if (timer !== undefined) {
+          clearInterval(timer);
+          timer = undefined;
+        }
+      };
+      const syncTimer = (kick: boolean) => {
+        if (signal.aborted || isHidden()) {
+          stopTimer();
+          return;
+        }
+        if (timer === undefined) {
+          timer = setInterval(() => void tick(), 1200);
+        }
+        if (kick) void tick();
+      };
+      const onVisibility = () => syncTimer(true);
+      const offKept = visibility.subscribe(onVisibility);
+      if (typeof document !== "undefined") {
+        document.addEventListener("visibilitychange", onVisibility);
+      }
+      syncTimer(false);
       return () => {
-        clearInterval(timer);
+        stopTimer();
+        offKept();
+        if (typeof document !== "undefined") {
+          document.removeEventListener("visibilitychange", onVisibility);
+        }
       };
     },
   );

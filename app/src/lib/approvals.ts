@@ -69,8 +69,22 @@ export type ApprovalInboxData = {
     createdAt: string;
   }[];
 };
-export const approvalInboxOptions = () =>
-  queryOptions({
+export const APPROVALS_ACTIVE_POLL_MS = 10_000;
+export const APPROVALS_IDLE_POLL_MS = 60_000;
+
+export function hasPendingApprovals(
+  data: ApprovalInboxData | undefined,
+): boolean {
+  if (!data) return false;
+  if (data.questions.length > 0) return true;
+  return data.requests.some((request) => request.status === "pending");
+}
+
+export const approvalInboxOptions = (options?: {
+  poll?: boolean | (() => boolean);
+}) => {
+  const poll = options?.poll ?? true;
+  return queryOptions({
     queryKey: ["approvals"],
     queryFn: async (): Promise<ApprovalInboxData> => {
       const response = await client("/api/approvals", {
@@ -78,8 +92,18 @@ export const approvalInboxOptions = () =>
       });
       return response.json();
     },
-    refetchInterval: 10_000,
+    refetchInterval:
+      poll === false
+        ? false
+        : (query) => {
+            if (typeof poll === "function" && !poll()) return false;
+            return hasPendingApprovals(query.state.data)
+              ? APPROVALS_ACTIVE_POLL_MS
+              : APPROVALS_IDLE_POLL_MS;
+          },
+    refetchIntervalInBackground: false,
   });
+};
 export const decideApproval = (id: string, decision: ApprovalDecision) =>
   client(`/api/approvals/${encodeURIComponent(id)}/decision`, {
     method: "POST",

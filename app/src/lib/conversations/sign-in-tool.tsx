@@ -1,6 +1,6 @@
 import { IconLock } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState } from "react";
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { SignInForm } from "@/components/passwords/sign-in-form";
@@ -13,8 +13,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useExternalConnection } from "@/hooks";
 import type { ToolRenderProps } from "@/lib/chat/renderers";
 import { client } from "@/lib/client";
+import { objectConnectionKey } from "@/lib/connection-key";
+import { useKeptVisibility } from "@/lib/kept-visible";
 import { useComputerToolRenderer } from "./approval-tools";
 
 type Outcome = {
@@ -67,15 +70,38 @@ function SignInCall({
   status,
   toolCallId,
 }: ToolRenderProps<{ site: string; reason?: string }>) {
+  const visibility = useKeptVisibility();
+  const queryClient = useQueryClient();
+  const waitingRef = useRef(result === undefined);
+  waitingRef.current = result === undefined;
   const requests = useQuery({
     queryKey: ["passwords", "pending"],
     enabled: result === undefined,
-    refetchInterval: result === undefined ? 1500 : false,
+    refetchInterval: () =>
+      result === undefined && visibility.get() ? 1500 : false,
+    refetchIntervalInBackground: false,
     queryFn: async () =>
       (await client("/api/sign-in-requests")).json() as Promise<{
         requests: { id: string; toolCallId?: string }[];
       }>,
   });
+  useExternalConnection(
+    result === undefined
+      ? `sign-in-vis:${toolCallId}:${objectConnectionKey(visibility)}:${objectConnectionKey(queryClient)}`
+      : false,
+    () => {
+      let wasVisible = visibility.get();
+      return visibility.subscribe(() => {
+        const nowVisible = visibility.get();
+        if (!wasVisible && nowVisible && waitingRef.current) {
+          void queryClient.invalidateQueries({
+            queryKey: ["passwords", "pending"],
+          });
+        }
+        wasVisible = nowVisible;
+      });
+    },
+  );
   const outcome = parse(result);
   const requestId =
     outcome.requestId ??

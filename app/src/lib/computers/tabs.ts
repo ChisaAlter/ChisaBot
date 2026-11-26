@@ -25,8 +25,48 @@ export type TabsView = {
   running: boolean;
 };
 
+/** 最多缓存 16 台云端电脑的标签快照（每台最多 20 tab × 100 KB favicon），超出按 LRU 淘汰。 */
+export const TABS_VIEW_CACHE_MAX = 16;
+
 const views = new Map<string, TabsView>();
 const listeners = new Map<string, Set<() => void>>();
+
+function evictExcessViews(): void {
+  while (views.size > TABS_VIEW_CACHE_MAX) {
+    // 优先淘汰当前无订阅者的最久未用快照；若都在使用则淘汰最老的一项。
+    let victim: string | undefined;
+    for (const id of views.keys()) {
+      if (!listeners.has(id)) {
+        victim = id;
+        break;
+      }
+    }
+    if (victim === undefined) {
+      victim = views.keys().next().value;
+    }
+    if (victim === undefined) break;
+    views.delete(victim);
+  }
+}
+
+/** 测试用：读取仓库占用规模（不改变 LRU 顺序）。 */
+export function tabsStoreStats(): {
+  views: number;
+  listeners: number;
+  viewIds: string[];
+} {
+  return {
+    views: views.size,
+    listeners: listeners.size,
+    viewIds: [...views.keys()],
+  };
+}
+
+/** 测试用：清空仓库。 */
+export function resetTabsStoreForTests(): void {
+  views.clear();
+  listeners.clear();
+}
 
 export function parseTabsView(value: unknown): TabsView | null {
   if (!value || typeof value !== "object") return null;
@@ -59,8 +99,15 @@ export function setTabsView(computerId: string, value: unknown): void {
   const view = parseTabsView(value);
   if (!view) return;
   const before = views.get(computerId);
-  if (before && JSON.stringify(before) === JSON.stringify(view)) return;
+  if (before && JSON.stringify(before) === JSON.stringify(view)) {
+    // 命中相同快照也刷新 LRU 位置，不广播重复渲染。
+    views.delete(computerId);
+    views.set(computerId, before);
+    return;
+  }
+  views.delete(computerId);
   views.set(computerId, view);
+  evictExcessViews();
   for (const listener of listeners.get(computerId) ?? []) listener();
 }
 
@@ -70,6 +117,7 @@ function subscribe(computerId: string, listener: () => void) {
   listeners.set(computerId, set);
   return () => {
     set.delete(listener);
+    if (set.size === 0) listeners.delete(computerId);
   };
 }
 

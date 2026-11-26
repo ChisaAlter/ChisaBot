@@ -1,5 +1,5 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
-import { createContext } from "react";
+import { createContext, useMemo, useRef } from "react";
 import { ACTIVE_STATUSES } from "@/components/task-center/labels";
 import { client } from "@/lib/client";
 import { taskCenterSnapshotOptions } from "@/lib/task-center-api";
@@ -79,36 +79,70 @@ export function useRailTasksSummary(active = true) {
   const snapshot = useQuery(taskCenterSnapshotOptions({ poll: active }));
   const workflows = useQuery(railWorkflowLibraryOptions(active));
   const data = snapshot.data;
-  const outbox = Array.isArray(data?.outbox) ? data.outbox : [];
-  const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
-  const runs = Array.isArray(workflows.data?.runs) ? workflows.data.runs : [];
+  const workflowData = workflows.data;
 
-  const pendingDecisions = outbox.filter(
-    (decision) => decision.status === "pending",
-  );
-  const activeTasks = tasks.filter(
-    (task) =>
-      ACTIVE_STATUSES.includes(task.status) ||
-      task.status === "paused" ||
-      task.status === "waiting_approval",
-  );
-  const activeRuns = runs.filter((run) =>
-    ACTIVE_WORKFLOW_RUN_STATUSES.includes(run.status),
-  );
-  const waitingApprovalRuns = activeRuns.filter(
-    (run) => run.status === "waiting_approval",
-  );
+  const derived = useMemo(() => {
+    const outbox = Array.isArray(data?.outbox) ? data.outbox : [];
+    const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+    const runs = Array.isArray(workflowData?.runs) ? workflowData.runs : [];
 
-  return {
-    snapshot,
-    workflows,
-    pendingDecisions,
-    activeTasks,
-    activeRuns,
-    approvalCount:
-      (data?.decisionCounts?.pending ?? pendingDecisions.length) +
-      waitingApprovalRuns.length,
-    activeCount:
-      (data?.counts ? countActiveTasks(data.counts) : 0) + activeRuns.length,
-  };
+    const pendingDecisions = outbox.filter(
+      (decision) => decision.status === "pending",
+    );
+    const activeTasks = tasks.filter(
+      (task) =>
+        ACTIVE_STATUSES.includes(task.status) ||
+        task.status === "paused" ||
+        task.status === "waiting_approval",
+    );
+    const activeRuns = runs.filter((run) =>
+      ACTIVE_WORKFLOW_RUN_STATUSES.includes(run.status),
+    );
+    const waitingApprovalRuns = activeRuns.filter(
+      (run) => run.status === "waiting_approval",
+    );
+
+    return {
+      pendingDecisions,
+      activeTasks,
+      activeRuns,
+      approvalCount:
+        (data?.decisionCounts?.pending ?? pendingDecisions.length) +
+        waitingApprovalRuns.length,
+      activeCount:
+        (data?.counts ? countActiveTasks(data.counts) : 0) + activeRuns.length,
+    };
+  }, [data, workflowData]);
+
+  const cacheRef = useRef<{
+    key: string;
+    derived: typeof derived;
+    value: {
+      snapshot: typeof snapshot;
+      workflows: typeof workflows;
+      pendingDecisions: typeof derived.pendingDecisions;
+      activeTasks: typeof derived.activeTasks;
+      activeRuns: typeof derived.activeRuns;
+      approvalCount: number;
+      activeCount: number;
+    };
+  } | null>(null);
+
+  const key = `${snapshot.status}:${snapshot.fetchStatus}:${snapshot.dataUpdatedAt}:${snapshot.errorUpdatedAt}:${workflows.status}:${workflows.fetchStatus}:${workflows.dataUpdatedAt}:${workflows.errorUpdatedAt}`;
+  if (
+    !cacheRef.current ||
+    cacheRef.current.key !== key ||
+    cacheRef.current.derived !== derived
+  ) {
+    cacheRef.current = {
+      key,
+      derived,
+      value: {
+        snapshot,
+        workflows,
+        ...derived,
+      },
+    };
+  }
+  return cacheRef.current.value;
 }

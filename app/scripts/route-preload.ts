@@ -63,7 +63,14 @@ function normalize(id: string): string {
   return id.replaceAll("\\", "/");
 }
 
-/** 构建产物里：每组要预载的块（去掉入口已经静态带上的）。 */
+/**
+ * 传递依赖只有大于该阈值（字节）才注入 `<link rel="modulepreload">`：
+ * 保留关键大块并行下载，避免几十个 <12 KB 碎片块塞满首屏 preload 队列。
+ * 每组的直接根块无论大小都保留。
+ */
+export const MIN_PRELOAD_DEP_BYTES = 12_000;
+
+/** 构建产物里：每组要预载的块（去掉入口已经静态带上的，并过滤过小的传递碎片块）。 */
 export function routePreloadMap(
   bundle: OutputBundle,
 ): Record<string, string[]> {
@@ -79,8 +86,15 @@ export function routePreloadMap(
   };
   for (const c of chunks) if (c.isEntry) addStatic(c.fileName, initial);
 
+  const shouldPreloadDep = (file: string): boolean => {
+    const code = byFile.get(file)?.code;
+    if (typeof code !== "string") return true;
+    return Buffer.byteLength(code) >= MIN_PRELOAD_DEP_BYTES;
+  };
+
   const map: Record<string, string[]> = {};
   for (const [group, suffixes] of Object.entries(ROUTE_PRELOAD_GROUPS)) {
+    const roots = new Set<string>();
     const files = new Set<string>();
     for (const suffix of suffixes) {
       const owner = suffix.startsWith("chunk:")
@@ -88,9 +102,14 @@ export function routePreloadMap(
         : chunks.find((c) =>
             c.moduleIds.some((id) => normalize(id).endsWith(`/app/${suffix}`)),
           );
-      if (owner) addStatic(owner.fileName, files);
+      if (owner) {
+        roots.add(owner.fileName);
+        addStatic(owner.fileName, files);
+      }
     }
-    map[group] = [...files].filter((f) => !initial.has(f)).sort();
+    map[group] = [...files]
+      .filter((f) => !initial.has(f) && (roots.has(f) || shouldPreloadDep(f)))
+      .sort();
   }
   return map;
 }

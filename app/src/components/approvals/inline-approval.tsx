@@ -7,6 +7,7 @@ import {
   approvalInboxOptions,
   decideApproval,
 } from "@/lib/approvals";
+import { useKeptVisibility } from "@/lib/kept-visible";
 import { DURATION_MS, usePresenceMount, useRetainedValue } from "@/lib/motion";
 
 /**
@@ -24,7 +25,8 @@ export function InlineApproval({
   fallback: ReactNode;
 }) {
   const cache = useQueryClient();
-  const inbox = useQuery(approvalInboxOptions());
+  const visibility = useKeptVisibility();
+  const inbox = useQuery(approvalInboxOptions({ poll: () => visibility.get() }));
   const [decidedStatus, setDecidedStatus] = useState<
     "approved" | "denied" | null
   >(null);
@@ -279,7 +281,8 @@ export function PendingApprovals({
 }: {
   toolCallIds: readonly string[];
 }) {
-  const inbox = useQuery(approvalInboxOptions());
+  const visibility = useKeptVisibility();
+  const inbox = useQuery(approvalInboxOptions({ poll: () => visibility.get() }));
   const waiting = new Set(
     (inbox.data?.requests ?? [])
       .filter((request) => request.status === "pending")

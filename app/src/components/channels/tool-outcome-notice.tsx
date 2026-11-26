@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,6 +7,7 @@ import { toast } from "@/components/ui/toast";
 import { useExternalConnection } from "@/hooks";
 import type { ConversationSession } from "@/lib/chat/session-client";
 import { client } from "@/lib/client";
+import { useKeptVisibility } from "@/lib/kept-visible";
 import { DURATION_MS, usePresenceMount, useRetainedValue } from "@/lib/motion";
 import type {
   ToolOutcomeResolution,
@@ -35,6 +36,7 @@ export function ToolOutcomeNotice({
   onResolved: (continued: boolean) => void;
 }) {
   const cache = useQueryClient();
+  const visibility = useKeptVisibility();
   const endpoint = `/api/conversations/${encodeURIComponent(agent.threadId)}/operations`;
   const key = ["conversation-operations", agent.threadId];
   const query = useQuery({
@@ -48,10 +50,14 @@ export function ToolOutcomeNotice({
       return ((await response.json()) as { operations: UnknownToolOperation[] })
         .operations;
     },
-    refetchInterval: (state) => (state.state.data?.length ? 5000 : false),
+    refetchInterval: (state) =>
+      visibility.get() && state.state.data?.length ? 5000 : false,
+    refetchIntervalInBackground: false,
   });
+  const hasOperationsRef = useRef(false);
+  hasOperationsRef.current = Boolean(query.data?.length);
   useExternalConnection(
-    `${instanceKey(agent)}\0${instanceKey(cache)}`,
+    `${instanceKey(agent)}\0${instanceKey(cache)}\0${instanceKey(visibility)}`,
     () => {
       const subscription = agent.subscribe({
         onRunFinishedEvent: () => {
@@ -60,7 +66,20 @@ export function ToolOutcomeNotice({
           });
         },
       });
-      return () => subscription.unsubscribe();
+      let wasVisible = visibility.get();
+      const offVis = visibility.subscribe(() => {
+        const nowVisible = visibility.get();
+        if (!wasVisible && nowVisible && hasOperationsRef.current) {
+          void cache.invalidateQueries({
+            queryKey: ["conversation-operations", agent.threadId],
+          });
+        }
+        wasVisible = nowVisible;
+      });
+      return () => {
+        subscription.unsubscribe();
+        offVis();
+      };
     },
   );
   const operation = query.data?.[0];

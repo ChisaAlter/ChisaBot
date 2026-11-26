@@ -7,17 +7,15 @@ import {
 } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { memo, useCallback, useRef, useState } from "react";
-import { AgentProfile } from "@/components/agents/agent-profile";
 import { RegisterBotChat } from "@/components/agents/bot-chat-actions";
 import { LazyBotThreadHistoryDialog } from "@/components/agents/bot-thread-history-lazy";
 import { hasUnseenActivity } from "@/components/app-sidebar/app-sidebar";
 import { BotPausedBanner } from "@/components/bot-profile/pause-banner";
 import { ChannelChat } from "@/components/channels/channel-chat";
-import { GroupChatView } from "@/components/channels/group-chat-view";
 import { MessageFind } from "@/components/channels/message-find";
-import { SideChatDrawer } from "@/components/channels/side-chat-drawer";
 import { DetailPanel } from "@/components/layout/detail-panel";
 import { Button } from "@/components/ui/button";
+import { lazyPart } from "@/components/ui/lazy-part";
 import { ErrorCard } from "@/components/ui/skyglass";
 import { useExternalConnection } from "@/hooks";
 import {
@@ -39,6 +37,22 @@ import { useComputerAutoWatch } from "@/lib/computers/auto-watch";
 import { createSideThreadMutationOptions } from "@/lib/conversations/side-threads";
 import { useMarkBotHidden } from "@/lib/kept-visible";
 import { restampOverlayMarker } from "@/lib/overlay-back";
+
+/*
+ * 机器人资料窗格（?settings=true）、多机器人群聊、分支侧栏（?side=true）不进入单聊首屏闭包，
+ * 按需加载，剥离 agent-profile / devices / pair-phone / group-chat-view / side-chat-drawer 等非单聊首屏代码。
+ */
+const LazyAgentProfile = lazyPart(() =>
+  import("@/components/agents/agent-profile").then((m) => m.AgentProfile),
+);
+const LazyGroupChatView = lazyPart(() =>
+  import("@/components/channels/group-chat-view").then((m) => m.GroupChatView),
+);
+const LazySideChatDrawer = lazyPart(() =>
+  import("@/components/channels/side-chat-drawer").then(
+    (m) => m.SideChatDrawer,
+  ),
+);
 
 export type ChannelPageProps = {
   channelId: string;
@@ -82,6 +96,9 @@ export const ChannelPage = memo(function ChannelPage({
   visibleRef.current = visible;
   const isSettingsOpen = settings === true;
   const isSideOpen = side === true;
+  // 首次打开侧栏后保持挂载以平滑完成收起动画；未打开过前不触发 chunk 下载。
+  const [sideEverOpened, setSideEverOpened] = useState(isSideOpen);
+  if (isSideOpen && !sideEverOpened) setSideEverOpened(true);
   const isGroupChannel = (channel.data?.agentIds.length ?? 0) > 1;
   /**
    * 单机器人对话按左栏记住的 Bot 预填首帧（DESIGN.md §88）；多机器人群聊不绑定单个 Bot 的右侧设置或计算机面板。
@@ -221,7 +238,7 @@ export const ChannelPage = memo(function ChannelPage({
         }
         detail={
           !isGroupChannel && agentId !== undefined ? (
-            <AgentProfile agentId={agentId} />
+            <LazyAgentProfile agentId={agentId} />
           ) : null
         }
       >
@@ -271,8 +288,8 @@ export const ChannelPage = memo(function ChannelPage({
           onOpenSideChat={handleOpenSideChat}
         />
       </DetailPanel>
-      {!isGroupChannel && channel.data?.threadId ? (
-        <SideChatDrawer
+      {sideEverOpened && !isGroupChannel && channel.data?.threadId ? (
+        <LazySideChatDrawer
           initialSideThreadId={sideThreadFocusId}
           isMainRunning={mainBusy}
           onOpenChange={setSideOpen}
@@ -369,7 +386,7 @@ const ChannelBody = memo(function ChannelBody({
   }
 
   if (channel.agentIds.length > 1) {
-    return <GroupChatView channel={channel} key={channel.id} />;
+    return <LazyGroupChatView channel={channel} key={channel.id} />;
   }
 
   const runtimeAgentId =

@@ -1,6 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
+import { useExternalConnection } from "@/hooks";
 import { tryClient } from "@/lib/client";
+import { objectConnectionKey } from "@/lib/connection-key";
+import { useKeptVisibility } from "@/lib/kept-visible";
 
 /**
  * 后台任务（DESIGN.md §38.2；服务器 server/src/workers/service.ts）在界面上的数据：这个对话里委派过的
@@ -45,7 +48,9 @@ export function workersApi(threadId: string) {
 }
 
 export function useThreadWorkers(threadId: string | null | undefined) {
-  return useQuery({
+  const visibility = useKeptVisibility();
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: workerKeys.thread(threadId ?? ""),
     enabled: Boolean(threadId),
     queryFn: async (): Promise<WorkerView[]> => {
@@ -56,15 +61,40 @@ export function useThreadWorkers(threadId: string | null | undefined) {
         ((await response.json()) as { workers?: WorkerView[] }).workers ?? []
       );
     },
-    refetchInterval: (query) =>
-      (query.state.data ?? []).some((worker) =>
+    refetchInterval: (state) =>
+      visibility.get() &&
+      (state.state.data ?? []).some((worker) =>
         ACTIVE_WORKER.includes(worker.status),
       )
         ? 1500
         : false,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     staleTime: 1000,
   });
+  const hasActiveRef = useRef(false);
+  hasActiveRef.current = (query.data ?? []).some((worker) =>
+    ACTIVE_WORKER.includes(worker.status),
+  );
+  useExternalConnection(
+    threadId
+      ? `workers-vis:${threadId}:${objectConnectionKey(visibility)}:${objectConnectionKey(queryClient)}`
+      : false,
+    () => {
+      if (!threadId) return;
+      let wasVisible = visibility.get();
+      return visibility.subscribe(() => {
+        const nowVisible = visibility.get();
+        if (!wasVisible && nowVisible && hasActiveRef.current) {
+          void queryClient.invalidateQueries({
+            queryKey: workerKeys.thread(threadId),
+          });
+        }
+        wasVisible = nowVisible;
+      });
+    },
+  );
+  return query;
 }
 
 /** 停止 / 补充说明。完成后立刻刷新卡片。 */

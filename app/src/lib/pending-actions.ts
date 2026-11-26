@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { approvalInboxOptions } from "@/lib/approvals";
 import { recentConfirmationsQueryOptions } from "@/lib/confirmations";
+import { useKeptVisibility } from "@/lib/kept-visible";
 
 export type PendingApprovalsSlice = {
   requests?: readonly { status: string }[] | null;
@@ -32,7 +33,12 @@ export function countPendingActions(
  * 订阅审批收件箱与近期确认卡片，返回当前待处理总数。
  */
 export function usePendingActionCount(): number {
-  const approvals = useQuery(approvalInboxOptions());
-  const confirms = useQuery(recentConfirmationsQueryOptions());
+  const visibility = useKeptVisibility();
+  const approvals = useQuery(
+    approvalInboxOptions({ poll: () => visibility.get() }),
+  );
+  const confirms = useQuery(
+    recentConfirmationsQueryOptions({ poll: () => visibility.get() }),
+  );
   return countPendingActions(approvals.data, confirms.data);
 }
