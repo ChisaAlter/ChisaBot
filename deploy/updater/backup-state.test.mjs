@@ -14,6 +14,7 @@ import {
   backupStatus,
   beginBackup,
   completeBackup,
+  failBackup,
   pruneBackups,
 } from "./backup-state.mjs";
 
@@ -123,4 +124,29 @@ test("partial empty backup cannot be promoted to complete or rotated away", asyn
   await pruneBackups(f.root, "full", 1, 1);
   assert.equal((await backupStatus(f.root)).local, "missing");
   assert.ok((await stat(path)).isDirectory());
+});
+
+test("aborted pending backup marked failed is reclaimed by prune while pending and protected batches survive", async (t) => {
+  const f = await fixture(t);
+  const keep = await f.batch("keep", "update", "2026-11-08T00:00:00Z");
+  const pending = await f.batch(
+    "pending",
+    "update",
+    "2026-11-07T00:00:00Z",
+    false,
+  );
+  const aborted = await f.batch(
+    "aborted",
+    "update",
+    "2026-11-06T00:00:00Z",
+    false,
+  );
+  await failBackup(aborted, "aborted-before-swap");
+  assert.deepEqual(await pruneBackups(f.root, "update", 2), {
+    removed: 1,
+    retained: 1,
+  });
+  await assert.rejects(stat(aborted), { code: "ENOENT" });
+  for (const path of [keep, pending])
+    assert.ok((await stat(path)).isDirectory());
 });

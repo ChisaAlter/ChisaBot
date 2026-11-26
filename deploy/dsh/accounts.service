@@ -7,4 +7,5 @@ Requires=docker.service
 Type=oneshot
 UMask=0077
 ExecStart=/usr/bin/node /opt/chisabot-updater/accounts.mjs reconcile /etc/chisabot/dsh-accounts.json
+SuccessExitStatus=73
 TimeoutStartSec=300

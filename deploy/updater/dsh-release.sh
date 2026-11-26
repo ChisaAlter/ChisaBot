@@ -35,7 +35,8 @@ dsh_accounts_replace() {
   [ -n "${CHISABOT_DSH_ACCOUNTS_CONFIG:-}" ] || return 0
   dsh_require_compatible_image "$image" || return 1
   targets=$(dsh_external_targets_directory) || return 1
-  "${CHISABOT_DSH_NODE:-node}" "${U:?}/accounts-release.mjs" replace "$CHISABOT_DSH_ACCOUNTS_CONFIG" "$CONTAINER" "$targets" "$image"
+  CHISABOT_ACCOUNTS_LOCK_WAIT="${CHISABOT_ACCOUNTS_LOCK_WAIT:-120}" \
+    "${CHISABOT_DSH_NODE:-node}" "${U:?}/accounts-release.mjs" replace "$CHISABOT_DSH_ACCOUNTS_CONFIG" "$CONTAINER" "$targets" "$image"
 }
 
 dsh_enabled() {

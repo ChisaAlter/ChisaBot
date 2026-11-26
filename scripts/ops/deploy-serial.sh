@@ -8,7 +8,7 @@
 # 说明见 docs/ops/deploy.md。只走 updater 队列，从不直接调用 update.sh。
 set -u
 WANT=${1:?commit prefix}; WHO=${2:-hark-worker}
-U=${CHISABOT_UPDATER_DIR:-/opt/chisabot-updater}
+U=${CHISABOT_UPDATER_HOME:-${CHISABOT_UPDATER_DIR:-/opt/chisabot-updater}}
 APP=${CHISABOT_APP_CONTAINER:-chisabot-zh}
 exec 9>/run/cb-deploy.lock
 flock -w 2400 9 || { echo "DEPLOY-LOCK TIMEOUT"; exit 3; }
@@ -23,8 +23,10 @@ locks() {
 }
 for i in $(seq 1 240); do busy || break; sleep 10; done
 
-# Wave 10 §1.1：串行重启旧容器前先执行静默排空握手（POST /api/internal/quiesce），
+# Wave 10 §1.1：静默排空握手（POST /api/internal/quiesce），
 # 拒接新回合进入并等待在途 runningTurns === 0（带上限超时；旧版本无此端点时优雅降级）。
+# 默认不在 check / 构建前提前触发（CHISABOT_SERIAL_PRE_QUIESCE=0），
+# 避免长构建或前置校验失败让旧容器提前拒接；停机排空与 .maintenance 门控统一由 update.sh 在 swap 前一刻执行。
 quiesce_app() {
   q_timeout=${CHISABOT_QUIESCE_TIMEOUT_S:-120}
   q_url=${CHISABOT_INTERNAL_URL:-http://127.0.0.1:3001}
@@ -122,7 +124,9 @@ quiesce_app() {
   esac
 }
 
-quiesce_app || { echo "QUIESCE FAILED IN STRICT MODE"; exit 4; }
+if [ "${CHISABOT_SERIAL_PRE_QUIESCE:-0}" = 1 ] || [ "${CHISABOT_SERIAL_PRE_QUIESCE:-0}" = true ]; then
+  quiesce_app || { echo "QUIESCE FAILED IN STRICT MODE"; exit 4; }
+fi
 for i in $(seq 1 120); do [ "$(locks)" = 0 ] && break; sleep 10; done
 [ "$(locks)" = 0 ] || { echo "THREAD LOCKS STILL >0, giving up"; exit 4; }
 ACTOR=$WHO sh $U/request.sh check; sleep 5

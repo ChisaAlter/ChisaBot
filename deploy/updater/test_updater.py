@@ -158,11 +158,13 @@ def main():
         class FakeChild(object):
             pass
 
+        log_streams = []
+
         def fake_popen(args, **kwargs):
             started.append(args)
             stream = kwargs.get("stdout")
             if stream is not None:
-                stream.close()
+                log_streams.append(stream)
             return FakeChild()
 
         original_popen = m.subprocess.Popen
@@ -178,6 +180,7 @@ def main():
             if original_setsid is None:
                 del m.os.setsid
         assert started and started[0][1].endswith("magpie.sh"), started
+        assert log_streams and log_streams[-1].closed, "parent log FD must be closed after Popen"
         assert "--update" in started[0] and "--job" in started[0], started
         assert u.internal["job"]["action"] == "magpie", u.internal["job"]
         assert u.internal["job"]["status"] == "running", u.internal["job"]
@@ -229,6 +232,12 @@ def main():
         assert u.internal["job"]["id"] == "magpie-r2cccccc", u.internal["job"]
         u.child = None
         u.internal["job"]["status"] = "succeeded"
+        # start_check() 后台拉取期间 last_check 仍为 0，但不应每 2s 触发 refresh() 风暴。
+        u.checking = True
+        u.last_check = 0
+        u.last_refresh = 1000
+        assert not u.should_refresh(1002), "should not storm refresh() while check is in flight"
+        assert u.should_refresh(1000 + m.REFRESH_EVERY + 1), "should still refresh after REFRESH_EVERY"
         print("chisabot-updater self-test OK on python %d.%d" % sys.version_info[:2])
     finally:
         shutil.rmtree(home, ignore_errors=True)

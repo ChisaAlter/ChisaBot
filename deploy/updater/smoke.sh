@@ -2,7 +2,8 @@
 # 管理员自检（docs/admin-smoke.md）：一次真实的模型往返，不建对话、不写消息。
 # 用法：smoke.sh [机器人 id]     通过时退出码 0，否则 1。
 set -u
-. /opt/chisabot-updater/config.env
+U=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
+. "$U/config.env"
 # CR-P1-02：网关模式下本机管理员接口要带 X-ChisaBot-Local-Caller（= CHISABOT_GATEWAY_SECRET）。
 LOCAL_CALLER=""
 if [ -f "${COMPOSE_DIR}/.env" ]; then

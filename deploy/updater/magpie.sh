@@ -22,7 +22,7 @@
 #   ::step:: <key>  ::from:: <镜像>  ::to:: <镜像>  ::duration:: <秒>  ::result:: succeeded|failed  ::error:: <一句话>
 set -u
 
-U=${CHISABOT_UPDATER_DIR:-/opt/chisabot-updater}
+U=${CHISABOT_UPDATER_HOME:-${CHISABOT_UPDATER_DIR:-/opt/chisabot-updater}}
 # shellcheck source=/dev/null
 [ -f "$U/config.env" ] && . "$U/config.env"
 

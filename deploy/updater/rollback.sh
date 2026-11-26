@@ -3,7 +3,7 @@
 # 「上一版」= 当前镜像上线前的 compose（compose.yaml.before-<当前标签>，手动发布和一键更新都会留下它）。
 # 用法：rollback.sh --job <id>
 set -uo pipefail
-U=/opt/chisabot-updater
+U=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
 . "$U/config.env"
 # shellcheck source=compose-image.sh
 . "$U/compose-image.sh"
@@ -73,6 +73,10 @@ DSH_RELEASE_ALLOWED=0
 
 step health "健康检查"
 bash "$U/health.sh" "$PREV" "" || fail "回滚后健康检查没通过"
+if [ -f "$U/isolate-sidecar-app.sh" ]; then
+  CHISABOT_APP_CONTAINER="$CONTAINER" sh "$U/isolate-sidecar-app.sh" --apply \
+    || echo "警告：回滚后侧车隔离规则重刷失败，请手动执行 sh $U/isolate-sidecar-app.sh --apply" >&2
+fi
 DSH_RELEASE_ALLOWED=1
 step done "已回滚到 $PREV"
 RESULT=succeeded

@@ -15,6 +15,7 @@ services:
         CHISABOT_IMAGE: ${CHISABOT_IMAGE:-local/chisabot:latest}
     container_name: chisabot-zh
     restart: unless-stopped
+    shm_size: ${CHISABOT_SHM_SIZE:-256m}
     env_file: .env
     ports:
       - "127.0.0.1:3001:3001"

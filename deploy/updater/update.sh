@@ -71,6 +71,10 @@ RESULT=failed
 PROTO_STOPPED=""
 DSH_ADMISSION_HELD=0
 DSH_RELEASE_ALLOWED=1
+SWAP_STARTED=0
+FULL_BUILDER_USED=0
+BK=""
+BK_STATE=""
 RB=""
 B="$U/build"
 resume_proto() {
@@ -88,11 +92,19 @@ pause_proto() {
 }
 finish() {
   resume_proto
+  if [ "$FULL_BUILDER_USED" = 1 ]; then
+    docker buildx stop "$FULL_BUILDER" >/dev/null 2>&1 || true
+  fi
   if [ "$DSH_ADMISSION_HELD" = 1 ] && [ "$DSH_RELEASE_ALLOWED" = 1 ]; then
     dsh_release_admission "$JOB" || echo "::error:: DSH 接纳仍暂停，请检查持久卷中的 .maintenance 后恢复"
   elif [ "$DSH_ADMISSION_HELD" = 1 ]; then
     echo "::error:: 应用或账号运行时切换未确认，保留 .maintenance；核对镜像和账号容器后恢复"
   fi
+  if [ -n "${BK:-}" ] && [ "$BK_STATE" = pending ] && [ "$SWAP_STARTED" = 0 ]; then
+    backup_state fail "$BK" "aborted-before-swap" >/dev/null 2>&1 || true
+    backup_state prune "$U/backups" update "$KEEP_BACKUPS" >/dev/null 2>&1 || true
+  fi
+  [ -z "${B:-}" ] || [ ! -d "$B" ] || rm -rf "$B"
   [ "$RESULT" = succeeded ] || [ ! -d "$U/deps-$TAG.partial" ] || rm -rf "$U/deps-$TAG.partial"
   echo "::result:: $RESULT"
 }
@@ -158,19 +170,24 @@ else
   echo "依赖未变，底座 $BASE_IMAGE：快速更新"
   NEED_KB=2500000
 fi
-AVAIL_KB=$(df -Pk /var/lib/docker | awk 'NR==2{print $4}')
-[ "${AVAIL_KB:-0}" -gt "$NEED_KB" ] || fail "磁盘剩余不足 $((NEED_KB/1000000)) GB（$((AVAIL_KB/1024)) MB），先清理再更新"
+for disk_path in /var/lib/docker "$U"; do
+  [ -e "$disk_path" ] || continue
+  AVAIL_KB=$(df -Pk "$disk_path" | awk 'NR==2{print $4}')
+  [ "${AVAIL_KB:-0}" -gt "$NEED_KB" ] || fail "磁盘 $disk_path 剩余不足 $((NEED_KB/1000000)) GB（$((AVAIL_KB/1024)) MB），先清理再更新"
+done
 
 # ---------- backup ----------
 BK=""
-if [ "$BUILD_ONLY" = 1 ]; then
-  step backup "只构建镜像：跳过备份"
+BK_STATE=""
+if [ "$BUILD_ONLY" = 1 ] || [ "$DRY" = 1 ]; then
+  step backup "演练/只构建模式：跳过备份"
 else
   step backup "备份数据库与 compose"
   BK="$U/backups/$(date -u +%Y%m%dT%H%M%SZ)-$JOB"
   mkdir -p "$BK"
   chmod 0700 "$BK"
   backup_state begin "$BK" update || fail "无法登记更新备份"
+  BK_STATE=pending
   docker exec "$CONTAINER" sh -c 'pg_dump -Fc "$(cat /run/s6/container_environment/DATABASE_URL)"' > "$BK/chisabot.dump" \
     || fail "pg_dump 失败"
   [ -s "$BK/chisabot.dump" ] || fail "数据库备份是空的"
@@ -206,12 +223,14 @@ if [ "$MODE" = full ]; then
     docker buildx rm "$FULL_BUILDER" >/dev/null 2>&1 || true
   fi
   if ! docker buildx inspect "$FULL_BUILDER" >/dev/null 2>&1; then
+    FULL_BUILDER_USED=1
     docker buildx create --name "$FULL_BUILDER" --driver docker-container --buildkitd-config "$U/buildkitd.toml" \
       --driver-opt "memory=$FULL_BUILD_MEMORY,memory-swap=$FULL_BUILD_MEMORY" --bootstrap >/dev/null 2>&1 \
       || fail "无法创建构建器 $FULL_BUILDER"
     echo "$WANT" > "$U/.builder-config"
     echo "已创建构建器 $FULL_BUILDER（内存上限 $FULL_BUILD_MEMORY，无 swap；同时最多 $FULL_BUILD_PARALLELISM 步）"
   else
+    FULL_BUILDER_USED=1
     docker buildx inspect --bootstrap "$FULL_BUILDER" >/dev/null 2>&1 || fail "构建器 $FULL_BUILDER 启动失败"
   fi
   pause_proto
@@ -375,9 +394,11 @@ if [ "$DSH_ADMISSION_HELD" = 1 ]; then
 fi
 
 backup_state complete "$BK" || fail "更新备份不完整，保持旧镜像"
+BK_STATE=complete
 
 # ---------- swap ----------
 step swap "切换到 $NEW_IMAGE"
+SWAP_STARTED=1
 DSH_RELEASE_ALLOWED=0
 RB="$COMPOSE_DIR/rollback-to-$CUR_TAG.sh"
 sed -e "s#@NEW@#$NEW_IMAGE#g" -e "s#@NEW_TAG@#$TAG#g" -e "s#@PREV@#$CUR_IMAGE#g" -e "s#@JOB@#$JOB#g" \
@@ -412,8 +433,8 @@ echo "::rollback:: $RB"
     RECREATE=(--force-recreate)
   fi
   dsh_prepare_candidate_reader "$NEW_IMAGE" || { echo "无法持久保存候选读取器要求，未启动候选"; exit 1; }
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 240 "$SERVICE" || exit 1
-  if [ "$DSH_ENABLED" = 1 ]; then dsh_accounts_replace "$NEW_IMAGE" || exit 1; fi
+  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --no-deps --pull never "${RECREATE[@]}" --wait --wait-timeout 240 "$SERVICE" || exit 10
+  if [ "$DSH_ENABLED" = 1 ]; then dsh_accounts_replace "$NEW_IMAGE" || exit 11; fi
 )
 SWAP=$?
 
@@ -424,7 +445,13 @@ if [ "$SWAP" = 0 ] && bash "$U/health.sh" "$NEW_IMAGE" "$TAG"; then
   OK=1
 fi
 if [ "$OK" != 1 ]; then
-  echo "::error:: 新版本健康检查没通过；仅在 $CUR_IMAGE 满足持久读取器要求时回滚"
+  if [ "$SWAP" = 11 ]; then
+    echo "::error:: DSH 账号运行时替换失败（退出码 $SWAP，非健康检查失败）；仅在 $CUR_IMAGE 满足持久读取器要求时回滚"
+  elif [ "$SWAP" != 0 ]; then
+    echo "::error:: 新版本容器切换失败（退出码 $SWAP，未进入健康检查）；仅在 $CUR_IMAGE 满足持久读取器要求时回滚"
+  else
+    echo "::error:: 新版本健康检查没通过；仅在 $CUR_IMAGE 满足持久读取器要求时回滚"
+  fi
   docker logs --tail 15 "$CONTAINER" 2>&1 | cut -c1-240 | sed 's/^/  容器日志 | /'
   if sh "$RB" && bash "$U/health.sh" "$CUR_IMAGE" ""; then
     DSH_RELEASE_ALLOWED=1
@@ -434,6 +461,11 @@ if [ "$OK" != 1 ]; then
   fi
   echo "::error:: 自动回滚被兼容门槛阻止或未恢复健康；保持接纳暂停，使用兼容当前读取器的镜像恢复（回滚脚本 $RB，备份 ${BK:-无}）"
   exit 4
+fi
+
+if [ -f "$U/isolate-sidecar-app.sh" ]; then
+  CHISABOT_APP_CONTAINER="$CONTAINER" sh "$U/isolate-sidecar-app.sh" --apply \
+    || echo "警告：侧车隔离规则重刷失败，请手动执行 sh $U/isolate-sidecar-app.sh --apply" >&2
 fi
 
 DSH_RELEASE_ALLOWED=1
@@ -460,6 +492,8 @@ if [ "$MODE" = full ]; then
   fi
   docker buildx prune --builder "$FULL_BUILDER" -f --max-used-space "$BUILD_CACHE_MAX" >/dev/null 2>&1 \
     || docker buildx prune --builder "$FULL_BUILDER" -f --keep-storage "$BUILD_CACHE_MAX" >/dev/null 2>&1 || true
+  docker buildx stop "$FULL_BUILDER" >/dev/null 2>&1 || true
+  FULL_BUILDER_USED=0
 fi
 # 更新程序自己也跟着升级（新提交里的 deploy/updater/）：只换脚本，守护进程空闲时自动重新加载。失败不影响这次更新。
 if [ -f "$B/src/deploy/updater/install.sh" ]; then

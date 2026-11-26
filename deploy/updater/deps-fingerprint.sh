@@ -3,7 +3,8 @@
 # 根 package.json 只取去掉顶层 "version" 行之后的内容：改版本号不算依赖变化。
 # 用法：deps-fingerprint.sh <提交>   （读 /opt/chisabot-updater/mirror.git）
 set -euo pipefail
-G="git --git-dir=/opt/chisabot-updater/mirror.git"
+U=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
+G="git --git-dir=$U/mirror.git"
 {
   $G ls-tree -r "$1" -- \
     bun.lock tsconfig.base.json bunfig.toml app/package.json server/package.json Dockerfile docker \

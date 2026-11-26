@@ -28,6 +28,14 @@ deploy/**/id_rsa*
 deploy/**/*.key
 deploy/**/*.pem
 deploy/**/*.sqlite*
+android/
+pc/dist/
+pc/release/
+docs/
+tests/
+perf/
+.github/
+deploy/updater/__pycache__/
 
 # The self-hosted Dockerfile consumes a prebuilt frontend; Git still ignores it.
 !app/dist/

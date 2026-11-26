@@ -152,7 +152,7 @@ reject dsh_accounts_check
 pass 'external targets without explicit host config stop release'
 NODE_FAILURE=0 NODE_CALLS=$TMP/node-calls
 dsh_test_node() {
-  printf '%s\n' "$*" >> "$NODE_CALLS"
+  printf '%s wait=%s\n' "$*" "${CHISABOT_ACCOUNTS_LOCK_WAIT:-}" >> "$NODE_CALLS"
   [ "$NODE_FAILURE" = 0 ] || return 1
   if [ "$1" = "$U/reader-compatibility.mjs" ]; then node "$@"; fi
 }
@@ -165,11 +165,11 @@ reject dsh_accounts_check
 pass 'account config mismatch or missing coordinator fails release'
 NODE_FAILURE=0 IMAGE_FAILURE=0 CANDIDATE=$CURRENT
 dsh_snapshot "$TMP/cutover"
-grep -q 'accounts.mjs snapshot /host/accounts.json .*/cutover/accounts' "$NODE_CALLS"
+grep -q 'accounts.mjs snapshot /host/accounts.json .*/cutover/accounts wait=60' "$NODE_CALLS"
 pass 'external backup dispatches coordinated account snapshot'
 dsh_accounts_replace fixture:new
-grep -q 'accounts-release.mjs replace /host/accounts.json fixture /targets fixture:new' "$NODE_CALLS"
-pass 'replacement receives the same target image as the API'
+grep -q 'accounts-release.mjs replace /host/accounts.json fixture /targets fixture:new wait=120' "$NODE_CALLS"
+pass 'replacement receives the same target image as the API with default lock wait'
 EXTERNAL_TARGETS=''
 reject dsh_accounts_check
 pass 'host account config cannot silently act on a managed deployment'

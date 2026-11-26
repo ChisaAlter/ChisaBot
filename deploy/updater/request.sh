@@ -11,7 +11,7 @@
 #
 # 环境变量 ACTOR=<名字> 写进历史（默认 host:<用户>）。
 set -eu
-U=/opt/chisabot-updater
+U=${CHISABOT_UPDATER_HOME:-/opt/chisabot-updater}
 REQ="$U/spool/requests"
 STATE="$U/spool/state/state.json"
 ACTION=${1:-}
