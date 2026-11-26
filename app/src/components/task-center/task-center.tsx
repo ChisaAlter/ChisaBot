@@ -74,14 +74,14 @@ export type TaskCenterView =
   | "context"
   | "capabilities";
 const views = [
-  { id: "inbox", label: "Inbox", icon: IconInbox },
+  { id: "inbox", label: "收件箱", icon: IconInbox },
   { id: "board", label: "看板", icon: IconLayoutKanban },
-  { id: "outbox", label: "Outbox", icon: IconSend },
+  { id: "outbox", label: "发件箱", icon: IconSend },
   { id: "active", label: "进行中", icon: IconActivity },
   { id: "history", label: "历史", icon: IconHistory },
   { id: "sources", label: "信息源", icon: IconAdjustments },
   { id: "context", label: "我的上下文", icon: IconUser },
-  { id: "capabilities", label: "工具与 Agent", icon: IconListDetails },
+  { id: "capabilities", label: "工具与智能体", icon: IconListDetails },
 ] as const;
 const titles: Record<TaskCenterView, string> = {
   inbox: "等待安排的事项",
@@ -91,7 +91,7 @@ const titles: Record<TaskCenterView, string> = {
   history: "历史与交付",
   sources: "巡检信息源",
   context: "我的工作上下文",
-  capabilities: "工具与 Agent",
+  capabilities: "工具与智能体",
 };
 const descriptions: Partial<Record<TaskCenterView, string>> = {
   inbox: "主动发现的待办和你交付的目标，统一在这里安排。",

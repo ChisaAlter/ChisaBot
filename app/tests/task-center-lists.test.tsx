@@ -192,7 +192,7 @@ test("task and approval lists load beyond the snapshot; search is sent to the se
   expect(ui.queryByText("任务 0")).toBeNull();
   expect(paths.some((path) => path.includes("search="))).toBe(true);
   await act(async () =>
-    fireEvent.click(ui.getByRole("button", { name: /Outbox/ })),
+    fireEvent.click(ui.getByRole("button", { name: /发件箱/ })),
   );
   await waitFor(() => expect(ui.getByText("已显示 50 / 65 项")).toBeTruthy());
   await act(async () =>

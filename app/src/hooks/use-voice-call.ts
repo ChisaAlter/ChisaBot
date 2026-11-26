@@ -73,6 +73,7 @@ export function useVoiceCall(options: UseVoiceCallOptions): UseVoiceCallResult {
   const micAmpRef = useRef(0);
   const playbackAmpRef = useRef(0);
   const mountedRef = useRef(true);
+  const activeTargetRef = useRef<string | null>(null);
   const onCallEndedRef = useRef(onCallEnded);
   onCallEndedRef.current = onCallEnded;
 
@@ -393,6 +394,22 @@ export function useVoiceCall(options: UseVoiceCallOptions): UseVoiceCallResult {
   // 组件卸载或切换机器人/频道时自动清理当前通话。
   useEffect(() => {
     mountedRef.current = true;
+    const targetKey = `${botId}\0${channelId ?? ""}`;
+    if (
+      activeTargetRef.current !== null &&
+      activeTargetRef.current !== targetKey
+    ) {
+      setState("idle");
+      setStatusDetail(null);
+      setActiveToolName(null);
+      setError(null);
+      setDurationSeconds(0);
+      setSubtitles([]);
+      micAmpRef.current = 0;
+      playbackAmpRef.current = 0;
+      amplitude.set(0);
+    }
+    activeTargetRef.current = targetKey;
     return () => {
       mountedRef.current = false;
       connectAbortRef.current?.abort();
@@ -403,8 +420,9 @@ export function useVoiceCall(options: UseVoiceCallOptions): UseVoiceCallResult {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
+      startedAtRef.current = null;
     };
-  }, []);
+  }, [amplitude, botId, channelId]);
 
   return {
     state,

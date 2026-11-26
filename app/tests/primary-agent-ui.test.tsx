@@ -318,7 +318,7 @@ test("[TC-U02 & TC-U03 & TC-U07] BotsPage 将主 Agent 置顶、渲染星标与�
   expect(
     primaryRow.querySelector('[data-testid="primary-agent-badge"]')
       ?.textContent,
-  ).toContain("主 Agent");
+  ).toContain("主机器人");
   expect(
     secondaryRow.querySelector('[data-testid="primary-agent-star"]'),
   ).toBeNull();
@@ -334,7 +334,7 @@ test("[TC-U02 & TC-U03 & TC-U07] BotsPage 将主 Agent 置顶、渲染星标与�
     deleteMenuItem.getAttribute("aria-disabled") === "true" ||
       deleteMenuItem.hasAttribute("data-disabled"),
   ).toBe(true);
-  expect(deleteMenuItem.textContent).toContain("需先取消或更换主 Agent");
+  expect(deleteMenuItem.textContent).toContain("需先取消或更换主机器人");
 });
 
 test("[TC-U04] BotProfilePage 异步按钮严格遵循 pending -> success 状态机且成功无多余 Toast", async () => {
@@ -450,7 +450,7 @@ test("[TC-U04] BotProfilePage 异步按钮严格遵循 pending -> success 状态
 
   const toggleBtn = await view.findByTestId("profile-primary-toggle");
   expect(toggleBtn.getAttribute("data-btn-state")).toBe("idle");
-  expect(toggleBtn.textContent).toContain("设为主 Agent");
+  expect(toggleBtn.textContent).toContain("设为主机器人");
 
   const user = userEvent.setup({ document });
   await act(async () => {
@@ -466,13 +466,13 @@ test("[TC-U04] BotProfilePage 异步按钮严格遵循 pending -> success 状态
   await waitFor(
     () => {
       expect(toggleBtn.getAttribute("data-btn-state")).toBe("success");
-      expect(toggleBtn.textContent).toContain("已设为主 Agent");
+      expect(toggleBtn.textContent).toContain("已设为主机器人");
     },
     { timeout: 1500 },
   );
   expect(view.getByTestId("profile-primary-star")).toBeTruthy();
   expect(view.getByTestId("profile-primary-badge").textContent).toContain(
-    "主 Agent",
+    "主机器人",
   );
   expect(view.container.querySelectorAll(".glass-toast").length).toBe(0);
 

@@ -1,10 +1,4 @@
-import {
-  type CSSProperties,
-  useCallback,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { type CSSProperties, useCallback, useRef, useState } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { useExternalConnection, useInterval, useTimeout } from "@/hooks";
 import {
@@ -21,7 +15,11 @@ import {
   useCustomWallpaperUrl,
   useWallpaperLoading,
 } from "@/lib/appearance";
-import { DURATION_MS } from "@/lib/motion";
+import {
+  DURATION_MS,
+  prefersReducedMotion,
+  useSharedReducedMotion,
+} from "@/lib/motion";
 import {
   isResizing,
   resizeInProgress,
@@ -610,35 +608,8 @@ function engineSetInterval(
   return id;
 }
 
-const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
-
-function reducedMotionQuery(): MediaQueryList | null {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
-    return null;
-  return window.matchMedia(REDUCED_MOTION_QUERY);
-}
-
-function prefersReducedMotion(): boolean {
-  return reducedMotionQuery()?.matches ?? false;
-}
-
-function subscribeReducedMotion(listener: () => void): () => void {
-  const mq = reducedMotionQuery();
-  if (!mq) return () => {};
-  if (typeof mq.addEventListener === "function") {
-    mq.addEventListener("change", listener);
-    return () => mq.removeEventListener("change", listener);
-  }
-  mq.addListener?.(listener);
-  return () => mq.removeListener?.(listener);
-}
-
 export function useReducedMotion(): boolean {
-  return useSyncExternalStore(
-    subscribeReducedMotion,
-    prefersReducedMotion,
-    () => false,
-  );
+  return useSharedReducedMotion();
 }
 
 export function stopSkyMotionNow(): void {

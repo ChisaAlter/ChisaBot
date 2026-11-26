@@ -7,6 +7,7 @@ import {
   IconPinnedOff,
   IconPlayerPause,
   IconPlus,
+  IconRefresh,
   IconSearch,
   IconStar,
   IconStarFilled,
@@ -29,6 +30,7 @@ import { AccountCard, AccountMenu } from "@/components/layout/account-menu";
 import { RailSidebar, RailSidebarEdge } from "@/components/layout/rail-sidebar";
 import { RosterToggle } from "@/components/layout/roster-toggle";
 import { SidebarSearchField } from "@/components/layout/sidebar-search-field";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,6 +48,7 @@ import {
   useCloseMobileDrawer,
   useOptionalSidebar,
 } from "@/components/ui/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
 import { openTriggerByLabel, snapAnchor } from "@/components/ui/snap-anchor";
 import { useBotChat, useCurrentBotChat } from "@/lib/agents/bot-chat-context";
 import { openCreateBot } from "@/lib/agents/create-bot";
@@ -897,6 +900,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     />
   );
 
+  const rosterLoading = agents.isPending && !agents.data;
+  const rosterError = agents.isError && !agents.data;
+  const retryRoster = useCallback(() => {
+    void agents.refetch();
+  }, [agents]);
+
   const collapsed = Boolean(
     sidebar && !sidebar.isMobile && sidebar.state === "collapsed",
   );
@@ -907,10 +916,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <BotMiniRail
           attentionById={attentionById}
           bots={railBots}
+          error={rosterError}
           knownIds={knownIds}
           latestChannelByBot={latestChannelByBot}
+          loading={rosterLoading}
           mainBotId={mainBot?.id}
+          onRetry={retryRoster}
           onToggleMain={handleToggleMain}
+          retrying={agents.isFetching}
           selectedBotId={selectedBotId}
         />
       </RailSidebar>
@@ -1079,27 +1092,73 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <HiddenChatBotRow known={knownIds} />
               {/* §139：不再有「主机器人 / 其他」分组标签——主机器人置顶、头像带星，中间一条细分隔线。 */}
               <div className="glass-bot-list relative">
-                {mainBot ? row(mainBot, true) : null}
-                {mainBot && others.length > 0 ? (
-                  <span aria-hidden className="glass-bot-sep" />
-                ) : null}
-                <PresenceList>
-                  {others.map((bot, index) => (
-                    <PresenceItem key={bot.id} layoutKey={index}>
-                      {row(bot, false)}
-                    </PresenceItem>
-                  ))}
-                </PresenceList>
-                {roster.length === 0 && agents.isSuccess ? (
-                  <button
-                    className="glass-list-empty"
-                    onClick={openCreateBot}
-                    type="button"
+                {rosterLoading ? (
+                  <div
+                    aria-busy="true"
+                    aria-label={"正在加载机器人列表"}
+                    className="flex flex-col gap-1.5 px-1 py-1"
+                    data-testid="sidebar-roster-skeleton"
+                    role="status"
                   >
-                    <IconPlus className="size-4" />
-                    {"新建一个机器人"}
-                  </button>
-                ) : null}
+                    {[0, 1, 2, 3].map((slot) => (
+                      <div
+                        className="flex h-11 items-center gap-2.5 px-2"
+                        key={slot}
+                      >
+                        <Skeleton className="size-7 shrink-0 rounded-full" />
+                        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                          <Skeleton className="h-3.5 w-24 rounded" />
+                          <Skeleton className="h-2.5 w-16 rounded" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : rosterError ? (
+                  <div
+                    className="flex flex-col items-center gap-2 rounded-xl border border-destructive/25 bg-destructive/5 px-3 py-4 text-center"
+                    data-testid="sidebar-roster-error"
+                    role="alert"
+                  >
+                    <p className="text-[12.5px] text-destructive">
+                      {"机器人列表暂时无法加载"}
+                    </p>
+                    <Button
+                      data-testid="sidebar-roster-retry"
+                      disabled={agents.isFetching}
+                      onClick={retryRoster}
+                      size="xs"
+                      type="button"
+                      variant="outline"
+                    >
+                      <IconRefresh className="size-3.5" />
+                      {agents.isFetching ? "重试中…" : "重试"}
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    {mainBot ? row(mainBot, true) : null}
+                    {mainBot && others.length > 0 ? (
+                      <span aria-hidden className="glass-bot-sep" />
+                    ) : null}
+                    <PresenceList>
+                      {others.map((bot, index) => (
+                        <PresenceItem key={bot.id} layoutKey={index}>
+                          {row(bot, false)}
+                        </PresenceItem>
+                      ))}
+                    </PresenceList>
+                    {roster.length === 0 && agents.isSuccess ? (
+                      <button
+                        className="glass-list-empty"
+                        onClick={openCreateBot}
+                        type="button"
+                      >
+                        <IconPlus className="size-4" />
+                        {"新建一个机器人"}
+                      </button>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -1144,6 +1203,10 @@ function BotMiniRail({
   latestChannelByBot,
   attentionById,
   onToggleMain,
+  loading,
+  error,
+  retrying,
+  onRetry,
 }: {
   bots: RosterBot[];
   knownIds: Set<string>;
@@ -1152,6 +1215,10 @@ function BotMiniRail({
   latestChannelByBot: Map<string, ChannelSummary>;
   attentionById: Map<string, BotAttention>;
   onToggleMain: (botId: string, isMain: boolean) => void;
+  loading: boolean;
+  error: boolean;
+  retrying: boolean;
+  onRetry: () => void;
 }) {
   return (
     <nav aria-label={"机器人"} className="glass-mini" id="chisabot-bot-list">
@@ -1173,18 +1240,51 @@ function BotMiniRail({
         <span aria-hidden className="glass-mini-div" />
         <div className="glass-mini-scroll">
           <HiddenChatMiniBot known={knownIds} />
-          {bots.map((bot) => (
-            <MiniBot
-              attention={attentionById.get(bot.id)}
-              bot={bot}
-              canReplaceMain={bot.id === mainBotId && bots.length > 1}
-              key={bot.id}
-              latest={latestChannelByBot.get(bot.id)}
-              main={bot.id === mainBotId}
-              onToggleMain={onToggleMain}
-              selected={selectedBotId === bot.id}
-            />
-          ))}
+          {loading ? (
+            <div
+              aria-busy="true"
+              aria-label={"正在加载机器人列表"}
+              className="flex flex-col items-center gap-2 py-1"
+              data-testid="sidebar-mini-skeleton"
+              role="status"
+            >
+              {[0, 1, 2, 3].map((slot) => (
+                <Skeleton className="size-9 rounded-full" key={slot} />
+              ))}
+            </div>
+          ) : error ? (
+            <div
+              className="flex flex-col items-center py-2"
+              data-testid="sidebar-mini-error"
+              role="alert"
+            >
+              <RailTip label={"机器人列表加载失败，点击重试"}>
+                <button
+                  aria-label={"重新加载机器人列表"}
+                  className="glass-mini-act text-destructive"
+                  data-testid="sidebar-mini-retry"
+                  disabled={retrying}
+                  onClick={onRetry}
+                  type="button"
+                >
+                  <IconRefresh className="size-4" />
+                </button>
+              </RailTip>
+            </div>
+          ) : (
+            bots.map((bot) => (
+              <MiniBot
+                attention={attentionById.get(bot.id)}
+                bot={bot}
+                canReplaceMain={bot.id === mainBotId && bots.length > 1}
+                key={bot.id}
+                latest={latestChannelByBot.get(bot.id)}
+                main={bot.id === mainBotId}
+                onToggleMain={onToggleMain}
+                selected={selectedBotId === bot.id}
+              />
+            ))
+          )}
         </div>
         <span aria-hidden className="glass-mini-div" />
         <div className="glass-mini-foot">

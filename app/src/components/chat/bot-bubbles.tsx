@@ -21,7 +21,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { DiagramZoom, svgNaturalWidth } from "@/components/chat/diagram-zoom";
 import { SmoothStreamdown } from "@/components/chat/smooth-markdown";
@@ -46,7 +45,12 @@ import {
 } from "@/lib/chat/fold-long-message";
 import { useConversation } from "@/lib/conversations/conversation";
 import { githubQueryOptions } from "@/lib/github";
-import { EASE_OUT, ENTRANCE_SECONDS, smoothScrollIntoView } from "@/lib/motion";
+import {
+  EASE_OUT,
+  ENTRANCE_SECONDS,
+  smoothScrollIntoView,
+  useSharedReducedMotion,
+} from "@/lib/motion";
 import {
   type BubbleSegment,
   splitBubbles,
@@ -84,78 +88,6 @@ const ARRIVE_ZERO_TRANSITION = {
   duration: ENTRANCE_SECONDS,
   ease: EASE_OUT,
 } as const;
-
-const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
-let sharedReducedMotionSource: {
-  from: typeof window.matchMedia;
-  mql: MediaQueryList;
-} | null = null;
-const reducedMotionListeners = new Set<() => void>();
-let activeReducedMotionMql: MediaQueryList | null = null;
-const notifyReducedMotion = () => {
-  for (const listener of reducedMotionListeners) listener();
-};
-
-function getReducedMotionMql(): MediaQueryList | null {
-  if (
-    typeof window === "undefined" ||
-    typeof window.matchMedia !== "function"
-  ) {
-    return null;
-  }
-  if (sharedReducedMotionSource?.from !== window.matchMedia) {
-    sharedReducedMotionSource = {
-      from: window.matchMedia,
-      mql: window.matchMedia(REDUCED_MOTION_QUERY),
-    };
-  }
-  return sharedReducedMotionSource.mql;
-}
-
-function subscribeReducedMotion(listener: () => void): () => void {
-  const mql = getReducedMotionMql();
-  if (mql && activeReducedMotionMql !== mql) {
-    activeReducedMotionMql?.removeEventListener?.(
-      "change",
-      notifyReducedMotion,
-    );
-    activeReducedMotionMql = mql;
-    if (reducedMotionListeners.size > 0) {
-      activeReducedMotionMql.addEventListener?.("change", notifyReducedMotion);
-    }
-  }
-  const wasEmpty = reducedMotionListeners.size === 0;
-  reducedMotionListeners.add(listener);
-  if (wasEmpty && activeReducedMotionMql) {
-    activeReducedMotionMql.addEventListener?.("change", notifyReducedMotion);
-  }
-  return () => {
-    reducedMotionListeners.delete(listener);
-    if (reducedMotionListeners.size === 0 && activeReducedMotionMql) {
-      activeReducedMotionMql.removeEventListener?.(
-        "change",
-        notifyReducedMotion,
-      );
-      activeReducedMotionMql = null;
-    }
-  };
-}
-
-function getReducedMotionSnapshot(): boolean {
-  return Boolean(getReducedMotionMql()?.matches);
-}
-
-function getReducedMotionServerSnapshot(): boolean {
-  return false;
-}
-
-function useSharedReducedMotion(): boolean {
-  return useSyncExternalStore(
-    subscribeReducedMotion,
-    getReducedMotionSnapshot,
-    getReducedMotionServerSnapshot,
-  );
-}
 
 export const BotBubbles = memo(function BotBubbles({
   text,

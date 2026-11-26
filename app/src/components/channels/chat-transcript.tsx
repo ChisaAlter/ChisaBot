@@ -26,7 +26,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import type { VirtualizerHandle } from "virtua";
 import {
@@ -158,6 +157,7 @@ import {
   workCallInterrupted,
 } from "@/lib/chat/work-steps";
 import { useThreadConfirmations } from "@/lib/confirmations";
+import { objectConnectionKey } from "@/lib/connection-key";
 import {
   type EditableAttachment,
   isEditableUserText,
@@ -186,6 +186,7 @@ import {
   smoothScrollIntoView,
   usePresenceMount,
   useRetainedValue,
+  useSharedReducedMotion,
 } from "@/lib/motion";
 import { readToolName } from "@/lib/plugins/tool-name";
 import {
@@ -339,7 +340,7 @@ function VisibleApprovalPoll({ enabled }: { enabled: boolean }) {
   const keptVisibility = useKeptVisibility();
   const queryClient = useQueryClient();
   useExternalConnection(
-    enabled ? `approval-poll:${objectKey(keptVisibility)}` : false,
+    enabled ? `approval-poll:${objectConnectionKey(keptVisibility)}` : false,
     () => {
       let timer: ReturnType<typeof setInterval> | null = null;
       const stop = () => {
@@ -684,7 +685,7 @@ function describeParked(
     .map((file) => file.filename)
     .filter((filename) => filename !== undefined);
 
-  return named.length > 0 ? named.join(", ") : "attachment";
+  return named.length > 0 ? named.join(", ") : "附件";
 }
 
 /**
@@ -798,17 +799,6 @@ function Queued({
  * alternative is threading a ref out through three components with no other reason to know a
  * scroller exists.
  */
-const objectIds = new WeakMap<object, number>();
-let nextObjectId = 1;
-
-function objectKey(value: object): number {
-  const existing = objectIds.get(value);
-  if (existing !== undefined) return existing;
-  const created = nextObjectId++;
-  objectIds.set(value, created);
-  return created;
-}
-
 function ScrollNewestQueuedIntoView({
   newest,
   viewport,
@@ -820,7 +810,7 @@ function ScrollNewestQueuedIntoView({
 
   useExternalConnection(
     newest !== null
-      ? `${newest}\0${objectKey(scrollToEnd)}\0${viewport ? objectKey(viewport) : ""}`
+      ? `${newest}\0${objectConnectionKey(scrollToEnd)}\0${viewport ? objectConnectionKey(viewport) : ""}`
       : false,
     () => {
       if (newest === null) {
@@ -842,78 +832,6 @@ function ScrollNewestQueuedIntoView({
   );
 
   return null;
-}
-
-const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
-let sharedReducedMotionSource: {
-  from: typeof window.matchMedia;
-  mql: MediaQueryList;
-} | null = null;
-const reducedMotionListeners = new Set<() => void>();
-let activeReducedMotionMql: MediaQueryList | null = null;
-const notifyReducedMotion = () => {
-  for (const listener of reducedMotionListeners) listener();
-};
-
-function getReducedMotionMql(): MediaQueryList | null {
-  if (
-    typeof window === "undefined" ||
-    typeof window.matchMedia !== "function"
-  ) {
-    return null;
-  }
-  if (sharedReducedMotionSource?.from !== window.matchMedia) {
-    sharedReducedMotionSource = {
-      from: window.matchMedia,
-      mql: window.matchMedia(REDUCED_MOTION_QUERY),
-    };
-  }
-  return sharedReducedMotionSource.mql;
-}
-
-function subscribeReducedMotion(listener: () => void): () => void {
-  const mql = getReducedMotionMql();
-  if (mql && activeReducedMotionMql !== mql) {
-    activeReducedMotionMql?.removeEventListener?.(
-      "change",
-      notifyReducedMotion,
-    );
-    activeReducedMotionMql = mql;
-    if (reducedMotionListeners.size > 0) {
-      activeReducedMotionMql.addEventListener?.("change", notifyReducedMotion);
-    }
-  }
-  const wasEmpty = reducedMotionListeners.size === 0;
-  reducedMotionListeners.add(listener);
-  if (wasEmpty && activeReducedMotionMql) {
-    activeReducedMotionMql.addEventListener?.("change", notifyReducedMotion);
-  }
-  return () => {
-    reducedMotionListeners.delete(listener);
-    if (reducedMotionListeners.size === 0 && activeReducedMotionMql) {
-      activeReducedMotionMql.removeEventListener?.(
-        "change",
-        notifyReducedMotion,
-      );
-      activeReducedMotionMql = null;
-    }
-  };
-}
-
-function getReducedMotionSnapshot(): boolean {
-  return Boolean(getReducedMotionMql()?.matches);
-}
-
-function getReducedMotionServerSnapshot(): boolean {
-  return false;
-}
-
-function useSharedReducedMotion(): boolean {
-  return useSyncExternalStore(
-    subscribeReducedMotion,
-    getReducedMotionSnapshot,
-    getReducedMotionServerSnapshot,
-  );
 }
 
 /** 恢复完成后还钉在底部多久（毫秒）：晚到的「已停止」行、图片撑高、存储补进来的几轮都在这段时间里。 */
@@ -1029,7 +947,7 @@ function SettleAtEnd({
   useLayoutEffect(() => () => finalWrite.current?.(), []);
 
   useExternalConnection(
-    `${scrollKey ?? ""}\0${objectKey(scrollToMessage)}\0${objectKey(viewport)}`,
+    `${scrollKey ?? ""}\0${objectConnectionKey(scrollToMessage)}\0${objectConnectionKey(viewport)}`,
     () => {
       const element = viewport.current;
       const content = element?.querySelector<HTMLElement>(
@@ -3842,7 +3760,7 @@ function ChatTranscriptImpl({
    */
   const hasItems = items.length > 0;
   useExternalConnection(
-    hasItems && !opening ? objectKey(delays) : false,
+    hasItems && !opening ? objectConnectionKey(delays) : false,
     () => {
       delays.settle();
     },
@@ -4530,7 +4448,7 @@ function useFreshAnchor(
   // 过期后重画一次，把标记拿掉。
   const [, expire] = useState(0);
   useExternalConnection(
-    fresh ? `${objectKey(memo)}\0${memo.at}` : false,
+    fresh ? `${objectConnectionKey(memo)}\0${memo.at}` : false,
     () => {
       const timer = window.setTimeout(
         () => expire((n) => n + 1),

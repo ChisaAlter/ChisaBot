@@ -1,4 +1,5 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
+import { toast } from "@/components/ui/toast";
 import { channelKeys } from "@/lib/channels/queries";
 import { client } from "@/lib/client";
 import {
@@ -11,7 +12,7 @@ import {
   type UpdateTransport,
 } from "./queries";
 
-const FALLBACK = "Bot operation failed";
+const FALLBACK = "机器人操作失败，请稍后重试。";
 
 /** Everything here moves badges, Activity and state together, so all of it is refetched. */
 function invalidateLifecycle(queryClient: QueryClient) {
@@ -30,6 +31,16 @@ export function setBotPausedMutationOptions(queryClient: QueryClient) {
         { method: "POST", fallback: FALLBACK },
       ),
     onSuccess: () => invalidateLifecycle(queryClient),
+    onError: (error, variables) => {
+      if (typeof window === "undefined") return;
+      toast.error(
+        error instanceof Error && error.message
+          ? error.message
+          : variables.paused
+            ? "暂停机器人失败，请稍后重试。"
+            : "恢复机器人运行失败，请稍后重试。",
+      );
+    },
   });
 }
 
@@ -45,6 +56,14 @@ export function setBotNotifyMutationOptions(queryClient: QueryClient) {
         fallback: FALLBACK,
       }),
     onSuccess: () => invalidateLifecycle(queryClient),
+    onError: (error) => {
+      if (typeof window === "undefined") return;
+      toast.error(
+        error instanceof Error && error.message
+          ? error.message
+          : "更新通知设置失败，请稍后重试。",
+      );
+    },
   });
 }
 

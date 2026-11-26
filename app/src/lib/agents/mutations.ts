@@ -1,4 +1,5 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
+import { toast } from "@/components/ui/toast";
 import { channelKeys } from "@/lib/channels/queries";
 import { client } from "@/lib/client";
 import { forgetStoredPanelBot } from "@/lib/panels/active-bot";
@@ -94,6 +95,16 @@ export function setAgentPinnedMutationOptions(queryClient: QueryClient) {
       );
     },
     onSuccess: () => invalidateAgents(queryClient),
+    onError: (error, variables) => {
+      if (typeof window === "undefined") return;
+      toast.error(
+        error instanceof Error && error.message
+          ? error.message
+          : variables.pinned
+            ? "固定机器人失败，请稍后重试。"
+            : "取消固定失败，请稍后重试。",
+      );
+    },
   });
 }
 

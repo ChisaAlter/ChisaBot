@@ -31,7 +31,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { toast } from "@/components/ui/toast";
 import { agentListQueryOptions, agentQueryOptions } from "@/lib/agents/queries";
 import { setBotPausedMutationOptions } from "@/lib/bot-lifecycle/mutations";
 import {
@@ -257,7 +256,7 @@ function BotChat({
       // Preserve the unsent draft when channel creation fails.
       setSent(null);
       if (caught instanceof ClientError && caught.code === "AGENT_PAUSED") {
-        setPausedAgentError(caught.message || "该 Agent 已暂停运行。");
+        setPausedAgentError(caught.message || "该机器人已暂停运行。");
       } else {
         setError(caught instanceof Error ? caught.message : "无法开始会话。");
       }
@@ -305,7 +304,7 @@ function BotChat({
       const unsent = [...pendingFiles, ...queued.current.splice(0)];
       if (unsent.length > 0) stashDraftFiles(`new:${agent}`, unsent);
       if (caught instanceof ClientError && caught.code === "AGENT_PAUSED") {
-        setPausedAgentError(caught.message || "该 Agent 已暂停运行。");
+        setPausedAgentError(caught.message || "该机器人已暂停运行。");
       } else {
         setError(caught instanceof Error ? caught.message : "无法开始会话。");
       }
@@ -351,8 +350,8 @@ function BotChat({
       await resumeBot.mutateAsync({ agentId: agent, paused: false });
       setPausedAgentError(null);
       setError(null);
-    } catch (caught) {
-      toast.error(caught instanceof Error ? caught.message : "恢复运行失败。");
+    } catch {
+      // setBotPausedMutationOptions.onError 已统一弹出中文失败提示
     }
   };
 
@@ -387,7 +386,7 @@ function BotChat({
                 data-testid="new-channel-primary-badge"
               >
                 <IconStarFilled aria-hidden className="size-2.5" />
-                {"主 Agent"}
+                {"主机器人"}
               </span>
             ) : null}
           </p>
@@ -428,7 +427,7 @@ function BotChat({
                     </span>
                     {candidate.id === mainBotId ? (
                       <span className="ml-2 shrink-0 text-[11px] text-amber-600 dark:text-amber-300">
-                        {"主 Agent"}
+                        {"主机器人"}
                       </span>
                     ) : null}
                   </DropdownMenuItem>

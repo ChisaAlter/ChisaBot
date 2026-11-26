@@ -186,7 +186,7 @@ test("a remote BOT explains that its model is configured externally", async () =
   const view = draw();
   await view.findAllByRole("combobox", { name: "模型选择" });
   expect((within(view.getByTestId("settings")).getByRole("combobox", { name: "模型选择" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(within(view.getByTestId("settings")).getByText("此外部 BOT 的模型由其服务管理。")).toBeTruthy();
+  expect(within(view.getByTestId("settings")).getByText("此外部机器人的模型由其服务管理。")).toBeTruthy();
   expect(within(view.getByTestId("settings")).queryByRole("alert")).toBeNull();
 });
 
