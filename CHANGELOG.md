@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **全量审查 M2 — 部署更新链稳定性、Docker/s6 运维优化与 CI 流水线提速**：
+  - 根治在线更新在 `swap` 阶段因 `flock --nonblock` 退出码 73 撞锁引发的误回滚与永久 `.maintenance` 锁死问题（`dsh-release.sh` / `accounts-release.mjs` 对 `--replace` 默认注入 `CHISABOT_ACCOUNTS_LOCK_WAIT=120`，定时对账遇 `.maintenance` 优雅跳过、`accounts.service` 添加 `SuccessExitStatus=73`）；修复 `deploy-serial.sh` 提前 `quiesce_app` 导致构建期间误停服与 `pin-resources.sh` 多账号 DSH 误选网络；在线更新与回滚健康后自动重刷 `isolate-sidecar-app.sh --apply` 并清理陈旧容器 IP 规则；补齐 `update.sh` 异常路径备份与 buildx builder 回收、`install-updater.sh` 安装清单、`host-monitor-state.mjs` 备份监测及 `chisabot-updater.py` FD 泄漏与 2s 轮询风暴修复。
+  - 优化根 `Dockerfile` 分层缓存（`apt-get` 与系统初始化前移至业务 `COPY` 前，且不再打入 `server/tests`）与 `.dockerignore` 排除目录；统一 `Dockerfile.update` `HEALTHCHECK` 为轻量 `curl`；修复 s6 禁用服务 1s 循环重启、支持内嵌 PostgreSQL 内存参数环境变量及 `/tmp` `tmpfs` 扩至 `192m`；CI 流水线补齐 Bun/npm/Gradle 缓存、去除 `web-and-models` 重复构建/重复测试并对齐 PG16 镜像，发版流水线合并为单次 Linux `web-bundle` 构建（无新增数据库迁移或手动操作）。
+
 - **全量审查 M1 — 服务端 CI 基线清零、核心状态机修复与性能内存治理**：
   - 修复 `origin/main` 既有 2 条 CI 基线失败（清理 `route-access-registry.ts` 过时通配项，对齐 `restart-interrupted-run.integration.test.ts` 的 `buildStopSummary` 契约）；修复空频道 `/connect` 缺失 `RUN_STARTED`/`RUN_FINISHED` 信封引发前端控制台报错的问题；修复 DSH `ToolLoopGuard` 并行工具调用单槽覆写及 `local-conversations.ts` `emit()` 终态竞态。
   - 新增非破坏性迁移 `0071_tool_operations_run_created_idx.sql` 补全 `chisabot_tool_operations(run_id, created_at)` 索引（自动执行，无需手动操作）；落盘 `RUN_STARTED` 剔除冗余 `context`/`tools` 并在 `audit-retention.ts` 新增带 advisory lock 的历史中间事件分批归档清理（`CB-031`）；将 20 处热路径维护态检测切换至异步缓存 `*Async()`；修复 `DshRuntimeAgent.reconnect()` 句柄泄漏与可中止退避、`agents/lifecycle.ts` 5s 轮询防重入与批量查库，并加固 `guarded-fetch` 压缩流清理、`ModelBreakers`/`DshClientPool` 上限、`devices/hub` ping 回收与 `system-update` 异步读取。
