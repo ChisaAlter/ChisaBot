@@ -6,6 +6,11 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import * as PiAi from "@deepseek-ai/dsh-llm-pi-ai";
 import { appendPluginRecord } from "@deepseek-ai/dsh-session";
 import { ACTION_NUDGE, actionPromise } from "./action-promise.mjs";
+import {
+  detectLeakedToolCall,
+  LEAKED_TOOL_CALL_ABORT_MESSAGE,
+  LEAKED_TOOL_CALL_NUDGE,
+} from "./leaked-tool-call.mjs";
 import { ChisaModelRouter } from "./model-router.mjs";
 import { ensureLoopGuard, toolLoopLimits } from "./tool-loop-guard.mjs";
 
@@ -383,10 +388,75 @@ export async function apply(ctx, config) {
     state.steeringInstructions = [];
     state.toolTurns = new Set();
     state.nudgedTurns = new Set();
+    state.leakNudgedTurns = new Set();
+    state.activeAttemptStream = undefined;
     state.reply = undefined;
     // Bounds each turn's tool loop. Keep the same guard across rebinds of this run
     // (approval resume must not clear the per-turn counters — QA513 P3).
     ensureLoopGuard(state, loopLimits);
+    state.disposers.push(
+      agentCtx.on("agent/assistant-stream", ({ frame }) => {
+        if (!frame || state.stopped) return;
+        if (frame.type === "start") {
+          state.activeAttemptStream = {
+            attemptId: frame.attemptId,
+            turn: frame.turn,
+            step: frame.step,
+            order: [],
+            blocks: new Map(),
+          };
+          return;
+        }
+        if (
+          frame.type === "chunk" &&
+          state.activeAttemptStream?.attemptId === frame.attemptId
+        ) {
+          const chunk = frame.chunk;
+          if (!chunk || typeof chunk !== "object") return;
+          if (chunk.type === "block-start") {
+            if (!state.activeAttemptStream.blocks.has(chunk.index)) {
+              state.activeAttemptStream.order.push(chunk.index);
+              state.activeAttemptStream.blocks.set(chunk.index, {
+                type: chunk.blockType,
+                text: "",
+              });
+            }
+            return;
+          }
+          if (chunk.type === "text-delta") {
+            let entry = state.activeAttemptStream.blocks.get(chunk.index);
+            if (!entry) {
+              state.activeAttemptStream.order.push(chunk.index);
+              entry = { type: "text", text: "" };
+              state.activeAttemptStream.blocks.set(chunk.index, entry);
+            }
+            if (entry.type === "text" && typeof chunk.text === "string") {
+              entry.text += chunk.text;
+            }
+            return;
+          }
+          if (chunk.type === "block-end" && chunk.block?.type === "text") {
+            let entry = state.activeAttemptStream.blocks.get(chunk.index);
+            if (!entry) {
+              state.activeAttemptStream.order.push(chunk.index);
+              entry = { type: "text", text: "" };
+              state.activeAttemptStream.blocks.set(chunk.index, entry);
+            }
+            if (typeof chunk.block.text === "string") {
+              entry.text = chunk.block.text;
+            }
+            return;
+          }
+          return;
+        }
+        if (
+          frame.type === "end" &&
+          state.activeAttemptStream?.attemptId === frame.attemptId
+        ) {
+          state.activeAttemptStream = undefined;
+        }
+      }),
+    );
     state.disposers.push(
       agentCtx.systemPrompt.section({
         name: "chisabot:prompt",
@@ -554,7 +624,40 @@ export async function apply(ctx, config) {
                 };
               }
             }
-            state.loopGuard.observe({ result: finalResult });
+            const outcome = state.loopGuard.observe({ result: finalResult });
+            if (outcome?.stop) {
+              if (state.loopConcluded !== call.turn) {
+                state.loopConcluded = call.turn;
+                appendPluginRecord(agent.session, "plugin:chisabot/loop-stop", {
+                  turn: call.turn,
+                  step: call.step,
+                  reason: outcome.reason,
+                  text: outcome.concludeText,
+                });
+              }
+              execution.concludeTurn();
+              return {
+                content: outcome.concludeText,
+                isError: true,
+                stopped: true,
+              };
+            }
+            const notices = [verdict.notice, outcome?.notice].filter(
+              (item) => typeof item === "string" && item.length > 0,
+            );
+            if (notices.length > 0) {
+              const baseText =
+                typeof finalResult.content === "string"
+                  ? finalResult.content
+                  : JSON.stringify(finalResult);
+              const joinedNotices = notices.join("\n");
+              finalResult = {
+                ...finalResult,
+                content: baseText
+                  ? `${baseText}\n\n[运行时提醒]\n${joinedNotices}`
+                  : `[运行时提醒]\n${joinedNotices}`,
+              };
+            }
             return finalResult;
           },
         }),
@@ -597,8 +700,7 @@ export async function apply(ctx, config) {
         return { ...decision, messages: [...decision.messages, ...injected] };
       }),
     );
-    // Promise without action (ported from the Hermes adapter): a turn about to close on "I'll go
-    // check now" — tools on offer, none called this turn — is steered once to actually act.
+    // Promise without action & leaked tool-call tags: steer back first, abort cleanly if repeated.
     state.disposers.push(
       agentCtx.on("agent/turn-stopping", ({ turn, signal }) => {
         const reply = state.reply;
@@ -607,11 +709,59 @@ export async function apply(ctx, config) {
           state.stopped ||
           state.waiting ||
           state.binding.tools.length === 0 ||
-          state.toolTurns.has(turn) ||
-          state.nudgedTurns.has(turn) ||
           state.loopGuard.isStopped(turn) ||
           reply?.turn !== turn ||
-          reply.failed ||
+          reply.failed
+        )
+          return;
+        const leak = detectLeakedToolCall(reply.text, state.binding.tools);
+        if (leak) {
+          if (!state.leakNudgedTurns.has(turn)) {
+            state.leakNudgedTurns.add(turn);
+            appendPluginRecord(
+              agent.session,
+              "plugin:chisabot/leaked-tool-call",
+              {
+                turn,
+                marker: leak.marker,
+                toolName: leak.toolName,
+                action: "steer",
+              },
+            );
+            agent.steer(
+              createUserMessage({
+                source: {
+                  kind: "user",
+                  rpcId: `chisabot:leak-nudge:${state.binding.runId}:${turn}`,
+                },
+                content: [{ type: "text", text: LEAKED_TOOL_CALL_NUDGE }],
+              }),
+            );
+            return;
+          }
+          appendPluginRecord(
+            agent.session,
+            "plugin:chisabot/leaked-tool-call",
+            {
+              turn,
+              marker: leak.marker,
+              toolName: leak.toolName,
+              action: "abort",
+            },
+          );
+          if (state.loopConcluded !== turn) {
+            state.loopConcluded = turn;
+            appendPluginRecord(agent.session, "plugin:chisabot/loop-stop", {
+              turn,
+              reason: "leaked_tool_call",
+              text: LEAKED_TOOL_CALL_ABORT_MESSAGE,
+            });
+          }
+          return;
+        }
+        if (
+          state.toolTurns.has(turn) ||
+          state.nudgedTurns.has(turn) ||
           !actionPromise(reply.text)
         )
           return;
@@ -978,6 +1128,22 @@ export async function apply(ctx, config) {
       return { accepted: true, generation, sessionId: input.sessionId };
     }),
   );
+  function extractAttemptPlainText(attemptStream) {
+    if (!attemptStream || !Array.isArray(attemptStream.order)) return "";
+    const parts = [];
+    for (const index of attemptStream.order) {
+      const block = attemptStream.blocks.get(index);
+      if (
+        block?.type === "text" &&
+        typeof block.text === "string" &&
+        block.text.length > 0
+      ) {
+        parts.push(block.text);
+      }
+    }
+    return parts.join("");
+  }
+
   function applySteerDecision(state, agent, item, requestId) {
     const inFlight = state.inFlightTools?.size ?? 0;
     if (
@@ -986,6 +1152,16 @@ export async function apply(ctx, config) {
       inFlight === 0 &&
       agent.status === "running"
     ) {
+      const partialText = extractAttemptPlainText(state.activeAttemptStream);
+      if (partialText.trim().length > 0) {
+        appendPluginRecord(agent.session, "plugin:chisabot/steer-partial", {
+          turn: state.activeAttemptStream?.turn ?? state.currentTurn,
+          step: state.activeAttemptStream?.step,
+          attemptId: state.activeAttemptStream?.attemptId,
+          requestId,
+          text: partialText,
+        });
+      }
       agent.inbox.remove(item.id);
       agent.cancel({ kind: "hook", reason: STEER_CUT }, { keepInbox: true });
       agent.followup(item);

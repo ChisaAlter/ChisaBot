@@ -20,6 +20,7 @@ import {
   WorkspaceRequestError,
   WorkspaceTooLargeError,
 } from "../computer/client";
+import { clearRunBudget } from "../computer/command-budget";
 import { ActionRefusedError } from "../computer/gateway";
 import { HeadlessToolSuspension } from "../computer/headless-tools";
 import {
@@ -79,16 +80,38 @@ function unknownEffect(
 const STEER_TOOL_GRACE_MS = 1_000;
 const BACKGROUND_PROMOTED_NOTICE =
   "该只读查询仍在后台继续执行（未中止），请先响应用户刚刚插入的新指令；后台完成后结果会自动记录。";
+const SKIPPED_FOR_NEW_MESSAGE_CODE = "skipped_for_new_message";
+const YIELDED_TO_STEER_NOTICE =
+  "检测到用户新插话，等待已立即让步中断（skipped_for_new_message），请优先响应新消息。";
+const YIELD_TO_STEER_TOOL_NAMES = new Set([
+  "wait",
+  "sleep",
+  "wait_seconds",
+  "computer_wait",
+  "device_wait",
+]);
 
 export type DshToolExecuteResult = ToolOperationResult & {
   images?: ToolImagePart[];
   backgroundPromoted?: boolean;
+  skippedForNewMessage?: boolean;
+  status?: string;
 };
 
 export function isPromotableReadTool(
   tool: Pick<GrantedTool, "effect" | "prepareConfirm">,
 ): boolean {
   return tool.effect === "read" && !tool.prepareConfirm;
+}
+
+export function isYieldToSteerTool(
+  tool: Pick<GrantedTool, "name" | "prepareConfirm"> & {
+    yieldsToSteer?: boolean;
+  },
+): boolean {
+  if (tool.prepareConfirm) return false;
+  if (tool.yieldsToSteer === true) return true;
+  return YIELD_TO_STEER_TOOL_NAMES.has(tool.name.trim().toLowerCase());
 }
 
 /**
@@ -185,6 +208,7 @@ export function createDshToolGateway(
     const close = () => {
       runs.delete(capability);
       steerSignals.delete(registration.identity.runId);
+      clearRunBudget(registration.identity.runId);
       for (const key of steering.keys())
         if (key.startsWith(`${capability}:`)) steering.delete(key);
       registration.signal.removeEventListener("abort", close);
@@ -288,8 +312,18 @@ export function createDshToolGateway(
     }
     let invoked = false;
     const callStartedAt = Date.now();
+    const callAbort = new AbortController();
+    const forwardRunAbort = () => callAbort.abort(run.signal.reason);
+    if (run.signal.aborted) {
+      callAbort.abort(run.signal.reason);
+    } else {
+      run.signal.addEventListener("abort", forwardRunAbort, { once: true });
+    }
+    const cleanupCallAbort = () => {
+      run.signal.removeEventListener("abort", forwardRunAbort);
+    };
     const executionPromise = Promise.resolve().then(() => {
-      run.signal.throwIfAborted();
+      callAbort.signal.throwIfAborted();
       return withToolImageCollector(
         {
           supportsImages: run.supportsImages ?? false,
@@ -299,14 +333,14 @@ export function createDshToolGateway(
           withConfirmTurn(turn, () =>
             withConfirmToolCall(toolCallId, input.name, () =>
               withConfirmActor(initiator, () =>
-                withToolAbort(run.signal, () =>
+                withToolAbort(callAbort.signal, () =>
                   withApprovalContext(continuation, () =>
                     withDurableConfirmation(
                       { suspend: suspendConfirmation(claim.id, continuation) },
                       () => {
                         invoked = true;
                         return tool.execute(parsed.data, {
-                          signal: run.signal,
+                          signal: callAbort.signal,
                         });
                       },
                     ),
@@ -340,7 +374,9 @@ export function createDshToolGateway(
       throw unknownEffect(claim.id, continuation);
     };
 
-    if (!isPromotableReadTool(tool)) {
+    const yieldToSteer = isYieldToSteerTool(tool);
+    const promotableRead = !yieldToSteer && isPromotableReadTool(tool);
+    if (!yieldToSteer && !promotableRead) {
       try {
         const collected = await executionPromise;
         // 账本仅落盘纯文本结果，避免将大体积 base64 写入 PostgreSQL JSONB。
@@ -352,10 +388,13 @@ export function createDshToolGateway(
           : { content: collected.content };
       } catch (error) {
         return settleFailure(error);
+      } finally {
+        cleanupCallAbort();
       }
     }
 
     let promoted = false;
+    let yielded = false;
     let finished = false;
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
     let signalEntry = steerSignals.get(run.identity.runId);
@@ -377,9 +416,19 @@ export function createDshToolGateway(
       | { kind: "completed"; collected: Awaited<typeof executionPromise> }
       | { kind: "failed"; error: unknown }
       | { kind: "promoted" }
+      | { kind: "yielded" }
     >((resolve) => {
-      const armTimer = () => {
-        if (finished || promoted || graceTimer) return;
+      const onSteerSignal = () => {
+        if (finished || promoted || yielded) return;
+        if (yieldToSteer) {
+          yielded = true;
+          cleanupWatch();
+          cleanupCallAbort();
+          callAbort.abort(new Error(SKIPPED_FOR_NEW_MESSAGE_CODE));
+          resolve({ kind: "yielded" });
+          return;
+        }
+        if (graceTimer) return;
         graceTimer = setTimeout(() => {
           if (finished || run.signal.aborted) return;
           promoted = true;
@@ -392,18 +441,20 @@ export function createDshToolGateway(
         signalEntry = { listeners: new Set() };
         steerSignals.set(run.identity.runId, signalEntry);
       }
-      signalListener = armTimer;
-      signalEntry.listeners.add(armTimer);
+      signalListener = onSteerSignal;
+      signalEntry.listeners.add(onSteerSignal);
       if (
         signalEntry.signaledAt !== undefined &&
         signalEntry.signaledAt >= callStartedAt - 500
       )
-        armTimer();
+        onSteerSignal();
 
       void executionPromise.then(
         async (collected) => {
           finished = true;
           cleanupWatch();
+          cleanupCallAbort();
+          if (yielded) return;
           if (promoted) {
             await operations
               .settle(claim.id, "completed", { content: collected.content })
@@ -415,6 +466,8 @@ export function createDshToolGateway(
         async (error) => {
           finished = true;
           cleanupWatch();
+          cleanupCallAbort();
+          if (yielded) return;
           if (promoted) {
             await settleFailure(error).catch(() => {});
             return;
@@ -424,6 +477,18 @@ export function createDshToolGateway(
       );
     });
 
+    if (raceOutcome.kind === "yielded") {
+      const content = JSON.stringify({
+        status: SKIPPED_FOR_NEW_MESSAGE_CODE,
+        message: YIELDED_TO_STEER_NOTICE,
+      });
+      await operations.settle(claim.id, "completed", { content });
+      return {
+        status: SKIPPED_FOR_NEW_MESSAGE_CODE,
+        content,
+        skippedForNewMessage: true,
+      };
+    }
     if (raceOutcome.kind === "promoted") {
       return {
         content: BACKGROUND_PROMOTED_NOTICE,

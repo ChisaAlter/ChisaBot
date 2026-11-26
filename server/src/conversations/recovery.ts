@@ -68,6 +68,14 @@ export async function recoverConversations(options: {
       .status(record.thread_id, record.run_id, "interrupted")
       .catch(() => {});
     await options.settleInterrupted?.(record).catch(() => {});
+    if (!backend.control.isActive(record.thread_id)) {
+      await backend.client
+        .releaseOrphanedLock(record.thread_id, record.run_id)
+        .catch(() => {});
+      await backend.client
+        .closeInterruptedRun(record.thread_id, record.run_id)
+        .catch(() => {});
+    }
   };
   const start = async (record: PendingRunRecord, initiator: AuditInitiator) => {
     if (backend.control.isActive(record.thread_id)) return;

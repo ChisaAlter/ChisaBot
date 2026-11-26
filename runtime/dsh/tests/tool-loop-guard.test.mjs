@@ -282,3 +282,129 @@ test("QA513 P3: ensureLoopGuard keeps counts across rebind of the same run", asy
   assert.notEqual(next, first);
   assert.equal(next.admit(1, "ima_search", { q: "x" }).kind, "run");
 });
+
+test("state_cycle detects 2-state and 3-state loops and resets when fingerprint changes", () => {
+  const guard2 = new ToolLoopGuard({ maxCalls: 20, maxRepeats: 4, grace: 1 });
+  // 2-state: A -> B -> A -> B with identical outputs
+  for (let i = 0; i < 2; i += 1) {
+    assert.equal(guard2.admit(1, "tool_a", { k: 1 }).kind, "run");
+    const obsA = guard2.observe({ result: { content: "same-a" } });
+    assert.equal(guard2.admit(1, "tool_b", { k: 2 }).kind, "run");
+    const obsB = guard2.observe({ result: { content: "same-b" } });
+    if (i === 1) {
+      assert.match(obsB.notice ?? "", /state_cycle/);
+    } else {
+      assert.equal(obsA.stop, false);
+    }
+  }
+  const refused2 = guard2.admit(1, "tool_a", { k: 1 });
+  assert.equal(refused2.kind, "refuse");
+  assert.match(refused2.message, /state_cycle/);
+
+  // Changing fingerprint on any signature resets the state_cycle window.
+  const guardReset = new ToolLoopGuard({
+    maxCalls: 20,
+    maxRepeats: 4,
+    grace: 1,
+  });
+  assert.equal(guardReset.admit(1, "tool_a", { k: 1 }).kind, "run");
+  guardReset.observe({ result: { content: "a1" } });
+  assert.equal(guardReset.admit(1, "tool_b", { k: 2 }).kind, "run");
+  guardReset.observe({ result: { content: "b1" } });
+  assert.equal(guardReset.admit(1, "tool_a", { k: 1 }).kind, "run");
+  guardReset.observe({ result: { content: "a2-changed" } });
+  assert.equal(guardReset.admit(1, "tool_b", { k: 2 }).kind, "run");
+  const obsReset = guardReset.observe({ result: { content: "b1" } });
+  assert.equal(obsReset.notice, undefined);
+  assert.equal(guardReset.admit(1, "tool_a", { k: 1 }).kind, "run");
+
+  // 3-state: A -> B -> C -> A -> B -> C
+  const guard3 = new ToolLoopGuard({ maxCalls: 20, maxRepeats: 4, grace: 1 });
+  for (let i = 0; i < 2; i += 1) {
+    for (const [toolName, out] of [
+      ["step_a", "oa"],
+      ["step_b", "ob"],
+      ["step_c", "oc"],
+    ]) {
+      assert.equal(guard3.admit(1, toolName, {}).kind, "run");
+      const obs = guard3.observe({ result: { content: out } });
+      if (i === 1 && toolName === "step_c") {
+        assert.match(obs.notice ?? "", /state_cycle/);
+      }
+    }
+  }
+  const refused3 = guard3.admit(1, "step_a", {});
+  assert.equal(refused3.kind, "refuse");
+});
+
+test("consecutive failure ladder warns at 4, stops at 6, and unrecoverable code stops at 2", () => {
+  const guard = new ToolLoopGuard({ maxCalls: 20, maxRepeats: 10, grace: 1 });
+  for (let i = 1; i <= 3; i += 1) {
+    assert.equal(guard.admit(1, `cmd_${i}`, {}).kind, "run");
+    const obs = guard.observe({ result: { content: "err", error: "fail" } });
+    assert.equal(obs.stop, false);
+    assert.equal(obs.notice, undefined);
+  }
+  // 4th consecutive failure warns
+  assert.equal(guard.admit(1, "cmd_4", {}).kind, "run");
+  const warnObs = guard.observe({ result: { content: "err", error: "fail" } });
+  assert.equal(warnObs.stop, false);
+  assert.match(warnObs.notice ?? "", /连续失败 4 次/);
+
+  // 5th warns, 6th stops
+  assert.equal(guard.admit(1, "cmd_5", {}).kind, "run");
+  assert.equal(
+    guard.observe({ result: { content: "err", error: "fail" } }).stop,
+    false,
+  );
+  assert.equal(guard.admit(1, "cmd_6", {}).kind, "run");
+  const stopObs = guard.observe({ result: { content: "err", error: "fail" } });
+  assert.equal(stopObs.stop, true);
+  assert.equal(stopObs.reason, "consecutive_failures");
+
+  // Unrecoverable COMMAND_BUDGET_EXHAUSTED stops on 2nd occurrence
+  const budgetGuard = new ToolLoopGuard({
+    maxCalls: 20,
+    maxRepeats: 10,
+    grace: 1,
+  });
+  assert.equal(
+    budgetGuard.admit(1, "computer_run_command", { command: "a" }).kind,
+    "run",
+  );
+  const firstBudget = budgetGuard.observe({
+    result: {
+      content: "COMMAND_BUDGET_EXHAUSTED: limit reached",
+      error: "COMMAND_BUDGET_EXHAUSTED",
+    },
+  });
+  assert.equal(firstBudget.stop, false);
+  assert.equal(
+    budgetGuard.admit(1, "computer_run_command", { command: "b" }).kind,
+    "run",
+  );
+  const secondBudget = budgetGuard.observe({
+    result: {
+      content: "COMMAND_BUDGET_EXHAUSTED: limit reached",
+      error: "COMMAND_BUDGET_EXHAUSTED",
+    },
+  });
+  assert.equal(secondBudget.stop, true);
+  assert.equal(secondBudget.reason, "unrecoverable");
+});
+
+test("midpoint budget reminders fire once at 50% and 75% of maxCalls", () => {
+  const guard = new ToolLoopGuard({ maxCalls: 8, maxRepeats: 10, grace: 1 });
+  const notices = [];
+  for (let i = 1; i <= 8; i += 1) {
+    const verdict = guard.admit(1, `tool_${i}`, { i });
+    assert.equal(verdict.kind, "run");
+    if (verdict.notice) notices.push({ step: i, notice: verdict.notice });
+    guard.observe({ result: { content: `ok-${i}` } });
+  }
+  assert.equal(notices.length, 2);
+  assert.equal(notices[0].step, 4);
+  assert.match(notices[0].notice, /过半/);
+  assert.equal(notices[1].step, 6);
+  assert.match(notices[1].notice, /75%/);
+});

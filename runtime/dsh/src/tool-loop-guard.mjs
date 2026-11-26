@@ -17,6 +17,10 @@
 export const TOOL_CALLS_PER_TURN = 40;
 export const SAME_CALL_REPEATS = 4;
 export const STOP_GRACE_CALLS = 2;
+export const CONSECUTIVE_FAILURE_WARN = 4;
+export const CONSECUTIVE_FAILURE_STOP = 6;
+export const UNRECOVERABLE_FAILURE_STOP = 2;
+export const UNRECOVERABLE_ERROR_CODES = new Set(["COMMAND_BUDGET_EXHAUSTED"]);
 
 const LIMITS = {
   maxCalls: TOOL_CALLS_PER_TURN,
@@ -83,16 +87,99 @@ function resultFingerprint(result) {
   return JSON.stringify(result);
 }
 
+function extractUnrecoverableCode(result) {
+  if (!result || typeof result !== "object") {
+    if (typeof result === "string") {
+      for (const code of UNRECOVERABLE_ERROR_CODES) {
+        if (result.includes(code)) return code;
+      }
+    }
+    return null;
+  }
+  const direct =
+    typeof result.errorCode === "string"
+      ? result.errorCode
+      : typeof result.code === "string"
+        ? result.code
+        : null;
+  if (direct && UNRECOVERABLE_ERROR_CODES.has(direct)) return direct;
+  const textCandidates = [
+    typeof result.error === "string" ? result.error : "",
+    typeof result.content === "string" ? result.content : "",
+  ];
+  for (const text of textCandidates) {
+    if (!text) continue;
+    for (const code of UNRECOVERABLE_ERROR_CODES) {
+      if (text.includes(code)) return code;
+    }
+  }
+  return null;
+}
+
 function looksFailed(result) {
   if (result == null) return true;
   if (typeof result === "string")
-    return /^(error\b|failed\b|exception\b)/i.test(result.trim());
+    return /^(error\b|failed\b|exception\b|工具未完成)/i.test(result.trim());
   if (typeof result === "object") {
-    if (result.ok === false || result.error) return true;
+    if (
+      result.ok === false ||
+      result.isError === true ||
+      result.error ||
+      result.errorCode
+    )
+      return true;
+    if (extractUnrecoverableCode(result)) return true;
     if (typeof result.content === "string")
-      return /^(error\b|failed\b|exception\b)/i.test(result.content.trim());
+      return /^(error\b|failed\b|exception\b|工具未完成)/i.test(
+        result.content.trim(),
+      );
   }
   return false;
+}
+
+function detectTailStateCycle(recentCycle) {
+  const len = recentCycle.length;
+  // 2 态循环：A -> B -> A -> B（且各状态结果指纹均未变化）
+  if (len >= 4) {
+    const a1 = recentCycle[len - 4];
+    const b1 = recentCycle[len - 3];
+    const a2 = recentCycle[len - 2];
+    const b2 = recentCycle[len - 1];
+    if (
+      a1.signature !== b1.signature &&
+      a1.signature === a2.signature &&
+      b1.signature === b2.signature &&
+      a1.fingerprint === a2.fingerprint &&
+      b1.fingerprint === b2.fingerprint
+    ) {
+      return { size: 2, signatures: [a1.signature, b1.signature] };
+    }
+  }
+  // 3 态循环：A -> B -> C -> A -> B -> C
+  if (len >= 6) {
+    const a1 = recentCycle[len - 6];
+    const b1 = recentCycle[len - 5];
+    const c1 = recentCycle[len - 4];
+    const a2 = recentCycle[len - 3];
+    const b2 = recentCycle[len - 2];
+    const c2 = recentCycle[len - 1];
+    const distinct = new Set([a1.signature, b1.signature, c1.signature]);
+    if (
+      distinct.size >= 2 &&
+      a1.signature === a2.signature &&
+      b1.signature === b2.signature &&
+      c1.signature === c2.signature &&
+      a1.fingerprint === a2.fingerprint &&
+      b1.fingerprint === b2.fingerprint &&
+      c1.fingerprint === c2.fingerprint
+    ) {
+      return {
+        size: 3,
+        signatures: [a1.signature, b1.signature, c1.signature],
+      };
+    }
+  }
+  return null;
 }
 
 export class ToolLoopGuard {
@@ -111,6 +198,13 @@ export class ToolLoopGuard {
     this.lastSignature = undefined;
     this.streak = 0;
     this.lastResults = new Map();
+    this.recentCycle = [];
+    this.cycleBlockedSignatures = new Set();
+    this.cycleDetectedLength = 0;
+    this.consecutiveFailures = 0;
+    this.unrecoverableCounts = new Map();
+    this.warnedMidpoint50 = false;
+    this.warnedMidpoint75 = false;
     this.pending = undefined;
     this.stopped = undefined;
     this.refused = 0;
@@ -122,7 +216,7 @@ export class ToolLoopGuard {
   }
 
   /**
-   * Decide one tool call. Returns `{ kind: "run" }`, `{ kind: "refuse", message }` (a model-facing
+   * Decide one tool call. Returns `{ kind: "run", notice? }`, `{ kind: "refuse", message }` (a model-facing
    * error; the call is not executed) or `{ kind: "conclude", text }` (end the turn with `text`).
    */
   admit(turn, name, args) {
@@ -137,6 +231,16 @@ export class ToolLoopGuard {
       return { kind: "refuse", message: this.notice() };
     }
     const signature = `${name}\u0000${canonicalArgs(args)}`;
+    if (this.cycleBlockedSignatures.has(signature)) {
+      this.stopped = {
+        reason: "state_cycle",
+        name,
+        count: this.cycleDetectedLength,
+      };
+      if (this.limits.grace === 0)
+        return { kind: "conclude", text: this.conclusion() };
+      return { kind: "refuse", message: this.notice() };
+    }
     // Only a consecutive streak of the same call counts as a repeat. An intervening different
     // call (including a write) resets the streak so multi-step coding is not blocked (QA513 P2).
     if (signature !== this.lastSignature) {
@@ -159,7 +263,24 @@ export class ToolLoopGuard {
       return { kind: "refuse", message: this.notice() };
     }
     this.pending = { name, signature };
-    return { kind: "run" };
+
+    let budgetNotice;
+    const ratio = this.attempts / this.limits.maxCalls;
+    if (!this.warnedMidpoint75 && ratio >= 0.75 && this.limits.maxCalls >= 4) {
+      this.warnedMidpoint75 = true;
+      this.warnedMidpoint50 = true;
+      budgetNotice = `提醒：本轮工具调用次数已使用约 75%（${this.attempts}/${this.limits.maxCalls}），请尽快收敛并整理已有结论。`;
+    } else if (
+      !this.warnedMidpoint50 &&
+      ratio >= 0.5 &&
+      this.limits.maxCalls >= 2
+    ) {
+      this.warnedMidpoint50 = true;
+      budgetNotice = `提示：本轮工具调用次数已过半（${this.attempts}/${this.limits.maxCalls}），请注意控制调用次数。`;
+    }
+    return budgetNotice
+      ? { kind: "run", notice: budgetNotice }
+      : { kind: "run" };
   }
 
   /**
@@ -169,7 +290,7 @@ export class ToolLoopGuard {
   observe(outcome) {
     const pending = this.pending;
     this.pending = undefined;
-    if (!pending) return;
+    if (!pending) return { stop: false };
     const { name, signature } = pending;
     // Approval pause: call has not run yet. Drop the pending slot and roll back the admit
     // that reserved attempts/streak, so a resume of the same call is counted once
@@ -177,17 +298,23 @@ export class ToolLoopGuard {
     if (outcome?.deferred) {
       this.attempts -= 1;
       this.streak -= 1;
-      return;
+      return { stop: false };
     }
     if (outcome?.rejected) {
       this.rejected += 1;
-      return;
+      return { stop: false };
     }
     const result = outcome?.result;
     const failed = outcome?.failed === true || looksFailed(result);
-    if (failed) this.failed += 1;
-    else this.succeeded += 1;
+    if (failed) {
+      this.failed += 1;
+      this.consecutiveFailures += 1;
+    } else {
+      this.succeeded += 1;
+      this.consecutiveFailures = 0;
+    }
     this.executed.set(name, (this.executed.get(name) ?? 0) + 1);
+
     const fingerprint = resultFingerprint(result);
     const previous = this.lastResults.get(signature);
     this.lastResults.set(signature, fingerprint);
@@ -195,14 +322,82 @@ export class ToolLoopGuard {
     // Intervening different calls (including writes) already reset the streak in admit
     // via lastSignature — no need to special-case mutating names here, or a repeated
     // `run_tests` with the same failure would never trip the guard.
-    if (previous !== undefined && previous !== fingerprint) this.streak = 1;
+    if (previous !== undefined && previous !== fingerprint) {
+      this.streak = 1;
+      // 任一签名结果指纹变化意味着状态推进，立即重置状态循环窗口。
+      this.recentCycle = [];
+      this.cycleBlockedSignatures.clear();
+      this.cycleDetectedLength = 0;
+    }
+
+    this.recentCycle.push({ signature, fingerprint });
+    if (this.recentCycle.length > 12) this.recentCycle.shift();
+    const detectedCycle = detectTailStateCycle(this.recentCycle);
+    if (detectedCycle) {
+      this.cycleDetectedLength = detectedCycle.size;
+      this.cycleBlockedSignatures = new Set(detectedCycle.signatures);
+    }
+
+    const unrecoverableCode = extractUnrecoverableCode(result);
+    if (unrecoverableCode) {
+      const count = (this.unrecoverableCounts.get(unrecoverableCode) ?? 0) + 1;
+      this.unrecoverableCounts.set(unrecoverableCode, count);
+      if (count >= UNRECOVERABLE_FAILURE_STOP) {
+        this.stopped = {
+          reason: "unrecoverable",
+          name,
+          count,
+          code: unrecoverableCode,
+        };
+      }
+    }
+
+    if (!this.stopped && this.consecutiveFailures >= CONSECUTIVE_FAILURE_STOP) {
+      this.stopped = {
+        reason: "consecutive_failures",
+        name,
+        count: this.consecutiveFailures,
+      };
+    }
+
+    if (this.stopped) {
+      return {
+        stop: true,
+        reason: this.stopped.reason,
+        notice: this.notice(),
+        concludeText: this.conclusion(),
+      };
+    }
+
+    const notices = [];
+    if (this.consecutiveFailures >= CONSECUTIVE_FAILURE_WARN) {
+      notices.push(
+        `警告：工具已连续失败 ${this.consecutiveFailures} 次（连续失败 ${CONSECUTIVE_FAILURE_STOP} 次将强制中止），请排查根因或更换方法。`,
+      );
+    }
+    if (detectedCycle) {
+      notices.push(
+        `警告：检测到 ${detectedCycle.size} 态无进展循环（state_cycle），请勿继续重复同一套调用序列。`,
+      );
+    }
+    return notices.length > 0
+      ? { stop: false, notice: notices.join("\n") }
+      : { stop: false };
   }
 
   notice() {
-    const why =
-      this.stopped.reason === "repeat"
-        ? `the tool "${this.stopped.name}" was requested ${this.stopped.count} times with identical arguments without progress`
-        : `this turn reached the limit of ${this.limits.maxCalls} tool calls`;
+    let why;
+    if (this.stopped.reason === "repeat") {
+      why = `the tool "${this.stopped.name}" was requested ${this.stopped.count} times with identical arguments without progress`;
+    } else if (this.stopped.reason === "state_cycle") {
+      why = `a ${this.stopped.count}-state tool loop (state_cycle) repeated without any change in tool outcomes`;
+    } else if (this.stopped.reason === "unrecoverable") {
+      why = `an unrecoverable error (${this.stopped.code}) occurred ${this.stopped.count} times`;
+    } else if (this.stopped.reason === "consecutive_failures") {
+      why = `${this.stopped.count} consecutive tool calls failed without recovery`;
+    } else {
+      why = `this turn reached the limit of ${this.limits.maxCalls} tool calls`;
+    }
     return MODEL_STOP_NOTICE.replace("{why}", why);
   }
 
@@ -223,10 +418,18 @@ export class ToolLoopGuard {
     if (this.rejected)
       parts.push(`另有 ${this.rejected} 次调用被网关拒绝、未执行`);
     const ranSentence = `${parts.join("；")}。`;
-    const why =
-      this.stopped.reason === "repeat"
-        ? `模型反复用同样的参数调用「${this.stopped.name}」（已连续请求 ${this.stopped.count} 次），没有新进展`
-        : `工具调用达到了单轮上限（${this.limits.maxCalls} 次）仍没有得出结论`;
+    let why;
+    if (this.stopped.reason === "repeat") {
+      why = `模型反复用同样的参数调用「${this.stopped.name}」（已连续请求 ${this.stopped.count} 次），没有新进展`;
+    } else if (this.stopped.reason === "state_cycle") {
+      why = `模型陷入 ${this.stopped.count} 态工具循环（state_cycle）且结果均无变化`;
+    } else if (this.stopped.reason === "unrecoverable") {
+      why = `触发不可恢复错误「${this.stopped.code}」（已发生 ${this.stopped.count} 次）`;
+    } else if (this.stopped.reason === "consecutive_failures") {
+      why = `连续 ${this.stopped.count} 次工具调用失败且未恢复`;
+    } else {
+      why = `工具调用达到了单轮上限（${this.limits.maxCalls} 次）仍没有得出结论`;
+    }
     const outcome =
       this.succeeded > 0
         ? "已有部分结果，但还没有得出可以确认的最终结论，我不会假装已经完成。"

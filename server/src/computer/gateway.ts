@@ -29,6 +29,7 @@ import {
   type AuditStore,
   recordAuditEvent,
 } from "../audit";
+import { currentConfirmTurn } from "../confirmations/context";
 import { withUntrustedNotice } from "../untrusted-content";
 import {
   ComputerStoppedError,
@@ -36,6 +37,11 @@ import {
   createComputerTransport,
   StaleSnapshotError,
 } from "./client";
+import {
+  CommandBudgetExhaustedError,
+  capTimeout,
+  recordElapsed,
+} from "./command-budget";
 import { HeadlessToolSuspension } from "./headless-tools";
 import { checkComputerAddress } from "./target";
 import { workspaceUrlFor } from "./workspace-url";
@@ -44,10 +50,10 @@ export {
   CaptureBusyError,
   ComputerUnavailableError,
   ElementNotFoundError,
-  PageTimeoutError,
   HandoffRequestError,
   HumanHasControlError,
   NavigationRefusedError,
+  PageTimeoutError,
   StaleSnapshotError,
   WorkspaceNotFoundError,
   WorkspaceRefusedError,
@@ -55,6 +61,8 @@ export {
   WorkspaceTooLargeError,
 } from "./client";
 
+import type { HandoffSource } from "../../../shared/computer-control";
+import { notifyControlReleased } from "./control-blocks";
 import type { PageFrameStore } from "./page-frames";
 import {
   type ActionPolicy,
@@ -64,8 +72,6 @@ import {
   policyInitiator,
 } from "./policy";
 import type { ComputerProvider, ComputerUpdate } from "./provider";
-import type { HandoffSource } from "../../../shared/computer-control";
-import { notifyControlReleased } from "./control-blocks";
 import type {
   ActionResult,
   ClickInput,
@@ -81,9 +87,6 @@ import type {
   ReadFileInput,
   ReadFileResult,
   ReadResult,
-  StartLink,
-  TabAction,
-  TabsView,
   RunCommandInput,
   RunCommandResult,
   ScreenshotResult,
@@ -94,6 +97,9 @@ import type {
   SignInFillResult,
   SnapshotElement,
   SnapshotResult,
+  StartLink,
+  TabAction,
+  TabsView,
   TypeInput,
   WriteFileInput,
   WriteFileResult,
@@ -1332,6 +1338,29 @@ export function createComputerGateway(
       input: RunCommandInput,
       caller?: AbortSignal,
     ) {
+      const runId =
+        currentConfirmTurn()?.runId ?? currentApprovalContext()?.runId;
+      const requestedMs =
+        typeof input.timeoutMs === "number" &&
+        Number.isFinite(input.timeoutMs) &&
+        input.timeoutMs > 0
+          ? Math.trunc(input.timeoutMs)
+          : COMMAND_DEFAULT_TIMEOUT_SEC * 1_000;
+      const budget = capTimeout(runId, requestedMs);
+      if (!budget.allowed) {
+        return Promise.reject(
+          new CommandBudgetExhaustedError(budget.usedMs, budget.budgetMs),
+        );
+      }
+      const effectiveTimeoutMs =
+        runId && budget.timeoutMs < requestedMs
+          ? budget.timeoutMs
+          : input.timeoutMs;
+      const payloadInput: RunCommandInput =
+        effectiveTimeoutMs !== undefined
+          ? { ...input, timeoutMs: effectiveTimeoutMs }
+          : input;
+      const startedAt = Date.now();
       return govern(
         "computer_run_command",
         botId,
@@ -1342,9 +1371,24 @@ export function createComputerGateway(
             botId,
             "/exec",
             // Named in the body too, so the command's traffic goes out as this Bot (its own proxy key).
-            { ...input, botId },
+            { ...payloadInput, botId },
             caller,
             COMMAND_BACKSTOP_MS,
+          ).then(
+            (result) => {
+              const elapsed =
+                typeof result?.elapsedMs === "number" &&
+                Number.isFinite(result.elapsedMs) &&
+                result.elapsedMs >= 0
+                  ? result.elapsedMs
+                  : Date.now() - startedAt;
+              recordElapsed(runId, elapsed);
+              return result;
+            },
+            (error) => {
+              recordElapsed(runId, Date.now() - startedAt);
+              throw error;
+            },
           ),
       ).then((result) => {
         // What a command prints can be anything it fetched, so the output is marked.
@@ -1355,8 +1399,8 @@ export function createComputerGateway(
         // §102：被超时停掉时说清楚停在几秒、下一步该怎么做，避免机器人原样重跑或换到别的设备上绕路。
         if (!result?.timedOut) return marked;
         const sec =
-          typeof input.timeoutMs === "number"
-            ? input.timeoutMs / 1000
+          typeof payloadInput.timeoutMs === "number"
+            ? payloadInput.timeoutMs / 1000
             : COMMAND_DEFAULT_TIMEOUT_SEC;
         return {
           ...marked,

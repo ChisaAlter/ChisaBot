@@ -337,6 +337,21 @@ test("real Host: phase-aware STEER_CUT cuts model stream & puts steer first, whi
     )
     .map((r) => r.event.data.source.rpcId);
   assert.deepEqual(userRpcOrder, ["req-1", "req-steer", "req-queued"]);
+  const steerPartial = modelPage.records.find(
+    (r) => r.event?.type === "plugin:chisabot/steer-partial",
+  );
+  assert.ok(steerPartial, JSON.stringify(modelPage.records));
+  assert.equal(steerPartial.event.data.text, "Partial intro ");
+  const steerTurnRequest = requests.find((r) =>
+    r.messages.includes("Priority steer"),
+  );
+  assert.ok(steerTurnRequest, JSON.stringify(requests));
+  const partialIdx = steerTurnRequest.messages.indexOf("Partial intro ");
+  const steerIdx = steerTurnRequest.messages.indexOf("Priority steer");
+  assert.ok(
+    partialIdx >= 0 && partialIdx < steerIdx,
+    steerTurnRequest.messages,
+  );
 
   // Case 2: Tools phase queues next-step + steer-signal & updateQueuedItem edits/steers
   await client.bind(

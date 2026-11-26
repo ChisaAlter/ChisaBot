@@ -14,9 +14,14 @@ import {
   capConnectMessages,
   snapshotSince,
 } from "../../shared/connect-snapshot";
-import { readReleaseLocksOnStart } from "./config";
 import { forgetHistorySummaries } from "./agents/history-budget";
 import { fallbackNotice } from "./agents/model-fallback";
+import {
+  buildStopSummary,
+  buildStopSummaryFromDb,
+  type StopSummaryOperation,
+} from "./agents/stop-summary";
+import { readReleaseLocksOnStart } from "./config";
 import { withConfirmTurn, withToolAbort } from "./confirmations/context";
 import {
   estimateTokens,
@@ -42,7 +47,6 @@ import {
 } from "./conversations/inbox-message";
 import { createConversationInteractions } from "./conversations/interactions";
 import { assertConversationAdmissionOpen } from "./conversations/maintenance";
-import { beginTurn } from "./runtime/quiesce";
 import { createDshRunJournal } from "./conversations/run-journal";
 import {
   type AgentRunnerConnectRequest,
@@ -65,6 +69,7 @@ import {
   publicErrorMessage,
   redactPublicText,
 } from "./public-error";
+import { beginTurn } from "./runtime/quiesce";
 import { cancelSchedulesForDeletedThreads } from "./schedules/service";
 import {
   anchorsPresent,
@@ -397,7 +402,10 @@ class ConversationStore {
     return rows[0].messages;
   }
 
-  async ownedMessages({ threadId, userId }: ThreadIdentity): Promise<Message[]> {
+  async ownedMessages({
+    threadId,
+    userId,
+  }: ThreadIdentity): Promise<Message[]> {
     const rows = await this.database.$client.unsafe<
       { owner_user_id: string; messages: Message[] }[]
     >(
@@ -535,6 +543,29 @@ export async function closeInterruptedRun(
   threadId: string,
   runId: string,
 ): Promise<boolean> {
+  // 在持锁事务外部先只读读取工具操作记录，绝不在行锁内增加额外等待。
+  const opRows = await database.$client
+    .unsafe<
+      {
+        call_id: string | null;
+        tool_name: string;
+        args: unknown;
+        status: string;
+        result: unknown;
+      }[]
+    >(
+      "SELECT call_id, tool_name, args, status, result FROM chisabot_tool_operations WHERE run_id=$1 ORDER BY created_at ASC",
+      [runId],
+    )
+    .catch(() => []);
+  const operations: StopSummaryOperation[] = opRows.map((row) => ({
+    callId: row.call_id,
+    toolName: row.tool_name,
+    args: row.args,
+    status: row.status,
+    result: row.result,
+  }));
+
   return database.$client.begin(async (tx) => {
     const [thread] = await tx.unsafe<ThreadRow[]>(
       "SELECT * FROM chisabot_local_threads WHERE id=$1 AND run_id IS NULL FOR UPDATE",
@@ -546,10 +577,15 @@ export async function closeInterruptedRun(
       [threadId, runId],
     );
     if (!rows.length) return false;
+    const interruptionMessage = buildStopSummary({
+      baseMessage: RESTART_INTERRUPTED_MESSAGE,
+      events: rows.map((row) => row.event),
+      operations,
+    });
     const finalizer = createRunEventFinalizer();
     for (const row of rows) finalizer.observe(row.event);
     const appended = finalizer.finalize({
-      interruptionMessage: RESTART_INTERRUPTED_MESSAGE,
+      interruptionMessage,
     });
     for (const event of appended) {
       const written = await tx.unsafe<EventRow[]>(
@@ -728,6 +764,11 @@ export class LocalConversationClient {
       }
     }
     return { threads: threads.length, runs: runs.length, closed };
+  }
+
+  /** 为单条被中断的运行补齐收尾事件与确定性规则摘要。 */
+  async closeInterruptedRun(threadId: string, runId: string): Promise<boolean> {
+    return closeInterruptedRun(this.store.database, threadId, runId);
   }
 
   /** 这个进程里没有对应的运行（上一个进程留下的锁）：按停止时直接释放，用户不用干等锁到期。 */
@@ -1826,12 +1867,24 @@ class PostgresAgentRunner implements ConversationRunner {
       }
       // Every RUN_ERROR — runtime, provider, interruption — is redacted before it is stored or sent.
       if (event.type === EventType.RUN_ERROR) {
-        const failure = event as BaseEvent & { message?: unknown };
-        if (typeof failure.message === "string")
+        const failure = event as BaseEvent & {
+          code?: unknown;
+          message?: unknown;
+        };
+        if (typeof failure.message === "string") {
+          let rawMessage = failure.message;
+          if (entry.stopped && failure.code === "DSH_RUN_CANCELLED") {
+            rawMessage = await buildStopSummaryFromDb(this.store.database, {
+              threadId,
+              runId: entry.runId,
+              baseMessage: rawMessage,
+            });
+          }
           event = {
             ...event,
-            message: redactPublicText(failure.message) || GENERIC_FAILURE,
+            message: redactPublicText(rawMessage) || GENERIC_FAILURE,
           } as BaseEvent;
+        }
       }
       const preparedEvent = prepared.event(event);
       if (!preparedEvent || !canCommit()) return;
@@ -2076,10 +2129,23 @@ class PostgresAgentRunner implements ConversationRunner {
           threadId,
           runId: entry.runId,
         } as BaseEvent);
+      let resolvedInterruption = interruptionMessage;
+      if (entry.stopped && !terminal && !resolvedInterruption) {
+        resolvedInterruption = await buildStopSummaryFromDb(
+          this.store.database,
+          {
+            threadId,
+            runId: entry.runId,
+            baseMessage: "用户已停止这一轮。",
+          },
+        );
+      }
       for (const event of finalizer.finalize({
         stopRequested: entry.stopped,
         protocolVersion: input.protocolVersion,
-        ...(interruptionMessage ? { interruptionMessage } : {}),
+        ...(resolvedInterruption
+          ? { interruptionMessage: resolvedInterruption }
+          : {}),
       })) {
         // Synthetic results answer interrupted tools in both the transcript and replay stream.
         if (event.type === EventType.TOOL_CALL_RESULT) {
@@ -3130,6 +3196,27 @@ class PostgresAgentRunner implements ConversationRunner {
     if (!entry) {
       if (persistent) {
         await this.inbox.pause(threadId);
+        // 在开事务锁前预计算规则停止摘要，避免持锁期间执行额外聚合查询。
+        const candidateRuns = await this.store.database.$client
+          .unsafe<{ run_id: string }[]>(
+            `SELECT r.run_id
+             FROM chisabot_local_runs r
+             JOIN chisabot_dsh_runs d ON d.thread_id=r.thread_id AND d.run_id=r.run_id
+             WHERE d.thread_id=$1 AND d.stop_requested AND d.status='settled' AND r.status<>'stopped'`,
+            [threadId],
+          )
+          .catch(() => []);
+        const summaryByRunId = new Map<string, string>();
+        for (const candidate of candidateRuns) {
+          summaryByRunId.set(
+            candidate.run_id,
+            await buildStopSummaryFromDb(this.store.database, {
+              threadId,
+              runId: candidate.run_id,
+              baseMessage: "用户已停止这一轮。",
+            }),
+          );
+        }
         await this.store.database.$client.begin(async (tx) => {
           const stopped = await tx.unsafe<{ run_id: string }[]>(
             `UPDATE chisabot_local_runs r SET status='stopped',finished_at=now()
@@ -3146,7 +3233,8 @@ class PostgresAgentRunner implements ConversationRunner {
                 JSON.stringify({
                   type: EventType.RUN_ERROR,
                   code: "DSH_RUN_CANCELLED",
-                  message: "用户已停止这一轮。",
+                  message:
+                    summaryByRunId.get(run.run_id) ?? "用户已停止这一轮。",
                 }),
               ],
             );
@@ -3562,7 +3650,11 @@ export async function createLocalConversations(
       if (suffix === "clear" && request.method === "POST") {
         await database.$client.begin(async (transaction) => {
           const rows = await transaction.unsafe<
-            { id: string; run_id: string | null; lock_expires_at: Date | null }[]
+            {
+              id: string;
+              run_id: string | null;
+              lock_expires_at: Date | null;
+            }[]
           >(
             "SELECT id, run_id, lock_expires_at FROM chisabot_local_threads WHERE owner_user_id = $1 FOR UPDATE",
             [actorId],
