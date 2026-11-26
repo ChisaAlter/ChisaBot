@@ -94,6 +94,7 @@ import {
   wasJustSent,
 } from "@/lib/chat/ui-memory";
 import { tryClient } from "@/lib/client";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { SendDeliveryUnknownError } from "@/lib/conversations/connection-drop";
 import { shouldStopOnEscape } from "@/lib/conversations/held-supplements";
 import { inboxState } from "@/lib/conversations/thread-inbox";
@@ -140,17 +141,6 @@ import {
   useOverallUploadPercent,
 } from "./upload-progress";
 import { useDictation } from "./use-dictation";
-
-const objectIds = new WeakMap<object, number>();
-let nextObjectId = 1;
-
-function objectKey(value: object): number {
-  const existing = objectIds.get(value);
-  if (existing !== undefined) return existing;
-  const created = nextObjectId++;
-  objectIds.set(value, created);
-  return created;
-}
 
 function claimedClipboardFiles(
   event: ClipboardEvent,
@@ -609,7 +599,7 @@ function ComposerImpl({
    */
   const draftWritten = useRef<Segment[] | null>(value);
   useExternalConnection(
-    draftKey ? `${draftKey}\0${objectKey(value)}` : false,
+    draftKey ? `${draftKey}\0${objectConnectionKey(value)}` : false,
     () => {
       if (!draftKey || draftWritten.current === value) return;
       draftWritten.current = value;
@@ -701,7 +691,7 @@ function ComposerImpl({
   } | null>(threadUi(draftKey)?.restoredSend ?? null);
   const uncertainDraft = useRef(false);
   useExternalConnection(
-    draftKey ? `${draftKey}\0${replyQuote ? objectKey(replyQuote) : 0}` : false,
+    draftKey ? `${draftKey}\0${replyQuote ? objectConnectionKey(replyQuote) : 0}` : false,
     () => {
       if (!draftKey) return;
       const restored = restoredQuotedSend.current;
@@ -719,7 +709,7 @@ function ComposerImpl({
   const activeComposerRef = useRef(activeComposer);
   activeComposerRef.current = activeComposer;
   useExternalConnection(
-    `${disabled ? 1 : 0}\0${targetPath}\0${objectKey(visibility)}`,
+    `${disabled ? 1 : 0}\0${targetPath}\0${objectConnectionKey(visibility)}`,
     () => {
       const receiver = receiveComposerInputs({
         targetPath,
@@ -1069,7 +1059,7 @@ function ComposerImpl({
    */
   useExternalConnection(
     droppedAttachments && droppedAttachments.attachments.length > 0
-      ? `${objectKey(droppedAttachments)}\0${objectKey(releaseStagedRows)}`
+      ? `${objectConnectionKey(droppedAttachments)}\0${objectConnectionKey(releaseStagedRows)}`
       : false,
     () => {
       if (!droppedAttachments || droppedAttachments.attachments.length === 0) {
@@ -1252,7 +1242,7 @@ function ComposerImpl({
    * `attachments` and not `staged`: a send in flight only HIDES its attachments, and they are still
    * the composer's until the send becomes a message.
    */
-  useExternalConnection(objectKey(attachments), () => {
+  useExternalConnection(objectConnectionKey(attachments), () => {
     if (
       uploadedRows.current.size === 0 &&
       uploadedChatFiles.current.size === 0
@@ -1634,7 +1624,7 @@ function ComposerImpl({
   // Persist original files as soon as picked, then replace their upload references when ready.
   // A reload reuses a staged row; it never uploads another copy to discover whether Send landed.
   useExternalConnection(
-    `${objectKey(attachments)}\0${objectKey(uploadIdentity)}\0${objectKey(saveFileDraft)}`,
+    `${objectConnectionKey(attachments)}\0${objectConnectionKey(uploadIdentity)}\0${objectConnectionKey(saveFileDraft)}`,
     () => {
       let changed = false;
       for (const attachment of attachments) {
@@ -1653,7 +1643,7 @@ function ComposerImpl({
       if (changed) saveFileDraft();
     },
   );
-  useExternalConnection(objectKey(saveFileDraft), () =>
+  useExternalConnection(objectConnectionKey(saveFileDraft), () =>
     listenDraftFilesAccepted((ids) => {
       let changed = false;
       const accepted = new Set(ids);
@@ -1678,7 +1668,7 @@ function ComposerImpl({
   );
   useExternalConnection(
     accountId && draftKey
-      ? `${accountId}\0${draftKey}\0${objectKey(persistFileDraft)}`
+      ? `${accountId}\0${draftKey}\0${objectConnectionKey(persistFileDraft)}`
       : false,
     () =>
       listenDraftFileSubmissions(async (ids, submission) => {
@@ -1749,11 +1739,11 @@ function ComposerImpl({
           accountId ?? "",
           draftKey,
           conversationScope?.threadId ?? "",
-          objectKey(restoreSavedFile),
-          objectKey(restoreAttachments),
-          objectKey(uploadIdentity),
-          objectKey(saveFileDraft),
-          objectKey(reportFileStorageError),
+          objectConnectionKey(restoreSavedFile),
+          objectConnectionKey(restoreAttachments),
+          objectConnectionKey(uploadIdentity),
+          objectConnectionKey(saveFileDraft),
+          objectConnectionKey(reportFileStorageError),
         ].join("\0")
       : false,
     (_activeKey, signal) => {
@@ -2331,7 +2321,7 @@ function ComposerImpl({
   const draft = useMemo(() => toDraft(value, staged), [staged, value]);
   useExternalConnection(
     onAgentChange
-      ? `${draft.agentId ?? ""}\0${objectKey(onAgentChange)}`
+      ? `${draft.agentId ?? ""}\0${objectConnectionKey(onAgentChange)}`
       : false,
     () => {
       onAgentChange?.(draft.agentId ?? undefined);
@@ -2688,7 +2678,7 @@ function ComposerImpl({
   // Submit after the transcript has been committed to the latest draft. The ref is consumed
   // before invoking the normal send path, so rerenders and StrictMode cannot submit twice.
   useExternalConnection(
-    `${objectKey(value)}\0${objectKey(submitDraft)}`,
+    `${objectConnectionKey(value)}\0${objectConnectionKey(submitDraft)}`,
     () => {
       if (!sendDictatedDraft.current) return;
       sendDictatedDraft.current = false;

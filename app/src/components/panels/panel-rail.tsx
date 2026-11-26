@@ -21,6 +21,7 @@ import {
   useState,
 } from "react";
 import { ToggleTip } from "@/components/layout/glass-topbar";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,6 +38,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ErrorCard } from "@/components/ui/skyglass";
 import {
   useDeferWhileResizing,
   useExternalConnection,
@@ -586,7 +588,19 @@ class PanelRailErrorBoundary extends Component<
     }
   }
 
-  override componentDidCatch(_error: Error, _info: ErrorInfo) {}
+  override componentDidCatch(error: Error, info: ErrorInfo) {
+    const stackSummary = (info.componentStack ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 4)
+      .join(" > ");
+    console.error("[PanelRailErrorBoundary]", {
+      name: error.name || "Error",
+      message: error.message.slice(0, 200),
+      componentStack: stackSummary,
+    });
+  }
 
   override render() {
     if (this.state.hasError) {
@@ -733,6 +747,30 @@ const PanelRailBody = memo(function PanelRailBody({
               <Skeleton className="h-28 w-full rounded-2xl" />
               <Skeleton className="h-20 w-full rounded-2xl" />
             </div>
+          ) : liveList.isError && !liveMounted && !hasLive ? (
+            <ErrorCard
+              action={
+                <Button
+                  className="mt-2"
+                  data-testid="rail-panels-retry"
+                  disabled={liveList.isFetching}
+                  onClick={() => void liveList.refetch()}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {liveList.isFetching ? "重试中…" : "重试"}
+                </Button>
+              }
+              className="m-1"
+              description={"刷新一下再试；不会影响聊天和已有对话。"}
+              detail={
+                liveList.error instanceof Error
+                  ? liveList.error.message
+                  : undefined
+              }
+              title={"面板暂时无法加载"}
+            />
           ) : (
             <>
               {liveMounted || hasLive ? (

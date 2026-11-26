@@ -61,20 +61,10 @@ import {
 } from "@/lib/chat/session-client";
 import { sendLanded } from "@/lib/chat/ui-memory";
 import { bindAgentBot, useActiveBot } from "@/lib/conversations/active-bot";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { DURATION_MS, usePresenceMount } from "@/lib/motion";
 import { chatFileUrl } from "../../../../shared/chat-files";
 import { splitChatOrigin } from "../../../../shared/chat-origin";
-
-const objectIds = new WeakMap<object, number>();
-let nextObjectId = 1;
-
-function objectKey(value: object): number {
-  const existing = objectIds.get(value);
-  if (existing !== undefined) return existing;
-  const created = nextObjectId++;
-  objectIds.set(value, created);
-  return created;
-}
 
 function interruptWaitingKind(
   metadata: Record<string, unknown> | undefined,
@@ -768,7 +758,7 @@ export function ChannelChat({
   // Join the gateway socket, restore durable history, then release the first-message gate.
   useExternalConnection(
     isReady
-      ? `${objectKey(conversationClient)}\0${objectKey(agent)}\0${channel.threadId}\0${runtimeAgentId}\0${objectKey(retryHistoryRead)}`
+      ? `${objectConnectionKey(conversationClient)}\0${objectConnectionKey(agent)}\0${channel.threadId}\0${runtimeAgentId}\0${objectConnectionKey(retryHistoryRead)}`
       : false,
     () => {
       let current = true;
@@ -903,7 +893,7 @@ export function ChannelChat({
   // 变化戳带 running：还在跑就立刻标 live；停了再读一次收件箱。只认 running（inboxLive）：paused 是用户停止 /
   // 出错 / 停滞后留住补充消息，不是进行中；等审批由 transcript 看审批收件箱。
   useExternalConnection(
-    `${objectKey(activity)}\0${channel.threadId}`,
+    `${objectConnectionKey(activity)}\0${channel.threadId}`,
     (_key, signal) => {
       let wasRunning: boolean | undefined;
       const off = activity.onActivity((value) => {
@@ -928,7 +918,7 @@ export function ChannelChat({
   );
   const joinedRef = useRef(false);
   useExternalConnection(
-    `${objectKey(joinGatePromise)}\0${objectKey(activity.kick)}`,
+    `${objectConnectionKey(joinGatePromise)}\0${objectConnectionKey(activity.kick)}`,
     (_key, signal) => {
       joinedRef.current = false;
       void joinGatePromise.then(() => {
@@ -978,7 +968,7 @@ export function ChannelChat({
     },
   );
   useExternalConnection(
-    `${objectKey(onJoinedActivity)}\0${channel.threadId}\0${runtimeAgentId}`,
+    `${objectConnectionKey(onJoinedActivity)}\0${channel.threadId}\0${runtimeAgentId}`,
     (_key, signal) => {
       let wasRunning = false;
       return onJoinedActivity((value) => {
@@ -1041,7 +1031,7 @@ export function ChannelChat({
    * the platform's read of the thread can be a beat behind it.
    */
   useExternalConnection(
-    `${channel.id}\0${channel.threadId}\0${objectKey(joinGatePromise)}\0${runtimeAgentId}`,
+    `${channel.id}\0${channel.threadId}\0${objectConnectionKey(joinGatePromise)}\0${runtimeAgentId}`,
     () => {
       const rosterRow = (): ChannelSummary | undefined =>
         queryClient
@@ -2071,11 +2061,26 @@ export function ChannelChat({
     setStopping(true);
     sendStop();
   };
+  const stopRestoreTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(
+    new Set(),
+  );
+  useExternalConnection(channel.threadId, () => () => {
+    for (const timerId of stopRestoreTimersRef.current) clearTimeout(timerId);
+    stopRestoreTimersRef.current.clear();
+  });
   const stopTask = () => {
     setStopping(true);
     // The server pauses what the stopped turn read or had queued; pick that up promptly.
-    for (const delay of [800, 2_000, 4_500])
-      setTimeout(() => void restoreQueue(channel.threadId), delay);
+    const threadId = channel.threadId;
+    for (const timerId of stopRestoreTimersRef.current) clearTimeout(timerId);
+    stopRestoreTimersRef.current.clear();
+    for (const delay of [800, 2_000, 4_500]) {
+      const timerId = setTimeout(() => {
+        stopRestoreTimersRef.current.delete(timerId);
+        void restoreQueue(threadId);
+      }, delay);
+      stopRestoreTimersRef.current.add(timerId);
+    }
     // Also blocks inbox fallback after Stop during a frontend tool handoff.
     stopRequestedRef.current = true;
     awaitingReply.current = false;
@@ -2406,26 +2411,45 @@ export function ChannelChat({
   // CB-104: a new turn never carries the previous turn's 「停止失败，重试」.
   const agentLiveBefore = useRef(agentLive);
   useExternalConnection(
-    `${agentLive ? 1 : 0}\0${objectKey(stopRequest.clear)}`,
+    `${agentLive ? 1 : 0}\0${objectConnectionKey(stopRequest.clear)}`,
     () => {
       if (agentLive && !agentLiveBefore.current) stopRequest.clear();
       agentLiveBefore.current = agentLive;
     },
   );
   useExternalConnection(
-    stopping ? `${objectKey(agent)}\0${channel.threadId}` : false,
+    stopping ? `${objectConnectionKey(agent)}\0${channel.threadId}` : false,
     (_key, signal) => {
+      let inFlight = false;
       const check = async () => {
-        const state = await restoreQueue(channel.threadId);
-        if (!signal.aborted && state?.running === false) {
-          setStopping(false);
-          void agent.detachActiveRun();
+        if (inFlight || signal.aborted) return;
+        if (typeof document !== "undefined" && document.hidden) return;
+        inFlight = true;
+        try {
+          const state = await restoreQueue(channel.threadId);
+          if (!signal.aborted && state?.running === false) {
+            setStopping(false);
+            void agent.detachActiveRun();
+          }
+        } finally {
+          inFlight = false;
+        }
+      };
+      const onVisibilityChange = () => {
+        if (typeof document !== "undefined" && !document.hidden) {
+          void check();
         }
       };
       void check();
       const timer = setInterval(() => void check(), 1500);
+      if (typeof document !== "undefined") {
+        document.addEventListener("visibilitychange", onVisibilityChange);
+      }
       return () => {
         clearInterval(timer);
+        if (typeof document !== "undefined") {
+          document.removeEventListener("visibilitychange", onVisibilityChange);
+        }
       };
     },
   );
@@ -2464,7 +2488,7 @@ export function ChannelChat({
     [],
   );
   useExternalConnection(
-    `${runtimeAgentId}\0${objectKey(activeMessages)}\0${chatBusy ? 1 : 0}`,
+    `${runtimeAgentId}\0${objectConnectionKey(activeMessages)}\0${chatBusy ? 1 : 0}`,
     () => {
       syncComputerMessages(runtimeAgentId, activeMessages, chatBusy);
     },

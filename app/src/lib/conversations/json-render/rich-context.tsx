@@ -10,8 +10,9 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useExternalConnection, useMediaQuery, useTimeout } from "@/hooks";
+import { useExternalConnection, useTimeout } from "@/hooks";
 import { useKeptVisible } from "@/lib/kept-visible";
+import { useSharedReducedMotion } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import {
   canTween,
@@ -311,7 +312,7 @@ export function useNow(granularitySeconds = 1): number {
 }
 
 export function usePrefersReducedMotion(): boolean {
-  return useMediaQuery("(prefers-reduced-motion: reduce)");
+  return useSharedReducedMotion();
 }
 
 /**

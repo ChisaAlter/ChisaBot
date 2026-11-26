@@ -221,10 +221,10 @@ export function ModelPicker({
     return (
       <span
         className="model-pill model-pill-static"
-        title="此外部 BOT 的模型由其服务管理。"
+        title="此外部机器人的模型由其服务管理。"
       >
         <ProviderMark provider="" />
-        <span className="truncate">外部 BOT</span>
+        <span className="truncate">外部机器人</span>
       </span>
     );
   }
@@ -242,7 +242,7 @@ export function ModelPicker({
     state.data.overrideModel
       ? effective
       : `部署默认 · ${state.data.defaultModel}`,
-    !state.data.canManage ? "只有此 BOT 的拥有者或管理员可以更改模型" : "",
+    !state.data.canManage ? "只有此机器人的拥有者或管理员可以更改模型" : "",
     modelMissing ? "当前模型已不可用，请重新选择" : "",
   ]
     .filter(Boolean)

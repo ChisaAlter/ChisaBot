@@ -37,7 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Card, SettingRow } from "@/components/ui/skyglass";
+import { Card, ErrorCard, SettingRow } from "@/components/ui/skyglass";
 import { Switch } from "@/components/ui/switch";
 import type { AgentProfile } from "@/lib/agents/queries";
 import {
@@ -126,9 +126,23 @@ function ResetDialog({
           {plan.isPending ? (
             <PageSkeleton rows={2} />
           ) : plan.error ? (
-            <p className="text-destructive text-sm" role="alert">
-              {"无法计算重置会删除的内容。"}
-            </p>
+            <ErrorCard
+              action={
+                <Button
+                  className="mt-2"
+                  disabled={plan.isFetching}
+                  onClick={() => void plan.refetch()}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {plan.isFetching ? "重试中…" : "重试"}
+                </Button>
+              }
+              description={"刷新一下再试。"}
+              detail={plan.error instanceof Error ? plan.error.message : undefined}
+              title={"无法计算重置会删除的内容。"}
+            />
           ) : (
             <div className="grid gap-2 text-sm">
               {lines.length === 0 ? (
@@ -241,7 +255,7 @@ function StatusLine({
           data-testid="profile-primary-badge"
         >
           <IconStarFilled aria-hidden className="size-2.5" />
-          {"主 Agent"}
+          {"主机器人"}
         </span>
       ) : null}
     </span>
@@ -350,9 +364,29 @@ function RunCard({ agent }: { agent: AgentProfile }) {
           <PageSkeleton rows={2} />
         </div>
       ) : lifecycle.error ? (
-        <p className="bp-error px-5 py-4" role="alert">
-          {"无法加载运行状态。"}
-        </p>
+        <div className="px-5 py-4">
+          <ErrorCard
+            action={
+              <Button
+                className="mt-2"
+                disabled={lifecycle.isFetching}
+                onClick={() => void lifecycle.refetch()}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {lifecycle.isFetching ? "重试中…" : "重试"}
+              </Button>
+            }
+            description={"刷新一下再试。"}
+            detail={
+              lifecycle.error instanceof Error
+                ? lifecycle.error.message
+                : undefined
+            }
+            title={"无法加载运行状态。"}
+          />
+        </div>
       ) : (
         <>
           <SettingRow
@@ -416,15 +450,47 @@ function RunCard({ agent }: { agent: AgentProfile }) {
               </Button>
             </SettingRow>
           ) : null}
+          {pause.error || notify.error ? (
+            <p className="bp-error px-5 pb-4 text-xs" role="alert">
+              {(pause.error ?? notify.error) instanceof Error
+                ? (pause.error ?? notify.error)?.message
+                : "操作失败，请稍后重试。"}
+            </p>
+          ) : null}
         </>
       )}
     </Card>
   );
 }
 
-/** 任务：只在有任务时出现；进行中、已计划、最近完成（最多 5 条）一张卡。 */
+/** 任务：只在有任务或加载失败时出现；进行中、已计划、最近完成（最多 5 条）一张卡。 */
 function TasksSection({ agentId }: { agentId: string }) {
   const activity = useQuery(botActivityQueryOptions(agentId));
+  if (activity.isError && !activity.data) {
+    return (
+      <PageSection title={"任务"}>
+        <ErrorCard
+          action={
+            <Button
+              className="mt-2"
+              disabled={activity.isFetching}
+              onClick={() => void activity.refetch()}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {activity.isFetching ? "重试中…" : "重试"}
+            </Button>
+          }
+          description={"刷新一下再试；不会影响正在运行的任务。"}
+          detail={
+            activity.error instanceof Error ? activity.error.message : undefined
+          }
+          title={"任务列表暂时无法加载"}
+        />
+      </PageSection>
+    );
+  }
   if (!activity.data) return null;
   const groups: [string, ActivityItem[]][] = [
     ["进行中", activity.data.inProgress],
@@ -471,7 +537,7 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
     },
     {
       errorToast: (err) =>
-        err instanceof Error ? err.message : "设置主 Agent 失败",
+        err instanceof Error ? err.message : "设置主机器人失败",
     },
   );
   const effectiveIntent =
@@ -484,12 +550,12 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
     effectiveIntent === "set"
       ? {
           pending: "设置中…",
-          success: "已设为主 Agent",
+          success: "已设为主机器人",
           error: "设置失败",
         }
       : {
           pending: "取消中…",
-          success: "已取消主 Agent",
+          success: "已取消主机器人",
           error: "取消失败",
         };
   const [editing, setEditing] = useState(false);
@@ -535,7 +601,7 @@ export function BotProfilePage({ agent }: { agent: AgentProfile }) {
               variant={isMain ? "secondary" : "outline"}
             >
               {isMain ? <IconStarFilled /> : <IconStar />}
-              {isMain ? "取消主 Agent" : "设为主 Agent"}
+              {isMain ? "取消主机器人" : "设为主机器人"}
             </Button>
           ) : null}
           {canEdit ? (

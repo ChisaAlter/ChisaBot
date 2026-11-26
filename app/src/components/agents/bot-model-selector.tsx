@@ -66,7 +66,7 @@ function BotModelSettingsRow({ agentId, disabled = false, bare = false }: { agen
             save.mutate(next.id || null);
           }}
         >
-          <Button aria-label="模型选择" title={selectedLabel} type="button" variant={compact ? "ghost" : "outline"} size="sm" render={<ComboboxTrigger />} nativeButton className="min-w-0 flex-1 justify-between" disabled={disabled || saving || !state.data.available || !state.data.canManage || !catalog.data}><span className="truncate">{state.data.available ? selectedLabel : "外部 BOT"}</span></Button>
+          <Button aria-label="模型选择" title={selectedLabel} type="button" variant={compact ? "ghost" : "outline"} size="sm" render={<ComboboxTrigger />} nativeButton className="min-w-0 flex-1 justify-between" disabled={disabled || saving || !state.data.available || !state.data.canManage || !catalog.data}><span className="truncate">{state.data.available ? selectedLabel : "外部机器人"}</span></Button>
           <ComboboxContent className="min-w-64 max-w-[min(34rem,calc(100vw-2rem))]" side="top">
             <ComboboxInput aria-label="搜索模型" placeholder="搜索模型名称…" showTrigger={false} className="w-full" />
             <ComboboxEmpty>没有匹配的模型</ComboboxEmpty>
@@ -81,7 +81,7 @@ function BotModelSettingsRow({ agentId, disabled = false, bare = false }: { agen
       {saving ? <p className="pt-1 text-xs text-muted-foreground" role="status">正在保存模型…</p> : null}
       {modelMissing ? <p className="pt-1 text-xs text-destructive" role="alert">当前模型 {state.data.model} 已不可用，请重新选择。</p> : null}
       {save.error || refresh.error || catalog.error || state.error ? <p className="pt-1 text-xs text-destructive" role="alert">{save.error?.message ?? refresh.error?.message ?? catalog.error?.message ?? state.error?.message}</p> : null}
-      {!state.data.available ? <p className="pt-1 text-xs text-muted-foreground">此外部 BOT 的模型由其服务管理。</p>   : !compact && !saving && !bare ? <p className="pt-1 text-xs text-muted-foreground">{state.data.canManage ? "与聊天输入框同步，下一轮使用所选模型。" : "只有此 BOT 的拥有者或管理员可以更改模型。"}</p> : null}
+      {!state.data.available ? <p className="pt-1 text-xs text-muted-foreground">此外部机器人的模型由其服务管理。</p>   : !compact && !saving && !bare ? <p className="pt-1 text-xs text-muted-foreground">{state.data.canManage ? "与聊天输入框同步，下一轮使用所选模型。" : "只有此机器人的拥有者或管理员可以更改模型。"}</p> : null}
     </div>
   );
 }

@@ -374,7 +374,17 @@ async function removeWithUndo(queryClient: ReturnType<typeof useQueryClient>, bo
   try {
     await removeBookmark(queryClient, bookmark.id, botId);
     toast.undo(`已删除收藏「${bookmark.title}」`, () => {
-      void addBookmark(queryClient, { title: bookmark.title, url: bookmark.url }, botId).catch(() => undefined);
+      void addBookmark(
+        queryClient,
+        { title: bookmark.title, url: bookmark.url },
+        botId,
+      ).catch((error) => {
+        toast.error(
+          error instanceof Error && error.message
+            ? `恢复收藏失败：${error.message}`
+            : "恢复收藏失败，请手动重新收藏。",
+        );
+      });
     });
   } catch (error) {
     toast.error(error instanceof Error ? error.message : "没能删除");

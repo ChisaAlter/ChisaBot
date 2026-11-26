@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/item";
 import { lazyDialog } from "@/components/ui/lazy-dialog";
 import { Separator } from "@/components/ui/separator";
+import { ErrorCard } from "@/components/ui/skyglass";
 import { toast } from "@/components/ui/toast";
 import { createdByLabel } from "@/lib/agents/created-by";
 import { agentListQueryOptions } from "@/lib/agents/queries";
@@ -113,7 +114,7 @@ function BotsPage() {
       await setMainBotAsync(nextAgentId);
     } catch (caught) {
       toast.error(
-        caught instanceof Error ? caught.message : "更新主 Agent 失败",
+        caught instanceof Error ? caught.message : "更新主机器人失败",
       );
     }
   }
@@ -131,9 +132,24 @@ function BotsPage() {
       {agents.isPending ? (
         <PageSkeleton />
       ) : agents.error && !agents.data ? (
-        <p className="mt-6 text-destructive text-sm" role="alert">
-          {"机器人列表暂时无法加载。"}
-        </p>
+        <ErrorCard
+          action={
+            <Button
+              className="mt-2"
+              disabled={agents.isFetching}
+              onClick={() => void agents.refetch()}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {agents.isFetching ? "重试中…" : "重试"}
+            </Button>
+          }
+          className="mt-6"
+          description={"刷新一下再试。"}
+          detail={agents.error instanceof Error ? agents.error.message : undefined}
+          title={"机器人列表暂时无法加载。"}
+        />
       ) : agents.data.length === 0 ? (
         <PageEmpty>{"你还没有机器人。"}</PageEmpty>
       ) : (
@@ -192,7 +208,7 @@ function BotsPage() {
                             data-testid="primary-agent-badge"
                           >
                             <IconStarFilled aria-hidden className="size-2.5" />
-                            {"主 Agent"}
+                            {"主机器人"}
                           </span>
                         ) : null}
                       </ItemTitle>
@@ -261,7 +277,7 @@ function BotsPage() {
                             onClick={() => void applyMainBot(null)}
                           >
                             <IconStarOff className="size-4 shrink-0" />
-                            <span>{"取消主 Agent"}</span>
+                            <span>{"取消主机器人"}</span>
                           </DropdownMenuItem>
                         ) : !agent.hidden ? (
                           <DropdownMenuItem
@@ -269,7 +285,7 @@ function BotsPage() {
                             onClick={() => void applyMainBot(agent.id)}
                           >
                             <IconStar className="size-4 shrink-0" />
-                            <span>{"设为主 Agent"}</span>
+                            <span>{"设为主机器人"}</span>
                           </DropdownMenuItem>
                         ) : null}
                         {canReplaceMain ? (
@@ -284,7 +300,7 @@ function BotsPage() {
                             }}
                           >
                             <IconArrowsExchange className="size-4 shrink-0" />
-                            <span>{"更换主 Agent…"}</span>
+                            <span>{"更换主机器人…"}</span>
                           </DropdownMenuItem>
                         ) : null}
                         <DropdownMenuItem
@@ -321,7 +337,7 @@ function BotsPage() {
                                 <span className="block">{"删除机器人…"}</span>
                                 {isMain ? (
                                   <span className="glass-mi-sub">
-                                    {"需先取消或更换主 Agent"}
+                                    {"需先取消或更换主机器人"}
                                   </span>
                                 ) : null}
                               </span>

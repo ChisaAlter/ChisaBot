@@ -174,11 +174,20 @@ export function AppearancePreferences() {
     null,
   );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mountedRef = useRef(true);
   const decodeRequestIdRef = useRef(0);
   const lastSkySceneRef = useRef<SkySceneId>("auto");
   const lastWallpaperSourceRef = useRef<ArtisticWallpaperPresetId | "custom">(
     "waterlily-pond",
   );
+
+  useExternalConnection(true, () => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      decodeRequestIdRef.current += 1;
+    };
+  });
 
   if (config.canvas.kind === "sky") {
     lastSkySceneRef.current = config.canvas.scene;
@@ -289,7 +298,7 @@ export function AppearancePreferences() {
       createdPreviewUrl = URL.createObjectURL(file);
       const { naturalWidth, naturalHeight } =
         await readImageDimensions(createdPreviewUrl);
-      if (decodeRequestIdRef.current !== requestId) {
+      if (!mountedRef.current || decodeRequestIdRef.current !== requestId) {
         URL.revokeObjectURL(createdPreviewUrl);
         return;
       }
@@ -305,13 +314,16 @@ export function AppearancePreferences() {
       if (createdPreviewUrl) {
         URL.revokeObjectURL(createdPreviewUrl);
       }
+      if (!mountedRef.current || decodeRequestIdRef.current !== requestId) {
+        return;
+      }
       toast.error(
         error instanceof Error
           ? error.message
           : "无法读取图片尺寸，请换一张图片重试",
       );
     } finally {
-      if (decodeRequestIdRef.current === requestId) {
+      if (mountedRef.current && decodeRequestIdRef.current === requestId) {
         setUploading(false);
       }
     }
@@ -324,7 +336,8 @@ export function AppearancePreferences() {
     let createdPreviewUrl: string | null = null;
     try {
       const savedSource = await loadUploadedWallpaperSource();
-      if (decodeRequestIdRef.current !== requestId) return;
+      if (!mountedRef.current || decodeRequestIdRef.current !== requestId)
+        return;
 
       const sourceDataUrl =
         savedSource?.sourceDataUrl ??
@@ -338,7 +351,7 @@ export function AppearancePreferences() {
       createdPreviewUrl = URL.createObjectURL(blob);
       const { naturalWidth, naturalHeight } =
         await readImageDimensions(createdPreviewUrl);
-      if (decodeRequestIdRef.current !== requestId) {
+      if (!mountedRef.current || decodeRequestIdRef.current !== requestId) {
         URL.revokeObjectURL(createdPreviewUrl);
         return;
       }
@@ -358,11 +371,14 @@ export function AppearancePreferences() {
       if (createdPreviewUrl) {
         URL.revokeObjectURL(createdPreviewUrl);
       }
+      if (!mountedRef.current || decodeRequestIdRef.current !== requestId) {
+        return;
+      }
       toast.error(
         error instanceof Error ? error.message : "读取已保存壁纸原图失败",
       );
     } finally {
-      if (decodeRequestIdRef.current === requestId) {
+      if (mountedRef.current && decodeRequestIdRef.current === requestId) {
         setUploading(false);
       }
     }

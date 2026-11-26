@@ -1,7 +1,7 @@
 import { IconChecks, IconChevronRight } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ConfirmRow } from "@/components/approvals/confirm-row";
 import { ConfirmationPages } from "@/components/approvals/confirmation-pages";
 import { PageSection, PageSkeleton } from "@/components/layout/page-shell";
@@ -169,9 +169,16 @@ function HandOffCard({
   onDone: () => Promise<unknown>;
 }) {
   const handOff = request.action.policy?.behaviour === "hand_off";
+  const decidingRef = useRef(false);
   const decide = async (choice: ApprovalDecision) => {
-    await decideApproval(request.id, choice);
-    await onDone();
+    if (decidingRef.current) return;
+    decidingRef.current = true;
+    try {
+      await decideApproval(request.id, choice);
+      await onDone();
+    } finally {
+      decidingRef.current = false;
+    }
   };
   const opts = { errorToast: (error: Error) => error.message };
   const first = useAsyncAction(
@@ -180,6 +187,10 @@ function HandOffCard({
   );
   const always = useAsyncAction(() => decide("allow_always"), opts);
   const deny = useAsyncAction(() => decide("deny"), opts);
+  const busy =
+    first.state === "pending" ||
+    always.state === "pending" ||
+    deny.state === "pending";
   /*
    * bot/ 的审批（bot factory）：服务器把要建的机器人放在 action.target，卡片直接画出名字、职责、
    * 完整提示词和模型——这是点「允许」前要看的东西，不能埋在 args JSON 里。
@@ -221,12 +232,15 @@ function HandOffCard({
       </details>
       <div className="pending-card-a">
         <Button
+          disabled={busy && first.state !== "pending"}
           feedback={{
             pending: "处理中…",
             success: handOff ? "已标记完成" : "已允许",
             error: "失败",
           }}
-          onClick={() => void first.run()}
+          onClick={() => {
+            if (!decidingRef.current) void first.run();
+          }}
           size="sm"
           state={first.state}
         >
@@ -234,8 +248,11 @@ function HandOffCard({
         </Button>
         {handOff ? null : (
           <Button
+            disabled={busy && always.state !== "pending"}
             feedback={{ pending: "处理中…", success: "已允许", error: "失败" }}
-            onClick={() => void always.run()}
+            onClick={() => {
+              if (!decidingRef.current) void always.run();
+            }}
             size="sm"
             state={always.state}
             variant="outline"
@@ -244,8 +261,11 @@ function HandOffCard({
           </Button>
         )}
         <Button
+          disabled={busy && deny.state !== "pending"}
           feedback="cancel"
-          onClick={() => void deny.run()}
+          onClick={() => {
+            if (!decidingRef.current) void deny.run();
+          }}
           size="sm"
           state={deny.state}
           variant="outline"

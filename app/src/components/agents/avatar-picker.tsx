@@ -332,6 +332,16 @@ function AvatarDialogBody({
   const [notice, setNotice] = useState<string | null>(null);
   const cropRef = useRef<CropHandle | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const mountedRef = useRef(true);
+  const loadRequestIdRef = useRef(0);
+
+  useExternalConnection(true, () => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      loadRequestIdRef.current += 1;
+    };
+  });
 
   useExternalConnection(source?.url || null, (url) => () => {
     URL.revokeObjectURL(url);
@@ -373,16 +383,24 @@ function AvatarDialogBody({
   });
   const chooseFile = async (file: File | undefined) => {
     if (!file) return;
+    const requestId = ++loadRequestIdRef.current;
     setError(null);
     setNotice(null);
     setTab("upload");
     try {
       const loaded = await loadAvatarSource(file);
+      if (!mountedRef.current || loadRequestIdRef.current !== requestId) {
+        URL.revokeObjectURL(loaded.url);
+        return;
+      }
       setSource(loaded);
       setNotice(
         smallSourceHint(loaded.image.naturalWidth, loaded.image.naturalHeight),
       );
     } catch (failure) {
+      if (!mountedRef.current || loadRequestIdRef.current !== requestId) {
+        return;
+      }
       setError(failure instanceof Error ? failure.message : "这张图片打不开。");
     }
   };
@@ -392,11 +410,13 @@ function AvatarDialogBody({
       setBusy(true);
       try {
         const blob = await renderAvatar(source.image, cropRef.current.crop());
+        if (!mountedRef.current) return;
         onDone({ kind: "image", blob, previewUrl: URL.createObjectURL(blob) });
       } catch (failure) {
+        if (!mountedRef.current) return;
         setError(failure instanceof Error ? failure.message : "图片没能处理。");
       } finally {
-        setBusy(false);
+        if (mountedRef.current) setBusy(false);
       }
       return;
     }

@@ -420,9 +420,18 @@ export function applyMessagesSnapshot(
   return result;
 }
 
+export const SYNTHETIC_CONNECT_RUN_PREFIX = "connect:";
+
+export function isSyntheticConnectRunId(runId: string | undefined): boolean {
+  return (
+    typeof runId === "string" && runId.startsWith(SYNTHETIC_CONNECT_RUN_PREFIX)
+  );
+}
+
 /** An observer has no model or tool loop. The server owns every execution. */
 export class ConversationSession extends HttpAgent {
   private observedRunId?: string;
+  private syntheticConnectActive = false;
   private readonly acceptedCommands = new Set<string>();
   private readonly activeLiveMessageIds = new Set<string>();
   private structureVersion = 0;
@@ -506,7 +515,12 @@ export class ConversationSession extends HttpAgent {
       },
       onRunStartedEvent: ({ event }) => {
         this.lastDeltaKind = "none";
-        this.observedRunId = event.runId;
+        if (isSyntheticConnectRunId(event.runId)) {
+          this.syntheticConnectActive = true;
+        } else {
+          this.syntheticConnectActive = false;
+          this.observedRunId = event.runId;
+        }
         this.setConnection("online");
       },
       onTextMessageStartEvent: ({ event }) => {
@@ -589,6 +603,13 @@ export class ConversationSession extends HttpAgent {
         this.lastDeltaKind = "none";
         this.activeLiveMessageIds.clear();
         finishLiveMessageText(this.threadId);
+        if (
+          this.syntheticConnectActive ||
+          isSyntheticConnectRunId(this.observedRunId)
+        ) {
+          this.syntheticConnectActive = false;
+          this.observedRunId = undefined;
+        }
         this.setConnection("online");
       },
       onMessagesSnapshotEvent: ({ event }) => {
@@ -608,9 +629,12 @@ export class ConversationSession extends HttpAgent {
           this.setConnection(event.value.status);
         if (
           event.name === "chisabot.execution" &&
-          typeof event.value?.runId === "string"
-        )
+          typeof event.value?.runId === "string" &&
+          !isSyntheticConnectRunId(event.value.runId)
+        ) {
+          this.syntheticConnectActive = false;
           this.observedRunId = event.value.runId;
+        }
       },
     });
   }
@@ -680,6 +704,7 @@ export class ConversationSession extends HttpAgent {
           if (admittedInStream && headerRunId) {
             this.acceptedCommands.add(commandId);
             draftFilesAccepted(commandContent);
+            this.syntheticConnectActive = false;
             this.observedRunId = headerRunId;
           }
           const reader = response.body?.getReader();
@@ -711,6 +736,7 @@ export class ConversationSession extends HttpAgent {
               admittedInStream = true;
               this.acceptedCommands.add(commandId);
               draftFilesAccepted(commandContent);
+              this.syntheticConnectActive = false;
               this.observedRunId = event.value.runId;
             }
             observer.next(event);
@@ -782,6 +808,7 @@ export class ConversationSession extends HttpAgent {
         // Admission is durable even if the event subscription fails before its first frame.
         this.acceptedCommands.add(commandId);
         draftFilesAccepted(commandContent);
+        this.syntheticConnectActive = false;
         this.observedRunId = admitted.runId;
         abort.signal.throwIfAborted();
         const events = new HttpAgent({

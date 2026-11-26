@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { useTimeout } from "@/hooks";
 
 /**
@@ -45,15 +45,96 @@ export const ENTRANCE_SECONDS = DURATION_SECONDS.normal;
 /** 标准退场时长（秒，退出快于进入）。 */
 export const EXIT_SECONDS = DURATION_SECONDS.exit;
 
-/** 查询当前系统是否启用了「减少动态效果」。 */
-export function prefersReducedMotion(): boolean {
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+let sharedReducedMotionSource: {
+  from: typeof window.matchMedia;
+  mql: MediaQueryList;
+} | null = null;
+const reducedMotionListeners = new Set<() => void>();
+let activeReducedMotionMql: MediaQueryList | null = null;
+
+const notifyReducedMotion = () => {
+  for (const listener of reducedMotionListeners) listener();
+};
+
+function attachReducedMotionListener(mql: MediaQueryList) {
+  if (typeof mql.addEventListener === "function") {
+    mql.addEventListener("change", notifyReducedMotion);
+    return;
+  }
+  mql.addListener?.(notifyReducedMotion);
+}
+
+function detachReducedMotionListener(mql: MediaQueryList) {
+  if (typeof mql.removeEventListener === "function") {
+    mql.removeEventListener("change", notifyReducedMotion);
+    return;
+  }
+  mql.removeListener?.(notifyReducedMotion);
+}
+
+function getReducedMotionMql(): MediaQueryList | null {
   if (
     typeof window === "undefined" ||
     typeof window.matchMedia !== "function"
   ) {
-    return false;
+    return null;
   }
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (sharedReducedMotionSource?.from !== window.matchMedia) {
+    sharedReducedMotionSource = {
+      from: window.matchMedia,
+      mql: window.matchMedia(REDUCED_MOTION_QUERY),
+    };
+  }
+  return sharedReducedMotionSource.mql;
+}
+
+function subscribeReducedMotion(listener: () => void): () => void {
+  const mql = getReducedMotionMql();
+  if (mql && activeReducedMotionMql !== mql) {
+    if (activeReducedMotionMql) {
+      detachReducedMotionListener(activeReducedMotionMql);
+    }
+    activeReducedMotionMql = mql;
+    if (reducedMotionListeners.size > 0) {
+      attachReducedMotionListener(activeReducedMotionMql);
+    }
+  }
+  const wasEmpty = reducedMotionListeners.size === 0;
+  reducedMotionListeners.add(listener);
+  if (wasEmpty && activeReducedMotionMql) {
+    attachReducedMotionListener(activeReducedMotionMql);
+  }
+  return () => {
+    reducedMotionListeners.delete(listener);
+    if (reducedMotionListeners.size === 0 && activeReducedMotionMql) {
+      detachReducedMotionListener(activeReducedMotionMql);
+      activeReducedMotionMql = null;
+    }
+  };
+}
+
+function getReducedMotionSnapshot(): boolean {
+  return Boolean(getReducedMotionMql()?.matches);
+}
+
+function getReducedMotionServerSnapshot(): boolean {
+  return false;
+}
+
+/** 查询当前系统是否启用了「减少动态效果」。 */
+export function prefersReducedMotion(): boolean {
+  return getReducedMotionSnapshot();
+}
+
+/** 共享单例订阅 `prefers-reduced-motion: reduce`，避免全站重复挂载 `matchMedia` 监听。 */
+export function useSharedReducedMotion(): boolean {
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    getReducedMotionSnapshot,
+    getReducedMotionServerSnapshot,
+  );
 }
 
 /** 遵守 `prefers-reduced-motion` 的滚动定位，减少动态效果下自动退回 `auto`。 */

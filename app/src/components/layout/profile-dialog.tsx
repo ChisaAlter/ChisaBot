@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { useExternalConnection } from "@/hooks";
+import { useExternalConnection, useTimeout } from "@/hooks";
 import { authKeys, currentUserQueryOptions } from "@/lib/auth/queries";
 import { client } from "@/lib/client";
 import { usePresenceMount } from "@/lib/motion";
@@ -202,8 +202,27 @@ function ProfileForm({
   const [name, setName] = useState(initialName);
   const [crop, setCrop] = useState<Crop | null>(null);
   const [pickError, setPickError] = useState<string | null>(null);
+  const [savedNotifyPending, setSavedNotifyPending] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const mountedRef = useRef(true);
+  const pickRequestIdRef = useRef(0);
   const current = user?.image ?? null;
+
+  useExternalConnection(true, () => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      pickRequestIdRef.current += 1;
+    };
+  });
+
+  useTimeout(
+    () => {
+      setSavedNotifyPending(false);
+      onSaved?.();
+    },
+    savedNotifyPending ? 900 : null,
+  );
 
   const save = useMutation({
     mutationFn: async () => {
@@ -213,7 +232,7 @@ function ProfileForm({
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: authKeys.currentUser() });
-      window.setTimeout(() => onSaved?.(), 900);
+      if (mountedRef.current) setSavedNotifyPending(true);
     },
   });
 
@@ -228,9 +247,14 @@ function ProfileForm({
       setPickError("图片太大（最大 15 MB）。");
       return;
     }
+    const requestId = ++pickRequestIdRef.current;
     const src = URL.createObjectURL(file);
     try {
       const img = await loadImage(src);
+      if (!mountedRef.current || pickRequestIdRef.current !== requestId) {
+        URL.revokeObjectURL(src);
+        return;
+      }
       setCrop({
         src,
         w: img.naturalWidth,
@@ -240,6 +264,10 @@ function ProfileForm({
         y: 0,
       });
     } catch (e) {
+      URL.revokeObjectURL(src);
+      if (!mountedRef.current || pickRequestIdRef.current !== requestId) {
+        return;
+      }
       setPickError(e instanceof Error ? e.message : "图片无法读取");
     }
   }, []);
