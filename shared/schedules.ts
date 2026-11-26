@@ -30,6 +30,327 @@ export type ScheduleRunStatus =
   | "skipped"
   | "queued";
 
+export type ConditionMode = "becomes_met" | "each_time_met";
+
+export type ScheduleConditionSkipReason =
+  | "not_met"
+  | "already_met"
+  | "cooldown";
+
+export type ScheduleConditionState = {
+  conditionPrompt: string | null;
+  conditionMode: ConditionMode;
+  cooldownMs: number;
+  baselineValue: string | null;
+  lastMet: boolean | null;
+  lastFiredAt: number | null;
+  lastSkipReason: ScheduleConditionSkipReason | null;
+};
+
+export type ConditionProbeResult = {
+  met: boolean;
+  value: string | null;
+  evidence: string | null;
+};
+
+export type ConditionEvaluationOutcome = {
+  shouldFire: boolean;
+  skipReason: ScheduleConditionSkipReason | null;
+  nextState: ScheduleConditionState;
+  observedValue: string | null;
+  evidence: string | null;
+};
+
+export const SCHEDULE_BASELINE_MAX_LEN = 120;
+const CONDITION_EVIDENCE_MAX_LEN = 500;
+
+export function normalizeConditionMode(
+  mode: string | null | undefined,
+): ConditionMode {
+  return mode === "each_time_met" ? "each_time_met" : "becomes_met";
+}
+
+export function normalizeCooldownMs(
+  cooldownMs: number | null | undefined,
+): number {
+  if (
+    typeof cooldownMs !== "number" ||
+    !Number.isFinite(cooldownMs) ||
+    cooldownMs <= 0
+  ) {
+    return 0;
+  }
+  return Math.floor(cooldownMs);
+}
+
+/** 将观测值规整并截断到 ≤120 字；空白/null 退化为 null（纯布尔边沿）。 */
+export function normalizeConditionBaseline(
+  value: string | null | undefined,
+): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= SCHEDULE_BASELINE_MAX_LEN) return trimmed;
+  return `${trimmed.slice(0, SCHEDULE_BASELINE_MAX_LEN - 1)}…`;
+}
+
+function normalizeConditionEvidence(
+  evidence: string | null | undefined,
+): string | null {
+  if (typeof evidence !== "string") return null;
+  const trimmed = evidence.trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= CONDITION_EVIDENCE_MAX_LEN) return trimmed;
+  return `${trimmed.slice(0, CONDITION_EVIDENCE_MAX_LEN - 1)}…`;
+}
+
+/**
+ * 纯状态机：根据本次只读条件探测结果与当前时刻，判定是否应当触发主动作并给出下一状态。
+ * - becomes_met：仅在非 true → true 边沿触发（持续为 true 返回 skipReason: "already_met"）；
+ * - each_time_met：每次 met=true 均尝试触发；
+ * - cooldownMs：距上次成功触发未满冷却时长时阻断并记 skipReason: "cooldown"，不推进基线与 lastMet。
+ */
+export function evaluateConditionOutcome(
+  state: Readonly<ScheduleConditionState>,
+  probe: { met: boolean; value: string | null; evidence?: string | null },
+  nowMs: number,
+): ConditionEvaluationOutcome {
+  const mode = normalizeConditionMode(state.conditionMode);
+  const cooldownMs = normalizeCooldownMs(state.cooldownMs);
+  const currentBaseline = normalizeConditionBaseline(state.baselineValue);
+  const observedValue = normalizeConditionBaseline(probe.value);
+  const evidence = normalizeConditionEvidence(probe.evidence);
+  const nextBaseline = observedValue ?? currentBaseline;
+
+  if (!probe.met) {
+    return {
+      shouldFire: false,
+      skipReason: "not_met",
+      observedValue,
+      evidence,
+      nextState: {
+        ...state,
+        conditionMode: mode,
+        cooldownMs,
+        baselineValue: nextBaseline,
+        lastMet: false,
+        lastSkipReason: "not_met",
+      },
+    };
+  }
+
+  if (mode === "becomes_met" && state.lastMet === true) {
+    return {
+      shouldFire: false,
+      skipReason: "already_met",
+      observedValue,
+      evidence,
+      nextState: {
+        ...state,
+        conditionMode: mode,
+        cooldownMs,
+        baselineValue: nextBaseline,
+        lastMet: true,
+        lastSkipReason: "already_met",
+      },
+    };
+  }
+
+  if (
+    cooldownMs > 0 &&
+    state.lastFiredAt !== null &&
+    nowMs - state.lastFiredAt < cooldownMs
+  ) {
+    return {
+      shouldFire: false,
+      skipReason: "cooldown",
+      observedValue,
+      evidence,
+      nextState: {
+        ...state,
+        conditionMode: mode,
+        cooldownMs,
+        baselineValue: currentBaseline,
+        lastSkipReason: "cooldown",
+      },
+    };
+  }
+
+  return {
+    shouldFire: true,
+    skipReason: null,
+    observedValue,
+    evidence,
+    nextState: {
+      ...state,
+      conditionMode: mode,
+      cooldownMs,
+      baselineValue: nextBaseline,
+      lastMet: true,
+      lastFiredAt: nowMs,
+      lastSkipReason: null,
+    },
+  };
+}
+
+/** 主动作派发失败时回滚基线、lastFiredAt、lastMet 与 lastSkipReason，保留触发机会。 */
+export function revertConditionFire(
+  prevState: Readonly<ScheduleConditionState>,
+  failedState: Readonly<ScheduleConditionState>,
+): ScheduleConditionState {
+  return {
+    ...failedState,
+    baselineValue: prevState.baselineValue,
+    lastMet: prevState.lastMet,
+    lastFiredAt: prevState.lastFiredAt,
+    lastSkipReason: prevState.lastSkipReason,
+  };
+}
+
+/** 编辑条件规则时清空旧基线与边沿/冷却历史，避免新规则沿用旧基线。 */
+export function resetConditionState(
+  state: Readonly<ScheduleConditionState>,
+  patch?: Partial<
+    Pick<
+      ScheduleConditionState,
+      "conditionPrompt" | "conditionMode" | "cooldownMs"
+    >
+  >,
+): ScheduleConditionState {
+  return {
+    conditionPrompt:
+      patch?.conditionPrompt !== undefined
+        ? patch.conditionPrompt
+        : state.conditionPrompt,
+    conditionMode:
+      patch?.conditionMode !== undefined
+        ? normalizeConditionMode(patch.conditionMode)
+        : normalizeConditionMode(state.conditionMode),
+    cooldownMs:
+      patch?.cooldownMs !== undefined
+        ? normalizeCooldownMs(patch.cooldownMs)
+        : normalizeCooldownMs(state.cooldownMs),
+    baselineValue: null,
+    lastMet: null,
+    lastFiredAt: null,
+    lastSkipReason: null,
+  };
+}
+
+function toProbeResult(raw: unknown): ConditionProbeResult | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.met !== "boolean") return null;
+  let value: string | null = null;
+  if (typeof obj.value === "string") {
+    value = normalizeConditionBaseline(obj.value);
+  } else if (typeof obj.value === "number" || typeof obj.value === "boolean") {
+    value = normalizeConditionBaseline(String(obj.value));
+  }
+  const evidence =
+    typeof obj.evidence === "string"
+      ? normalizeConditionEvidence(obj.evidence)
+      : null;
+  return { met: obj.met, value, evidence };
+}
+
+function tryParseProbeCandidate(
+  candidate: string,
+): ConditionProbeResult | null {
+  try {
+    return toProbeResult(JSON.parse(candidate));
+  } catch {
+    return null;
+  }
+}
+
+function extractBalancedJsonCandidates(text: string): string[] {
+  const candidates: string[] = [];
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== "{") continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i += 1) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === "\\") {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === "{") {
+        depth += 1;
+      } else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          candidates.push(text.slice(start, i + 1));
+          start = i;
+          break;
+        }
+      }
+    }
+  }
+  return candidates;
+}
+
+/** 容错提取只读条件探测结果 `{"met": boolean, "value"?: string, "evidence"?: string}`。 */
+export function parseConditionProbe(text: string): ConditionProbeResult | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  try {
+    return toProbeResult(JSON.parse(trimmed));
+  } catch {
+    // 非整段纯 JSON，继续从代码块或正文中提取嵌入式 JSON 对象。
+  }
+
+  const fenceRe = /```(?:json)?\s*([\s\S]*?)```/gi;
+  for (const match of trimmed.matchAll(fenceRe)) {
+    const inner = match[1]?.trim();
+    if (!inner) continue;
+    const parsed = tryParseProbeCandidate(inner);
+    if (parsed) return parsed;
+    for (const candidate of extractBalancedJsonCandidates(inner)) {
+      const nested = tryParseProbeCandidate(candidate);
+      if (nested) return nested;
+    }
+  }
+
+  for (const candidate of extractBalancedJsonCandidates(trimmed)) {
+    const parsed = tryParseProbeCandidate(candidate);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+const CONDITION_SKIP_REASON_ZH: Record<ScheduleConditionSkipReason, string> = {
+  not_met: "条件未满足",
+  already_met: "条件持续满足（仅在首次满足时触发）",
+  cooldown: "处于冷却期内",
+};
+
+export function formatConditionSkipResult(
+  outcome: Pick<
+    ConditionEvaluationOutcome,
+    "skipReason" | "observedValue" | "evidence"
+  >,
+): string {
+  const reason = outcome.skipReason
+    ? CONDITION_SKIP_REASON_ZH[outcome.skipReason]
+    : "未满足触发条件";
+  const observed = outcome.observedValue ?? "无";
+  const evidence = outcome.evidence ? ` · 依据：${outcome.evidence}` : "";
+  return `已跳过（${reason}）· 观测值：${observed}${evidence}`;
+}
+
 export type ScheduleRunView = {
   id: string;
   scheduleId: string;
@@ -39,6 +360,8 @@ export type ScheduleRunView = {
   status: ScheduleRunStatus;
   result: string | null;
   manual: boolean;
+  skipReason?: string | null;
+  observedValue?: string | null;
 };
 
 export type ScheduleView = {
@@ -66,6 +389,13 @@ export type ScheduleView = {
   running: boolean;
   /** 模块 13 M2：网页例程的原对话已删除（任务已自动取消，不会发到别的对话）。 */
   threadDeleted?: boolean;
+  conditionPrompt?: string | null;
+  conditionMode?: ConditionMode;
+  cooldownMs?: number;
+  baselineValue?: string | null;
+  lastMet?: boolean | null;
+  lastFiredAt?: string | null;
+  lastSkipReason?: ScheduleConditionSkipReason | null;
   recentRuns?: ScheduleRunView[];
 };
 
