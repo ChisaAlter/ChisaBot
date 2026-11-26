@@ -23,6 +23,10 @@ const PROXY_KEYS = [
   "all_proxy",
 ];
 
+const ACP_STDOUT_BUF_CAP = 4 * 1024 * 1024;
+const ACP_STDERR_BUF_CAP = 256 * 1024;
+const ACP_FULLTEXT_CAP = 512 * 1024;
+
 function killTree(child) {
   if (!child?.pid) return;
   try {
@@ -139,11 +143,21 @@ function sanitizeAntigravityEnv(env, fixProxy = true) {
 
 function createJsonRpcConnection(
   child,
-  { onNotification, onRequest, onStderrLine },
+  {
+    onNotification,
+    onRequest,
+    onStderrLine,
+    maxStdoutBytes = ACP_STDOUT_BUF_CAP,
+    maxStderrBytes = ACP_STDERR_BUF_CAP,
+  },
 ) {
   let seq = 0;
   const pending = new Map();
   let closed = false;
+  const stdoutCap = Math.max(1024, Number(maxStdoutBytes) || ACP_STDOUT_BUF_CAP);
+  const stderrCap = Math.max(512, Number(maxStderrBytes) || ACP_STDERR_BUF_CAP);
+
+  child.stdin?.on("error", () => {});
 
   function sendRaw(payload) {
     if (closed || !child.stdin || child.stdin.destroyed) return;
@@ -181,79 +195,142 @@ function createJsonRpcConnection(
     sendRaw({ jsonrpc: "2.0", method, params });
   }
 
+  function handleStdoutLine(line) {
+    if (!line) return;
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== "object") return;
+    if (
+      msg.id !== undefined &&
+      (msg.result !== undefined || msg.error !== undefined) &&
+      !msg.method
+    ) {
+      const entry = pending.get(msg.id);
+      if (!entry) return;
+      pending.delete(msg.id);
+      if (msg.error) {
+        const message =
+          typeof msg.error.message === "string"
+            ? msg.error.message
+            : JSON.stringify(msg.error);
+        entry.reject(
+          Object.assign(new Error(message), {
+            code: msg.error.code,
+            data: msg.error.data,
+          }),
+        );
+      } else {
+        entry.resolve(msg.result);
+      }
+    } else if (msg.id !== undefined && typeof msg.method === "string") {
+      Promise.resolve()
+        .then(() =>
+          onRequest
+            ? onRequest(msg.method, msg.params || {})
+            : Promise.reject(new Error(`不支持的客户端方法: ${msg.method}`)),
+        )
+        .then(
+          (result) =>
+            sendRaw({ jsonrpc: "2.0", id: msg.id, result: result ?? {} }),
+          (err) =>
+            sendRaw({
+              jsonrpc: "2.0",
+              id: msg.id,
+              error: {
+                code: -32000,
+                message: err?.message ? err.message : String(err),
+              },
+            }),
+        );
+    } else if (typeof msg.method === "string") {
+      if (onNotification) onNotification(msg.method, msg.params || {});
+    }
+  }
+
   let outBuf = "";
-  child.stdout.on("data", (chunk) => {
-    outBuf += String(chunk);
+  let outDropping = false;
+  child.stdout?.on("data", (chunk) => {
+    let text = String(chunk);
+    if (outDropping) {
+      const nl = text.indexOf("\n");
+      if (nl < 0) return;
+      outDropping = false;
+      text = text.slice(nl + 1);
+      if (!text) return;
+    }
+    let start = 0;
     for (;;) {
-      const idx = outBuf.indexOf("\n");
-      if (idx < 0) break;
-      const line = outBuf.slice(0, idx).replace(/\r$/, "").trim();
-      outBuf = outBuf.slice(idx + 1);
-      if (!line) continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch {
+      const nl = text.indexOf("\n", start);
+      if (nl < 0) break;
+      const seg = text.slice(start, nl);
+      start = nl + 1;
+      if (Buffer.byteLength(outBuf, "utf8") + Buffer.byteLength(seg, "utf8") > stdoutCap) {
+        outBuf = "";
         continue;
       }
-      if (!msg || typeof msg !== "object") continue;
+      const line = `${outBuf}${seg}`.replace(/\r$/, "").trim();
+      outBuf = "";
+      handleStdoutLine(line);
+    }
+    const tail = start > 0 ? text.slice(start) : text;
+    if (tail) {
       if (
-        msg.id !== undefined &&
-        (msg.result !== undefined || msg.error !== undefined) &&
-        !msg.method
+        Buffer.byteLength(outBuf, "utf8") + Buffer.byteLength(tail, "utf8") >
+        stdoutCap
       ) {
-        const entry = pending.get(msg.id);
-        if (!entry) continue;
-        pending.delete(msg.id);
-        if (msg.error) {
-          const message =
-            typeof msg.error.message === "string"
-              ? msg.error.message
-              : JSON.stringify(msg.error);
-          entry.reject(
-            Object.assign(new Error(message), {
-              code: msg.error.code,
-              data: msg.error.data,
-            }),
-          );
-        } else {
-          entry.resolve(msg.result);
-        }
-      } else if (msg.id !== undefined && typeof msg.method === "string") {
-        Promise.resolve()
-          .then(() =>
-            onRequest
-              ? onRequest(msg.method, msg.params || {})
-              : Promise.reject(new Error(`不支持的客户端方法: ${msg.method}`)),
-          )
-          .then(
-            (result) =>
-              sendRaw({ jsonrpc: "2.0", id: msg.id, result: result ?? {} }),
-            (err) =>
-              sendRaw({
-                jsonrpc: "2.0",
-                id: msg.id,
-                error: {
-                  code: -32000,
-                  message: err?.message ? err.message : String(err),
-                },
-              }),
-          );
-      } else if (typeof msg.method === "string") {
-        if (onNotification) onNotification(msg.method, msg.params || {});
+        outBuf = "";
+        outDropping = true;
+      } else {
+        outBuf += tail;
       }
     }
   });
 
   let errBuf = "";
-  child.stderr.on("data", (chunk) => {
-    errBuf += String(chunk);
+  let errDropping = false;
+  child.stderr?.on("data", (chunk) => {
+    let text = String(chunk);
+    if (errDropping) {
+      const nl = text.indexOf("\n");
+      if (nl < 0) return;
+      errDropping = false;
+      text = text.slice(nl + 1);
+      if (!text) return;
+    }
+    let start = 0;
     for (;;) {
-      const idx = errBuf.indexOf("\n");
-      if (idx < 0) break;
-      const line = errBuf.slice(0, idx).replace(/\r$/, "").trim();
-      errBuf = errBuf.slice(idx + 1);
+      const nl = text.indexOf("\n", start);
+      if (nl < 0) break;
+      const seg = text.slice(start, nl);
+      start = nl + 1;
+      let line = `${errBuf}${seg}`.replace(/\r$/, "").trim();
+      errBuf = "";
+      if (Buffer.byteLength(line, "utf8") > stderrCap) {
+        line = `${line.slice(0, Math.min(4096, stderrCap))}…（stderr 行过长已截断）`;
+      }
       if (line && onStderrLine) onStderrLine(line);
+    }
+    const tail = start > 0 ? text.slice(start) : text;
+    if (tail) {
+      if (
+        Buffer.byteLength(errBuf, "utf8") + Buffer.byteLength(tail, "utf8") >
+        stderrCap
+      ) {
+        const preview = `${errBuf}${tail}`
+          .slice(0, Math.min(4096, stderrCap))
+          .trim();
+        errBuf = "";
+        errDropping = true;
+        if (preview && onStderrLine) {
+          onStderrLine(`${preview}…（stderr 缓冲超限已截断）`);
+        }
+      } else {
+        errBuf += tail;
+      }
     }
   });
 
@@ -415,6 +492,7 @@ async function runAcpSession({
   mcpServers = [],
   resumeSessionId = null,
   timeoutMs = 600_000,
+  maxFullTextChars = ACP_FULLTEXT_CAP,
   signal,
   approve,
   askUser,
@@ -426,6 +504,11 @@ async function runAcpSession({
   let termSeq = 0;
   let stderrTail = "";
   let fullText = "";
+  let fullTextTruncated = false;
+  const fullTextCap = Math.max(
+    1024,
+    Number(maxFullTextChars) || ACP_FULLTEXT_CAP,
+  );
   let lineBuffer = "";
   const seenToolIds = new Set();
 
@@ -532,7 +615,17 @@ async function runAcpSession({
       if (kind === "agent_message_chunk") {
         const chunk = extractTextFromContent(update.content);
         if (chunk) {
-          fullText += chunk;
+          if (fullText.length < fullTextCap) {
+            const remain = fullTextCap - fullText.length;
+            if (chunk.length <= remain) {
+              fullText += chunk;
+            } else {
+              fullText += chunk.slice(0, remain);
+              fullTextTruncated = true;
+            }
+          } else {
+            fullTextTruncated = true;
+          }
           lineBuffer += chunk;
           flushTextLine(false);
         }
@@ -922,11 +1015,15 @@ async function runAcpSession({
     );
     flushTextLine(true);
     const stopReason = promptResult?.stopReason;
+    const trimmedFullText = fullText.trim();
+    const summaryText = trimmedFullText
+      ? fullTextTruncated
+        ? `${trimmedFullText}\n…（输出超过上限已截断）`
+        : trimmedFullText
+      : `（ACP 会话完成${stopReason ? `：${stopReason}` : ""}）`;
     return {
       exitCode: 0,
-      summary:
-        fullText.trim() ||
-        `（ACP 会话完成${stopReason ? `：${stopReason}` : ""}）`,
+      summary: summaryText,
       isError: false,
       stderrTail,
       sessionId,
@@ -959,6 +1056,9 @@ async function runAcpSession({
 }
 
 module.exports = {
+  ACP_STDOUT_BUF_CAP,
+  ACP_STDERR_BUF_CAP,
+  ACP_FULLTEXT_CAP,
   probeAcpAgent,
   runAcpSession,
   sanitizeAntigravityEnv,

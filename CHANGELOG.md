@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **全量审查 M5 — PC 桌面端（Electron / Node）性能、稳定性、更新与安全边界加固**：
+  - 消除缓冲区无限增长与 `child.stdin` 未捕获 `EPIPE` 异常（`acp-client.js`、`win-ps-helper.js`、`ops.js` `git()` 强制 `maxBuffer` 与 stderr 截断、`sandbox.js` 截断超限日志并补齐 `stdin.on("error")`）；修复 Windows UIA 助手 O(N²) COM 树扫描与异常退出自动重建、`main.js` `prewarmedChatWindow` 孤儿窗口防泄漏与 `Atomics.wait`/同步 `codesign` 阻塞主线程，以及 `config.js` / `desktop-prefs.js` / `safe-fs.js` 热路径同步写盘改为异步原子持久化。
+  - 修复 `local-web.js` 已 settle 后吞错、`ui/update.js` 手动更新进度停在 `0%`、`updater.js` 错误态与下载状态残留，以及 `code-ops.js` `backupOf()` 补齐 `allowedRoots` 与符号链接越界校验；新增 `pc/test/desktop-hardening.check.js` 回归测试，PC 外壳指纹 `7314f9105596bec5` 保持不变（Windows 原地自动更新，无需重装；无新增数据库迁移）。
+
 - **全量审查 M2 — 部署更新链稳定性、Docker/s6 运维优化与 CI 流水线提速**：
   - 根治在线更新在 `swap` 阶段因 `flock --nonblock` 退出码 73 撞锁引发的误回滚与永久 `.maintenance` 锁死问题（`dsh-release.sh` / `accounts-release.mjs` 对 `--replace` 默认注入 `CHISABOT_ACCOUNTS_LOCK_WAIT=120`，定时对账遇 `.maintenance` 优雅跳过、`accounts.service` 添加 `SuccessExitStatus=73`）；修复 `deploy-serial.sh` 默认提前 `quiesce_app` 导致构建期间误停服（改为 `CHISABOT_SERIAL_PRE_QUIESCE=1` 显式启用，默认交由 `update.sh` 在 swap 前一刻排空）与 `pin-resources.sh` 多账号 DSH 误选网络；在线更新与回滚健康后自动重刷 `isolate-sidecar-app.sh --apply` 并清理陈旧容器 IP 规则；补齐 `update.sh` 异常路径备份与 buildx builder 回收、`install-updater.sh` 安装清单及 `chisabot-updater.py` FD 泄漏与 2s 轮询风暴修复。
   - 优化根 `Dockerfile` 分层缓存（`apt-get` 与系统初始化前移至业务 `COPY` 前，且不再打入 `server/tests`）与 `.dockerignore` 排除目录；统一 `Dockerfile.update` `HEALTHCHECK` 为轻量 `curl`；修复 s6 禁用服务 1s 循环重启、支持内嵌 PostgreSQL 内存参数环境变量及 `/tmp` `tmpfs` 扩至 `192m`；CI 流水线补齐 Bun/npm/Gradle 缓存、去除 `web-and-models` 重复构建/重复测试并对齐 PG16 镜像，发版流水线合并为单次 Linux `web-bundle` 构建（无新增数据库迁移或手动操作）。

@@ -292,17 +292,58 @@ function defaultSpawnSync(cmd, args, options = {}) {
   }
 }
 
-function hasStableMacSignature({ execPath, spawnSync = defaultSpawnSync }) {
-  const appRoot = path.join(path.dirname(execPath), "..", "..");
-  const res = spawnSync("/usr/bin/codesign", ["-dv", "--verbose=2", appRoot], {
-    timeout: 3500,
-  });
-  if (!res || res.error || res.status !== 0) return false;
-  const out = `${res.stdout || ""}\n${res.stderr || ""}`;
+const macSignatureCache = new Map();
+
+function parseMacSignatureOutput(stdout, stderr) {
+  const out = `${stdout || ""}\n${stderr || ""}`;
   const sigLine = out
     .split(/\r?\n/)
     .find((l) => /^Signature(?:=| size=)/.test(l));
   return Boolean(sigLine) && !/^Signature=adhoc\b/i.test(sigLine);
+}
+
+function hasStableMacSignature({ execPath, spawnSync = defaultSpawnSync }) {
+  const useCache = spawnSync === defaultSpawnSync && typeof execPath === "string";
+  if (useCache && macSignatureCache.has(execPath)) {
+    return macSignatureCache.get(execPath);
+  }
+  const appRoot = path.join(path.dirname(execPath), "..", "..");
+  const res = spawnSync("/usr/bin/codesign", ["-dv", "--verbose=2", appRoot], {
+    timeout: 3500,
+  });
+  const stable =
+    Boolean(res && !res.error && res.status === 0) &&
+    parseMacSignatureOutput(res.stdout, res.stderr);
+  if (useCache) macSignatureCache.set(execPath, stable);
+  return stable;
+}
+
+/** 异步预热 macOS 签名校验缓存，避免主进程热路径同步 spawnSync 阻塞。 */
+function probeStableMacSignatureAsync({ execPath }) {
+  if (process.platform !== "darwin" || typeof execPath !== "string" || !execPath) {
+    return Promise.resolve(false);
+  }
+  if (macSignatureCache.has(execPath)) {
+    return Promise.resolve(macSignatureCache.get(execPath));
+  }
+  const appRoot = path.join(path.dirname(execPath), "..", "..");
+  return new Promise((resolve) => {
+    try {
+      childProcess.execFile(
+        "/usr/bin/codesign",
+        ["-dv", "--verbose=2", appRoot],
+        { timeout: 3500, encoding: "utf8" },
+        (error, stdout, stderr) => {
+          const stable = !error && parseMacSignatureOutput(stdout, stderr);
+          macSignatureCache.set(execPath, stable);
+          resolve(stable);
+        },
+      );
+    } catch {
+      macSignatureCache.set(execPath, false);
+      resolve(false);
+    }
+  });
 }
 
 /** NSIS 安装版：安装目录里有卸载程序。免安装 zip 解压出来的没有。 */
@@ -436,6 +477,10 @@ function createUpdater({
     }
     if (state.status === "downloaded" || state.status === "verifying")
       return false;
+    // 下载或检查失败后清空 lastAvailableVersion，确保重检同版本时能重新触发 onAvailable 通知。
+    if (!state.version || lastAvailableVersion === state.version) {
+      lastAvailableVersion = "";
+    }
     set({
       status: "error",
       error: cleanMessage(error),
@@ -551,7 +596,8 @@ function createUpdater({
         ? requiresFullInstall(info, shellHash)
         : Boolean(state.fullInstall);
       // 重新安装不能交给 electron-updater 的「退出时安装」（它一定带 --updated）；退出时由 installOnQuit 处理。
-      if (fullInstall) autoUpdater.autoInstallOnAppQuit = false;
+      // 非 fullInstall 路径在未启用验签时显式恢复 autoInstallOnAppQuit = true，防止被前序 fullInstall 状态污染。
+      autoUpdater.autoInstallOnAppQuit = fullInstall ? false : !signing;
       const version = info?.version || state.version;
       if (!signing) {
         set({
@@ -584,6 +630,9 @@ function createUpdater({
           (error) => {
             if (seq !== verifySeq) return;
             removeFile(file);
+            if (!version || lastAvailableVersion === version) {
+              lastAvailableVersion = "";
+            }
             const reason =
               error instanceof updateSignature.UpdateSignatureError
                 ? error.message
@@ -593,6 +642,7 @@ function createUpdater({
             );
             set({
               status: "error",
+              version: undefined,
               error: `更新包签名校验失败，已拒绝安装：${reason}`,
               fullInstall: false,
               manualInstall: false,
@@ -666,6 +716,7 @@ function createUpdater({
               );
               set({
                 status: "error",
+                version: undefined,
                 error: `更新清单签名校验失败，已拒绝安装：${reason}`,
                 fullInstall: false,
                 manualInstall: false,
@@ -837,9 +888,11 @@ function createUpdater({
     stop();
     if (!supported || !getAutoUpdate()) return;
     firstTimer = timers.setTimeout(() => void check(), FIRST_CHECK_MS);
+    firstTimer?.unref?.();
     interval = timers.setInterval(() => {
       if (getAutoUpdate()) void check();
     }, INTERVAL_MS);
+    interval?.unref?.();
   }
 
   function stop() {
@@ -942,6 +995,7 @@ module.exports = {
   cleanMessage,
   isInstalledBuild,
   hasStableMacSignature,
+  probeStableMacSignatureAsync,
   requiresFullInstall,
   requiresClientDownload,
   compareVersion,

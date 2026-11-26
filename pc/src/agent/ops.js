@@ -110,14 +110,34 @@ function runProcess(
     let errBytes = 0;
     let truncated = false;
     let timedOut = false;
+    let settled = false;
+    child.stdin?.on("error", () => {});
     child.stdout.on("data", (chunk) => {
-      if (outBytes < OUTPUT_CAP) out.push(chunk);
-      else truncated = true;
+      const remain = OUTPUT_CAP - outBytes;
+      if (remain > 0) {
+        if (chunk.length <= remain) {
+          out.push(chunk);
+        } else {
+          out.push(chunk.subarray(0, remain));
+          truncated = true;
+        }
+      } else {
+        truncated = true;
+      }
       outBytes += chunk.length;
     });
     child.stderr.on("data", (chunk) => {
-      if (errBytes < OUTPUT_CAP) err.push(chunk);
-      else truncated = true;
+      const remain = OUTPUT_CAP - errBytes;
+      if (remain > 0) {
+        if (chunk.length <= remain) {
+          err.push(chunk);
+        } else {
+          err.push(chunk.subarray(0, remain));
+          truncated = true;
+        }
+      } else {
+        truncated = true;
+      }
       errBytes += chunk.length;
     });
     const timer = setTimeout(() => {
@@ -126,13 +146,20 @@ function runProcess(
     }, timeoutMs);
     const onAbort = () => killTree(child, platform);
     signal?.addEventListener("abort", onAbort, { once: true });
-    child.on("error", (error) => {
+    const cleanup = () => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       reject(new OpError(`进程出错：${error.message}`));
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
+      if (settled) return;
+      settled = true;
+      cleanup();
       const [stdout, t1] = capText(Buffer.concat(out));
       const [stderr, t2] = capText(Buffer.concat(err));
       resolve({
@@ -145,8 +172,10 @@ function runProcess(
         durationMs: Date.now() - started,
       });
     });
-    if (input !== undefined) child.stdin.end(input);
-    else child.stdin.end();
+    try {
+      if (input !== undefined) child.stdin.end(input);
+      else child.stdin.end();
+    } catch {}
   });
 }
 
@@ -1112,6 +1141,9 @@ function createOps(options = {}) {
       code.stopAll(reason);
       accessibilityBridgeInstance?.authorizer?.revokeAll?.();
       accessibilityBridgeInstance?.clearSnapshots?.();
+      if (platform === "win32") {
+        disposeSharedWinPsHelper({ sync: false });
+      }
     },
     async run(operation, args, ctx = {}) {
       const fn = table[operation];

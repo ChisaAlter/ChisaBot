@@ -186,21 +186,39 @@ function run(dir) {
   );
   agent.events.on("full_access", (e) => log(`[完全访问] ${e.on ? "已生效" : e.expired ? "已到期" : "已关闭"}`));
   agent.events.on("audit", (entry) => log(`[审计] ${entry.actor} ${entry.operation} ${entry.outcome} ${entry.summary || ""}${entry.detail ? ` — ${String(entry.detail).slice(0, 200)}` : ""}`));
+  let stopping = false;
+  const shutdown = async (reason) => {
+    if (stopping) return;
+    stopping = true;
+    ops.stopAll?.(reason);
+    disposeWinPsHelper({ sync: true, permanent: true });
+    agentRuntime.runtime.stopAll?.();
+    agent.stop();
+    if (typeof agentRuntime.runtime.cleanupSessions === "function") {
+      let timer = null;
+      await Promise.race([
+        Promise.resolve()
+          .then(() => agentRuntime.runtime.cleanupSessions())
+          .catch(() => {}),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, 2500);
+          timer.unref?.();
+        }),
+      ]).finally(() => {
+        if (timer) clearTimeout(timer);
+      });
+    }
+    process.exit(0);
+  };
   agent.events.on("revoked", () => {
     log("[撤销] 设备已在网页上被撤销，节点退出。重新安装请在网页上生成新的安装命令。");
-    ops.stopAll?.("revoked");
-    disposeWinPsHelper({ sync: true });
     // 退出码 0：systemd Restart=on-failure 不会再拉起
-    process.exit(0);
+    void shutdown("revoked");
   });
   agent.events.on("error", (error) => log(`[错误] ${error.message}`));
   agent.start();
   const stop = () => {
-    ops.stopAll?.("shutdown");
-    disposeWinPsHelper({ sync: true });
-    agentRuntime.runtime.stopAll?.();
-    agent.stop();
-    process.exit(0);
+    void shutdown("shutdown");
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);

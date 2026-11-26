@@ -329,6 +329,9 @@ async function openFileNoFollow(filePath, opts = {}) {
     if (
       before.dev !== after.dev ||
       before.ino !== after.ino ||
+      (before.ctimeNs !== undefined &&
+        after.ctimeNs !== undefined &&
+        before.ctimeNs !== after.ctimeNs) ||
       !after.isFile()
     ) {
       throw new SafeFsError(
@@ -637,6 +640,7 @@ function hardenFilePermissionsSync(filePath, mode = 0o600, opts = {}) {
 
 module.exports = {
   SafeFsError,
+  isWithinDir,
   isTransientRenameError,
   renameWithRetry,
   renameWithRetrySync,

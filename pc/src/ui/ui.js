@@ -29,13 +29,39 @@ const Appearance = (() => {
     for (const k in sky.body) body.setProperty(k, sky.body[k]);
     for (const k in sky.root) root.setProperty(k, sky.root[k]);
   }
+  let skyTimer = null;
+  function stopSkyTimer() {
+    if (skyTimer !== null) {
+      clearInterval(skyTimer);
+      skyTimer = null;
+    }
+  }
+  function syncSkyTimer() {
+    const active =
+      current.sky !== false &&
+      typeof computeSky === "function" &&
+      !document.hidden;
+    if (!active) {
+      stopSkyTimer();
+      return;
+    }
+    if (skyTimer === null) {
+      skyTimer = setInterval(apply, 60000);
+    }
+  }
   media.addEventListener("change", apply);
-  setInterval(apply, 60000);
+  document.addEventListener("visibilitychange", () => {
+    syncSkyTimer();
+    if (!document.hidden) apply();
+  });
+  window.addEventListener("beforeunload", stopSkyTimer);
   apply();
+  syncSkyTimer();
   return {
     set(next) {
       if (next) current = { ...current, ...next };
       apply();
+      syncSkyTimer();
     },
   };
 })();
