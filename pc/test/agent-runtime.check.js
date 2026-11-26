@@ -2121,4 +2121,24 @@ test("subagent-bridge: extracted asar scriptPath is shared consistently across m
   }
 });
 
+test("pc/src/agent-runtime is self-contained without parent-directory requires", () => {
+  const runtimeDir = path.join(__dirname, "..", "src", "agent-runtime");
+  const files = fs
+    .readdirSync(runtimeDir)
+    .filter((name) => name.endsWith(".js"));
+  assert.ok(files.includes("proxy.js"));
+  for (const name of files) {
+    const content = fs.readFileSync(path.join(runtimeDir, name), "utf8");
+    const parentRequire = content.match(
+      /require\(\s*["']\.\.\/[^"']+["']\s*\)/,
+    );
+    assert.equal(
+      parentRequire,
+      null,
+      `agent-runtime/${name} must not require outside pc/src/agent-runtime: ${parentRequire?.[0]}`,
+    );
+  }
+});
+
+
 

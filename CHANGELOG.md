@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **修复容器部署因 `agent-runtime` 跨目录引用 `../agent/proxy` 启动失败并回滚的问题**：
+  - 将代理模块下沉收口至 `pc/src/agent-runtime/proxy.js`（`pc/src/agent/proxy.js` 保留薄重导出），`antigravity-managed.js` 改为同目录引用 `./proxy`，并在 `pc/test/agent-runtime.check.js` 新增自包含回归门禁，确保镜像快速更新与全量构建仅复制 `pc/src/agent-runtime` 时均可正常启动（无新增数据库迁移或手动操作）。
+
 - **修复聊天输入框附件上传失败持久化、重试保护与草稿恢复竞态**：
   - `PersistedDraftFile` 保留 `failedReason` 并在上传失败时继续写入 IndexedDB，刷新恢复时直接呈现原失败原因并区分已失效附件与未完成上传；新增 `mergeDraftAttachments` 与 `removedDuringRestore` / `acceptedDuringRestore` 合并门控，消除异步草稿恢复期间选文件/删文件/发送入队导致的覆盖丢件与 `StrictMode`/切会话状态串台，同时补齐重试禁用保护、失败回写及 `composer-draft-restore.test.tsx` 回归测试（纯前端修复，无新增数据库迁移或手动操作）。
 

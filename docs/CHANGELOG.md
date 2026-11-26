@@ -1,5 +1,6 @@
 ## Unreleased
 
+- **修复容器部署因 `agent-runtime` 跨目录引用 `../agent/proxy` 启动失败并回滚的问题**：将代理实现收口至 `pc/src/agent-runtime/proxy.js`（`pc/src/agent/proxy.js` 保留重导出），`antigravity-managed.js` 改为引用 `./proxy`，并补充 `agent-runtime` 禁止越级 `require("../...")` 门禁测试，修复 `update.sh` / `Dockerfile` 仅复制 `pc/src/agent-runtime` 导致的容器启动崩溃（`pc/src/{agent-runtime/proxy,agent-runtime/antigravity-managed,agent/proxy,shell-fingerprint.json}` · `pc/test/agent-runtime.check.js`）。
 - **修复聊天输入框附件上传失败持久化、重试保护与草稿恢复竞态**：`PersistedDraftFile` 新增 `failedReason` 持久化与恢复区分，新增 `mergeDraftAttachments` 在异步草稿恢复期间与实时增删/发送状态合并防覆盖，修复 `StrictMode`/切会话恢复中断与重试异常回写/禁用状态漏洞，并补充回归单测（`composer.tsx` · `draft-attachment-store.ts` · `composer-draft-restore.test.tsx`）。
 
 ## 0.1.191 — 2026-11-26
