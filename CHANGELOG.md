@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **全量审查 M3 — Web 前端体验、错误态、资源回收与文案统一**：
+  - `session-client.ts` 配合 M1 空连接信封过滤合成 `connect:` 前缀 `runId`，防止污染 `observedRunId` 并在空闲连接结束时清理残留 ID；右栏面板 `PanelRail` 补齐 500 失败 `ErrorCard` + 重试与错误边界脱敏诊断日志；左栏 `AppSidebar`（展开态与收起态 `BotMiniRail`）补齐骨架占位与错误重试；固定/暂停/恢复/通知级别/取消收藏等写操作失败统一弹出中文提示与就近错误显示。
+  - 修复 `profile-dialog.tsx`、`appearance-preferences.tsx`、`avatar-picker.tsx` 3 处 `URL.createObjectURL` 泄漏与解码竞态；审批收件箱 `HandOffCard` 增加互斥锁防止并发冲突提交；`channel-chat.tsx` `stopTask` 定时器按卸载/切换清理且 `stopping` 轮询接入后台暂停与防重入；统一「主机器人 / 机器人 / 收件箱 / 发件箱 / 附件」中文文案、补齐 `BotProfilePage` 与 `BotsPage` 错误重试、修复 `useVoiceCall` 切目标自动断开，并收口复用 `objectConnectionKey` 与 `useSharedReducedMotion`（纯前端改动，更新客户端指纹，无新增数据库迁移）。
+
 - **全量审查 M5 — PC 桌面端（Electron / Node）性能、稳定性、更新与安全边界加固**：
   - 消除缓冲区无限增长与 `child.stdin` 未捕获 `EPIPE` 异常（`acp-client.js`、`win-ps-helper.js`、`ops.js` `git()` 强制 `maxBuffer` 与 stderr 截断、`sandbox.js` 截断超限日志并补齐 `stdin.on("error")`）；修复 Windows UIA 助手 O(N²) COM 树扫描与异常退出自动重建、`main.js` `prewarmedChatWindow` 孤儿窗口防泄漏与 `Atomics.wait`/同步 `codesign` 阻塞主线程，以及 `config.js` / `desktop-prefs.js` / `safe-fs.js` 热路径同步写盘改为异步原子持久化。
   - 修复 `local-web.js` 已 settle 后吞错、`ui/update.js` 手动更新进度停在 `0%`、`updater.js` 错误态与下载状态残留，以及 `code-ops.js` `backupOf()` 补齐 `allowedRoots` 与符号链接越界校验；新增 `pc/test/desktop-hardening.check.js` 回归测试，PC 外壳指纹 `7314f9105596bec5` 保持不变（Windows 原地自动更新，无需重装；无新增数据库迁移）。
