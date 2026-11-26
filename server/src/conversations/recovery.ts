@@ -106,7 +106,7 @@ export async function recoverConversations(options: {
     }
   };
   for (const record of pending) await start(record, record.initiator);
-  if (await conversationAdmissionClosedAsync()) return;
+  if (await conversationAdmissionClosedAsync({ ttlMs: 0 })) return;
   for (const record of await backend.capacity.queued()) {
     if (occupied.has(record.thread_id)) continue;
     const saved = record.execution;

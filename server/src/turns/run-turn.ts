@@ -330,7 +330,7 @@ export function createTurnRunner(options: {
      * of. `getOrCreateThread` is public API, idempotent, and already handles the 409 create-race
      * (`client.d.mts:603-621`), so it is safe on the thousandth firing as well as the first.
      */
-    await assertConversationAdmissionOpenAsync();
+    await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
     await checkQuota?.(ownerUserId);
     await conversations.getOrCreateThread({
       threadId,

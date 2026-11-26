@@ -689,7 +689,7 @@ export function createDshToolGateway(
         return { content: "这项工具的权限已被撤销，未执行已批准的操作。" };
       const args = await tool.parameters.parseAsync(snapshot.args);
       signal.throwIfAborted();
-      await assertConversationAdmissionOpenAsync();
+      await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
       const claim = await operations.resumeConfirmation({
         ownerUserId: input.ownerUserId,
         requestId: input.requestId,
@@ -740,7 +740,7 @@ export function createDshToolGateway(
                                 );
                               if (stopped) return stopped;
                               signal.throwIfAborted();
-                              await assertConversationAdmissionOpenAsync();
+                              await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
                               invoked = true;
                               return tool.execute(args, { signal });
                             },

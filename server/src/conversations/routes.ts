@@ -213,7 +213,7 @@ export function createConversationRoutes(options: {
     agentId: string,
     input: import("@ag-ui/client").RunAgentInput,
   ) {
-    await assertConversationAdmissionOpenAsync();
+    await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
     const actor = await identifyActor(request);
     await options.checkQuota?.({
       id: actor.id,
@@ -339,7 +339,7 @@ export function createConversationRoutes(options: {
           })
         : undefined;
       if (agent) {
-        await assertConversationAdmissionOpenAsync();
+        await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
         await options.checkQuota?.({
           id: actor.id,
           isAdmin: actor.role === "admin",

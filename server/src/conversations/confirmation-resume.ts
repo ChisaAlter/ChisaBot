@@ -48,7 +48,7 @@ export function createConfirmationResumer(options: {
     requestId: string,
     onAdmitted?: () => void,
   ) => {
-    await assertConversationAdmissionOpenAsync();
+    await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
     const decision = await options.confirmations.durableDecision(
       ownerUserId,
       requestId,
@@ -158,7 +158,7 @@ export function createConfirmationResumer(options: {
     }, 1000);
     let result: Awaited<ReturnType<typeof agent.resumeConfirmation>>;
     try {
-      await assertConversationAdmissionOpenAsync();
+      await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
       const refusal = await journal.continuationRefusal(
         snapshot.threadId,
         snapshot.runId,
