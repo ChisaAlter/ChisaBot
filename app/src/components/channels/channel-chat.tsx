@@ -164,7 +164,10 @@ import {
   useLastSentAt,
   useStoppedTurnIds,
 } from "@/lib/conversations/turn-compaction";
-import { useConversationSync } from "@/lib/conversations/use-conversation-sync";
+import {
+  messagesStructurallyEqual,
+  useConversationSync,
+} from "@/lib/conversations/use-conversation-sync";
 import { useThreadInbox } from "@/lib/conversations/use-thread-inbox";
 import { readImageDims } from "@/lib/image-dims";
 import { useKeptVisibility } from "@/lib/kept-visible";
@@ -1011,11 +1014,7 @@ export function ChannelChat({
           );
           if (
             merged !== latest.messages &&
-            !(
-              merged.length === latest.messages.length &&
-              merged.at(-1)?.id === latest.messages.at(-1)?.id &&
-              merged.at(-1)?.content === latest.messages.at(-1)?.content
-            )
+            !messagesStructurallyEqual(merged, latest.messages)
           ) {
             latest.setMessages(merged);
           }
@@ -1106,7 +1105,12 @@ export function ChannelChat({
               current.messages,
               stored.messages,
             );
-            if (messages === current.messages) continue;
+            if (
+              messages === current.messages ||
+              messagesStructurallyEqual(messages, current.messages)
+            ) {
+              continue;
+            }
             current.setMessages(messages);
             return;
           }
@@ -1686,7 +1690,12 @@ export function ChannelChat({
             mergeStoredMessages(latest.messages, stored.messages),
             stored.messages,
           );
-          if (merged !== latest.messages) latest.setMessages(merged);
+          if (
+            merged !== latest.messages &&
+            !messagesStructurallyEqual(merged, latest.messages)
+          ) {
+            latest.setMessages(merged);
+          }
           return true;
         },
       });

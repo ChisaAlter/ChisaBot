@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   AttachmentStrip,
   type StagedFile,
@@ -146,4 +147,198 @@ test("a text file over the extraction ceiling warns it may be read truncated", (
   );
 
   expect(getByText(/· 可能被截断/)).toBeTruthy();
+});
+
+test("clicking an uploaded image opens Lightbox and Escape closes it", async () => {
+  const { getByLabelText, getByRole, queryByRole } = render(
+    <AttachmentStrip
+      files={[]}
+      images={[
+        {
+          id: "img-1",
+          url: "/api/attachments/att-1",
+          alt: "sunset.png",
+          loading: false,
+        },
+      ]}
+      onRemove={() => {}}
+    />,
+  );
+
+  expect(queryByRole("dialog")).toBeNull();
+  const trigger = getByLabelText("预览 sunset.png") as HTMLButtonElement;
+  expect(trigger.tagName).toBe("BUTTON");
+  fireEvent.click(trigger);
+
+  const dialog = getByRole("dialog");
+  const lightboxImg = dialog.querySelector("img.rp-lightbox-img");
+  expect(lightboxImg?.getAttribute("src")).toBe("/api/attachments/att-1");
+
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() => expect(queryByRole("dialog") === null).toBe(true));
+});
+
+test("an image with local previewUrl is previewable while uploading, while skeleton-only stays inert", () => {
+  const { getByLabelText, getByRole, queryByLabelText, queryByRole } = render(
+    <AttachmentStrip
+      files={[]}
+      images={[
+        {
+          id: "local-1",
+          url: "",
+          previewUrl: "blob:http://localhost/local-preview-1",
+          alt: "local.png",
+          loading: true,
+        },
+        {
+          id: "skel-1",
+          url: "",
+          alt: "pending.png",
+          loading: true,
+        },
+      ]}
+      onRemove={() => {}}
+    />,
+  );
+
+  expect(getByRole("img", { name: "pending.png，正在上传" })).toBeTruthy();
+  expect(queryByLabelText("预览 pending.png")).toBeNull();
+
+  fireEvent.click(getByLabelText("预览 local.png"));
+  const dialog = getByRole("dialog");
+  expect(dialog.querySelector("img.rp-lightbox-img")?.getAttribute("src")).toBe(
+    "blob:http://localhost/local-preview-1",
+  );
+  expect(queryByRole("dialog")?.querySelector(".rp-lightbox-count")).toBeNull();
+});
+
+test("multi-image draft opens on clicked image and switches across previewable images", () => {
+  const { getByLabelText, getByRole } = render(
+    <AttachmentStrip
+      files={[]}
+      images={[
+        {
+          id: "a",
+          url: "/api/attachments/a",
+          alt: "first.png",
+          loading: false,
+        },
+        {
+          id: "skip",
+          url: "",
+          alt: "uploading.png",
+          loading: true,
+        },
+        {
+          id: "b",
+          url: "",
+          previewUrl: "blob:http://localhost/second",
+          alt: "second.png",
+          loading: true,
+        },
+        {
+          id: "c",
+          url: "/api/attachments/c",
+          alt: "third.png",
+          loading: false,
+        },
+      ]}
+      onRemove={() => {}}
+    />,
+  );
+
+  fireEvent.click(getByLabelText("预览 second.png"));
+  const dialog = getByRole("dialog");
+  expect(dialog.querySelector("img.rp-lightbox-img")?.getAttribute("src")).toBe(
+    "blob:http://localhost/second",
+  );
+  expect(dialog.querySelector(".rp-lightbox-count")?.textContent).toBe("2 / 3");
+
+  fireEvent.click(getByLabelText("下一张"));
+  expect(dialog.querySelector("img.rp-lightbox-img")?.getAttribute("src")).toBe(
+    "/api/attachments/c",
+  );
+  expect(dialog.querySelector(".rp-lightbox-count")?.textContent).toBe("3 / 3");
+
+  fireEvent.keyDown(window, { key: "ArrowLeft" });
+  expect(dialog.querySelector("img.rp-lightbox-img")?.getAttribute("src")).toBe(
+    "blob:http://localhost/second",
+  );
+  fireEvent.keyDown(window, { key: "ArrowLeft" });
+  expect(dialog.querySelector("img.rp-lightbox-img")?.getAttribute("src")).toBe(
+    "/api/attachments/a",
+  );
+});
+
+test("remove, retry, and disabled preview buttons never accidentally open Lightbox", () => {
+  const removed: string[] = [];
+  const retried: string[] = [];
+  const { getByLabelText, queryByRole } = render(
+    <AttachmentStrip
+      failed={[{ id: "fail-1", name: "broken.png", reason: "上传失败" }]}
+      files={[]}
+      images={[
+        {
+          id: "img-enabled",
+          url: "/api/attachments/1",
+          alt: "ok.png",
+          loading: false,
+        },
+        {
+          id: "img-disabled",
+          url: "/api/attachments/2",
+          alt: "locked.png",
+          loading: false,
+          disabled: true,
+        },
+      ]}
+      onRemove={(id) => removed.push(id)}
+      onRetry={(id) => retried.push(id)}
+    />,
+  );
+
+  fireEvent.click(getByLabelText("移除 ok.png"));
+  expect(removed).toEqual(["img-enabled"]);
+  expect(queryByRole("dialog")).toBeNull();
+
+  fireEvent.click(getByLabelText("重试上传 broken.png"));
+  expect(retried).toEqual(["fail-1"]);
+  expect(queryByRole("dialog")).toBeNull();
+
+  const disabledPreview = getByLabelText(
+    "预览 locked.png",
+  ) as HTMLButtonElement;
+  expect(disabledPreview.disabled).toBe(true);
+  fireEvent.click(disabledPreview);
+  expect(queryByRole("dialog")).toBeNull();
+});
+
+test("keyboard Enter and Space open Lightbox and Escape closes it", async () => {
+  const user = userEvent.setup({ document: globalThis.document });
+  const { getByLabelText, getByRole, queryByRole } = render(
+    <AttachmentStrip
+      files={[]}
+      images={[
+        {
+          id: "kbd-1",
+          url: "/api/attachments/kbd-1",
+          alt: "kbd.png",
+          loading: false,
+        },
+      ]}
+      onRemove={() => {}}
+    />,
+  );
+
+  const trigger = getByLabelText("预览 kbd.png") as HTMLButtonElement;
+  trigger.focus();
+  await user.keyboard("{Enter}");
+  expect(getByRole("dialog").querySelector("img.rp-lightbox-img")).toBeTruthy();
+
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(queryByRole("dialog") === null).toBe(true));
+
+  trigger.focus();
+  await user.keyboard(" ");
+  expect(getByRole("dialog").querySelector("img.rp-lightbox-img")).toBeTruthy();
 });

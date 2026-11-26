@@ -10,6 +10,7 @@ import {
 } from "../src/lib/conversations/thread-inbox";
 import {
   mergeSnapshot,
+  messagesStructurallyEqual,
   userOrderDiffers,
 } from "../src/lib/conversations/use-conversation-sync";
 
@@ -234,5 +235,36 @@ describe("userOrderDiffers (reconcile after a local turn, DESIGN.md §42.7)", ()
   });
   test("identical lists match", () => {
     expect(userOrderDiffers(["u1", "u2"], ["u1", "u2"])).toBe(false);
+  });
+});
+
+describe("messagesStructurallyEqual (post-turn sync short-circuit)", () => {
+  test("treats identical core message shapes as equal even across cloned objects", () => {
+    const a = [
+      { id: "u1", role: "user", content: "你好", name: "local" },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "收到",
+        toolCalls: [{ id: "tc1", type: "function", function: { name: "search", arguments: "{}" } }],
+      },
+    ];
+    const b = [
+      { id: "u1", role: "user", content: "你好", name: "stored" },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "收到",
+        toolCalls: [{ id: "tc1", type: "function", function: { name: "search", arguments: "{}" } }],
+      },
+    ];
+    expect(messagesStructurallyEqual(a, b)).toBe(true);
+    expect(
+      messagesStructurallyEqual(a, [
+        b[0]!,
+        { ...b[1]!, content: "收到，已更新" },
+      ]),
+    ).toBe(false);
+    expect(messagesStructurallyEqual(a, [b[0]!])).toBe(false);
   });
 });

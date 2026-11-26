@@ -5,8 +5,11 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { motion, useReducedMotion } from "motion/react";
-import { useState } from "react";
-
+import { useMemo, useState } from "react";
+import {
+  Lightbox,
+  type LightboxImage,
+} from "@/components/rich-previews/lightbox";
 import {
   Dialog,
   DialogBody,
@@ -54,12 +57,23 @@ import {
 export type StagedImage = {
   id: string;
   url: string;
+  /** 本地表预览地址（如 `blob:` / `data:`），未拿到服务端 `url` 前也可直接预览。 */
+  previewUrl?: string;
   alt?: string;
   size?: number;
   loading: boolean;
+  /** 禁用该图片的大图预览交互。 */
+  disabled?: boolean;
   /** The key its upload's progress is recorded under (the attachment's local id). */
   progressKey?: string;
 };
+
+function resolveImagePreviewSrc(image: StagedImage): string | undefined {
+  const url = image.url.trim();
+  if (url.length > 0) return url;
+  const previewUrl = image.previewUrl?.trim();
+  return previewUrl && previewUrl.length > 0 ? previewUrl : undefined;
+}
 
 /**
  * An upload that did not make it. It keeps its tile — the file is still in hand — with the reason
@@ -109,6 +123,34 @@ export function AttachmentStrip({
   progress?: UploadProgressStore;
 }) {
   const occupied = images.length > 0 || files.length > 0 || failed.length > 0;
+  const [previewImageId, setPreviewImageId] = useState<string | null>(null);
+
+  const previewItems = useMemo(
+    () =>
+      images.flatMap((image) => {
+        const src = resolveImagePreviewSrc(image);
+        if (!src || image.disabled) return [];
+        return [
+          {
+            id: image.id,
+            lightbox: {
+              src,
+              alt: image.alt ?? "附件",
+              name: image.alt,
+            } satisfies LightboxImage,
+          },
+        ];
+      }),
+    [images],
+  );
+  const lightboxImages = useMemo(
+    () => previewItems.map((item) => item.lightbox),
+    [previewItems],
+  );
+  const previewStartIndex =
+    previewImageId === null
+      ? -1
+      : previewItems.findIndex((item) => item.id === previewImageId);
 
   return (
     /*
@@ -128,147 +170,193 @@ export function AttachmentStrip({
      * it: `occupied` is false exactly when both lists are empty, so there is nothing inside to
      * reach when the attribute is on.
      */
-    <Collapse open={occupied}>
-      <ul
-        aria-hidden={!occupied}
-        aria-label={"附件"}
-        className="flex flex-wrap items-start gap-2 pb-3"
-      >
-        {images.map((image) => (
-          <Staged key={image.id}>
-            {image.loading || image.url === "" ? (
-              /*
-               * The placeholder stands in for the picture, so it carries the picture's role and
-               * the picture's name — otherwise the tile is a shape and nothing else, and the only
-               * thing a screen reader finds in it is a button offering to remove something
-               * unnamed. The file tile has said "Uploading…" in plain text since it was written.
-               *
-               * A name, not an announcement. `role="status"` would make each of these a live
-               * region, and a paste of eight images would interrupt eight times to say so.
-               */
-              <div className="relative size-20">
-                <Skeleton
-                  aria-label={`${image.alt ?? "附件"}，正在上传`}
-                  className="size-20 rounded-xl"
-                  role="img"
+    <>
+      <Collapse open={occupied}>
+        <ul
+          aria-hidden={!occupied}
+          aria-label={"附件"}
+          className="flex flex-wrap items-start gap-2 pb-3"
+        >
+          {images.map((image) => {
+            const previewSrc = resolveImagePreviewSrc(image);
+            const imageLabel = image.alt ?? "附件";
+            const progressKey =
+              image.progressKey ?? uploadKey(image.alt, image.size);
+
+            return (
+              <Staged key={image.id}>
+                {previewSrc === undefined ? (
+                  /*
+                   * The placeholder stands in for the picture, so it carries the picture's role and
+                   * the picture's name — otherwise the tile is a shape and nothing else, and the only
+                   * thing a screen reader finds in it is a button offering to remove something
+                   * unnamed. The file tile has said "Uploading…" in plain text since it was written.
+                   *
+                   * A name, not an announcement. `role="status"` would make each of these a live
+                   * region, and a paste of eight images would interrupt eight times to say so.
+                   */
+                  <div className="relative size-20">
+                    <Skeleton
+                      aria-label={`${imageLabel}，正在上传`}
+                      className="size-20 rounded-xl"
+                      role="img"
+                    />
+                    <UploadPercent
+                      className="absolute inset-x-1 bottom-1 truncate rounded bg-background/80 px-1 text-center text-[11px] text-muted-foreground tabular-nums"
+                      progressKey={progressKey}
+                      store={progress}
+                    />
+                  </div>
+                ) : (
+                  <div className="relative size-20">
+                    <button
+                      aria-label={`预览 ${imageLabel}`}
+                      className="block size-20 cursor-zoom-in overflow-hidden rounded-xl border border-border bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-default"
+                      disabled={image.disabled}
+                      onClick={() => {
+                        if (image.disabled) return;
+                        setPreviewImageId(image.id);
+                      }}
+                      title={`预览 ${imageLabel}`}
+                      type="button"
+                    >
+                      <img
+                        alt={imageLabel}
+                        className="size-full object-cover"
+                        decoding="async"
+                        draggable={false}
+                        src={previewSrc}
+                      />
+                    </button>
+                    {image.loading ? (
+                      <UploadPercent
+                        className="pointer-events-none absolute inset-x-1 bottom-1 truncate rounded bg-background/80 px-1 text-center text-[11px] text-muted-foreground tabular-nums"
+                        progressKey={progressKey}
+                        store={progress}
+                      />
+                    ) : null}
+                  </div>
+                )}
+                <RemoveButton
+                  name={image.alt ?? "attachment"}
+                  onRemove={() => onRemove(image.id)}
                 />
-                <UploadPercent
-                  className="absolute inset-x-1 bottom-1 truncate rounded bg-background/80 px-1 text-center text-[11px] text-muted-foreground tabular-nums"
-                  progressKey={image.progressKey ?? uploadKey(image.alt, image.size)}
-                  store={progress}
-                />
+              </Staged>
+            );
+          })}
+          {files.map((file) => (
+            /*
+             * The same height as a thumbnail, so a message carrying one of each reads as one row of
+             * attachments rather than as two things that happened to land next to each other.
+             */
+            <Staged
+              className="flex h-20 w-40 flex-col justify-between rounded-xl border border-border bg-muted/40 p-2"
+              key={file.id}
+            >
+              {/*
+               * `shrink-0` because the tile's height is fixed and the text below it is not. A third
+               * line, which is exactly what the truncation warning adds, takes the extra out of the
+               * only child that can give: this icon. It renders visibly smaller on precisely the
+               * tiles that carry the warning, which is the wrong moment to look broken.
+               */}
+              <IconFile className="size-5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0">
+                {file.preview === undefined ? (
+                  <p className="truncate font-medium text-xs" title={file.name}>
+                    {file.name}
+                  </p>
+                ) : (
+                  <PastedTextPreview name={file.name} text={file.preview} />
+                )}
+                {file.loading ? (
+                  <UploadPercent
+                    className="text-muted-foreground text-xs tabular-nums"
+                    progressKey={
+                      file.progressKey ?? uploadKey(file.name, file.size)
+                    }
+                    store={progress}
+                  />
+                ) : file.size === undefined ? null : (
+                  /*
+                   * ON THE SIZE LINE, NOT UNDER IT, AND THAT IS A LAYOUT CONSTRAINT RATHER THAN A
+                   * PREFERENCE. The tile's height is fixed so that a file and a thumbnail read as
+                   * one row. A third line does not fit: measured in Chromium at this repository's
+                   * 15px root, the two in-flow children need 63.75px inside a 58px box. Something
+                   * has to give, and the only choices are the icon shrinking to 13px or the text
+                   * spilling past the border. Folding the warning onto this line keeps two.
+                   *
+                   * `truncate` is the guarantee, not the wording: `formatBytes` is unbounded, so a
+                   * large enough file would wrap this line and put the third one back. The short
+                   * phrasing is what keeps it from ellipsizing at any realistic size; `title`
+                   * carries the sentence that actually explains it.
+                   */
+                  <p
+                    className="truncate text-muted-foreground text-xs"
+                    title={
+                      file.mayTruncate === true
+                        ? "该模型读取此文件的头 120,000 个字符。"
+                        : undefined
+                    }
+                  >
+                    {formatBytes(file.size)}
+                    {file.mayTruncate === true ? "· 可能被截断" : null}
+                  </p>
+                )}
               </div>
-            ) : (
-              <img
-                alt={image.alt ?? "附件"}
-                className="size-20 rounded-xl border border-border object-cover"
-                decoding="async"
-                src={image.url}
+              <RemoveButton
+                name={file.name}
+                onRemove={() => onRemove(file.id)}
               />
-            )}
-            <RemoveButton
-              name={image.alt ?? "attachment"}
-              onRemove={() => onRemove(image.id)}
-            />
-          </Staged>
-        ))}
-        {files.map((file) => (
-          /*
-           * The same height as a thumbnail, so a message carrying one of each reads as one row of
-           * attachments rather than as two things that happened to land next to each other.
-           */
-          <Staged
-            className="flex h-20 w-40 flex-col justify-between rounded-xl border border-border bg-muted/40 p-2"
-            key={file.id}
-          >
-            {/*
-             * `shrink-0` because the tile's height is fixed and the text below it is not. A third
-             * line, which is exactly what the truncation warning adds, takes the extra out of the
-             * only child that can give: this icon. It renders visibly smaller on precisely the
-             * tiles that carry the warning, which is the wrong moment to look broken.
-             */}
-            <IconFile className="size-5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0">
-              {file.preview === undefined ? (
-                <p className="truncate font-medium text-xs" title={file.name}>
-                  {file.name}
+            </Staged>
+          ))}
+          {failed.map((upload) => (
+            <Staged
+              className="flex h-20 w-40 flex-col justify-between rounded-xl border border-destructive border-dashed bg-destructive/5 p-2"
+              key={upload.id}
+            >
+              <div className="flex items-center gap-1 pr-5">
+                <IconAlertTriangle className="size-4 shrink-0 text-destructive" />
+                <p className="truncate font-medium text-xs" title={upload.name}>
+                  {upload.name}
                 </p>
-              ) : (
-                <PastedTextPreview name={file.name} text={file.preview} />
-              )}
-              {file.loading ? (
-                <UploadPercent
-                  className="text-muted-foreground text-xs tabular-nums"
-                  progressKey={file.progressKey ?? uploadKey(file.name, file.size)}
-                  store={progress}
-                />
-              ) : file.size === undefined ? null : (
-                /*
-                 * ON THE SIZE LINE, NOT UNDER IT, AND THAT IS A LAYOUT CONSTRAINT RATHER THAN A
-                 * PREFERENCE. The tile's height is fixed so that a file and a thumbnail read as
-                 * one row. A third line does not fit: measured in Chromium at this repository's
-                 * 15px root, the two in-flow children need 63.75px inside a 58px box. Something
-                 * has to give, and the only choices are the icon shrinking to 13px or the text
-                 * spilling past the border. Folding the warning onto this line keeps two.
-                 *
-                 * `truncate` is the guarantee, not the wording: `formatBytes` is unbounded, so a
-                 * large enough file would wrap this line and put the third one back. The short
-                 * phrasing is what keeps it from ellipsizing at any realistic size; `title`
-                 * carries the sentence that actually explains it.
-                 */
+              </div>
+              <div className="flex min-w-0 items-center justify-between gap-1">
                 <p
-                  className="truncate text-muted-foreground text-xs"
-                  title={
-                    file.mayTruncate === true
-                      ? "该模型读取此文件的头 120,000 个字符。"
-                      : undefined
-                  }
+                  className="min-w-0 truncate text-destructive text-xs"
+                  role="alert"
+                  title={upload.reason}
                 >
-                  {formatBytes(file.size)}
-                  {file.mayTruncate === true ? "· 可能被截断" : null}
+                  {upload.reason}
                 </p>
-              )}
-            </div>
-            <RemoveButton name={file.name} onRemove={() => onRemove(file.id)} />
-          </Staged>
-        ))}
-        {failed.map((upload) => (
-          <Staged
-            className="flex h-20 w-40 flex-col justify-between rounded-xl border border-destructive border-dashed bg-destructive/5 p-2"
-            key={upload.id}
-          >
-            <div className="flex items-center gap-1 pr-5">
-              <IconAlertTriangle className="size-4 shrink-0 text-destructive" />
-              <p className="truncate font-medium text-xs" title={upload.name}>
-                {upload.name}
-              </p>
-            </div>
-            <div className="flex min-w-0 items-center justify-between gap-1">
-              <p
-                className="min-w-0 truncate text-destructive text-xs"
-                role="alert"
-                title={upload.reason}
-              >
-                {upload.reason}
-              </p>
-              <button
-                aria-label={`重试上传 ${upload.name}`}
-                className="touch-target relative flex shrink-0 items-center gap-0.5 rounded px-1 text-xs text-foreground hover:bg-muted"
-                onClick={() => onRetry?.(upload.id)}
-                type="button"
-              >
-                <IconRefresh className="size-3" />
-                {"重试"}
-              </button>
-            </div>
-            <RemoveButton
-              name={upload.name}
-              onRemove={() => onDismissFailed?.(upload.id)}
-            />
-          </Staged>
-        ))}
-      </ul>
-    </Collapse>
+                <button
+                  aria-label={`重试上传 ${upload.name}`}
+                  className="touch-target relative flex shrink-0 items-center gap-0.5 rounded px-1 text-xs text-foreground hover:bg-muted"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRetry?.(upload.id);
+                  }}
+                  type="button"
+                >
+                  <IconRefresh className="size-3" />
+                  {"重试"}
+                </button>
+              </div>
+              <RemoveButton
+                name={upload.name}
+                onRemove={() => onDismissFailed?.(upload.id)}
+              />
+            </Staged>
+          ))}
+        </ul>
+      </Collapse>
+      {previewStartIndex >= 0 ? (
+        <Lightbox
+          images={lightboxImages}
+          onClose={() => setPreviewImageId(null)}
+          startIndex={previewStartIndex}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -329,8 +417,11 @@ function RemoveButton({
       aria-label={`移除 ${name}`}
       // `touch-target` widens the hit area to 44×44 with a pseudo-element (styles.css) while the
       // drawn circle stays 20px: a finger could not reliably land on the visible dot.
-      className="touch-target absolute top-1 right-1 grid size-5 place-items-center rounded-full border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
-      onClick={onRemove}
+      className="touch-target absolute top-1 right-1 z-10 grid size-5 place-items-center rounded-full border border-border bg-background/90 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
+      onClick={(event) => {
+        event.stopPropagation();
+        onRemove();
+      }}
       type="button"
     >
       <IconX className="size-3" />

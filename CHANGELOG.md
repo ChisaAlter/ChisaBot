@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **聊天输入框上传图片支持点击大图预览，并从第一性原理结构性根治发送后对话记录反复弹跳**：
+  - **输入框图片点击预览**：`AttachmentStrip` 与 `Composer` 复用 `Lightbox` 组件支持点击待发送图片缩略图弹出大图预览，兼容本地上传中 `blob:` URL 与已上传服务端 URL；同草稿多张图片支持按实际可预览索引定位及左右/方向键切换，`Esc` 关闭恢复焦点，并隔离右上角移除与重试按钮冒泡防止误触发，补充双端与组件单测。
+  - **对话记录弹跳根治**：拆除 `shadcn-react-message-scroller` 与 `SettleAtEnd` 双滚动状态机互搏及 `.scroll-smooth` 隐式平滑插值冲突，收敛为单源 `pinned` 同步 `instant` 落底并在贴底态通过 `data-cb-pinned="true"` 关闭原生 `overflow-anchor` 防互搏；移除 `.chat-slack` 弹性 `floor`、`BUSY_SLACK_SETTLE_MS` 释放循环与 `onScroll` 反向补留白；同步更新 `ComposerDock` 即时 `padding-bottom` 写入、`BotBubbles` 流式结束不折叠塌缩、`.chat-status-slot` Grid 同格叠放、`/sync` 结构等价短路及 `VirtualTranscriptRows` 贴底防护，并堵住 `tests/chat-scroll/send-jump.mjs` `upLimit=Infinity` 测试盲区，新增 `tests/chat-scroll/bounce-regression.mjs` 多阶段流式实机回归（纯前端改动，更新客户端指纹，无新增数据库迁移）。
+
 - **修复容器部署因 `agent-runtime` 跨目录引用 `../agent/proxy` 启动失败并回滚的问题**：
   - 将代理模块下沉收口至 `pc/src/agent-runtime/proxy.js`（`pc/src/agent/proxy.js` 保留薄重导出），`antigravity-managed.js` 改为同目录引用 `./proxy`，并在 `pc/test/agent-runtime.check.js` 新增自包含回归门禁，确保镜像快速更新与全量构建仅复制 `pc/src/agent-runtime` 时均可正常启动（无新增数据库迁移或手动操作）。
 

@@ -186,8 +186,12 @@ function load(): Store {
     }
   }
   store = prune(parsed);
-  if (typeof window !== "undefined" && listeningWindow !== window) {
-    listeningWindow?.removeEventListener("pagehide", flushPendingOnPageHide);
+  if (
+    typeof window !== "undefined" &&
+    typeof window.addEventListener === "function" &&
+    listeningWindow !== window
+  ) {
+    listeningWindow?.removeEventListener?.("pagehide", flushPendingOnPageHide);
     listeningWindow = window;
     // 刷新 / 关窗口前把还没落盘的写进去。
     window.addEventListener("pagehide", flushPendingOnPageHide);
@@ -219,7 +223,7 @@ export function flushUiMemory(): void {
 export function resetUiMemory(): void {
   if (timer !== null) clearTimeout(timer);
   timer = null;
-  listeningWindow?.removeEventListener("pagehide", flushPendingOnPageHide);
+  listeningWindow?.removeEventListener?.("pagehide", flushPendingOnPageHide);
   listeningWindow = null;
   store = null;
   draftFiles.clear();

@@ -151,17 +151,28 @@ describe("接线", () => {
     expect(transcript).not.toMatch(/const anchorRows = anchorRowIds\(items\);/);
   });
 
-  test("底下变矮在同一帧补留白；留白在 contents 那一格里", () => {
-    const settle = transcript.slice(transcript.indexOf("function SettleAtEnd"), transcript.indexOf("const FIRST_PAINT_STAGGER_COUNT"));
-    expect(settle).toContain("setSlack(s.slack + lost)");
-    expect(settle).toContain("element.scrollTop = seen.top");
-    expect(transcript).toContain('data-chat-slack=""');
+  test("单一滚动源接管贴底（零 smooth / 零反向补留白），贴底关闭原生 overflow-anchor", () => {
+    const settle = transcript.slice(
+      transcript.indexOf("function SettleAtEnd"),
+      transcript.indexOf("const FIRST_PAINT_STAGGER_COUNT"),
+    );
+    expect(transcript).toContain("autoScroll={false}");
+    expect(transcript).toContain("preserveScrollOnPrepend={false}");
+    expect(transcript).not.toContain("scroll-smooth");
+    expect(settle).not.toContain('"smooth"');
+    expect(settle).not.toContain("BUSY_SLACK_SETTLE_MS");
+    expect(settle).toContain("data-cb-pinned");
+    expect(settle).toContain("TAIL_ANCHOR_SLACK_EVENT");
     // 滚动位置：恢复完成后记，回来时回到那一条
     expect(settle).toContain("scrollToMessage(r.anchor");
     expect(settle).toContain("setThreadUi(scrollKey");
+    const css = src("styles.css");
+    expect(css).toMatch(
+      /\[data-slot="message-scroller-viewport"\]\[data-cb-pinned="true"\]\s*\{[^}]*overflow-anchor:\s*none/,
+    );
   });
 
-  test("状态行在固定槽里：胶囊出现 / 收起不改列高，钉底时不整段往上挪（§94.8）", () => {
+  test("状态行在固定槽里：grid 同格叠放、胶囊出现 / 收起不改列高，钉底时不整段往上挪（§94.8）", () => {
     // 槽包着「已停止 / 干活胶囊 / 思考中 / 暂停」那一行，排在 LooseConfirmCards 之前——和原来同一位置。
     const tail = transcript.slice(transcript.indexOf('className="chat-tail'));
     expect(tail.indexOf('className="chat-status-slot"')).toBeGreaterThan(-1);
@@ -171,10 +182,12 @@ describe("接线", () => {
     expect(tail).toMatch(
       /chat-status-slot">\s*\{tailStop \?/,
     );
-    // 槽高 = 胶囊高（38px）；槽里和槽的子元素都不当滚动锚点。
+    // 槽高 = 胶囊高（38px）、单格叠放且不当滚动锚点。
     const css = src("styles.css");
+    expect(css).toMatch(/\.chat-status-slot\s*\{[^}]*display:\s*grid/);
     expect(css).toMatch(/\.chat-status-slot\s*\{[^}]*min-height:\s*38px/);
     expect(css).toMatch(/\.chat-status-slot\s*>\s*\*\s*\{[^}]*overflow-anchor:\s*none/);
+    expect(css).toMatch(/\.chat-status-slot\s*>\s*\*\s*\{[^}]*grid-area:\s*1\s*\/\s*1/);
   });
 
   test("对话页 / 空聊天都用按机器人记住的「计算机」", () => {

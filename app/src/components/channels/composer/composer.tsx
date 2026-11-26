@@ -514,6 +514,52 @@ function ComposerImpl({
   const simpleMode = useSimpleMode();
   const conversationScope = useConversationScope();
   const fileDraft = useRef(new Map<string, PersistedDraftFile>());
+  const localPreviewUrls = useRef(
+    new Map<string, { file: File; url: string }>(),
+  );
+  const revokePreviewUrl = useCallback((key: string) => {
+    const entry = localPreviewUrls.current.get(key);
+    if (!entry) return;
+    localPreviewUrls.current.delete(key);
+    if (
+      typeof URL !== "undefined" &&
+      typeof URL.revokeObjectURL === "function"
+    ) {
+      try {
+        URL.revokeObjectURL(entry.url);
+      } catch {
+        /* 浏览器/测试环境不支持 revokeObjectURL 时安全忽略 */
+      }
+    }
+  }, []);
+  const revokeAllPreviewUrls = useCallback(() => {
+    for (const key of [...localPreviewUrls.current.keys()]) {
+      revokePreviewUrl(key);
+    }
+  }, [revokePreviewUrl]);
+  const ensurePreviewUrl = useCallback(
+    (key: string, file: File) => {
+      if (classifyAttachment(file.type) !== "image") return;
+      if (
+        typeof URL === "undefined" ||
+        typeof URL.createObjectURL !== "function"
+      ) {
+        return;
+      }
+      const existing = localPreviewUrls.current.get(key);
+      if (existing?.file === file) return;
+      if (existing) revokePreviewUrl(key);
+      try {
+        localPreviewUrls.current.set(key, {
+          file,
+          url: URL.createObjectURL(file),
+        });
+      } catch {
+        /* 受限环境无法创建 blob URL 时回退到占位骨架 */
+      }
+    },
+    [revokePreviewUrl],
+  );
   const pendingBusyModeRef = useRef<BusySendMode | null>(null);
   const fileDraftReadKey = useRef<string | null>(null);
   const lastSeenDraftKey = useRef<string | undefined>(draftKey);
@@ -526,6 +572,7 @@ function ComposerImpl({
     fileDraftAlive.current = true;
     return () => {
       fileDraftAlive.current = false;
+      revokeAllPreviewUrls();
     };
   });
   const storageErrorShown = useRef(false);
@@ -824,6 +871,7 @@ function ComposerImpl({
       progressStore.clear(failedKey);
       uploadAborts.current.delete(failedKey);
       pastedTexts.current.delete(failedKey);
+      revokePreviewUrl(failedKey);
       if (abortedUploads.current.delete(failedKey)) return;
       /*
        * A FAILED UPLOAD KEEPS ITS TILE (audit M4-3). The SDK has already taken the placeholder off the
@@ -866,7 +914,7 @@ function ComposerImpl({
         },
       ]);
     },
-    [uploadIdentity, progressStore, saveFileDraft],
+    [uploadIdentity, progressStore, saveFileDraft, revokePreviewUrl],
   );
 
   /**
@@ -968,11 +1016,12 @@ function ComposerImpl({
           if (saved.attachment && releasedIds.has(saved.attachment.id)) {
             if (restoringFiles.current) removedDuringRestore.current.add(key);
             fileDraft.current.delete(key);
+            revokePreviewUrl(key);
           }
         saveFileDraft();
       }
     },
-    [uploadIdentity, saveFileDraft],
+    [uploadIdentity, saveFileDraft, revokePreviewUrl],
   );
 
   const attachmentsConfig = useMemo(
@@ -1162,11 +1211,18 @@ function ComposerImpl({
         const key = uploadIdentity.keyOf(attachment);
         if (restoringFiles.current) removedDuringRestore.current.add(key);
         fileDraft.current.delete(key);
+        revokePreviewUrl(key);
       }
       saveFileDraft();
       removeAttachment(id);
     },
-    [attachments, removeAttachment, uploadIdentity, saveFileDraft],
+    [
+      attachments,
+      removeAttachment,
+      uploadIdentity,
+      saveFileDraft,
+      revokePreviewUrl,
+    ],
   );
 
   /**
@@ -1325,6 +1381,7 @@ function ComposerImpl({
         const id = uploadIdentity.assign(sent);
         stagedEntries.push({ id, sent });
         fileDraft.current.set(id, { id, file });
+        ensurePreviewUrl(id, file);
         const pasted = pastedSources.current.get(file);
         if (pasted !== undefined) pastedTexts.current.set(id, pasted);
         return sent;
@@ -1339,6 +1396,7 @@ function ComposerImpl({
           if (entry && !entry.attachment && !entry.failedReason) {
             if (restoringFiles.current) removedDuringRestore.current.add(id);
             fileDraft.current.delete(id);
+            revokePreviewUrl(id);
           }
         }
         saveFileDraft();
@@ -1410,6 +1468,7 @@ function ComposerImpl({
           if (!fileDraft.current.has(saved.id)) {
             fileDraft.current.set(saved.id, saved);
           }
+          ensurePreviewUrl(saved.id, saved.file);
           uploadIdentity.restore(saved.file, saved.id, restoredAttachment.id);
           const rowId = stagedRowId(restoredAttachment);
           if (rowId) uploadedRows.current.add(rowId);
@@ -1425,6 +1484,7 @@ function ComposerImpl({
         );
         if (restoringFiles.current) removedDuringRestore.current.add(id);
         fileDraft.current.delete(id);
+        revokePreviewUrl(id);
         saveFileDraft();
         if (status !== "accepted") {
           handedOffToStage = true;
@@ -1475,6 +1535,8 @@ function ComposerImpl({
       uploadIdentity,
       restoreAttachments,
       saveFileDraft,
+      ensurePreviewUrl,
+      revokePreviewUrl,
     ],
   );
   const dismissFailedUpload = useCallback(
@@ -1482,12 +1544,13 @@ function ComposerImpl({
       activeRetries.current.delete(id);
       if (restoringFiles.current) removedDuringRestore.current.add(id);
       fileDraft.current.delete(id);
+      revokePreviewUrl(id);
       saveFileDraft();
       setFailedUploads((current) =>
         current.filter((upload) => upload.id !== id),
       );
     },
-    [saveFileDraft],
+    [saveFileDraft, revokePreviewUrl],
   );
   const failedTiles = useMemo(
     () =>
@@ -1601,6 +1664,7 @@ function ComposerImpl({
         if (!trackingId || !accepted.has(trackingId)) continue;
         if (restoringFiles.current) removedDuringRestore.current.add(key);
         fileDraft.current.delete(key);
+        revokePreviewUrl(key);
         const rowId = stagedRowId(saved.attachment);
         if (rowId) uploadedRows.current.delete(rowId);
         const chatFileId = chatFileRowId(saved.attachment);
@@ -1696,6 +1760,7 @@ function ComposerImpl({
       if (lastSeenDraftKey.current !== draftKey) {
         if (lastSeenDraftKey.current !== undefined) {
           fileDraft.current.clear();
+          revokeAllPreviewUrls();
         }
         acceptedDuringRestore.current.clear();
         removedDuringRestore.current.clear();
@@ -1826,6 +1891,7 @@ function ComposerImpl({
         const ready: Attachment[] = [];
         for (const { entry, attachment } of restored) {
           if (!restoredIds.has(entry.id)) continue;
+          ensurePreviewUrl(entry.id, entry.file);
           uploadIdentity.restore(entry.file, entry.id, attachment.id);
           const rowId = stagedRowId(attachment);
           if (rowId) uploadedRows.current.add(rowId);
@@ -2164,14 +2230,18 @@ function ComposerImpl({
     () =>
       staged
         .filter((attachment) => stagedModality(attachment) === "image")
-        .map((attachment) => ({
-          id: attachment.id,
-          url: attachment.source.value,
-          alt: attachment.filename,
-          size: attachment.size,
-          loading: attachment.status === "uploading",
-          progressKey: uploadIdentity.keyOf(attachment),
-        })),
+        .map((attachment) => {
+          const progressKey = uploadIdentity.keyOf(attachment);
+          return {
+            id: attachment.id,
+            url: attachment.source.value,
+            previewUrl: localPreviewUrls.current.get(progressKey)?.url,
+            alt: attachment.filename,
+            size: attachment.size,
+            loading: attachment.status === "uploading",
+            progressKey,
+          };
+        }),
     [staged, uploadIdentity],
   );
 

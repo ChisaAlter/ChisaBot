@@ -141,3 +141,62 @@ test("a tail-first backfill prepend does not force layout in handleContentChange
   expect(await prependReads(false)).toBeGreaterThan(0);
   expect(await prependReads(true)).toBe(0);
 });
+
+test("subpixel or <= 8px non-user scrollTop drop does not flip following-bottom to free-scrolling", async () => {
+  const { container } = render(
+    <MessageScrollerProvider autoScroll>
+      <MessageScroller>
+        <MessageScrollerViewport>
+          <MessageScrollerContent>
+            {Array.from({ length: 40 }, (_, i) => (
+              <MessageScrollerItem key={String(i)} messageId={String(i)}>
+                {i}
+              </MessageScrollerItem>
+            ))}
+          </MessageScrollerContent>
+        </MessageScrollerViewport>
+      </MessageScroller>
+    </MessageScrollerProvider>,
+  );
+  await act(async () => {
+    await settleReactWork();
+  });
+  const viewport = container.querySelector(
+    "[data-slot='message-scroller-viewport']",
+  ) as HTMLElement;
+  let scrollHeight = 2000;
+  let scrollTop = 1600;
+  Object.defineProperty(viewport, "scrollHeight", {
+    configurable: true,
+    get: () => scrollHeight,
+  });
+  Object.defineProperty(viewport, "clientHeight", {
+    configurable: true,
+    get: () => 400,
+  });
+  Object.defineProperty(viewport, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (v: number) => {
+      scrollTop = v;
+    },
+  });
+  const calls: Array<ScrollToOptions> = [];
+  viewport.scrollTo = ((opt: ScrollToOptions) => {
+    calls.push(opt);
+    if (typeof opt.top === "number") scrollTop = opt.top;
+  }) as typeof viewport.scrollTo;
+
+  // 预热 scroll 记录 lastScrollTop = 1600
+  viewport.dispatchEvent(new Event("scroll"));
+  // 非用户意图导致 scrollTop 微小回退 4px（<= 8px 阈值）：不能误判为 free-scrolling
+  scrollTop = 1596;
+  viewport.dispatchEvent(new Event("scroll"));
+  calls.length = 0;
+  scrollHeight = 2100;
+  await act(async () => {
+    viewport.dispatchEvent(new Event("scroll"));
+    await settleReactWork();
+  });
+  expect(viewport.dataset.scrollable).not.toContain("end");
+});

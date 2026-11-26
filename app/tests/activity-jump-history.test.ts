@@ -1,9 +1,14 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { resetUiMemory } from "@/lib/chat/ui-memory";
 import { openForActivityJump } from "@/lib/computers/auto-watch";
 import {
   panelSheetOpenSource,
   setPanelSheetOpen,
 } from "@/lib/panels/rail-open";
+
+afterEach(() => {
+  resetUiMemory();
+});
 
 /**
  * CB-101 第二阶段：「在活动里看」在窄屏走 openPanelSheet("user")（和手动点把手同一个入口），
@@ -12,7 +17,11 @@ import {
 function withWidth<T>(wide: boolean, run: () => T): T {
   const g = globalThis as { window?: unknown };
   const previous = g.window;
-  g.window = { matchMedia: () => ({ matches: wide }) };
+  g.window = {
+    addEventListener() {},
+    removeEventListener() {},
+    matchMedia: () => ({ matches: wide }),
+  };
   try {
     return run();
   } finally {

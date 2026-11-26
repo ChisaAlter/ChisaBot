@@ -44,14 +44,17 @@ function refKey(value: object): number {
   return created;
 }
 
+const DETACH_PIN_EVENT = "chisabot:scroll-detach-pin";
+
 /**
  * 长对话虚拟化的渲染层（jank P3-3，flag `virtualTranscript` 后面）。
  *
- * 结构：滚动容器还是原来的 `MessageScrollerViewport`（贴底、留白 §88/§94、回到底部按钮、键盘都照旧），
- * 里面除了末尾常驻的几行，其余的行交给 virtua 的 `Virtualizer`（`scrollRef` 指向这个滚动容器）。
+ * 结构：滚动容器还是原来的 `MessageScrollerViewport`（贴底态由 SettleAtEnd 维护 `data-cb-pinned="true"`，
+ * 回到底部按钮、键盘都照旧），里面除了末尾常驻的几行，其余的行交给 virtua 的 `Virtualizer`。
  * - 行高：virtua 用 ResizeObserver 实测；离开时把快照按会话 key + 消息 id 存进 `transcriptSizeCache`，切回复用。
  * - 前插历史：第一行往后挪了就开 `shift`，视口内容不动（tail-first 的补行 / scrollHeight 补偿整条不走）。
- * - 流式：最后几行不在虚拟列表里（常驻，见 VIRTUAL_TAIL_ROWS），贴底跟随仍由原来的滚动容器做，人上滑时不抢。
+ * - 贴底冲突防护：视口处于 `data-cb-pinned="true"` 时抑制 virtua 内部重测触发的反向 scrollTo/scrollBy 重定位，
+ *   并在 `onResize` 时强制同步锁底，消除 `±188px` 回弹。
  */
 
 export type VirtualCell = { id: string; node: ReactNode };
@@ -115,6 +118,86 @@ export function VirtualTranscriptRows({
     setStartMargin((m) => (m === next ? m : next));
   }, [viewportRef, layoutKey]);
 
+  const syncPinnedBottom = useCallback(() => {
+    const vp = viewportRef.current;
+    if (vp?.getAttribute("data-cb-pinned") !== "true") return;
+    const max = Math.max(0, vp.scrollHeight - vp.clientHeight);
+    if (Math.abs(vp.scrollTop - max) > 0.5) {
+      vp.scrollTop = max;
+    }
+  }, [viewportRef]);
+
+  useLayoutEffect(() => {
+    syncPinnedBottom();
+  });
+
+  useExternalConnection(refKey(viewportRef), () => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const hasOwnScrollTo = Object.hasOwn(vp, "scrollTo");
+    const hasOwnScrollBy = Object.hasOwn(vp, "scrollBy");
+    const origScrollTo = vp.scrollTo;
+    const origScrollBy = vp.scrollBy;
+    const pinned = () => vp.getAttribute("data-cb-pinned") === "true";
+
+    if (typeof origScrollTo === "function") {
+      const wrappedScrollTo: typeof vp.scrollTo = (
+        optionsOrX?: ScrollToOptions | number,
+        y?: number,
+      ) => {
+        if (pinned()) {
+          const top =
+            typeof optionsOrX === "object" && optionsOrX !== null
+              ? optionsOrX.top
+              : typeof y === "number"
+                ? y
+                : undefined;
+          const max = Math.max(0, vp.scrollHeight - vp.clientHeight);
+          if (typeof top === "number" && top < max - 1) {
+            if (Math.abs(vp.scrollTop - max) > 0.5) vp.scrollTop = max;
+            return;
+          }
+        }
+        Reflect.apply(
+          origScrollTo,
+          vp,
+          typeof optionsOrX === "number" ? [optionsOrX, y ?? 0] : [optionsOrX],
+        );
+      };
+      vp.scrollTo = wrappedScrollTo;
+    }
+
+    if (typeof origScrollBy === "function") {
+      const wrappedScrollBy: typeof vp.scrollBy = (
+        optionsOrX?: ScrollToOptions | number,
+        y?: number,
+      ) => {
+        if (pinned()) {
+          const max = Math.max(0, vp.scrollHeight - vp.clientHeight);
+          if (Math.abs(vp.scrollTop - max) > 0.5) vp.scrollTop = max;
+          return;
+        }
+        Reflect.apply(
+          origScrollBy,
+          vp,
+          typeof optionsOrX === "number" ? [optionsOrX, y ?? 0] : [optionsOrX],
+        );
+      };
+      vp.scrollBy = wrappedScrollBy;
+    }
+
+    return () => {
+      if (typeof origScrollTo === "function") {
+        if (hasOwnScrollTo) vp.scrollTo = origScrollTo;
+        else Reflect.deleteProperty(vp, "scrollTo");
+      }
+      if (typeof origScrollBy === "function") {
+        if (hasOwnScrollBy) vp.scrollBy = origScrollBy;
+        else Reflect.deleteProperty(vp, "scrollBy");
+      }
+    };
+  });
+
   return (
     <div
       ref={boxRef}
@@ -126,6 +209,7 @@ export function VirtualTranscriptRows({
         bufferSize={VIRTUAL_BUFFER_PX}
         cache={cache}
         data={cells as VirtualCell[]}
+        onResize={syncPinnedBottom}
         ref={handleRef}
         scrollRef={viewportRef}
         shift={shift}
@@ -153,6 +237,7 @@ export function useVirtuaDataLayer<Row extends { id: string }>(
   items: readonly Row[],
   virtualIds: readonly string[],
   handleRef: RefObject<VirtualizerHandle | null>,
+  viewportRef?: RefObject<HTMLElement | null>,
 ): TranscriptDataLayer<Row> {
   const { scrollToEnd, scrollToMessage } = useMessageScroller();
   const indexRef = useRef(new Map<string, number>());
@@ -169,6 +254,7 @@ export function useVirtuaDataLayer<Row extends { id: string }>(
       scrollToBottom: (options?: TranscriptScrollOptions) =>
         scrollToEnd(options),
       scrollToMessage: (id: string, options?: TranscriptScrollOptions) => {
+        viewportRef?.current?.dispatchEvent(new Event(DETACH_PIN_EVENT));
         const index = indexRef.current.get(id);
         const handle = handleRef.current;
         if (index !== undefined && handle) {
@@ -184,7 +270,7 @@ export function useVirtuaDataLayer<Row extends { id: string }>(
         return scrollToMessage(id, options);
       },
     }),
-    [items, prependHistory, scrollToEnd, scrollToMessage, handleRef],
+    [items, prependHistory, scrollToEnd, scrollToMessage, handleRef, viewportRef],
   );
 }
 
@@ -393,7 +479,12 @@ export function VirtualTranscriptControls<Row extends { id: string }>({
   layerRef: { current: TranscriptDataLayer<Row> | null };
   textOf: (row: Row) => string | null;
 }) {
-  const dataLayer = useVirtuaDataLayer(items, virtualIds, handleRef);
+  const dataLayer = useVirtuaDataLayer(
+    items,
+    virtualIds,
+    handleRef,
+    viewportRef,
+  );
   layerRef.current = dataLayer;
   useExternalConnection(refKey(layerRef), () => () => {
     layerRef.current = null;

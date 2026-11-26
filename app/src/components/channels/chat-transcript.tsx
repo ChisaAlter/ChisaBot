@@ -104,7 +104,6 @@ import {
 import { SmoothCollapse } from "@/components/ui/motion-primitives";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  useElementEvent,
   useExternalConnection,
   useWindowEvent,
 } from "@/hooks";
@@ -120,11 +119,6 @@ import { readWakeUpTurn } from "@/lib/channels/follow-up-turn";
 import { readResponsibilityTurn } from "@/lib/channels/responsibility-turn";
 import { readFiring } from "@/lib/channels/routine-firing";
 import type { Attachment } from "@/lib/chat/attachment-state";
-import {
-  blankCoversViewport,
-  contentGap,
-  nextBlankHeight,
-} from "@/lib/chat/blank-release";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
 import {
   friendlyError,
@@ -843,38 +837,11 @@ function ScrollNewestQueuedIntoView({
           element.scrollHeight - element.scrollTop - element.clientHeight;
         if (fromBottom > 80) return;
       }
-      scrollToEnd();
+      scrollToEnd({ behavior: "instant" });
     },
   );
 
   return null;
-}
-
-/** 消息列的行距（px）。 */
-function rowGapOf(content: HTMLElement): number {
-  const gap = Number.parseFloat(getComputedStyle(content).rowGap);
-  return Number.isFinite(gap) ? gap : 0;
-}
-
-/**
- * 两块留白（滚动容器的 spacer、我们的 slack）在这一列里实际占的高度：各自的高度减去被负上边距抵掉的那道行距。
- * 消息行本身的高度 = 列高 − 这个数（§94 用它算新那一行吃掉多少空白）。
- */
-function blankArea(
-  content: HTMLElement,
-  slack: number,
-  spacerEl?: HTMLElement | null,
-): number {
-  const spacer =
-    spacerEl !== undefined
-      ? spacerEl
-      : content.querySelector<HTMLElement>("[data-message-scroller-spacer]");
-  const spacerHeight = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
-  if (spacerHeight <= 0 && slack <= 0) return 0;
-  const gap = rowGapOf(content);
-  return (
-    (spacerHeight > 0 ? spacerHeight - gap : 0) + (slack > 0 ? slack - gap : 0)
-  );
 }
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
@@ -951,39 +918,33 @@ function useSharedReducedMotion(): boolean {
 
 /** 恢复完成后还钉在底部多久（毫秒）：晚到的「已停止」行、图片撑高、存储补进来的几轮都在这段时间里。 */
 export const SETTLE_AFTER_HYDRATE_MS = 2500;
-/**
- * 回答进行中折叠开场白 / 过程话（220ms `chat-row-fold`）产生的临时留白：
- * 等折叠动画落稳后即可平滑收回，避免思考 / 干活胶囊在多步工具调用中越漂越高。
- */
-const BUSY_SLACK_SETTLE_MS = 260;
+
+/** 外部触发跳转到历史消息时通知 SettleAtEnd 退出 pinned。 */
+const DETACH_PIN_EVENT = "chisabot:scroll-detach-pin";
+/** ComposerDock 同步写完 padding-bottom 后通知 SettleAtEnd 同步贴底，绕开 ResizeObserver 深度推迟。 */
+const COMPOSER_INSET_SYNC_EVENT = "chisabot:composer-inset-sync";
 
 /**
- * 打开对话时落在最新一条，而且不跳（DESIGN.md §83）。
- *
- * 为什么需要它：滚动容器（`@shadcn/react` message-scroller）只看「行数变多了」——从旧的行数往后找第一个
- * 用户消息行（`data-scroll-anchor`），把它对齐到顶上（这是「刚发出一句，它滑到顶上、下面留地方给回答」的
- * 设计）。可打开一段长对话时，历史不是一次到齐的：接入回放一段段长出来（网速慢时 1 → 3 → 5 → 8 行），
- * 存储读完再补进 20 多行，「已停止」/「换了备用模型」的小行晚一点插进中间。每一次行数变多，它都当成
- * 「刚发了一句」，把中间某一条用户消息对齐到顶上——人就停在半截历史里（实测离底部 7322px），而且
- * 一路平滑滚着过去（`useSmoothSendScroll` 把那几次当成刚发的）。
- *
- * 所以：从打开到恢复完成后 SETTLE_AFTER_HYDRATE_MS 之内，内容每变一次（行增减、高度变化），在下一帧
- * 绘制之前直接回到底部（`scrollToEnd`，不平滑），并把滚动容器切回「跟着底部」。人自己滚了（滚轮、手指、
- * 翻页键、拖滚动条）或者发了新消息，马上停手，交回滚动容器原来的规则。
+ * 对话滚动单一事实源（Single Source of Truth）：
+ * - 仅维护单一 `pinned` 状态不变量：
+ *   1. 仅由真实用户输入（wheel 向上 deltaY < 0、touchmove、ArrowUp/PageUp/Home/Shift+Space、pointerdown 拖滚动条、
+ *      或外部 scrollToMessage 跳转）退出 `pinned`；绝不因内容增减或收缩 clamp 翻转。
+ *   2. 仅由用户发送新消息、点击「回到底部」、或主动滚回底缘 `<= 4px` 重新进入 `pinned`。
+ * - `pinned` 下在视口同步维护 `data-cb-pinned="true"`（带脏检查），由 CSS 关闭浏览器原生 `overflow-anchor` 防互搏；
+ *   唯一 `ResizeObserver(content & viewport, { box: "border-box" })` 的 `pinNow` 在绘制前同步瞬时落底（`behavior: "instant"`）。
+ * - 保留 `TAIL_ANCHOR_SLACK_EVENT` 对不足一屏历史补全（`tail-first-prepend-anchor`）的锚点垫高支持。
  */
 function SettleAtEnd({
-  busy = false,
   hydrating,
   opening = false,
   newestUserMessageId,
   viewport,
   scrollKey,
   slack,
-  sendMode,
 }: {
-  /** 这一段对话正在回答（§93.3：一轮结束时把底下留的空收掉）。 */
+  /** 这一段对话正在回答。 */
   busy?: boolean;
-  /** 刚出现的那条用户消息是不是连续聊天里发的（§94）：是就不翻页，底部跟着长。 */
+  /** 刚出现的那条用户消息是不是连续聊天里发的（§94）。 */
   sendMode?: React.RefObject<SendMode>;
   hydrating: boolean;
   /** 还在「打开」这段对话的窗口里（`useOpeningWindow`）：历史补齐不是新的一轮。 */
@@ -992,270 +953,105 @@ function SettleAtEnd({
   viewport: React.RefObject<HTMLDivElement | null>;
   /** 滚动位置记在哪（DESIGN.md §88）；没有就只管钉在底部。 */
   scrollKey?: string;
-  /** 最后一条下面的留白（§88.1），在 `contents` 那一格里，不算一行。 */
+  /** 最后一条下面的锚点垫高（仅用于 TAIL_ANCHOR_SLACK_EVENT）。 */
   slack: React.RefObject<HTMLDivElement | null>;
 }) {
-  const { scrollToEnd, scrollToMessage } = useMessageScroller();
-  /*
-   * 上次离开这段对话时的位置（§88.3）：不在底部 → 回到那一条、离顶边一样远；在底部 → 钉在底部，最后一条下面
-   * 照样留出当时的空白（新一轮对齐到顶上时滚动容器留的），画面和离开时一样。只在打开时读一次。
-   */
+  const { scrollToMessage } = useMessageScroller();
   const [memo] = useState(() =>
     scrollKey ? (threadUi(scrollKey)?.scroll ?? null) : null,
   );
   const state = useRef({
-    // 一打开就不在恢复（从新建对话页带着第一条消息来的）：不需要钉。
-    until: hydrating ? Number.POSITIVE_INFINITY : 0,
-    baseline: newestUserMessageId,
-    wasHydrating: hydrating,
-    released: false,
-    /** 还要回到上次那一条（找不到就在恢复完成时放弃，改钉底部）。 */
+    pinned: !(memo && !memo.atBottom && memo.anchor),
     restore: memo && !memo.atBottom && memo.anchor ? memo : null,
     hydrating,
-    /** 底下的留白（px）：固定高度时是设的值；「跟着变」（§94.6，floor 不是 null）时是它现在实际的高度。 */
-    get slack(): number {
-      const floor = this.floor;
-      if (floor === null) return this.slackPx;
-      const el = slack.current;
-      const content = el?.parentElement?.parentElement;
-      if (!el || !content) return 0;
-      const own = el.offsetHeight;
-      // 对话比一屏短时（min-h-full）它还会多撑出一截填满视口：那一截不算留白。
-      return Math.max(0, Math.min(own, floor - (content.offsetHeight - own)));
-    },
+    baseline: newestUserMessageId,
+    wasHydrating: hydrating,
     slackPx: 0,
-    /**
-     * §94.6「跟着变」的留白：这一列的最小高度钉在 floor（px），留白 flex-grow 填满「floor − 消息行」。消息行变矮 / 变高
-     * 在同一次布局里由留白补上 / 让出——总高度不变，浏览器不夹 scrollTop，不用等到下一帧的 ResizeObserver。null = 不在用。
-     */
-    floor: null as number | null,
-    /** 正在把留白收掉（§93.3）：这段时间里变矮不再补留白。 */
-    releasing: false,
-    /**
-     * 现在的留白是「显示更早的消息」为了让正在看的行不动垫的（TAIL_ANCHOR_SLACK_EVENT，QA #519 r2 P2-1）。
-     * 人动滚动之前 §93.3 不收它——收了正在看的行就慢慢落到视口底部。人一动 / 别处改留白就作废。
-     */
     anchorHold: false,
-    /**
-     * 这块留白是新一轮翻页对齐到视口上 1/3（§94.7）或刷新恢复有意预留的，回答还在跑时保持不动；
-     * 其余由过程话折叠 / elastic floor 产生的临时留白在折叠稳定后即可平滑收回，避免思考胶囊越漂越高。
-     */
-    holdBlank: false,
-    busy,
-    /** 上一次量到的位置（§94 连续发消息时用）：scrollTop、是不是在底部、消息行本身的高度（不算两块留白）。 */
-    lastTop: 0,
-    lastAtBottom: true,
-    lastRows: 0,
   });
-  state.current.busy = busy;
-  const reduceMotion = useSharedReducedMotion();
-  /** §93.3：一轮结束后收掉底下留的空（由下面的 effect 填上；没挂上时什么都不做）。 */
-  const releaseRef = useRef<((fromScroll?: boolean) => boolean) | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 滚动位置状态机：状态放在 ref 里，只在 hydrating / 最新用户消息等输入变化时重跑；ref 与 setter 不用列
+  const setSlack = (px: number) => {
+    const el = slack.current;
+    const next = Math.max(0, Math.round(px));
+    state.current.slackPx = next;
+    state.current.anchorHold = false;
+    if (!el) return;
+    if (next === 0) {
+      el.style.display = "none";
+      el.style.height = "";
+      el.style.marginTop = "";
+      return;
+    }
+    const column = el.parentElement?.parentElement;
+    const gap = column ? getComputedStyle(column).rowGap : "0px";
+    el.style.display = "block";
+    el.style.marginTop = gap && gap !== "normal" ? `calc(-1 * ${gap})` : "0px";
+    el.style.height = `${next}px`;
+  };
+
+  const pinActionRef = useRef<(() => void) | null>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 滚动位置状态机：状态放在 ref 里，只在 hydrating / 最新用户消息 / opening 变化时同步
   useLayoutEffect(() => {
     const s = state.current;
     s.hydrating = hydrating;
     if (hydrating) {
-      if (!s.wasHydrating) s.until = Number.POSITIVE_INFINITY;
       s.baseline = newestUserMessageId;
     } else if (s.wasHydrating) {
-      s.until = performance.now() + SETTLE_AFTER_HYDRATE_MS;
       s.baseline = newestUserMessageId;
-      /*
-       * §93.3：恢复完了、这一段没在回答——上次离开时底下留的空（新一轮对齐到顶上时滚动容器留的）不再放回去：
-       * 做完的一轮只要正常的底边距。还在回答时照旧放回去（§88.3，接着写的回答先填那块空，画面不跳）。
-       */
-      if (!s.busy && s.slack > 0) setSlack(0);
+      if (!s.restore && s.pinned) {
+        pinActionRef.current?.();
+      }
     } else if (newestUserMessageId !== s.baseline) {
-      // 恢复完成后又多了一条用户消息：人发的（或别的设备发的），交回「新一轮对齐到顶上」。
       s.baseline = newestUserMessageId;
-      /*
-       * 还在「打开」的窗口里（`opening`，DESIGN.md §83）：历史是分几段到的（上次看到的样子 → 存下的整段 →
-       * 晚到的「已停止」/备用说明），最新一条用户消息变了只说明这一段补进来了，不是有人刚发了一句——
-       * 垫 2/3 屏空白、翻页、把位置交回滚动容器，都会让刚打开 / 刚切回来的对话像发了一次消息。
-       * 基线已经跟着走了，窗口过后的第一条才算新的一轮。
-       */
-      if (opening) {
-        // 打开窗口里：只把「跟着变」的留白冻成固定高度（§94.6），不垫空白、不翻页、不动位置。
-        if (s.floor !== null) setSlack(s.slack);
-      } else if (
-        sendMode?.current.continuous &&
-        sendMode.current.id === newestUserMessageId
-      ) {
-        /*
-         * §94 连续聊天：这一条不带对齐标记，不翻页。滚动容器可能还停在上一轮的「对齐到顶上」状态（下面有它的
-         * spacer）——不处理的话它会继续把上一轮钉在顶上，新内容长到视口下面去。这里同一次提交里把它切回「跟着
-         * 底部」（scrollToEnd 会把 spacer 清零），清掉的那块空白改成我们的留白，先让新那一行吃掉；人在底部时
-         * scrollTop 正好落回原处，画面不动，之后内容先填留白、填满了再由滚动容器跟着底部往上长。人不在底部
-         * （往上翻着）时不留白，直接回到底部（发了一句就该看到它）。
-         */
-        const element = viewport.current;
-        const content = element?.querySelector<HTMLElement>(
-          '[data-slot="message-scroller-content"]',
-        );
-        if (element && content) {
-          const before = s.lastTop;
-          const wasAtBottom = s.lastAtBottom;
-          const gap = rowGapOf(content);
-          const blank = wasAtBottom ? blankArea(content, s.slack) : 0;
-          // 新那一行（连同前面的行距）已经在 DOM 里：它比空白矮多少，就留多少（两块留白都用负的上边距抵掉一道行距）。
-          const growth =
-            content.offsetHeight - blankArea(content, s.slack) - s.lastRows;
-          const keep = blank - Math.max(0, growth);
-          setSlack(keep > 0 ? keep + gap : 0);
-          s.holdBlank = keep > 0;
-          scrollToEnd({ behavior: reduceMotion ? "auto" : "smooth" });
-          if (
-            wasAtBottom &&
-            blank > 0 &&
-            Math.abs(element.scrollTop - before) <= 2
-          )
-            element.scrollTop = before;
-        } else {
-          setSlack(0);
-          scrollToEnd({ behavior: reduceMotion ? "auto" : "smooth" });
-        }
-      } else {
-        s.until = 0;
+      if (!opening && newestUserMessageId !== null) {
+        // 用户发送新消息：清除历史锚点垫高，进入 pinned 并同步瞬时落底。
         s.restore = null;
-        // 「跟着变」的留白先按现在的高度冻成固定的（§94.6）：下面两条路（连续 / 翻页）都按固定高度算，滚动容器对齐时也不受影响。
-        if (s.floor !== null) setSlack(s.slack);
-        /*
-         * 新的一轮：滚动容器要把问题对齐到视口上 1/3（§94.7 的 scrollMargin），它的对齐在**这次提交后的微任务**
-         * 里算目标再滚。可回答还没开始，问题下面是空的——它算出的目标比能滚到的更远，会被夹回最底（实测目标
-         * 194px、落在 114px）。这里赶在它之前（layout effect 早于那次微任务）把我们的留白垫到「问题下面有
-         * 2/3 视口」：它算 spacer 时内容已经够高，算出 0，不会叠成两块空白；回答开始长出来时照旧先吃这块留白。
-         */
-        const element = viewport.current;
-        const column = element?.querySelector<HTMLElement>(
-          '[data-slot="message-scroller-content"]',
-        );
-        const row = column?.querySelector<HTMLElement>(
-          '[data-scroll-anchor="true"]',
-        );
-        if (element && column && row) {
-          const blank = blankArea(column, s.slack);
-          const below =
-            column.getBoundingClientRect().bottom -
-            row.getBoundingClientRect().bottom -
-            blank;
-          const want = Math.round((element.clientHeight * 2) / 3) - below;
-          setSlack(Math.max(want, 0));
-          s.holdBlank = want > 0;
-        } else if (s.slack > 0) {
-          /*
-           * 没有可以垫的目标（标记不在这批 DOM 里）：照旧把留白让给滚动容器的 spacer。等它对齐完（微任务之后）
-           * 再拿掉——当场拿掉的话总高度先变矮，浏览器把 scrollTop 夹小，平滑滚动从夹过的位置出发，先往回跳一截
-           * （实测 193px / 238px）再往前滚。
-           */
-          queueMicrotask(() => setSlack(0));
-        }
+        s.anchorHold = false;
+        if (s.slackPx > 0) setSlack(0);
+        s.pinned = true;
+        pinActionRef.current?.();
       }
     }
     s.wasHydrating = hydrating;
   }, [hydrating, newestUserMessageId, opening]);
 
-  function setSlack(px: number) {
-    const el = slack.current;
-    const next = Math.max(0, Math.round(px));
-    state.current.slackPx = next;
-    state.current.anchorHold = false;
-    // 设固定高度：先退出「跟着变」（§94.6）。
-    state.current.floor = null;
-    if (el?.parentElement?.parentElement)
-      el.parentElement.parentElement.style.minHeight = "";
-    if (el) el.style.flex = "";
-    if (!el) {
-      if (next === 0) state.current.holdBlank = false;
-      return;
-    }
-    if (next === 0) {
-      state.current.holdBlank = false;
-      el.style.display = "none";
-      return;
-    }
-    // 它是这一列的一项，前面会多出一道行距（gap）：用负的上边距抵掉，加上的正好是 `next`。
-    const gap = el.parentElement?.parentElement
-      ? getComputedStyle(el.parentElement.parentElement).rowGap
-      : "0px";
-    el.style.display = "block";
-    el.style.marginTop = gap && gap !== "normal" ? `calc(-1 * ${gap})` : "0px";
-    el.style.height = `${next}px`;
-  }
-
-  /*
-   * §93.3 一轮结束后收掉底下的空（用户 2026-10-16「下面还有额外的空白」）。
-   *
-   * 根因：新一轮发出去时，滚动容器把那条用户消息对齐到顶上，回答比一屏短时在下面垫一块空（它自己的 spacer，
-   * 「anchored-to-message」）；这一轮结束了它也不收——人看着回答下面一大块空。变矮时 §88.1 又把少掉的高度
-   * 补成留白（slack），刷新后 §88.3 还把它原样放回去。
-   *
-   * 现在：回答结束（busy 变 false）的那一次提交里（和收起动画同时开始），人还在底部、没动过滚动：先把滚动容器的空
-   * 原样挪进我们的留白（总高度不变，画面不动），让滚动容器改成「跟着底部」（scrollToEnd 把它的 spacer 清零），
-   * 再按实际绘制帧逐步收掉留白——浏览器把 scrollTop 一点点夹小，整段对话平滑地往下落到正常的底边距。
-   * 人往上翻过、或者又开始回答了：不动。`prefers-reduced-motion` 发新消息时直接贴底，不制造翻页留白。
-   */
-  const wasBusy = useRef(busy);
+  // 流式增量或行高变更提交后，在进入下一帧 rAF / 绘制前同步校齐底部，消除 1 帧滞后。
   useLayoutEffect(() => {
-    const was = wasBusy.current;
-    wasBusy.current = busy;
-    if (busy || !was || hydrating) return;
-    state.current.holdBlank = false;
-    // 和这一轮结束时的收起（§82.9 过程话 / §93 干活卡）同一次提交、绘制之前开始：收起和收空一起往下落，
-    // 不会先被收起夹一下、滚动容器再把那条消息拉回顶上（预览实测：等收起走完再收，中间往回跳 67px）。
-    if (releaseRef.current?.() !== false) return;
-    // 这一帧还不行（滚动容器还在对齐、最后几个字刚进来）：接下来几帧再试，最多 ~0.5 秒。
-    let tries = 0;
-    let frame = 0;
-    const retry = () => {
-      if (releaseRef.current?.() !== false || ++tries > 30) return;
-      frame = window.requestAnimationFrame(retry);
-    };
-    frame = window.requestAnimationFrame(retry);
-    return () => window.cancelAnimationFrame(frame);
-  }, [busy, hydrating]);
+    const s = state.current;
+    if (!s.hydrating && s.pinned && !s.restore && !s.anchorHold) {
+      pinActionRef.current?.();
+    }
+  });
 
-  // 离开对话：最后记一次位置。用 layout 的清理——那时 DOM 还在页面上，量得出来（普通 effect 的清理时已经拿掉了）。
+  // 离开对话：最后记一次位置。用 layout 的清理——那时 DOM 还在页面上，量得出来。
   const finalWrite = useRef<(() => void) | null>(null);
   useLayoutEffect(() => () => finalWrite.current?.(), []);
 
-  // 回来时在底部、底下有留白：第一帧之前就把留白放回去（§88.3）。没在恢复、也没在回答：不放（§93.3）。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: once, on open.
-  useLayoutEffect(() => {
-    const element = viewport.current;
-    if (!memo?.atBottom || memo.spacer <= 0 || !element) return;
-    if (!hydrating && !busy) return;
-    setSlack(Math.min(memo.spacer, Math.max(0, element.clientHeight - 96)));
-    state.current.holdBlank = true;
-  }, []);
-
   useExternalConnection(
-    `${scrollKey ?? ""}\0${objectKey(scrollToEnd)}\0${objectKey(scrollToMessage)}\0${objectKey(viewport)}\0${reduceMotion ? 1 : 0}`,
+    `${scrollKey ?? ""}\0${objectKey(scrollToMessage)}\0${objectKey(viewport)}`,
     () => {
       const element = viewport.current;
       const content = element?.querySelector<HTMLElement>(
         '[data-slot="message-scroller-content"]',
       );
       if (!element || !content) return;
-      // 缓存滚动容器的 spacer 节点引用，避免单次 onScroll 内多次全树 querySelector。
-      let cachedSpacer: HTMLElement | null = null;
-      const getSpacer = (): HTMLElement | null => {
-        if (cachedSpacer?.isConnected && content.contains(cachedSpacer)) {
-          return cachedSpacer;
-        }
-        cachedSpacer = content.querySelector<HTMLElement>(
-          "[data-message-scroller-spacer]",
-        );
-        return cachedSpacer;
-      };
       const s = state.current;
-      // CB-106 r2：定位到 ?message= 那条后（data-message-hold），打开时的落点 / 贴底都让路，直到人滚动或发消息。
       const held = () => isMessageHeld(element);
-      const active = () =>
-        !s.released && performance.now() < s.until && !held();
-      let frame = 0;
-      /** 瞬时滚动到指定位置而不改写视口内联 style.scrollBehavior（避免标脏整棵对话树 4,500+ 节点样式重算）。 */
+
+      const syncPinnedAttr = () => {
+        const activePin = s.pinned && !s.restore && !s.anchorHold && !held();
+        if (activePin) {
+          if (element.getAttribute("data-cb-pinned") !== "true") {
+            element.setAttribute("data-cb-pinned", "true");
+          }
+        } else if (element.hasAttribute("data-cb-pinned")) {
+          element.removeAttribute("data-cb-pinned");
+        }
+        return activePin;
+      };
+
+      /** 瞬时滚动到指定位置而不改写视口内联 style.scrollBehavior。 */
       const scrollTopInstant = (top: number) => {
         const clamped = Math.max(0, top);
         if (typeof element.scrollTo === "function") {
@@ -1264,6 +1060,7 @@ function SettleAtEnd({
         }
         element.scrollTop = clamped;
       };
+
       /** 回到上次那一条；找到了返回 true。 */
       const toRemembered = () => {
         const r = s.restore;
@@ -1277,7 +1074,6 @@ function SettleAtEnd({
           behavior: "instant",
           scrollMargin: r.offset,
         });
-        // 滚动容器对齐时会算上行距 / 内边距，差那么一点：量一下，补齐到离开时的那个像素。
         const off =
           row.getBoundingClientRect().top -
           element.getBoundingClientRect().top -
@@ -1285,441 +1081,120 @@ function SettleAtEnd({
         if (Math.abs(off) > 1) scrollTopInstant(element.scrollTop + off);
         return ok;
       };
-      const settle = () => {
+
+      const pinNow = () => {
+        syncPinnedAttr();
+        if (held()) return;
         if (s.restore) {
-          if (toRemembered()) return;
-          // 恢复完成了还找不到那一条（被删了 / 太旧不在了）：不再找，钉在底部。
-          if (!s.hydrating) s.restore = null;
-          else return;
+          if (toRemembered()) {
+            if (!s.hydrating) s.restore = null;
+            return;
+          }
+          if (!s.hydrating) {
+            s.restore = null;
+            s.pinned = true;
+          } else {
+            return;
+          }
         }
-        scrollToEnd({ behavior: "instant" });
+        if (!syncPinnedAttr()) return;
+        const max = Math.max(0, element.scrollHeight - element.clientHeight);
+        if (Math.abs(element.scrollTop - max) > 0.5) {
+          scrollTopInstant(max);
+        }
       };
-      const pin = () => {
-        if (!active()) return;
-        window.cancelAnimationFrame(frame);
-        // 下一帧、绘制之前：滚动容器自己的处理（微任务里）已经跑完，这里最后说了算，屏幕上看不到中间那一跳。
-        frame = window.requestAnimationFrame(() => {
-          if (!active()) return;
-          settle();
-        });
-      };
-      /** 人最近动过滚动（滚轮 / 手指 / 键盘 / 拖滚动条）。 */
-      let touchedAt = Number.NEGATIVE_INFINITY;
-      const release = () => {
-        s.released = true;
+
+      pinActionRef.current = pinNow;
+
+      let lastScrollInputAt = Number.NEGATIVE_INFINITY;
+      let touchLastY: number | null = null;
+      let seenTop = element.scrollTop;
+
+      const detach = () => {
+        s.pinned = false;
         s.restore = null;
         s.anchorHold = false;
-        touchedAt = performance.now();
-        cancelBusyRelease();
-        window.cancelAnimationFrame(frame);
+        syncPinnedAttr();
+      };
+
+      const onWheel = (event: WheelEvent) => {
+        lastScrollInputAt = performance.now();
+        if (event.deltaY < 0) detach();
+      };
+      const onTouchStart = (event: TouchEvent) => {
+        touchLastY = event.touches?.[0]?.clientY ?? null;
+        lastScrollInputAt = performance.now();
+      };
+      const onTouchMove = (event: TouchEvent) => {
+        lastScrollInputAt = performance.now();
+        const y = event.touches?.[0]?.clientY;
+        if (typeof y === "number" && touchLastY !== null) {
+          const dy = y - touchLastY;
+          touchLastY = y;
+          // 手指向下拖 = 内容向上滚，脱离底部；手指向紧缩向上拖（滑向底部）不退出 pinned。
+          if (dy > 2) detach();
+          return;
+        }
+        detach();
+      };
+      const onTouchEnd = () => {
+        touchLastY = null;
       };
       const onKey = (event: KeyboardEvent) => {
+        lastScrollInputAt = performance.now();
         if (
-          [
-            "ArrowUp",
-            "ArrowDown",
-            "PageUp",
-            "PageDown",
-            "Home",
-            "End",
-            " ",
-          ].includes(event.key)
-        )
-          release();
+          event.key === "ArrowUp" ||
+          event.key === "PageUp" ||
+          event.key === "Home" ||
+          (event.key === " " && event.shiftKey)
+        ) {
+          detach();
+        }
       };
       const onPointer = (event: PointerEvent) => {
-        // 按在滚动条上（视口自己，不是里面的消息）= 要拖着翻。
-        if (event.target === element) release();
+        lastScrollInputAt = performance.now();
+        // 按在滚动条上（视口自己，不是里面的消息）= 拖动滚动条脱离底部。
+        if (event.target === element) detach();
       };
-      /*
-       * 干活卡点开 / 收起是人的动作，而且是「会改变内容高度」的点击：在 content 的捕获阶段处理——先于 React
-       * 根上冒泡派发的委托 click、也先于随后那次布局提交。
-       * 1) 记 touchedAt：收起那一帧内容矮 ~65px（实测 1280/420 两个视口都是），grew<0 走到下面 §88.1 的
-       *    补留白分支时 recentlyTouched 成立——缩掉的高度不再存成留白。busy 期间 releaseRef 一路
-       *    `skip:busy` 拒收，存进去就一直挂到回合结束（实测 gap 从展开前 ~156 变成 220、+1.9s 不变）。
-       *    不补留白，浏览器这一帧直接把 scrollTop 夹小，底边回到正常间距。展开是 grew>0，本来就不走
-       *    补留白分支；记 touched 只是让它也按「人刚动过」对待。
-       * 2) §94.6 的 floor 还撑着时，收起的变矮本来由「跟着变」的留白在同一布局里让出——这里在布局之前
-       *    把它冻成渲染高度（退出 floor、留白固定）。不能删：删掉这一列立刻矮一截、画面先跳一下；冻住
-       *    则这一帧布局原样，随后的 grew<0 走正常路径由浏览器夹 scrollTop。没有 floor（固定留白 / 没有
-       *    留白）时什么都不用做。干活卡已完成的 .chat-work-done 也带这个类，同样无害地走到这里。
-       */
-      let busyReleaseTimer = 0;
-      const cancelBusyRelease = () => {
-        window.clearTimeout(busyReleaseTimer);
-        busyReleaseTimer = 0;
+      const onDetachEvent = () => {
+        detach();
       };
-      const scheduleBusySlackRelease = () => {
-        cancelBusyRelease();
-        if (
-          !s.busy ||
-          s.holdBlank ||
-          s.anchorHold ||
-          s.releasing ||
-          s.slack <= 1
-        )
-          return;
-        busyReleaseTimer = window.setTimeout(() => {
-          busyReleaseTimer = 0;
-          if (
-            s.busy &&
-            !s.holdBlank &&
-            !s.anchorHold &&
-            !s.releasing &&
-            s.slack > 1
-          )
-            releaseRef.current?.();
-        }, BUSY_SLACK_SETTLE_MS);
-      };
-      const onWorkCardToggle = (event: Event) => {
+      const rootEl = element.parentElement;
+      const onRootClick = (event: Event) => {
         const target = event.target;
-        if (!(target instanceof Element) || !target.closest(".chat-work-card"))
-          return;
-        touchedAt = performance.now();
-        cancelBusyRelease();
-        if (s.releasing) {
-          window.cancelAnimationFrame(releaseFrame);
-          s.releasing = false;
-        }
-        const el = slack.current;
-        if (s.floor !== null && el) setSlack(el.offsetHeight);
-      };
-      /*
-       * 上一次看到的位置：滚动事件、每次 ResizeObserver 回调之后更新。内容变矮被浏览器夹回去的那一帧，这里还是
-       * 夹之前的数（滚动事件要到下一帧才来）。
-       */
-      const seen = { top: element.scrollTop, atBottom: true };
-      let lastHeight = content.offsetHeight;
-      let lastClient = element.clientHeight;
-      /*
-       * 上一次量到的列宽。宽度变了 = 整列重新换行（拖右栏把手、收左栏、缩窗口、开详情列），§94.6 的「总高度不变」
-       * 就不成立了（DESIGN.md §106）。
-       *
-       * floor / 留白按的是**上一次换行**的高度：拖窄几像素，文字多折两行，floor 抬上去；拖回来，行数回到原样，
-       * floor 却降不下来（min-height 撑着，offsetHeight 永远等于 floor，elastic 里 `s.floor === height` 直接返回），
-       * 差额全变成最后一条下面的留白，滚动容器又按「跟着底部」把 scrollTop 落在新的最底——人看到的是一整屏空白
-       * 被当成「底部」（1280 宽、右栏 380→500→380 实测：内容 6362 → 7749px、留白 1388px、视口里一条消息都没有）。
-       *
-       * 换行不是「内容多了 / 少了」，不该由留白来接：把 floor 与留白一起收掉、同步 lastHeight（下一帧的 grew
-       * 才不会算错），位置交回「贴底 / 浏览器的滚动锚定」。返回 true 表示这一帧的高度差来自换行，不是内容增减。
-       */
-      const roundHalf = (value: number) => Math.round(value * 2) / 2;
-      const innerWidthOf = (node: HTMLElement): number => {
-        const cs = getComputedStyle(node);
-        const pl = Number.parseFloat(cs.paddingLeft) || 0;
-        const pr = Number.parseFloat(cs.paddingRight) || 0;
-        return roundHalf(Math.max(0, node.clientWidth - pl - pr));
-      };
-      let layoutWidth = innerWidthOf(content);
-      let layoutClientWidth = content.clientWidth;
-      /*
-       * 新的一轮刚对齐（标记还在）：这一刻的宽度变化不是「拖把手 / 缩窗口」，是滚动条出现 / 消失那几像素。
-       * 拿掉留白会把刚对齐好的位置顶回去（§94.7：目标 1/3 会被夹回底部），所以标记在的时候只同步宽度。
-       */
-      const anchoring = () =>
-        content.querySelector('[data-scroll-anchor="true"]') !== null;
-      const reflowed = (measuredInlineWidth?: number) => {
-        const clientWidth = content.clientWidth;
-        const width =
-          measuredInlineWidth !== undefined
-            ? roundHalf(measuredInlineWidth)
-            : clientWidth !== layoutClientWidth
-              ? innerWidthOf(content)
-              : layoutWidth;
-        if (width === layoutWidth && clientWidth === layoutClientWidth)
-          return false;
-        layoutWidth = width;
-        layoutClientWidth = clientWidth;
-        if (!anchoring() && (s.floor !== null || s.slack > 0)) setSlack(0);
-        lastHeight = content.offsetHeight;
-        return true;
-      };
-      /*
-       * 换行之后人还贴着底部：同一帧就贴回去。滚动容器自己也会贴（它的 handleResize → scrollToEnd），但排在
-       * 下一帧的 rAF 里，中间那一帧会先画「最后一条掉到折线下面」。只在本来就在底部、不在恢复 / 对齐某一轮时动手。
-       */
-      /*
-       * instant（流式回答中 s.busy）：markdown 一块一块整块提交，一帧能长 100~230px。平滑追要 ~1.5s、
-       * 每来一块又重新起一次 —— 实测就是底边先砸下去再往回漂的「乱跳」（work-card-jump 基线：每 ~2s 一次
-       * ~230px 的向下跳，接着一帧缩回 ~105px 的二次布局）。忙的时候块本来就在一帧里整块落地，同一帧直接
-       * 贴到底读起来只是「流式多长了一块」，看不见中间位置。不忙时长出来的多是错误卡 / 缓冲消息一整条，
-       * 直接跳会把历史搬走 >150px，仍走平滑。换行那一支（reflowed）不传 instant：整列重新折行时内容末尾
-       * 没长，平滑过去才对得上。
-       *
-       * 必须是 "instant" 不能是 "auto"：视口带着 `.scroll-smooth`（scroll-behavior:smooth），"auto" 会走
-       * 元素的 computed scroll-behavior 解析回平滑——实测（work-card-jump fix1）同一帧的 scrollTo(auto)
-       * 不但没贴住，还在已飞行的平滑滚动上重启一次，底边照样砸 233px。"instant" 跳过 CSS 解析、同时
-       * 掐断还在飞的那次平滑滚动。
-       */
-      const stickToBottom = (instant = false) => {
-        if (held()) return;
-        const max = element.scrollHeight - element.clientHeight;
-        if (element.scrollTop >= max - 1) return;
-        element.scrollTo({
-          top: max,
-          behavior: reduceMotion || instant ? "instant" : "smooth",
-        });
-      };
-      const look = () => {
-        reflowed();
-        seen.top = element.scrollTop;
-        seen.atBottom =
-          element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
-        s.lastTop = seen.top;
-        s.lastAtBottom = seen.atBottom;
-        s.lastRows =
-          content.offsetHeight - blankArea(content, s.slack, getSpacer());
-        if (s.slack <= 1) s.holdBlank = false;
-        elastic();
-      };
-      /*
-       * §94.6 钉在底部、没人动、不在恢复 / 收留白时，留白改成「跟着变」：这一列最小高度 = 现在的总高度，留白 flex-grow
-       * 填满。之后消息行变矮（干活卡收起、工具那一行换成结果、开场一句收进卡片）、变高（回答多出一行、新的一行进来）都在
-       * 同一次布局里由留白补上 / 让出，不管那次布局是在一帧里还是被谁在任务里量出来的——总高度不变，scrollTop 不被夹，
-       * 画面不动。行长到超出这块地方时这一列照常变高，滚动容器跟着底部往上长，下一次 look 再把最小高度抬上去。
-       * 条件一不满足（人往上翻了、在恢复、在收留白）：按现在的实际高度冻成固定的（画面不变），交回原来的规则。
-       */
-      /*
-       * 接入快照把整段消息换掉的那一刻：内容列一下矮了几万像素（实测 50k→5.8k），§94.6 的 floor
-       * 还按旧总高撑着，留白 flex 涨到几十屏（实测 84k px），贴底的视口整屏落在留白里——按 §93.3
-       * 的 480px/s 收要几分钟，人看着就是「发消息全消失、空白半天」。两块留白加起来占满一屏
-       * 不是「垫在最后一条下面」是「盖住全部内容」：当场收掉（视口在留白上面时收掉也不动画面），
-       * 塌缩后的真实尾部露出来。收掉时把正在走的 §93.3 释放也停掉——不然下一帧它又把剩下的
-       * 几十屏留白写回去。
-       *
-       * floor 模式下内容总高不变：内容 ResizeObserver 与滚动事件都不会来，elastic() 根本跑不到——
-       * 这个判定由留白自己的 ResizeObserver（slackSizes）在撑大的那一帧调用，elastic / releaseRef
-       * 的入口只是多一重防线。
-       */
-      const dropOversizedBlank = () => {
-        const spacer = getSpacer();
-        const spacerPx = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
-        if (!blankCoversViewport(s.slack + spacerPx, element.clientHeight))
-          return false;
-        window.cancelAnimationFrame(releaseFrame);
-        if (spacer && spacerPx > 0) {
-          spacer.hidden = true;
-          spacer.style.height = "0px";
-          spacer.style.marginTop = "";
-        }
-        setSlack(0);
-        s.releasing = false;
-        lastHeight = content.offsetHeight;
-        return true;
-      };
-      const elastic = () => {
-        if (dropOversizedBlank()) return;
-        const el = slack.current;
-        if (!el || el.parentElement?.parentElement !== content) return;
-        const spacer = getSpacer();
-        const ok =
-          s.busy &&
-          seen.atBottom &&
-          !s.releasing &&
-          !active() &&
-          !s.restore &&
-          performance.now() - touchedAt > 400 &&
-          element.scrollHeight > element.clientHeight &&
-          // 滚动容器正把某一轮对齐在顶上（有它的 spacer）：它自己算高度，这里不插手。
-          (!spacer || spacer.hidden);
-        if (!ok) {
-          if (s.floor !== null) setSlack(s.slack);
-          return;
-        }
-        const height = content.offsetHeight;
-        if (s.floor === height) return;
-        if (s.floor === null) {
-          // 固定 → 跟着变：留白现在多高，跟着变以后还是多高（floor = 现在的总高度）。
-          const gap = rowGapOf(content);
-          el.style.display = "block";
-          el.style.marginTop = `${-gap}px`;
-          el.style.height = "0px";
-          el.style.flex = "1 0 0px";
-        }
-        s.floor = height;
-        content.style.minHeight = `max(100%, ${height}px)`;
-        lastHeight = content.offsetHeight;
-      };
-      s.lastTop = element.scrollTop;
-      /*
-       * 高度变了（图片加载完撑高、晚到的小行）：ResizeObserver 的回调在布局之后、绘制之前跑，这里当场回到底部，
-       * 这一帧画出来就已经在底部。等到下一帧（requestAnimationFrame）再回去，慢设备上会先画一帧「被顶上去」
-       * ——实测切到带图片的长对话，图片加载那一下离底部 488px 停了一两帧。
-       *
-       * 钉底部的那段时间过了以后（§88.1）：人在底部看着，底下的东西变矮了（干活卡收起、工具那一行换成结果、
-       * 「思考中」先走一帧、下一条还没到），浏览器把 scrollTop 夹小——整段聊天往下挪一截，下一帧滚动容器再滚回来，
-       * 看着就是「往回跳一下」。这里在同一帧把少掉的高度放到最后一条下面当留白、scrollTop 放回去，屏幕上不动；
-       * 后来长出来的内容先填这块留白，人往上翻到看不见它时悄悄收掉。
-       */
-      const pinNow = (entries?: readonly ResizeObserverEntry[]) => {
-        /*
-         * 换行（宽度或 padding-inline 变了）：这一帧的高度差是整列重新折行算出来的，不是内容长了 / 少了——
-         * 不补留白，只在原本贴底时同帧用 instant 贴回去，确保 scrollTop 同步落底、look() 保持 seen.atBottom=true，
-         * 不出现「先跳回更早对话、再平滑滑回底部」的回跳动画（§106）。翻在中间那一半交给浏览器滚动锚定。
-         */
-        const entry = entries?.[entries.length - 1];
-        const nextInline =
-          entry?.contentBoxSize?.[0]?.inlineSize ?? entry?.contentRect?.width;
-        if (reflowed(nextInline)) {
-          if (active()) {
-            // 打开对话的那几秒（§83）：照旧由 settle 决定落点（回到底部 / 回到上次那一条）。
-            window.cancelAnimationFrame(frame);
-            settle();
-          } else if (seen.atBottom && !s.restore && !anchoring()) {
-            stickToBottom(true);
-          }
-          look();
-          return;
-        }
-        const height = content.offsetHeight;
-        const grew = height - lastHeight;
-        lastHeight = height;
-        if (active()) {
-          window.cancelAnimationFrame(frame);
-          settle();
-          look();
-          return;
-        }
-        const max = element.scrollHeight - element.clientHeight;
-        const recentlyTouched = performance.now() - touchedAt < 400;
-        if (s.releasing && grew > 0) {
-          // 正在收回临时留白期间又有新内容长出来：立即停掉收回动画，交给下面的吃留白分支无缝衔接。
-          window.cancelAnimationFrame(releaseFrame);
-          cancelBusyRelease();
-          s.releasing = false;
-        }
-        if (s.releasing) {
-          // 正在收留白（§93.3）：变矮是我们自己收的，不补回去。
-        } else if (grew > 0 && s.slack > 0) {
-          // 长出来的先填留白：总高度不变，画面不动。
-          cancelBusyRelease();
-          const use = Math.min(s.slack, grew);
-          setSlack(s.slack - use);
-          lastHeight -= use;
-          // 全吃进去了：滚动容器要是已经先「跟着底部」滚了这一截（它比我们早动），放回去，画面不动（§94）。
-          if (use === grew && seen.atBottom && element.scrollTop !== seen.top) {
-            scrollTopInstant(seen.top);
-          } else if (
-            grew > use &&
-            seen.atBottom &&
-            !s.restore &&
-            !anchoring()
-          ) {
-            stickToBottom(s.busy);
-          }
-        } else if (grew > 0 && seen.atBottom && !s.restore && !anchoring()) {
-          cancelBusyRelease();
-          stickToBottom(s.busy);
-        } else if (
-          s.busy &&
-          grew < 0 &&
-          !recentlyTouched &&
-          seen.atBottom &&
-          seen.top > max + 1 &&
-          element.scrollTop >= max - 1
-        ) {
-          const lost = Math.min(seen.top - max, element.clientHeight);
-          setSlack(s.slack + lost);
-          lastHeight += lost;
-          element.scrollTop = seen.top;
-          scheduleBusySlackRelease();
-        }
-        look();
-      };
-      const onScroll = () => {
-        /*
-         * 换行引起的那一下（浏览器夹小 scrollTop / 内容变矮）不是「内容变少了」：留白已经收掉、位置由
-         * pinNow 的贴底负责，这里不能再按 §88.1 补一块回去（§106）。
-         */
-        if (reflowed()) {
-          look();
-          save();
-          return;
-        }
-        /*
-         * 浏览器自己夹小 scrollTop 的那一下（§88.1）：钉在底部、没人动，内容变矮被夹回去——有时 React 提交里有人量了
-         * 一下布局，夹在 ResizeObserver 之前就发生了，等它来时「上一次的位置」已经是夹过的数。滚动事件在下一次绘制
-         * 之前到：在这里把少掉的高度放到最后一条下面当留白、scrollTop 放回去，画出来的那一帧不动。
-         * 输入框从多行回落单行让视口变高（clientHeight > lastClient）同样会夹小 scrollTop，那不是内容变矮，不能补留白。
-         */
-        const max = element.scrollHeight - element.clientHeight;
         if (
-          s.busy &&
-          seen.atBottom &&
-          !s.releasing &&
-          !active() &&
-          !s.restore &&
-          element.clientHeight === lastClient &&
-          performance.now() - touchedAt > 400 &&
-          element.scrollTop < seen.top - 1 &&
-          element.scrollTop >= max - 1
+          target instanceof Element &&
+          target.closest(
+            '[data-slot="message-scroller-button"][data-direction="end"]',
+          )
         ) {
-          const back = seen.top;
-          setSlack(
-            s.slack + Math.min(back - element.scrollTop, element.clientHeight),
-          );
-          element.scrollTop = back;
-          lastHeight = content.offsetHeight;
-          scheduleBusySlackRelease();
+          s.restore = null;
+          s.anchorHold = false;
+          if (s.slackPx > 0) setSlack(0);
+          s.pinned = true;
+          lastScrollInputAt = performance.now();
+          syncPinnedAttr();
         }
-        look();
-        /*
-         * 留白整个在视口下面（人往上翻了）：收掉，看得见的东西一点都不动。滚动容器的 spacer 也是：
-         * 它只在「对齐某一轮 / 回到底部」时才重算，人翻走成 free-scrolling 后没人再管它——按它自己
-         * v(0) 的样子在这里收掉（下一次它要写 spacer 时照样写回来）。
-         */
-        let spacerPx = 0;
-        {
-          const spacer = getSpacer();
-          spacerPx = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
-          const blank = s.slack + spacerPx;
-          if (
-            blank > 0 &&
-            element.scrollTop + element.clientHeight <
-              element.scrollHeight - blank - 1
-          ) {
-            if (spacer && spacerPx > 0) {
-              spacer.hidden = true;
-              spacer.style.height = "0px";
-              spacer.style.marginTop = "";
-              spacerPx = 0;
-            }
-            setSlack(0);
-            lastHeight = content.offsetHeight;
-          }
-        }
-        // 落定在底部、底下还留着空（§93.3 当时人不在底部没收成）：接着收。
-        // 常规无留白滚动时跳过调用，避免每帧触发 release 判定与祖先 dataset.cbRelease 脏写。
-        if (s.slack > 1 || spacerPx > 0 || s.floor !== null) {
-          releaseRef.current?.(true);
-        }
-        save();
       };
-      /*
-       * 记下现在的位置（§88.3）：恢复完成之后才记（恢复中的样子是过渡的）；在底部记「在底部」+ 底下的空白，
-       * 不在底部记第一条看得见的消息和它离顶边多远。滚动时合并 200ms 记一次，离开对话时再记一次。
-       */
+
       let saveTimer: ReturnType<typeof setTimeout> | null = null;
       const write = () => {
         saveTimer = null;
-        // 已经从页面上拿掉了（量出来全是 0）：不记，留着上一次记的。
         if (
           !scrollKey ||
           s.hydrating ||
           !element.isConnected ||
           element.clientHeight === 0
-        )
+        ) {
           return;
+        }
         const gap =
           element.scrollHeight - element.scrollTop - element.clientHeight;
         if (gap <= 4) {
-          const spacer = getSpacer();
-          const spacerHeight =
-            spacer && !spacer.hidden ? spacer.offsetHeight : 0;
           setThreadUi(scrollKey, {
             scroll: {
               atBottom: true,
-              spacer: spacerHeight + s.slack,
+              spacer: s.slackPx,
               anchor: null,
               offset: 0,
               at: Date.now(),
@@ -1755,124 +1230,33 @@ function SettleAtEnd({
         saveTimer = null;
         write();
       };
-      let releaseFrame = 0;
-      let touchedRetry = 0;
-      releaseRef.current = (fromScroll = false) => {
-        const setReleaseState = (reason: string) => {
-          if (element.dataset.cbRelease !== reason) {
-            element.dataset.cbRelease = reason;
-          }
-        };
-        const why = (reason: string) => {
-          setReleaseState(reason);
-          return false;
-        };
-        const spacer = getSpacer();
-        const spacerHeight = spacer && !spacer.hidden ? spacer.offsetHeight : 0;
-        const busyHold = s.busy && (s.holdBlank || spacerHeight > 0);
-        if (busyHold || s.releasing || s.restore || active())
-          return why(
-            `skip:${busyHold ? "busy" : s.releasing ? "releasing" : s.restore ? "restore" : "settling"}`,
-          );
-        // 「显示更早的消息」垫的留白：人动滚动之前不收（收了正在看的行就落到底部，QA #519 r2 P2-1）。
-        if (s.anchorHold) return why("skip:anchor");
-        const total = spacerHeight + s.slack;
-        // 占满一屏的空白不走 §93.3 的逐帧收（480px/s 对几十屏要几分钟）：当场收掉露出真实尾部。
-        if (dropOversizedBlank()) return why("drop:covers-viewport");
-        if (performance.now() - touchedAt < 400) {
-          // 人刚滚完：等手停下来再试一次（滚到底部那一下正好撞上 touched，空白就永远留下了）。
-          window.clearTimeout(touchedRetry);
-          touchedRetry = window.setTimeout(() => releaseRef.current?.(), 420);
-          return why("touched");
+
+      const onScroll = () => {
+        const currentTop = element.scrollTop;
+        const gap = element.scrollHeight - currentTop - element.clientHeight;
+        if (
+          s.slackPx > 0 &&
+          currentTop + element.clientHeight <
+            element.scrollHeight - s.slackPx - 1
+        ) {
+          setSlack(0);
         }
-        /*
-         * 离真正的内容末尾多远：两块留白（spacer / slack）自己不算距离。上一轮对齐到视口 1/3 的那一轮底下
-         * 一定留着 spacer，把它算进 gap 就永远 >4——以前锚定的那一轮收空在这里被全部拒掉（§93.3 从没生效）。
-         */
-        const gap = contentGap(
-          element.scrollHeight,
-          element.scrollTop,
-          element.clientHeight,
-          total,
-        );
-        if (gap > 4) {
-          // 滚动期间若已标为 gap:* 不逐帧覆写变化的像素值，避免把整个滚动视口后代反复标脏。
-          const current = element.dataset.cbRelease;
-          return why(
-            fromScroll && current?.startsWith("gap:")
-              ? current
-              : `gap:${Math.round(gap)}`,
-          );
+        if (
+          !s.pinned &&
+          !s.restore &&
+          !s.anchorHold &&
+          !held() &&
+          gap <= 4 &&
+          (currentTop > seenTop + 0.5 ||
+            performance.now() - lastScrollInputAt < 1500)
+        ) {
+          s.pinned = true;
         }
-        if (total <= 1) {
-          // Even a zero-height elastic slack can retain the previous content min-height.
-          // Once idle, a collapsed row must not recreate that floor on the next resize.
-          if (!s.busy && s.floor !== null) setSlack(0);
-          return why("none");
-        }
-        cancelBusyRelease();
-        const busyRelease = s.busy;
-        s.releasing = true;
-        setReleaseState(`release:${Math.round(total)}`);
-        // 1) 滚动容器的空挪进留白（同一帧），2) 有 spacer 时让它改成跟着底部（spacer 清零，位置不变）。
-        setSlack(total);
-        if (spacerHeight > 0) {
-          const top = element.scrollTop;
-          scrollToEnd({ behavior: "instant" });
-          scrollTopInstant(top);
-        }
-        const finish = (remaining = 0) => {
-          setSlack(remaining);
-          lastHeight = content.offsetHeight;
-          s.releasing = false;
-          look();
-          save();
-        };
-        if (reduceMotion) {
-          finish();
-          return true;
-        }
-        // 3) Integrate each rendered frame. Catching up to a 300ms wall-clock ease after a slow
-        // Markdown/layout frame used to remove 70–120px at once and clamp scrollTop backwards.
-        let remaining = total;
-        let previous = performance.now();
-        const step = (now: number) => {
-          if (
-            (s.busy && s.holdBlank) ||
-            (!busyRelease && s.busy) ||
-            performance.now() - touchedAt < 400
-          ) {
-            // A new reply or the reader scrolling owns the viewport now. Preserve this frame's
-            // remaining blank rather than snapping it to zero underneath them.
-            finish(s.slack);
-            return;
-          }
-          remaining = nextBlankHeight(remaining, now - previous);
-          previous = now;
-          if (remaining === 0) {
-            finish();
-            return;
-          }
-          setSlack(remaining);
-          lastHeight = content.offsetHeight;
-          releaseFrame = window.requestAnimationFrame(step);
-        };
-        releaseFrame = window.requestAnimationFrame(step);
-        return true;
+        seenTop = currentTop;
+        syncPinnedAttr();
+        save();
       };
-      /*
-       * 行进来 / 出去（新的一行、开场一句收进卡片、「思考中」换成回答）：以前在 MutationObserver 的微任务里当场读
-       * content.offsetHeight（§94），流式时每个字一次强制同步布局（4x 降速 731ms，FIX-PLAN 4b）。
-       * 现在高度变化全部交给下面的 ResizeObserver(pinNow)：它在同一帧布局之后、绘制之前回调，留白照样在
-       * 这一帧吃掉 / 补上，屏幕上看不到中间那一跳，但读的是已经算好的布局，不再强制。这里只排 pin（rAF）。
-       */
-      const mutations = new MutationObserver(pin);
-      // characterData：回答一个字一个字往外冒时改的是文字节点本身（不是加减节点）——多出一行也要当场吃留白（§94.6，390 实测 20px）。
-      mutations.observe(content, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
+
       const sizes =
         typeof ResizeObserver === "undefined"
           ? null
@@ -1880,92 +1264,59 @@ function SettleAtEnd({
       if (sizes) {
         try {
           sizes.observe(content, { box: "border-box" });
+          sizes.observe(element, { box: "border-box" });
         } catch {
           sizes.observe(content);
+          sizes.observe(element);
         }
       }
-      /*
-       * 「跟着变」（§94.6）里消息行变矮由留白的 flex 在同一次布局里吃掉：这一列总高不变，上面的观察器
-       * 不动、scrollTop 不变、滚动事件不来——pinNow / onScroll 都看不见这次变矮，留白就一直挂着
-       * （2026-11-06 实测：点开「思考」再折叠，下面的空白留下了）。看留白自己的高：它长高 = 有行矮了
-       * 被吃进来——叫 release 照常判定；在底部、没动过、不忙它就收，条件不满足它自己拒，什么都不动。
-       */
-      const slackSizes =
-        typeof ResizeObserver === "undefined" || !slack.current
-          ? null
-          : new ResizeObserver(() => {
-              // 留白一下涨到占满一屏（floor 撑着旧总高、挂载窗塌缩）：当场收掉，别走逐帧释放的判定。
-              if (dropOversizedBlank()) return;
-              if (s.busy) scheduleBusySlackRelease();
-              else releaseRef.current?.();
-            });
-      if (slack.current) slackSizes?.observe(slack.current);
-      /*
-       * 视口变矮（输入框打字长高、加了小块 / 附件、手机键盘弹出）时人在底部看着：同一帧把 scrollTop 加上变矮的量，
-       * 最后一行留在输入框上面（§94）。滚动容器自己也会回到底部，但要等到下一帧——中间那一帧最后一行被盖住一截。
-       * 只在它「跟着底部」（没有 spacer）时做：对齐着某一轮时它会把那一轮留在顶上，这里不插手。
-       */
-      const viewportSizes =
-        typeof ResizeObserver === "undefined"
-          ? null
-          : new ResizeObserver(() => {
-              const height = element.clientHeight;
-              const shrink = lastClient - height;
-              lastClient = height;
-              const spacer = getSpacer();
-              if (
-                shrink > 0 &&
-                seen.atBottom &&
-                !active() &&
-                !s.restore &&
-                (!spacer || spacer.hidden)
-              ) {
-                scrollTopInstant(element.scrollTop + shrink);
-              }
-              look();
-            });
-      viewportSizes?.observe(element);
-      element.addEventListener("wheel", release, { passive: true });
-      element.addEventListener("touchmove", release, { passive: true });
-      element.addEventListener("keydown", onKey);
-      element.addEventListener("pointerdown", onPointer);
-      content.addEventListener("click", onWorkCardToggle, true);
-      element.addEventListener("scroll", onScroll, { passive: true });
+
       /*
        * 「显示更早的消息」恢复锚点时底下不够滚（内容原本不够一屏）：在最后一条下面垫出差的那一截，
        * 「最底」就正好是正在看的行原来的位置（QA #519 r2 P2-1）。同步处理：补行方马上再恢复一次锚点。
-       * 高度记成垫完的，ResizeObserver 不会把这截当成「长出来的」再吃掉。
        */
       const onAnchorSlack = (event: Event) => {
         const px = (event as CustomEvent<number>).detail;
         if (!(typeof px === "number" && px > 0)) return;
         event.preventDefault();
-        setSlack(s.slack + px);
+        setSlack(s.slackPx + px);
         s.anchorHold = true;
-        lastHeight = content.offsetHeight;
+        s.pinned = false;
+        syncPinnedAttr();
       };
+
+      element.addEventListener("wheel", onWheel, { passive: true });
+      element.addEventListener("touchstart", onTouchStart, { passive: true });
+      element.addEventListener("touchmove", onTouchMove, { passive: true });
+      element.addEventListener("touchend", onTouchEnd, { passive: true });
+      element.addEventListener("touchcancel", onTouchEnd, { passive: true });
+      element.addEventListener("keydown", onKey);
+      element.addEventListener("pointerdown", onPointer);
+      element.addEventListener("scroll", onScroll, { passive: true });
       element.addEventListener(TAIL_ANCHOR_SLACK_EVENT, onAnchorSlack);
+      element.addEventListener(DETACH_PIN_EVENT, onDetachEvent);
+      element.addEventListener(COMPOSER_INSET_SYNC_EVENT, pinNow);
+      rootEl?.addEventListener("click", onRootClick);
+
+      pinNow();
+
       return () => {
-        element.removeEventListener(TAIL_ANCHOR_SLACK_EVENT, onAnchorSlack);
-        if (s.floor !== null) setSlack(s.slack);
+        pinActionRef.current = null;
         if (saveTimer !== null) clearTimeout(saveTimer);
-        cancelBusyRelease();
-        window.clearTimeout(touchedRetry);
-        window.cancelAnimationFrame(releaseFrame);
-        releaseRef.current = null;
-        s.releasing = false;
         finalWrite.current = null;
-        window.cancelAnimationFrame(frame);
-        mutations.disconnect();
         sizes?.disconnect();
-        slackSizes?.disconnect();
-        viewportSizes?.disconnect();
-        element.removeEventListener("wheel", release);
-        element.removeEventListener("touchmove", release);
+        element.removeEventListener("wheel", onWheel);
+        element.removeEventListener("touchstart", onTouchStart);
+        element.removeEventListener("touchmove", onTouchMove);
+        element.removeEventListener("touchend", onTouchEnd);
+        element.removeEventListener("touchcancel", onTouchEnd);
         element.removeEventListener("keydown", onKey);
         element.removeEventListener("pointerdown", onPointer);
-        content.removeEventListener("click", onWorkCardToggle, true);
         element.removeEventListener("scroll", onScroll);
+        element.removeEventListener(TAIL_ANCHOR_SLACK_EVENT, onAnchorSlack);
+        element.removeEventListener(DETACH_PIN_EVENT, onDetachEvent);
+        element.removeEventListener(COMPOSER_INSET_SYNC_EVENT, pinNow);
+        rootEl?.removeEventListener("click", onRootClick);
       };
     },
   );
@@ -3718,74 +3069,6 @@ function assertNever(_item: never): null {
   return null;
 }
 
-function useSmoothSendScroll(
-  _viewport: React.RefObject<HTMLDivElement | null>,
-  newestUserMessageId: string | null,
-  opening = false,
-) {
-  const seenRef = useRef<string | null>(null);
-  const wasOpening = useRef(opening);
-
-  useLayoutEffect(() => {
-    seenRef.current = newestUserMessageId;
-    wasOpening.current = opening;
-  }, [newestUserMessageId, opening]);
-}
-
-/**
- * 历史晚到、补在上面时，正在看底部的人画面不动（CB-047）。
- *
- * 打开很长的对话时，先画的是接入快照里的尾巴（常常不满一屏，scrollTop 停在 0）；存下的整段历史晚几秒到
- * （`readThreadMessages` 4 秒截止后后台重试），并进来是补在最上面——浏览器的滚动锚定在 scrollTop 为 0 时
- * 不起作用，画面就停在最上面，离底部两万 px。这里记着「人是不是在底部」（滚动时更新），
- * 第一行换了（前面补进来了 / 换了对话）而人在底部时，画完那一刻直接回到底部（不平滑，不算跳）。
- * 人往上翻着看的时候不动，交给浏览器的滚动锚定。
- *
- * 两个「别动手」的时机（2026-10-22）：
- * - 还没收到过任何滚动事件时不知道人在哪，就不动——以前一开始就算「在底部」，打开一段上次停在中间的对话，
- *   第一批补上来的行（长对话首屏分几帧补齐）会把位置钉到底部一下，再被 §88.3 的恢复拽回去，闪一下；
- * - 还在「打开」窗口里（`opening`）时位置归 `SettleAtEnd`（回到底部 / 回到上次那一条），这里再钉一次是抢。
- */
-function useKeepBottomOnPrepend(
-  viewport: React.RefObject<HTMLDivElement | null>,
-  firstId: string | null,
-  opening = false,
-) {
-  const atBottom = useRef<boolean | null>(null);
-  const seen = useRef<string | null>(null);
-  useElementEvent(
-    viewport,
-    "scroll",
-    () => {
-      const element = viewport.current;
-      if (!element) return;
-      atBottom.current =
-        element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-    },
-    { passive: true },
-    objectKey(viewport),
-  );
-  useLayoutEffect(() => {
-    const element = viewport.current;
-    const previous = seen.current;
-    seen.current = firstId;
-    if (
-      !element ||
-      opening ||
-      previous === null ||
-      firstId === null ||
-      previous === firstId ||
-      atBottom.current !== true
-    )
-      return;
-    if (typeof element.scrollTo === "function") {
-      element.scrollTo({ top: element.scrollHeight, behavior: "instant" });
-    } else {
-      element.scrollTop = element.scrollHeight;
-    }
-  }, [firstId, viewport, opening]);
-}
-
 /**
  * 历史里最后一轮是不是「人说了、后面什么都没有」——刷新之后错误卡和「重试」据此重建（P1，2026-10-20）。
  *
@@ -4344,7 +3627,6 @@ function ChatTranscriptImpl({
    * 「切个机器人 / 从设置回来，整段对话像发了一次消息一样刷新一次」。
    */
   const opening = useOpeningWindow(hydrating);
-  useSmoothSendScroll(viewportRef, newestUserMessageId, opening);
   /*
    * CB-025：长对话首屏只挂尾巴再分批往前补。补行时的贴底 / 不跳由 useTailFirstMount 自己管
    * （原生 overflow-anchor，补完钉一次底；jank P1-2）。keep-bottom 只盯真正的历史 prepend
@@ -4508,7 +3790,6 @@ function ChatTranscriptImpl({
     }
   }
   const firstMountedVisible = mountedRows.length > 0;
-  useKeepBottomOnPrepend(viewportRef, items[0]?.id ?? null, opening);
 
   /* One rule for both kinds of row — see `anchorRowIds`, which is where it is written down. */
   /*
@@ -4595,6 +3876,7 @@ function ChatTranscriptImpl({
         `[data-message-id="${CSS.escape(owner.id)}"]`,
       );
       if (!row) return false;
+      viewportRef.current?.dispatchEvent(new Event(DETACH_PIN_EVENT));
       smoothScrollIntoView(row, { block: "center" });
       row.classList.add("is-activity-jump");
       setTimeout(() => row.classList.remove("is-activity-jump"), 1600);
@@ -4668,15 +3950,16 @@ function ChatTranscriptImpl({
   return (
     <TtsReadyContext.Provider value={ttsReady}>
       <MessageScrollerProvider
-        autoScroll
+        autoScroll={false}
         scrollMargin={anchorOffset}
         scrollPreviousItemPeek={48}
       >
         <MessageScroller>
           <MessageScrollerViewport
             ref={viewportRef}
-            // 补历史时靠浏览器原生滚动锚定保位（jank P1-2）；chat-tail 那一格单独关掉（§94.6）。
-            className="scroll-smooth motion-reduce:scroll-auto [overflow-anchor:auto]"
+            preserveScrollOnPrepend={false}
+            // 补历史时靠浏览器原生滚动锚定保位（jank P1-2）；贴底态由 SettleAtEnd 维护 data-cb-pinned="true" 关闭原生锚定。
+            className="[overflow-anchor:auto]"
           >
             <MessageScrollerContent
               aria-busy={busy}
