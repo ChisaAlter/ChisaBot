@@ -253,12 +253,56 @@ export function decisionListOptions(
   });
 }
 
+export const TASK_CENTER_ACTIVE_POLL_MS = 5_000;
+export const TASK_CENTER_IDLE_POLL_MS = 60_000;
+
+const ACTIVE_SNAPSHOT_STATUSES = [
+  "queued",
+  "planning",
+  "running",
+  "waiting_dependencies",
+  "waiting_approval",
+  "paused",
+] as const;
+
+export function hasActiveTaskCenterWork(
+  snapshot: TaskCenterSnapshot | undefined,
+): boolean {
+  if (!snapshot) return false;
+  if ((snapshot.decisionCounts?.pending ?? 0) > 0) return true;
+  if (
+    Array.isArray(snapshot.outbox) &&
+    snapshot.outbox.some((decision) => decision.status === "pending")
+  ) {
+    return true;
+  }
+  if (snapshot.counts) {
+    for (const status of ACTIVE_SNAPSHOT_STATUSES) {
+      if ((snapshot.counts[status] ?? 0) > 0) return true;
+    }
+  }
+  if (
+    Array.isArray(snapshot.tasks) &&
+    snapshot.tasks.some((task) =>
+      (ACTIVE_SNAPSHOT_STATUSES as readonly string[]).includes(task.status),
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function taskCenterSnapshotOptions(options?: { poll?: boolean }) {
   const poll = options?.poll ?? true;
   return queryOptions({
     queryKey: taskCenterKeys.snapshot,
     queryFn: ({ signal }) => taskCenterApi.snapshot(signal),
-    refetchInterval: poll ? 5_000 : false,
+    refetchInterval: poll
+      ? (query) =>
+          hasActiveTaskCenterWork(query.state.data)
+            ? TASK_CENTER_ACTIVE_POLL_MS
+            : TASK_CENTER_IDLE_POLL_MS
+      : false,
     refetchIntervalInBackground: false,
   });
 }

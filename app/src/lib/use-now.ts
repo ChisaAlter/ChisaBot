@@ -2,28 +2,74 @@ import { useRef, useState, useSyncExternalStore } from "react";
 
 /**
  * 卡片上「已用 12 秒」这类每秒走的时间共用一个时钟：整页只有一个 1 秒的 interval，
- * 第一个订阅者来时开、最后一个走时停（以前每张卡片各开一个）。
+ * 第一个订阅者来时开、最后一个走时停（以前每张卡片各开一个），标签页隐藏时暂停并在切回前台时立即 tick。
  */
 const listeners = new Set<() => void>();
 let now = Date.now();
 let timer: ReturnType<typeof setInterval> | undefined;
+let visibilityBound = false;
+
+function isDocumentHidden(): boolean {
+  return typeof document !== "undefined" && document.hidden === true;
+}
 
 function tick() {
   now = Date.now();
-  for (const listener of listeners) listener();
+  for (const listener of [...listeners]) listener();
+}
+
+function stopTimer() {
+  if (timer !== undefined) {
+    clearInterval(timer);
+    timer = undefined;
+  }
+}
+
+function startTimer() {
+  if (timer !== undefined || listeners.size === 0 || isDocumentHidden()) return;
+  now = Date.now();
+  timer = setInterval(() => {
+    if (isDocumentHidden()) {
+      stopTimer();
+      return;
+    }
+    tick();
+  }, 1000);
+}
+
+function onVisibilityChange() {
+  if (isDocumentHidden()) {
+    stopTimer();
+    return;
+  }
+  if (listeners.size === 0) return;
+  tick();
+  startTimer();
+}
+
+function ensureVisibilityListener() {
+  if (visibilityBound || typeof document === "undefined") return;
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  visibilityBound = true;
+}
+
+function teardownVisibilityListener() {
+  if (!visibilityBound || typeof document === "undefined") return;
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+  visibilityBound = false;
 }
 
 export function subscribeClock(listener: () => void): () => void {
   listeners.add(listener);
-  if (timer === undefined) {
-    now = Date.now();
-    timer = setInterval(tick, 1000);
+  ensureVisibilityListener();
+  if (!isDocumentHidden()) {
+    startTimer();
   }
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0 && timer !== undefined) {
-      clearInterval(timer);
-      timer = undefined;
+    if (listeners.size === 0) {
+      stopTimer();
+      teardownVisibilityListener();
     }
   };
 }
@@ -37,8 +83,8 @@ export function clockNow(): number {
  * 或在假定时器下开的 interval，这里把模块状态还原成刚加载时的样子。
  */
 export function resetClockForTests(): void {
-  if (timer !== undefined) clearInterval(timer);
-  timer = undefined;
+  stopTimer();
+  teardownVisibilityListener();
   listeners.clear();
   now = Date.now();
 }

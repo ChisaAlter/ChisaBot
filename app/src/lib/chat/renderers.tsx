@@ -7,12 +7,14 @@ import {
   type ReactNode,
   useContext,
   useMemo,
+  useRef,
   useSyncExternalStore,
 } from "react";
 import type { z } from "zod";
 import { useExternalConnection } from "@/hooks";
 import { client } from "@/lib/client";
 import { objectConnectionKey } from "@/lib/connection-key";
+import { useKeptVisibility } from "@/lib/kept-visible";
 import type { ContinuationView } from "../../../../shared/confirmations";
 import { continuationIsActive } from "./continuation";
 import { useConversationScope } from "./conversation-scope";
@@ -29,6 +31,8 @@ export type RegisteredToolRenderer = {
   name: string;
   match?: (toolName: string) => boolean;
   agentId?: string;
+  /** 按需懒加载占位渲染器：一旦同名真实渲染器注册即自动让位，避免首屏静态拉入重型工具组件。 */
+  placeholder?: boolean;
   /** Method syntax on purpose: each renderer narrows its own args; the registry holds them all. */
   render(props: ToolRenderProps): ReactNode;
 };
@@ -52,7 +56,14 @@ class RenderRegistry {
     };
   }
   private changed() {
-    this.snapshot = [...this.entries.values()];
+    const values = [...this.entries.values()];
+    const realNames = new Set<string>();
+    for (const entry of values) {
+      if (!entry.placeholder) realNames.add(entry.name);
+    }
+    this.snapshot = values.filter(
+      (entry) => !entry.placeholder || !realNames.has(entry.name),
+    );
     for (const listener of this.listeners) listener();
   }
 }
@@ -76,13 +87,14 @@ export function useRenderTool<S extends z.ZodType>(tool: {
   name: string;
   match?: (toolName: string) => boolean;
   agentId?: string;
+  placeholder?: boolean;
   parameters?: S;
   render: (props: ToolRenderProps<z.infer<S>>) => ReactNode;
 }) {
   const registry = useContext(Registry);
   const key = useMemo(() => Symbol(tool.name), [tool.name]);
   const connectionKey = registry
-    ? `${objectConnectionKey(registry)}:${tool.name}:${objectConnectionKey(tool.match)}:${tool.agentId === undefined ? "u" : `s:${tool.agentId}`}:${objectConnectionKey(tool.render)}`
+    ? `${objectConnectionKey(registry)}:${tool.name}:${tool.placeholder ? "p" : "r"}:${objectConnectionKey(tool.match)}:${tool.agentId === undefined ? "u" : `s:${tool.agentId}`}:${objectConnectionKey(tool.render)}`
     : false;
   useExternalConnection(connectionKey, () =>
     registry?.register(key, tool as RegisteredToolRenderer),
@@ -192,15 +204,19 @@ function InteractionCard({
   render(props: InteractionRenderProps): ReactNode;
 }) {
   const cache = useQueryClient();
+  const visibility = useKeptVisibility();
   const key = ["conversation-interaction", props.toolCallId];
   const interaction = useQuery<InteractionState>({
     queryKey: key,
     enabled: props.status !== "inProgress",
     refetchInterval: (query) =>
-      (query.state.data?.status !== "answered" && props.result === undefined) ||
-      continuationIsActive(query.state.data?.continuation)
+      visibility.get() &&
+      ((query.state.data?.status !== "answered" &&
+        props.result === undefined) ||
+        continuationIsActive(query.state.data?.continuation))
         ? 1000
         : false,
+    refetchIntervalInBackground: false,
     queryFn: async ({ signal }): Promise<InteractionState> =>
       (
         await client(
@@ -209,6 +225,24 @@ function InteractionCard({
         )
       ).json(),
   });
+  const unsettledRef = useRef(false);
+  unsettledRef.current =
+    props.status !== "inProgress" &&
+    ((interaction.data?.status !== "answered" && props.result === undefined) ||
+      continuationIsActive(interaction.data?.continuation));
+  useExternalConnection(
+    `interaction-vis:${props.toolCallId}:${objectConnectionKey(visibility)}:${objectConnectionKey(cache)}`,
+    () => {
+      let wasVisible = visibility.get();
+      return visibility.subscribe(() => {
+        const nowVisible = visibility.get();
+        if (!wasVisible && nowVisible && unsettledRef.current) {
+          void cache.invalidateQueries({ queryKey: key });
+        }
+        wasVisible = nowVisible;
+      });
+    },
+  );
   const result =
     props.result ??
     (interaction.data?.status === "answered"

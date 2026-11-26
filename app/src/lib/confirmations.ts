@@ -1,7 +1,10 @@
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useExternalConnection } from "@/hooks";
 import { continuationIsActive } from "@/lib/chat/continuation";
 import { client } from "@/lib/client";
+import { objectConnectionKey } from "@/lib/connection-key";
+import { useKeptVisibility } from "@/lib/kept-visible";
 import type {
   ConfirmCategory,
   ConfirmMode,
@@ -37,13 +40,24 @@ export function confirmPrefsQueryOptions() {
   });
 }
 
-export function recentConfirmationsQueryOptions() {
+export function recentConfirmationsQueryOptions(options?: {
+  poll?: boolean | (() => boolean);
+}) {
+  const poll = options?.poll ?? true;
   return queryOptions({
     queryKey: confirmKeys.recent,
     queryFn: ({ signal }): Promise<ConfirmRequestView[]> =>
       loadConfirmations({ limit: 20 }, signal),
-    refetchInterval: (query) =>
-      (query.state.data ?? []).some(confirmationIsUnsettled) ? 2000 : false,
+    refetchInterval:
+      poll === false
+        ? false
+        : (query) => {
+            if (typeof poll === "function" && !poll()) return false;
+            return (query.state.data ?? []).some(confirmationIsUnsettled)
+              ? 2000
+              : false;
+          },
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: "always",
   });
 }
@@ -94,6 +108,7 @@ export function confirmationPageQueryOptions(options: {
     queryFn: ({ signal }) => loadConfirmationPage(options, signal),
     refetchInterval: (query) =>
       query.state.data?.requests.some(confirmationIsUnsettled) ? 2000 : false,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: "always",
     staleTime: 1000,
   });
@@ -147,20 +162,46 @@ export function useThreadConfirmations(
   threadId: string | null | undefined,
   watching: boolean,
 ) {
-  return useQuery({
+  const visibility = useKeptVisibility();
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: confirmKeys.thread(threadId ?? ""),
     enabled: Boolean(threadId),
     queryFn: ({ signal }): Promise<ConfirmRequestView[]> =>
       threadId
         ? loadConfirmations({ threadId, limit: 100 }, signal)
         : Promise.resolve([]),
-    refetchInterval: (query) =>
-      watching || (query.state.data ?? []).some(confirmationIsUnsettled)
+    refetchInterval: (state) =>
+      visibility.get() &&
+      (watching || (state.state.data ?? []).some(confirmationIsUnsettled))
         ? 1500
         : false,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     staleTime: 1000,
   });
+  const needsPollRef = useRef(false);
+  needsPollRef.current =
+    watching || (query.data ?? []).some(confirmationIsUnsettled);
+  useExternalConnection(
+    threadId
+      ? `confirm-vis:${threadId}:${objectConnectionKey(visibility)}:${objectConnectionKey(queryClient)}`
+      : false,
+    () => {
+      if (!threadId) return;
+      let wasVisible = visibility.get();
+      return visibility.subscribe(() => {
+        const nowVisible = visibility.get();
+        if (!wasVisible && nowVisible && needsPollRef.current) {
+          void queryClient.invalidateQueries({
+            queryKey: confirmKeys.thread(threadId),
+          });
+        }
+        wasVisible = nowVisible;
+      });
+    },
+  );
+  return query;
 }
 
 export function decideConfirmation(

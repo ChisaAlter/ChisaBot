@@ -76,7 +76,13 @@ let fallbackBridge: DesktopWindowBridge | null = null;
 let fallbackSnapshot: DesktopWindowSnapshot | null = null;
 let teardownActive: (() => void) | null = null;
 let onCompactTransitionStart: (() => void) | null = null;
+let activeClipTimerRunning = false;
 let sessionSeq = 0;
+
+/** 测试用：当前 250ms 边缘裁切定时器是否在运行。 */
+export function desktopClipTimerRunningForTests(): boolean {
+  return activeClipTimerRunning;
+}
 
 /**
  * 标记即将发生小窗竖屏↔横屏切换：
@@ -138,6 +144,7 @@ function startActiveBridge(bridge: DesktopWindowBridge) {
   let compactSettling = false;
   let compactSettleTimer = 0;
   let resizeClipRaf = 0;
+  let clipTimer = 0;
   activeSnapshot = { bridge, maximized: false, compact: false };
 
   const root = document.documentElement;
@@ -203,6 +210,28 @@ function startActiveBridge(bridge: DesktopWindowBridge) {
     });
   };
 
+  const shouldPollClip = () =>
+    !maximizedNow &&
+    (typeof document === "undefined" || document.hidden !== true);
+
+  const syncClipTimer = () => {
+    if (shouldPollClip()) {
+      if (!clipTimer) {
+        clipTimer = window.setInterval(() => syncEdgeClip(), 250);
+        activeClipTimerRunning = true;
+      }
+    } else if (clipTimer) {
+      window.clearInterval(clipTimer);
+      clipTimer = 0;
+      activeClipTimerRunning = false;
+    }
+  };
+
+  const onVisibilityOrFocus = () => {
+    syncClipTimer();
+    if (shouldPollClip()) syncEdgeClip();
+  };
+
   const updateState = (
     nextMax: boolean,
     nextCompact: boolean,
@@ -212,6 +241,7 @@ function startActiveBridge(bridge: DesktopWindowBridge) {
     maximizedNow = nextMax;
     compactNow = nextCompact;
     writeDocumentFlags(root, maximizedNow, compactNow);
+    syncClipTimer();
     if (!options?.skipClip) syncEdgeClip();
     if (changed) {
       activeSnapshot = { bridge, maximized: maximizedNow, compact: compactNow };
@@ -221,7 +251,9 @@ function startActiveBridge(bridge: DesktopWindowBridge) {
 
   syncEdgeClip(true);
   window.addEventListener("resize", onWindowResize, { passive: true });
-  const clipTimer = window.setInterval(() => syncEdgeClip(), 250);
+  window.addEventListener("focus", onVisibilityOrFocus);
+  document.addEventListener("visibilitychange", onVisibilityOrFocus);
+  syncClipTimer();
 
   void bridge
     .isMaximized()
@@ -282,7 +314,13 @@ function startActiveBridge(bridge: DesktopWindowBridge) {
     offMax();
     offCompact();
     window.removeEventListener("resize", onWindowResize);
-    window.clearInterval(clipTimer);
+    window.removeEventListener("focus", onVisibilityOrFocus);
+    document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+    if (clipTimer) {
+      window.clearInterval(clipTimer);
+      clipTimer = 0;
+    }
+    activeClipTimerRunning = false;
     window.clearTimeout(compactSettleTimer);
     if (resizeClipRaf) window.cancelAnimationFrame(resizeClipRaf);
     root.style.removeProperty("--edge-clip-r");

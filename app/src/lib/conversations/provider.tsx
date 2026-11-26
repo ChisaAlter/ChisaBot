@@ -1,26 +1,163 @@
 import { useQuery } from "@tanstack/react-query";
-import { memo, type ReactNode } from "react";
-import { ToolRendererProvider } from "@/lib/chat/renderers";
+import {
+  lazy,
+  memo,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useMemo,
+  useState,
+} from "react";
+import { useExternalConnection, useIdleTask } from "@/hooks";
+import { ToolRendererProvider, useRenderTool } from "@/lib/chat/renderers";
 import { ConversationSessionProvider } from "@/lib/chat/session-client";
+import { objectConnectionKey } from "@/lib/connection-key";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
 import { ActiveBotProvider } from "./active-bot";
-import { BotFactoryTool } from "./bot-factory-tool";
 import { ChatFileTools } from "./chat-file-tools";
 import { ComputerTools } from "./computer-tools";
-import { EscalationTool } from "./escalation-tool";
 import { GalleryTools } from "./gallery-tools";
-import { GithubTool } from "./github-tool";
-import { HandoffTool } from "./handoff-tool";
 import { LocalAgentTool } from "./local-agent-tool";
-import { PagesTool } from "./pages-tool";
-import { PersonalSourcesTool } from "./personal-sources-tool";
-import { RenderUiTool } from "./render-ui-tool";
 import { SandboxedTools } from "./sandboxed-tools";
-import { ScheduleTool } from "./schedule-tool";
-import { SignInTool } from "./sign-in-tool";
 import { SkillTools } from "./skill-tools";
-import { VaultTool } from "./vault-tool";
 import { WorkerTool } from "./worker-tool";
+
+/*
+ * 重型 / 低频工具卡片渲染体按需 React.lazy：
+ * 聊天首屏仅同步注册轻量工具名占位元数据，避免把 json-render/catalog、personal-sources、
+ * github-connection、bot-factory、vault、pages、schedule、sign-in 等代码拖入首屏预载。
+ * 消息流实际出现对应工具调用时立即激活加载并由 RenderRegistry 无缝切到真实渲染器。
+ */
+const LazyRenderUiTool = lazy(() =>
+  import("./render-ui-tool").then((m) => ({ default: m.RenderUiTool })),
+);
+const LazyPersonalSourcesTool = lazy(() =>
+  import("./personal-sources-tool").then((m) => ({
+    default: m.PersonalSourcesTool,
+  })),
+);
+const LazyGithubTool = lazy(() =>
+  import("./github-tool").then((m) => ({ default: m.GithubTool })),
+);
+const LazyVaultTool = lazy(() =>
+  import("./vault-tool").then((m) => ({ default: m.VaultTool })),
+);
+const LazyPagesTool = lazy(() =>
+  import("./pages-tool").then((m) => ({ default: m.PagesTool })),
+);
+const LazyScheduleTool = lazy(() =>
+  import("./schedule-tool").then((m) => ({ default: m.ScheduleTool })),
+);
+const LazyBotFactoryTool = lazy(() =>
+  import("./bot-factory-tool").then((m) => ({ default: m.BotFactoryTool })),
+);
+const LazyHandoffTool = lazy(() =>
+  import("./handoff-tool").then((m) => ({ default: m.HandoffTool })),
+);
+const LazyEscalationTool = lazy(() =>
+  import("./escalation-tool").then((m) => ({ default: m.EscalationTool })),
+);
+const LazySignInTool = lazy(() =>
+  import("./sign-in-tool").then((m) => ({ default: m.SignInTool })),
+);
+
+type LazyToolGroupId =
+  | "render-ui"
+  | "personal-sources"
+  | "github"
+  | "vault"
+  | "pages"
+  | "schedule"
+  | "bot-factory"
+  | "handoff"
+  | "escalation"
+  | "sign-in";
+
+const LAZY_TOOL_NAMES: Record<LazyToolGroupId, readonly string[]> = {
+  "render-ui": ["render_ui"],
+  "personal-sources": [
+    "calendar_connect",
+    "email_connect",
+    "notify_webhook_connect",
+  ],
+  github: [
+    "github_create_issue",
+    "github_comment",
+    "github_create_pr",
+    "github_connect",
+  ],
+  vault: ["vault_request_secret"],
+  pages: ["page_create", "page_update", "page_publish"],
+  schedule: ["schedule_create"],
+  "bot-factory": [
+    "create_bot",
+    "list_managed_bots",
+    "update_bot",
+    "disable_bot",
+  ],
+  handoff: ["message_bot"],
+  escalation: ["ask_person"],
+  "sign-in": ["computer_request_sign_in"],
+};
+
+function LazyToolTrigger({ onActivate }: { onActivate: () => void }) {
+  useExternalConnection(objectConnectionKey(onActivate), () => {
+    onActivate();
+  });
+  return null;
+}
+
+const LazyToolNameStub = memo(function LazyToolNameStub({
+  name,
+  onActivate,
+}: {
+  name: string;
+  onActivate: () => void;
+}) {
+  const render = useCallback(
+    () => <LazyToolTrigger onActivate={onActivate} />,
+    [onActivate],
+  );
+  useRenderTool({
+    name,
+    placeholder: true,
+    render,
+  });
+  return null;
+});
+
+function LazyToolGroupStubs({
+  group,
+  onActivate,
+}: {
+  group: LazyToolGroupId;
+  onActivate: (group: LazyToolGroupId) => void;
+}) {
+  const activate = useCallback(() => onActivate(group), [group, onActivate]);
+  return (
+    <>
+      {LAZY_TOOL_NAMES[group].map((name) => (
+        <LazyToolNameStub key={name} name={name} onActivate={activate} />
+      ))}
+    </>
+  );
+}
+
+/** 首屏画完且浏览器空闲后汇报页面 origin（供服务器拼出页面完整链接），避免同步拉入 pages 模块。 */
+function ReportPageOriginWhenIdle() {
+  const [done, setDone] = useState(false);
+  useIdleTask(
+    () => {
+      setDone(true);
+      void import("@/lib/pages")
+        .then((m) => m.reportPageOrigin())
+        .catch(() => {});
+    },
+    !done,
+    3000,
+  );
+  return null;
+}
 
 /** Registers conversation surfaces and tool result renderers around the authenticated chat. */
 export const ConversationToolsProvider = memo(
@@ -28,47 +165,72 @@ export const ConversationToolsProvider = memo(
     const { data: capabilities } = useQuery(
       deploymentCapabilitiesQueryOptions(),
     );
+    const [activated, setActivated] = useState<ReadonlySet<LazyToolGroupId>>(
+      () => new Set(),
+    );
+    const activateGroup = useCallback((group: LazyToolGroupId) => {
+      setActivated((current) => {
+        if (current.has(group)) return current;
+        const next = new Set(current);
+        next.add(group);
+        return next;
+      });
+    }, []);
+
+    const activeGroups = useMemo(() => activated, [activated]);
+    const generativeUi = Boolean(capabilities?.generativeUi);
 
     return (
       /* Computer tools target the Bot declared by the mounted surface. */
       <ConversationSessionProvider>
         <ToolRendererProvider>
           <ActiveBotProvider>
+            <ReportPageOriginWhenIdle />
             <ComputerTools />
-            {/*
-          json-render 生成式界面（取代 A2UI）：`render_ui` 在服务器上执行并校验，这里只负责画。
-          与服务器提供这个工具是同一个开关（/api/capabilities 的 generativeUi）。
-        */}
-            {capabilities?.generativeUi ? <RenderUiTool /> : null}
             {/* 后台任务卡片（DESIGN.md §38.2）：`delegate_task` 在服务器上执行，这里只画。 */}
             <WorkerTool />
             {/* 本地 agent 任务卡片（docs/local-agents.md）：`device_agent_run` 在服务器上执行，这里只画。 */}
             <LocalAgentTool />
-            {/* The private sign-in request: a card whose form posts to the server, never to the Bot. */}
-            <SignInTool />
-            {/* 密钥保险箱的安全输入卡片（DESIGN.md §52）：`vault_request_secret` 在服务器上等，这里只画。 */}
-            <VaultTool />
-            {/* GitHub 连接与写操作确认卡片（DESIGN.md §53）：github_connect / github_create_issue / comment / create_pr。 */}
-            <GithubTool />
-            {/* 个人数据源（日历 / 邮箱 / 随身通知）安全连接卡片：calendar_connect / email_connect / notify_webhook_connect。 */}
-            <PersonalSourcesTool />
-            {/* 页面卡片（DESIGN.md §54）：page_create / page_update / page_publish 在服务器上跑，这里只画。 */}
-            <PagesTool />
-            {/* 定时任务的确认卡（DESIGN.md §55）：`schedule_create` 在服务器上执行，这里只画。 */}
-            <ScheduleTool />
             {/* 图片生成 / 修改的结果、机器人交给用户的文件卡（DESIGN.md §56）：工具在服务器上执行，这里只画。 */}
             <ChatFileTools />
-            {/*
-          Draws a Bot bringing in another Bot. Registers no tool: `message_bot` runs on the server,
-          where the grant and the caps are. A hop that happens off-screen is the thing to avoid.
-        */}
-            <HandoffTool />
-            {/*
-          A Bot making / listing / changing / pausing the Bots it created (bot factory). Same deal as
-          the handoff beside it: server runs the tool and the approval, here only draws the outcome.
-        */}
-            <BotFactoryTool />
-            <EscalationTool />
+            {/* 轻量工具名注册占位：消息真正命中该工具时再加载对应重型渲染模块。 */}
+            {generativeUi ? (
+              <LazyToolGroupStubs
+                group="render-ui"
+                onActivate={activateGroup}
+              />
+            ) : null}
+            <LazyToolGroupStubs group="sign-in" onActivate={activateGroup} />
+            <LazyToolGroupStubs group="vault" onActivate={activateGroup} />
+            <LazyToolGroupStubs group="github" onActivate={activateGroup} />
+            <LazyToolGroupStubs
+              group="personal-sources"
+              onActivate={activateGroup}
+            />
+            <LazyToolGroupStubs group="pages" onActivate={activateGroup} />
+            <LazyToolGroupStubs group="schedule" onActivate={activateGroup} />
+            <LazyToolGroupStubs group="handoff" onActivate={activateGroup} />
+            <LazyToolGroupStubs
+              group="bot-factory"
+              onActivate={activateGroup}
+            />
+            <LazyToolGroupStubs group="escalation" onActivate={activateGroup} />
+            <Suspense fallback={null}>
+              {generativeUi && activeGroups.has("render-ui") ? (
+                <LazyRenderUiTool />
+              ) : null}
+              {activeGroups.has("sign-in") ? <LazySignInTool /> : null}
+              {activeGroups.has("vault") ? <LazyVaultTool /> : null}
+              {activeGroups.has("github") ? <LazyGithubTool /> : null}
+              {activeGroups.has("personal-sources") ? (
+                <LazyPersonalSourcesTool />
+              ) : null}
+              {activeGroups.has("pages") ? <LazyPagesTool /> : null}
+              {activeGroups.has("schedule") ? <LazyScheduleTool /> : null}
+              {activeGroups.has("handoff") ? <LazyHandoffTool /> : null}
+              {activeGroups.has("bot-factory") ? <LazyBotFactoryTool /> : null}
+              {activeGroups.has("escalation") ? <LazyEscalationTool /> : null}
+            </Suspense>
             {/* Gallery tools are registered once; their handlers re-read the active Bot to avoid shadowing renderers. */}
             <GalleryTools />
             {/* Browser-authored components use the same component grants as the compiled gallery. */}

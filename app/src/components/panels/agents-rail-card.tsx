@@ -128,8 +128,9 @@ function DeviceAgentBlock({ device }: { device: DeviceView }) {
   const navigate = useNavigate();
   const state = useQuery({
     ...deviceAgentQueryOptions(device.id),
-    // 检测结果 / 档位不是推送的，轮询跟上（和设备列表的 5 秒错开频率）。
-    refetchInterval: 30_000,
+    // 检测结果 / 档位不是推送的，在线设备 30s 轮询跟上（和设备列表的 5 秒错开频率）；离线设备停止轮询。
+    refetchInterval: device.online ? 30_000 : false,
+    refetchIntervalInBackground: false,
   });
   const save = useMutation({
     ...updateDeviceAgentMutationOptions(queryClient),

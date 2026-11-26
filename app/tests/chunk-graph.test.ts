@@ -7,6 +7,7 @@ import {
   findChunkCycles,
   firstScreenChunks,
   graphFromFiles,
+  MAX_PRELOAD_CHUNKS,
   readDist,
 } from "../scripts/chunk-graph";
 
@@ -77,6 +78,16 @@ test("flags conversation client / Markdown on the settings and admin first scree
   expect(problems).toHaveLength(2);
   expect(problems.join("\n")).toContain("admin");
   expect(problems.join("\n")).not.toContain("settings");
+});
+
+test("flags excessive modulepreload fragment counts", () => {
+  const g = graph({ "assets/index-AAAAAAAA.js": [] });
+  const tooMany = Array.from(
+    { length: MAX_PRELOAD_CHUNKS + 1 },
+    (_, i) => `assets/frag${i}-AAAAAAAA.js`,
+  );
+  const problems = chunkProblems(g, { chat: tooMany });
+  expect(problems.some((p) => p.includes("modulepreload"))).toBe(true);
 });
 
 test("rebuilds the chunk graph from minified output (static imports only)", () => {

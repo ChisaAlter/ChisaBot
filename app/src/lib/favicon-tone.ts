@@ -51,13 +51,68 @@ export function isDarkInkPixels(data: ArrayLike<number>, threshold = DARK_INK_LU
   return sum / weight < threshold;
 }
 
+/** LRU 缓存上限：避免长时间浏览云端浏览器时模块级 Map 无限增长。 */
+export const FAVICON_TONE_CACHE_MAX = 200;
+
 const cache = new Map<string, boolean>();
 const pending = new Map<string, Promise<boolean>>();
 
+/**
+ * 将可能高达 100 KB 的 data:image/* Base64 折叠为短哈希 Key（长度 + 双路 32 位 FNV-1a），
+ * 避免模块级缓存长期持有整段 Base64 字符串。
+ */
+export function faviconToneCacheKey(src: string): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < src.length; i++) {
+    const code = src.charCodeAt(i);
+    h1 ^= code;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 ^= code + i;
+    h2 = Math.imul(h2, 0x85ebca6b);
+  }
+  return `${src.length}:${(h1 >>> 0).toString(36)}:${(h2 >>> 0).toString(36)}`;
+}
+
+function getCachedTone(key: string): boolean | undefined {
+  const hit = cache.get(key);
+  if (hit === undefined) return undefined;
+  cache.delete(key);
+  cache.set(key, hit);
+  return hit;
+}
+
+export function setCachedFaviconTone(src: string, dark: boolean): string {
+  const key = faviconToneCacheKey(src);
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, dark);
+  while (cache.size > FAVICON_TONE_CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  return key;
+}
+
+/** 测试用：读取当前缓存状态（不改变 LRU 顺序）。 */
+export function faviconToneCacheStats(): {
+  size: number;
+  keys: string[];
+} {
+  return { size: cache.size, keys: [...cache.keys()] };
+}
+
+/** 测试用：清空缓存。 */
+export function clearFaviconToneCache(): void {
+  cache.clear();
+  pending.clear();
+}
+
 function measure(src: string): Promise<boolean> {
-  const hit = cache.get(src);
+  const key = faviconToneCacheKey(src);
+  const hit = getCachedTone(key);
   if (hit !== undefined) return Promise.resolve(hit);
-  const running = pending.get(src);
+  const running = pending.get(key);
   if (running) return running;
   const job = new Promise<boolean>((resolve) => {
     if (typeof Image === "undefined" || typeof document === "undefined") return resolve(false);
@@ -79,30 +134,32 @@ function measure(src: string): Promise<boolean> {
     img.onerror = () => resolve(false);
     img.src = src;
   }).then((dark) => {
-    cache.set(src, dark);
-    pending.delete(src);
+    setCachedFaviconTone(src, dark);
+    pending.delete(key);
     return dark;
   });
-  pending.set(src, job);
+  pending.set(key, job);
   return job;
 }
 
-/** 图标 src 是不是深色墨（结果按 src 缓存；量出来之前是 false）。 */
+/** 图标 src 是不是深色墨（结果按短哈希 LRU 缓存；量出来之前是 false）。 */
 export function useDarkInk(src: string | undefined): boolean {
-  const [measured, setMeasured] = useState<{ src: string; dark: boolean } | null>(
-    () => (src && cache.has(src) ? { src, dark: cache.get(src) ?? false } : null),
+  const key = src ? faviconToneCacheKey(src) : "";
+  const [measured, setMeasured] = useState<{ key: string; dark: boolean } | null>(
+    () => (key && cache.has(key) ? { key, dark: cache.get(key) ?? false } : null),
   );
   useExternalConnection(src || false, (activeSrc, signal) => {
+    const activeKey = faviconToneCacheKey(activeSrc);
     void measure(activeSrc).then((value) => {
       if (!signal.aborted) {
         setMeasured((prev) =>
-          prev?.src === activeSrc && prev.dark === value
+          prev?.key === activeKey && prev.dark === value
             ? prev
-            : { src: activeSrc, dark: value },
+            : { key: activeKey, dark: value },
         );
       }
     });
   });
   if (!src) return false;
-  return measured?.src === src ? measured.dark : (cache.get(src) ?? false);
+  return measured?.key === key ? measured.dark : (cache.get(key) ?? false);
 }

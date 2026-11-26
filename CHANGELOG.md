@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **全量审查 M4 — Web 前端首屏打包瘦身、闲置轮询降频与渲染内存优化**：
+  - **首屏打包与预加载瘦身**：将 `AgentProfile`、`GroupChatView`、`SideChatDrawer` 与 10 组重型工具渲染器（含 `RenderUiTool`、`PersonalSourcesTool` 等）及 `ConfirmHost` 剥离出聊天首屏静态闭包改为按需懒加载；`route-preload.ts` 过滤小于 12 KB 碎片传递依赖并新增 `MAX_PRELOAD_CHUNKS = 30` 门禁，聊天首屏 `<link rel="modulepreload">` 由 **87 降至 21（-75.9%）**，首屏静态闭包 JS 减少 **-327.8 KB raw / -117.0 KB gz（-22 块）**。
+  - **闲置轮询与时钟门控**：`taskCenterSnapshotOptions` 与 `approvalInboxOptions` 空闲态分别由 5s / 10s 降至 **60s** 并禁用后台轮询；9 处 KeepAlive 内轮询统一接入非重渲 `useKeptVisibility()`，离线设备停止 30s 轮询；`desktop-window.ts` 250ms 裁剪定时器在最大化/隐藏态停表，`use-now.ts` 与 `relative-time.ts`（改为单模块共享 60s 时钟）接入 `document.hidden` 暂停与切回即刻刷新。
+  - **渲染与内存治理**：抽取 `AgentOrb` 150 行内联 `<style>` 至静态 `agent-orb.css`；`html[data-motion-rest="1"]` 补齐 8 处无限循环动画暂停；`favicon-tone.ts` 改为短哈希 + 200 上限 LRU，`computers/tabs.ts` 增加空监听键清理与 16 台上限 LRU；新增 `web-perf-guardrails.test.tsx` 并更新客户端指纹（无新增数据库迁移）。
+
 - **全量审查 M3 — Web 前端体验、错误态、资源回收与文案统一**：
   - `session-client.ts` 配合 M1 空连接信封过滤合成 `connect:` 前缀 `runId`，防止污染 `observedRunId` 并在空闲连接结束时清理残留 ID；右栏面板 `PanelRail` 补齐 500 失败 `ErrorCard` + 重试与错误边界脱敏诊断日志；左栏 `AppSidebar`（展开态与收起态 `BotMiniRail`）补齐骨架占位与错误重试；固定/暂停/恢复/通知级别/取消收藏等写操作失败统一弹出中文提示与就近错误显示。
   - 修复 `profile-dialog.tsx`、`appearance-preferences.tsx`、`avatar-picker.tsx` 3 处 `URL.createObjectURL` 泄漏与解码竞态；审批收件箱 `HandOffCard` 增加互斥锁防止并发冲突提交；`channel-chat.tsx` `stopTask` 定时器按卸载/切换清理且 `stopping` 轮询接入后台暂停与防重入；统一「主机器人 / 机器人 / 收件箱 / 发件箱 / 附件」中文文案、补齐 `BotProfilePage` 与 `BotsPage` 错误重试、修复 `useVoiceCall` 切目标自动断开，并收口复用 `objectConnectionKey` 与 `useSharedReducedMotion`（纯前端改动，更新客户端指纹，无新增数据库迁移）。

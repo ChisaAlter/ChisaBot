@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { routePreloadGroup, routePreloadMap, routePreloadScript } from "../scripts/route-preload";
+import {
+  MIN_PRELOAD_DEP_BYTES,
+  routePreloadGroup,
+  routePreloadMap,
+  routePreloadScript,
+} from "../scripts/route-preload";
 
 function chunk(fileName: string, moduleIds: string[], imports: string[] = [], extra: Record<string, unknown> = {}) {
   return { type: "chunk", fileName, name: fileName.replace(/-.*$/, ""), moduleIds, imports, isEntry: false, ...extra };
@@ -42,4 +47,17 @@ test("collects group chunks with static deps, minus the entry closure", () => {
   };
   const map = routePreloadMap(bundle as never);
   expect(map.settings).toEqual(["assets/dep.js", "assets/route-settings-y.js", "assets/shell-x.js"]);
+});
+
+test("skips tiny transitive fragment deps while keeping direct roots and large deps", () => {
+  const largeCode = "x".repeat(MIN_PRELOAD_DEP_BYTES + 128);
+  const tinyCode = "x".repeat(512);
+  const bundle = {
+    entry: chunk("assets/index.js", ["/r/app/src/main.tsx"], [], { isEntry: true, code: largeCode }),
+    root: chunk("assets/route-settings-y.js", ["/r/app/src/routes/_authed/settings.tsx"], ["assets/large.js", "assets/tiny.js"], { name: "route-settings", code: tinyCode }),
+    large: chunk("assets/large.js", ["/r/app/src/lib/large.ts"], [], { code: largeCode }),
+    tiny: chunk("assets/tiny.js", ["/r/app/src/lib/tiny.ts"], [], { code: tinyCode }),
+  };
+  const map = routePreloadMap(bundle as never);
+  expect(map.settings).toEqual(["assets/large.js", "assets/route-settings-y.js"]);
 });

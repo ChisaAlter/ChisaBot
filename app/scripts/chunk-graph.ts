@@ -20,6 +20,9 @@ export const FIRST_SCREEN_FORBIDDEN: Record<string, string[]> = {
   admin: ["vendor-conversation", "vendor-markdown"],
 };
 
+/** 单组首屏 `<link rel="modulepreload">` 数量上限，防止碎片块回退拥堵首屏并发队列。 */
+export const MAX_PRELOAD_CHUNKS = 30;
+
 export function graphFromBundle(bundle: Rollup.OutputBundle): ChunkGraph {
   const graph: ChunkGraph = new Map();
   for (const c of Object.values(bundle)) {
@@ -104,6 +107,13 @@ export function chunkProblems(
     );
     for (const bad of forbidden) {
       if (names.has(bad)) problems.push(`${group} 首屏带上了 ${bad}`);
+    }
+  }
+  for (const [group, list] of Object.entries(preloadMap)) {
+    if (list.length > MAX_PRELOAD_CHUNKS) {
+      problems.push(
+        `${group} 首屏 modulepreload 数量超限（${list.length} > ${MAX_PRELOAD_CHUNKS}）`,
+      );
     }
   }
   return problems;

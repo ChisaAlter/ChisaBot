@@ -12,6 +12,7 @@ import {
   dismissPersonQuestion,
 } from "@/lib/approvals";
 import { botLifecycleKeys } from "@/lib/bot-lifecycle/queries";
+import { useKeptVisibility } from "@/lib/kept-visible";
 import { DURATION_MS, usePresenceMount, useRetainedValue } from "@/lib/motion";
 
 /**
@@ -54,7 +55,8 @@ export function PendingQuestion({
   onAnswer?: (response: string) => unknown;
 }) {
   const cache = useQueryClient();
-  const inbox = useQuery(approvalInboxOptions());
+  const visibility = useKeptVisibility();
+  const inbox = useQuery(approvalInboxOptions({ poll: () => visibility.get() }));
   const bots = useQuery(agentListQueryOptions());
   const [text, setText] = useState("");
   const [selectedOption, setSelectedOption] = useState<string | null>(null);

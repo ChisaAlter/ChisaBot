@@ -29,12 +29,6 @@ const hasBlurFilter = (body: string) =>
     body.replace(/backdrop-filter\s*:[^;]*;?/g, ""),
   );
 
-function orbStyle() {
-  const tsx = read("components/agents/orb/agent-orb.tsx");
-  const m = tsx.match(/<style>\{`([\s\S]*?)`\}<\/style>/);
-  return m?.[1] ? m[1].replace(/\$\{[^}]*\}/g, "0") : "";
-}
-
 const sheets: Record<string, string> = {
   "styles/tokens.css": strip(read("styles/tokens.css")),
   "styles/canvas.css": strip(read("styles/canvas.css")),
@@ -43,7 +37,9 @@ const sheets: Record<string, string> = {
   "components/rich-previews/link-card.css": strip(
     read("components/rich-previews/link-card.css"),
   ),
-  "agent-orb.tsx <style>": strip(orbStyle()),
+  "components/agents/orb/agent-orb.css": strip(
+    read("components/agents/orb/agent-orb.css"),
+  ),
 };
 
 const noblur = strip(read("perf-noblur.css"));
