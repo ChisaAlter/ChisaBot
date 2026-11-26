@@ -36,6 +36,13 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type BrowserContext, chromium, type Page } from "playwright";
+import {
+  type ApiRiskBuffer,
+  type ApiRiskHit,
+  createApiRiskBuffer,
+  detectApiRisk,
+  isInspectableJsonResponse,
+} from "./api-risk";
 import { profileDirectoryFor } from "./bot-id";
 import { chooseIdle, createCapEnforcer } from "./browser-eviction";
 import { browserRuntimeFromEnv } from "./browser-runtime";
@@ -350,6 +357,8 @@ export function createProfiles(
     tabsChanged: () => void;
     /** Keeps this browser's session cookies on the profile volume. Absent for a native Chrome. */
     sessionCookies?: SessionCookieKeeper;
+    /** 最近 10 秒内接口返回的轻量化风控提示缓冲。 */
+    riskBuffer: ApiRiskBuffer;
   };
 
   /**
@@ -750,6 +759,7 @@ export function createProfiles(
           bumpTabs: () => {},
           retarget: () => {},
           tabsChanged: () => {},
+          riskBuffer: createApiRiskBuffer(),
           ...(sessionCookies ? { sessionCookies } : {}),
         };
         record.bumpTabs = () => {
@@ -789,6 +799,26 @@ export function createProfiles(
           watched.on("load", () => {
             tabMetaCache.invalidate(watched, { keepFavicon: true });
             record.bumpTabs();
+          });
+          watched.on("response", (response) => {
+            // 仅检查小体积 JSON 响应，避免读取大包阻塞或拖慢页面。
+            if (
+              !isInspectableJsonResponse(
+                response.headers(),
+                response.status(),
+                response.request().resourceType(),
+              )
+            ) {
+              return;
+            }
+            const responseUrl = response.url();
+            void within(response.text(), 500, "")
+              .then((body) => {
+                if (!body) return;
+                const hit = detectApiRisk(body, responseUrl);
+                if (hit) record.riskBuffer.record(hit);
+              })
+              .catch(() => undefined);
           });
         };
         watchPage(page);
@@ -998,6 +1028,11 @@ export function createProfiles(
     /** Monotonic tab metadata version for event-driven live-screen pushes; 0 when not running. */
     tabsVersion(botId: string): number {
       return live.get(botId)?.tabsVersion ?? 0;
+    },
+
+    /** 最近 10 秒内该会话捕获到的接口风控/限流提示（未命中或已过期返回 undefined）。 */
+    recentRisk(botId: string): ApiRiskHit | undefined {
+      return live.get(botId)?.riskBuffer.latest();
     },
 
     /**

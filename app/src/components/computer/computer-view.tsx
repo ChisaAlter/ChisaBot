@@ -3,6 +3,8 @@ import {
   IconCheck,
   IconCopy,
   IconDeviceDesktop,
+  IconEye,
+  IconLock,
   IconPlayerStopFilled,
   IconSparkles,
   IconWorld,
@@ -387,6 +389,7 @@ export function ComputerView({
 
   const visualVisible = pageVisible && (expanded || previewIntersecting);
   const liveController = useRef<LiveScreenController | null>(null);
+  const [watchOnly, setWatchOnly] = useState(false);
   const tabsView = useBrowserTabs(computerId, false);
   const activeTab = tabsView?.tabs.find((tab) => tab.id === tabsView.activeId);
   // 起始页上的常用网站 = 收藏夹：右栏画面出现、打开大屏时推一次给这个机器人的浏览器。
@@ -870,6 +873,30 @@ export function ComputerView({
     ) : null;
 
   const takeoverRef = useTakeoverFit(takeoverPresence.mounted);
+  const watchOnlyToggle = (
+    <button
+      aria-pressed={watchOnly}
+      className={`inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium transition-colors ${
+        watchOnly
+          ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+          : "text-muted-foreground hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+      }`}
+      onClick={() => setWatchOnly((prev) => !prev)}
+      title={
+        watchOnly
+          ? "已开启仅观摩：点击画面不会自动接管控制，再点一次解锁"
+          : "开启仅观摩：锁定画面，防止点击时自动接管控制"
+      }
+      type="button"
+    >
+      {watchOnly ? (
+        <IconLock className="size-3.5" />
+      ) : (
+        <IconEye className="size-3.5" />
+      )}
+      <span>{"仅观摩"}</span>
+    </button>
+  );
   const closeButton = (
     <button
       type="button"
@@ -1189,7 +1216,14 @@ export function ComputerView({
                         <TabStrip
                           computerId={computerId}
                           driving={driving}
-                          onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)}
+                          end={watchOnlyToggle}
+                          onTakeControl={
+                            watchOnly
+                              ? undefined
+                              : () =>
+                                  changeControl?.("take") ??
+                                  Promise.resolve(false)
+                          }
                           poll={!showLiveScreen}
                         />
                       }
@@ -1206,6 +1240,9 @@ export function ComputerView({
                       driving={driving}
                       onDemonstrationAction={handleDemonstrationAction}
                       onProblem={setStreamProblem}
+                      onRequestAutoTakeover={() =>
+                        changeControl?.("take") ?? Promise.resolve(false)
+                      }
                       recordingId={wheelHere ? recordingId : null}
                       retryKey={retryKey}
                       urlbarEnd={(url) => (
@@ -1216,6 +1253,7 @@ export function ComputerView({
                           url={url}
                         />
                       )}
+                      watchOnly={watchOnly}
                     >
                       {/*
                         A live screen that ends reports why through `onProblem`, and this is the
@@ -1247,7 +1285,23 @@ export function ComputerView({
                   */
                   <>
                     <div className="computer-chrome">
-                      {settled ? recordTitle : <TabStrip computerId={computerId} driving={driving} onTakeControl={() => changeControl?.("take") ?? Promise.resolve(false)} poll />}
+                      {settled ? (
+                        recordTitle
+                      ) : (
+                        <TabStrip
+                          computerId={computerId}
+                          driving={driving}
+                          end={watchOnlyToggle}
+                          onTakeControl={
+                            watchOnly
+                              ? undefined
+                              : () =>
+                                  changeControl?.("take") ??
+                                  Promise.resolve(false)
+                          }
+                          poll
+                        />
+                      )}
                     </div>
                     <div className="ctk-stage">
                       <div className="computer-frame ctk-screen relative w-full rounded-lg" data-ctk-screen style={{ aspectRatio }}>

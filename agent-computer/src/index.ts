@@ -33,6 +33,12 @@ import { describeHumanGesture } from "./demonstration";
 import { handleEgressPolicyRequest, startEgressFilter } from "./egress";
 import { identity } from "./identity";
 import {
+  collectVisibleNoticeSnapshot,
+  diffNewLimitNotice,
+  LIMIT_NOTICE_MAX_LENGTH,
+  LIMIT_NOTICE_SELECTOR,
+} from "./limit-notice";
+import {
   chooseClickedOption,
   chooseNativeOption,
   focusNativeSelect,
@@ -86,7 +92,7 @@ import {
   STREAM_IDLE_TIMEOUT_S,
   STREAM_KEEPALIVE_MS,
 } from "./stream-keepalive";
-import { TabError } from "./tabs";
+import { TabError, within } from "./tabs";
 import { shouldDropViewerFrame } from "./viewer";
 import { startVirtualDisplay } from "./virtual-display";
 import {
@@ -1507,6 +1513,7 @@ serve<StreamData>({
           const extract = await readablePageText(target);
           // 硬拦截页（「Sorry, you have been blocked」）：告诉 BOT 别重试、照实转告，并在页面上盖中文提示。
           const siteBlock = await detectSiteBlock(target);
+          const riskControl = profiles.recentRisk(botId);
           return json({
             url: target.url(),
             title: await target.title(),
@@ -1514,6 +1521,7 @@ serve<StreamData>({
             truncated: extract.truncated,
             elapsedMs: Date.now() - startedAt,
             ...(siteBlock ? { siteBlock } : {}),
+            ...(riskControl ? { riskControl } : {}),
             challenge: await detectChallenge(target, session.control, {
               cfMitigated: response
                 ? await response.headerValue("cf-mitigated")
@@ -1780,12 +1788,14 @@ serve<StreamData>({
           const target = await currentPage(botId);
           const extract = await readablePageText(target);
           const siteBlock = await detectSiteBlock(target);
+          const riskControl = profiles.recentRisk(botId);
           return json({
             url: target.url(),
             title: await target.title(),
             text: extract.text,
             truncated: extract.truncated,
             ...(siteBlock ? { siteBlock } : {}),
+            ...(riskControl ? { riskControl } : {}),
             challenge: await detectChallenge(target, session.control),
           });
         } catch (error) {
@@ -1838,6 +1848,7 @@ serve<StreamData>({
             // The caller going away is the stop signal: the surface aborts its request, the server
             // aborts the one it made to this computer, and Bun aborts this one in turn.
             request.signal,
+            () => profiles.recentRisk(botId),
           );
           const challenge =
             url.pathname === "/click" || url.pathname === "/type"
@@ -2013,6 +2024,36 @@ async function performHumanInput(
   return { action: "human_scroll", deltaY, url: target.url() };
 }
 
+const ACTION_PROBE_TIMEOUT_MS = 150;
+
+type ActionProbe = {
+  url: string;
+  title: string;
+  notices: string[];
+  ok: boolean;
+};
+
+async function probeActionSignals(target: Page): Promise<ActionProbe> {
+  const url = target.url();
+  const snapshot = await within(
+    target.evaluate(collectVisibleNoticeSnapshot, {
+      selector: LIMIT_NOTICE_SELECTOR,
+      maxLength: LIMIT_NOTICE_MAX_LENGTH,
+    }),
+    ACTION_PROBE_TIMEOUT_MS,
+    null,
+  ).catch(() => null);
+  if (!snapshot) {
+    return { url, title: "", notices: [], ok: false };
+  }
+  return {
+    url,
+    title: snapshot.title,
+    notices: snapshot.notices,
+    ok: true,
+  };
+}
+
 /**
  * Carry out one action on the page.
  *
@@ -2026,6 +2067,34 @@ async function performHumanInput(
  * landing on a live page. Stop must reach the browser before a high-impact click lands.
  */
 async function performAction(
+  session: BotSession,
+  target: Page,
+  action: string,
+  body: ActionBody,
+  signal?: AbortSignal,
+  getRiskControl?: () => { url: string; reason: string } | undefined,
+): Promise<Record<string, unknown>> {
+  const before = await probeActionSignals(target);
+  const result = await executeAction(session, target, action, body, signal);
+  const after = await probeActionSignals(target);
+  const urlChanged = after.url !== before.url;
+  const titleChanged =
+    before.ok && after.ok ? after.title !== before.title : false;
+  const limitReached =
+    before.ok && after.ok
+      ? diffNewLimitNotice(before.notices, after.notices)
+      : undefined;
+  const riskControl = getRiskControl?.();
+  return {
+    ...result,
+    urlChanged,
+    titleChanged,
+    ...(limitReached ? { limitReached } : {}),
+    ...(riskControl ? { riskControl } : {}),
+  };
+}
+
+async function executeAction(
   session: BotSession,
   target: Page,
   action: string,

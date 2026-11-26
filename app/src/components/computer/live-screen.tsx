@@ -2,6 +2,7 @@ import {
   IconArrowLeft,
   IconArrowRight,
   IconLoader2,
+  IconLock,
   IconRefresh,
   IconWorld,
 } from "@tabler/icons-react";
@@ -16,6 +17,7 @@ import {
 import {
   useElementSync,
   useExternalConnection,
+  useTimeout,
   useWindowEvent,
 } from "@/hooks";
 import {
@@ -133,6 +135,10 @@ type Props = {
   recordingId?: string | null;
   /** 收到后端透传的脱敏 DOM 示教步骤事件时回调。 */
   onDemonstrationAction?: (action: RecordedDemonstrationAction) => void;
+  /** 未接管时主动点击画布触发自动接管；返回 false 表示接管未成功。 */
+  onRequestAutoTakeover?: (() => Promise<boolean>) | (() => void);
+  /** 仅观摩锁：开启后禁止点击画布触发自动接管。 */
+  watchOnly?: boolean;
 };
 
 export type LiveScreenController = {
@@ -235,6 +241,8 @@ export function LiveScreen({
   controllerRef,
   recordingId,
   onDemonstrationAction,
+  onRequestAutoTakeover,
+  watchOnly = false,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -268,6 +276,59 @@ export function LiveScreen({
   const onDemonstrationActionRef = useRef(onDemonstrationAction);
   onDemonstrationActionRef.current = onDemonstrationAction;
   const activeRecordingId = recordingId?.trim() ?? "";
+  const [autoTakeoverBusy, setAutoTakeoverBusy] = useState(false);
+  const [takeoverProblem, setTakeoverProblem] = useState<string | null>(null);
+  const autoTakeoverPending = useRef(false);
+  const [wasDriving, setWasDriving] = useState(driving);
+  if (driving !== wasDriving) {
+    setWasDriving(driving);
+    if (driving) {
+      setTakeoverProblem(null);
+      setAutoTakeoverBusy(false);
+    }
+  }
+  useTimeout(
+    () => setTakeoverProblem(null),
+    takeoverProblem ? 4000 : null,
+    takeoverProblem ?? null,
+  );
+  const canAutoTakeover =
+    !driving &&
+    connected &&
+    hasFrame &&
+    !watchOnly &&
+    Boolean(onRequestAutoTakeover);
+  const handleAutoTakeoverMouseDown = (
+    event: React.MouseEvent<HTMLCanvasElement>,
+  ) => {
+    if (!canAutoTakeover || event.button !== 0 || autoTakeoverPending.current) {
+      return;
+    }
+    const handler = onRequestAutoTakeover;
+    if (!handler) return;
+    autoTakeoverPending.current = true;
+    setAutoTakeoverBusy(true);
+    setTakeoverProblem(null);
+    void Promise.resolve(handler())
+      .then((result) => {
+        if (result === false) {
+          setTakeoverProblem(
+            "没能接管控制；再点一次，或先点下方「接管控制」。",
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        setTakeoverProblem(
+          error instanceof Error && error.message
+            ? error.message
+            : "没能接管控制；再点一次，或先点下方「接管控制」。",
+        );
+      })
+      .finally(() => {
+        autoTakeoverPending.current = false;
+        setAutoTakeoverBusy(false);
+      });
+  };
 
   useExternalConnection(
     `${computerId}\0${retryKey}\0${activeRecordingId}`,
@@ -856,8 +917,8 @@ export function LiveScreen({
       >
     <canvas
       ref={canvasRef}
-      className={`block h-auto w-full ${driving ? "cursor-crosshair" : ""}`}
-      // Only forward input during takeover.
+      className={`block h-auto w-full ${driving ? "cursor-crosshair" : canAutoTakeover ? "cursor-pointer" : ""}`}
+      // Only forward input during takeover; when watching with auto-takeover enabled, only active mousedown triggers takeover.
       {...(driving
         ? {
             onMouseDown: onMouse("pressed"),
@@ -865,15 +926,63 @@ export function LiveScreen({
             onMouseMove: onMouse("moved"),
             onContextMenu: (event: React.MouseEvent) => event.preventDefault(),
           }
-        : {})}
+        : canAutoTakeover
+          ? {
+              onMouseDown: handleAutoTakeoverMouseDown,
+            }
+          : {})}
       aria-label={
         driving
           ? "助理的屏幕。您有控制权：点击并在此输入。"
-          : "助理的屏幕，实时"
+          : watchOnly
+            ? "助理的屏幕，实时（仅观摩模式）"
+            : canAutoTakeover
+              ? "助理的屏幕，实时。点击画面可自动接管控制。"
+              : "助理的屏幕，实时"
       }
       data-connected={connected}
       data-has-frame={hasFrame}
+      data-watch-only={watchOnly ? "true" : undefined}
     />
+        {!driving && autoTakeoverBusy ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center px-3"
+            role="status"
+          >
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/75 px-3 py-1 text-xs font-medium text-white shadow-sm">
+              <IconLoader2 className="size-3.5 animate-spin" />
+              {"正在接管控制…"}
+            </span>
+          </div>
+        ) : !driving && takeoverProblem ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center px-3"
+            role="alert"
+          >
+            <span className="rounded-full bg-destructive/90 px-3 py-1 text-xs font-medium text-white shadow-sm">
+              {takeoverProblem}
+            </span>
+          </div>
+        ) : !driving && connected && hasFrame && !reconnecting && watchOnly ? (
+          <div
+            className="pointer-events-none absolute bottom-2 left-2 z-10"
+            role="status"
+          >
+            <span className="inline-flex items-center gap-1 rounded-full bg-black/65 px-2.5 py-1 text-[11px] font-medium text-white/90">
+              <IconLock className="size-3" />
+              {"仅观摩"}
+            </span>
+          </div>
+        ) : canAutoTakeover && !reconnecting ? (
+          <div
+            className="pointer-events-none absolute bottom-2 left-2 z-10"
+            role="status"
+          >
+            <span className="rounded-full bg-black/65 px-2.5 py-1 text-[11px] font-medium text-white/90">
+              {"点击画面自动接管"}
+            </span>
+          </div>
+        ) : null}
         {hasFrame && blankPage && !reconnecting ? (
           <div
             className="computer-frame computer-idle computer-screen-idle"
