@@ -1843,7 +1843,7 @@ class PostgresAgentRunner implements ConversationRunner {
           ...event,
           threadId,
           runId: entry.runId,
-          input: { ...input, messages: newMessages },
+          input: { ...input, messages: newMessages, context: [], tools: [] },
         } as BaseEvent;
       } else if (event.type === EventType.RUN_FINISHED) {
         event = { ...event, threadId, runId: entry.runId } as BaseEvent;
@@ -1866,23 +1866,19 @@ class PostgresAgentRunner implements ConversationRunner {
         return;
       }
       // Every RUN_ERROR — runtime, provider, interruption — is redacted before it is stored or sent.
+      let deferredStopSummaryBase: string | undefined;
       if (event.type === EventType.RUN_ERROR) {
         const failure = event as BaseEvent & {
           code?: unknown;
           message?: unknown;
         };
         if (typeof failure.message === "string") {
-          let rawMessage = failure.message;
           if (entry.stopped && failure.code === "DSH_RUN_CANCELLED") {
-            rawMessage = await buildStopSummaryFromDb(this.store.database, {
-              threadId,
-              runId: entry.runId,
-              baseMessage: rawMessage,
-            });
+            deferredStopSummaryBase = failure.message;
           }
           event = {
             ...event,
-            message: redactPublicText(rawMessage) || GENERIC_FAILURE,
+            message: redactPublicText(failure.message) || GENERIC_FAILURE,
           } as BaseEvent;
         }
       }
@@ -1895,21 +1891,35 @@ class PostgresAgentRunner implements ConversationRunner {
         published.type === EventType.RUN_ERROR;
       if (isTerminal) {
         finalizer.observe(published);
-        runStarted ||= published.type === EventType.RUN_STARTED;
         terminal = true;
         failed ||= published.type === EventType.RUN_ERROR;
         void flushPendingDelta();
         return guarded(async () => {
           if (!canCommit() || persistenceError) return;
+          let finalPublished = published;
+          let finalWireEvent = wireEvent;
+          if (deferredStopSummaryBase !== undefined) {
+            const summarized = await buildStopSummaryFromDb(
+              this.store.database,
+              {
+                threadId,
+                runId: entry.runId,
+                baseMessage: deferredStopSummaryBase,
+              },
+            );
+            const message = redactPublicText(summarized) || GENERIC_FAILURE;
+            finalPublished = { ...published, message } as BaseEvent;
+            finalWireEvent = { ...wireEvent, message } as BaseEvent;
+          }
           const sequence = await this.store.append(
             threadId,
             entry.runId,
-            wireEvent,
+            finalWireEvent,
           );
           recordDbWrite(sequence, undefined);
-          entry.stream.next(published);
-          entry.live.next({ sequence, event: wireEvent });
-          notify(published);
+          entry.stream.next(finalPublished);
+          entry.live.next({ sequence, event: finalWireEvent });
+          notify(finalPublished);
         });
       }
       if (published.type !== EventType.RUN_STARTED) {
@@ -2832,6 +2842,7 @@ class PostgresAgentRunner implements ConversationRunner {
       let doneHooked = false;
       let observedRunId: string | undefined;
       let streamRunId: string | undefined;
+      let syntheticStreamRunId: string | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let checking = false;
       const lifecycles = createEventLifecycles();
@@ -2969,6 +2980,13 @@ class PostgresAgentRunner implements ConversationRunner {
               code: "ADMISSION_FAILED",
               message: "消息已保存，但执行未能开始。",
             } as BaseEvent);
+          else if (syntheticStreamRunId) {
+            subscriber.next({
+              type: EventType.RUN_FINISHED,
+              threadId: request.threadId,
+              runId: syntheticStreamRunId,
+            } as BaseEvent);
+          }
           subscriber.complete();
         } catch (error) {
           subscriber.error(error);
@@ -3066,6 +3084,15 @@ class PostgresAgentRunner implements ConversationRunner {
           );
         }
         const messages = await dims.annotateMessages(capped.messages);
+        if (!streamRunId) {
+          syntheticStreamRunId = `connect:${request.threadId}:${crypto.randomUUID()}`;
+          streamRunId = syntheticStreamRunId;
+          subscriber.next({
+            type: EventType.RUN_STARTED,
+            threadId: request.threadId,
+            runId: streamRunId,
+          } as BaseEvent);
+        }
         subscriber.next({
           type: EventType.MESSAGES_SNAPSHOT,
           messages,

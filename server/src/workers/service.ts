@@ -12,8 +12,8 @@ import {
   withCapacityFeedback,
 } from "../conversations/capacity";
 import {
-  assertConversationAdmissionOpen,
-  conversationAdmissionClosed,
+  assertConversationAdmissionOpenAsync,
+  conversationAdmissionClosedAsync,
 } from "../conversations/maintenance";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
@@ -526,7 +526,7 @@ export function createWorkerService(
 
   const pump = async () => {
     if (pumping) return;
-    if (conversationAdmissionClosed()) {
+    if (await conversationAdmissionClosedAsync()) {
       deferredPump ??= setTimeout(() => {
         deferredPump = undefined;
         void pump();
@@ -689,7 +689,7 @@ export function createWorkerService(
     },
 
     async start(input) {
-      assertConversationAdmissionOpen();
+      await assertConversationAdmissionOpenAsync();
       const title = clip(input.title.trim() || "后台任务", 40);
       const task = input.task.trim();
       if (!task) throw new Error("任务说明是空的。");

@@ -35,6 +35,12 @@ import {
  */
 const SWEEP_LOCK = 4_192_004;
 
+/** Separate session advisory lock for pruning archived intermediate local conversation events (CB-031). */
+export const LOCAL_EVENTS_SWEEP_LOCK = 4_192_005;
+
+/** Default retention window for archived streaming intermediate rows in chisabot_local_events. */
+export const DEFAULT_LOCAL_EVENT_RETENTION_DAYS = 14;
+
 /**
  * How many rows one delete removes.
  *
@@ -51,6 +57,99 @@ export type RetentionResult = {
   /** Null when another server was already sweeping. Distinguished from having deleted nothing. */
   deleted: number | null;
 };
+
+export type LocalEventsSweepConnection = {
+  tryAdvisoryLock: (lockId: number) => Promise<boolean>;
+  deleteArchivedBatch: (
+    retentionDays: number,
+    batchSize: number,
+  ) => Promise<number>;
+  end: () => Promise<void>;
+};
+
+export type LocalEventsSweepOptions = {
+  batchSize?: number;
+  maxBatches?: number;
+  connect?: (databaseUrl: string) => LocalEventsSweepConnection;
+};
+
+function defaultLocalEventsConnection(
+  databaseUrl: string,
+): LocalEventsSweepConnection {
+  const connection = postgres(databaseUrl, { max: 1 });
+  return {
+    async tryAdvisoryLock(lockId: number): Promise<boolean> {
+      const [lock] = await connection`
+        select pg_try_advisory_lock(${lockId}) as held
+      `;
+      return Boolean(lock?.held);
+    },
+    async deleteArchivedBatch(
+      retentionDays: number,
+      batchSize: number,
+    ): Promise<number> {
+      const removed = await connection`
+        delete from chisabot_local_events where sequence in (
+          select e.sequence
+          from chisabot_local_events e
+          join chisabot_local_threads t on t.id = e.thread_id
+          where t.snapshot_sequence is not null
+            and e.sequence <= t.snapshot_sequence
+            and e.created_at < now() - (${retentionDays} || ' days')::interval
+            and coalesce(e.event->>'type', '') not in ('RUN_STARTED', 'RUN_FINISHED', 'RUN_ERROR')
+          limit ${batchSize}
+        )
+      `;
+      return removed.count ?? 0;
+    },
+    async end(): Promise<void> {
+      await connection.end({ timeout: 5 }).catch(() => undefined);
+    },
+  };
+}
+
+/**
+ * Remove expired intermediate streaming rows from `chisabot_local_events` that are already covered
+ * by `chisabot_local_threads.snapshot_sequence`, while preserving lifecycle rows
+ * (`RUN_STARTED` / `RUN_FINISHED` / `RUN_ERROR`).
+ */
+export async function sweepLocalEvents(
+  databaseUrl: string,
+  retentionDays: number = DEFAULT_LOCAL_EVENT_RETENTION_DAYS,
+  options: LocalEventsSweepOptions = {},
+): Promise<RetentionResult> {
+  if (!Number.isInteger(retentionDays) || retentionDays < 1) {
+    return { deleted: null };
+  }
+  const batchSize =
+    options.batchSize && Number.isInteger(options.batchSize) && options.batchSize > 0
+      ? options.batchSize
+      : BATCH;
+  const maxBatches =
+    options.maxBatches && Number.isInteger(options.maxBatches) && options.maxBatches > 0
+      ? options.maxBatches
+      : MAX_BATCHES;
+  const connection = (options.connect ?? defaultLocalEventsConnection)(
+    databaseUrl,
+  );
+  try {
+    const held = await connection.tryAdvisoryLock(LOCAL_EVENTS_SWEEP_LOCK);
+    if (!held) return { deleted: null };
+
+    let deleted = 0;
+    for (let batch = 0; batch < maxBatches; batch += 1) {
+      const count = await connection.deleteArchivedBatch(
+        retentionDays,
+        batchSize,
+      );
+      deleted += count;
+      if (count < batchSize) break;
+    }
+    return { deleted };
+  } finally {
+    await connection.end();
+  }
+}
 
 /**
  * Remove audit rows older than the retention window.
@@ -126,10 +225,21 @@ export function startRetentionSweeps(
   retentionDays: number | undefined,
   // Swept whatever the audit policy is: their only other caller runs in `computers.mode: sandbox` alone.
   pageFrames?: PageFrameStore,
-  options: { intervalMs?: number; firstRunMs?: number } = {},
+  options: {
+    intervalMs?: number;
+    firstRunMs?: number;
+    localEventRetentionDays?: number;
+  } = {},
 ): RetentionSweeper {
   const sweepsAudit = Boolean(retentionDays && retentionDays >= 1);
-  if (!sweepsAudit && !pageFrames) return { stop: () => undefined };
+  const localEventDays =
+    options.localEventRetentionDays ?? DEFAULT_LOCAL_EVENT_RETENTION_DAYS;
+  const sweepsLocalEvents =
+    Boolean(databaseUrl) &&
+    Number.isInteger(localEventDays) &&
+    localEventDays >= 1;
+  if (!sweepsAudit && !pageFrames && !sweepsLocalEvents)
+    return { stop: () => undefined };
 
   const intervalMs = options.intervalMs ?? 60 * 60_000;
   const firstRunMs = options.firstRunMs ?? 60_000;
@@ -148,6 +258,28 @@ export function startRetentionSweeps(
             JSON.stringify({
               type: "page-frames-sweep-failed",
               note: "Old turn screenshots were not removed. Nothing is broken; the table is larger than it should be.",
+              error: String(error),
+            }),
+          );
+        });
+    }
+    if (sweepsLocalEvents) {
+      void sweepLocalEvents(databaseUrl, localEventDays)
+        .then(({ deleted }) => {
+          if (deleted === null || deleted === 0) return;
+          console.info(
+            JSON.stringify({
+              type: "local-events-retention-swept",
+              deleted,
+              retentionDays: localEventDays,
+            }),
+          );
+        })
+        .catch((error) => {
+          console.error(
+            JSON.stringify({
+              type: "local-events-retention-failed",
+              note: "Archived intermediate conversation events were not pruned. Conversation history is intact.",
               error: String(error),
             }),
           );

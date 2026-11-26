@@ -14,12 +14,25 @@ import type { Database } from "../src/db/client";
  * replica is running for every person: only a pause, or a database that stays unreadable, does.
  */
 function flakyDatabase() {
-  const state = { fail: false, pausedAt: null as Date | null };
+  const state = {
+    fail: false,
+    pausedAt: null as Date | null,
+    queries: 0,
+    delayMs: 0,
+    rows: null as
+      | Array<{ ownerUserId: string; agentId: string; pausedAt: Date | null }>
+      | null,
+  };
   const query = {
     from: () => query,
     where: () => query,
     limit: async () => {
+      state.queries += 1;
+      if (state.delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, state.delayMs));
+      }
       if (state.fail) throw new Error("connection terminated unexpectedly");
+      if (state.rows !== null) return state.rows;
       return [{ pausedAt: state.pausedAt }];
     },
   };
@@ -71,4 +84,37 @@ test("a database that stays unreadable stops the turns, and a pause stops them a
   state.pausedAt = new Date();
   await checkRunningTurnsForTests();
   expect(next.aborted).toBe(true);
+});
+
+test("batches multiple active pairs into a single query and skips reentrant overlapping checks", async () => {
+  const { database, state } = flakyDatabase();
+  configureBotLifecycle({ database });
+  const ada = await guardBotTurn({ ownerUserId: "ada", agentId: "bot-a" });
+  const grace = await guardBotTurn({ ownerUserId: "grace", agentId: "bot-b" });
+  const linus = await guardBotTurn({ ownerUserId: "linus", agentId: "bot-c" });
+
+  state.queries = 0;
+  state.rows = [
+    { ownerUserId: "ada", agentId: "bot-a", pausedAt: null },
+    { ownerUserId: "grace", agentId: "bot-b", pausedAt: new Date() },
+  ];
+  await checkRunningTurnsForTests();
+  // All 3 active pairs checked in 1 batch SELECT.
+  expect(state.queries).toBe(1);
+  expect(ada.aborted).toBe(false);
+  expect(grace.aborted).toBe(true);
+  expect(linus.aborted).toBe(false);
+
+  // Overlapping ticks are dropped by the reentrancy guard so slow DB failures cannot stack.
+  state.queries = 0;
+  state.fail = true;
+  state.delayMs = 30;
+  await Promise.all([
+    checkRunningTurnsForTests(),
+    checkRunningTurnsForTests(),
+    checkRunningTurnsForTests(),
+  ]);
+  expect(state.queries).toBe(1);
+  expect(ada.aborted).toBe(false);
+  expect(linus.aborted).toBe(false);
 });

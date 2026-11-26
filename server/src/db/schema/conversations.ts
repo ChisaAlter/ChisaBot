@@ -265,6 +265,10 @@ export const toolOperations = pgTable(
     index("chisabot_tool_operations_inflight_run_idx")
       .on(table.runId)
       .where(sql`${table.status} IN ('dispatching', 'outcome_unknown')`),
+    index("chisabot_tool_operations_run_created_idx").on(
+      table.runId,
+      table.createdAt,
+    ),
   ],
 );
 

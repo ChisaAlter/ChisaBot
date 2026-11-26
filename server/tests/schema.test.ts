@@ -534,4 +534,27 @@ describe("ChisaBot database schema", () => {
       expect(migration).toContain(`CREATE INDEX IF NOT EXISTS "${indexName}"`);
     }
   });
+
+  test("declares chisabot_tool_operations(run_id, created_at) index in 0071 without CONCURRENTLY", async () => {
+    const migration = await readFile(
+      new URL(
+        "../drizzle/0071_tool_operations_run_created_idx.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(migration).not.toMatch(/\bCONCURRENTLY\b/i);
+    expect(migration).toContain(
+      `CREATE INDEX IF NOT EXISTS "chisabot_tool_operations_run_created_idx" ON "chisabot_tool_operations" USING btree ("run_id","created_at")`,
+    );
+    const journal = JSON.parse(
+      await readFile(
+        new URL("../drizzle/meta/_journal.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { entries: Array<{ idx: number; tag: string; when: number }> };
+    const last = journal.entries.at(-1);
+    expect(last?.idx).toBe(71);
+    expect(last?.tag).toBe("0071_tool_operations_run_created_idx");
+  });
 });

@@ -30,7 +30,7 @@ import {
   executionClass,
   executionDeadline,
 } from "../conversations/capacity";
-import { assertConversationAdmissionOpen } from "../conversations/maintenance";
+import { assertConversationAdmissionOpenAsync } from "../conversations/maintenance";
 import { isGroupChatProps } from "../memory/tools";
 import { withModelConnectionScope } from "../model-connection-context";
 import { filterHeadlessForWorkflow } from "../workflows/policy";
@@ -330,7 +330,7 @@ export function createTurnRunner(options: {
      * of. `getOrCreateThread` is public API, idempotent, and already handles the 409 create-race
      * (`client.d.mts:603-621`), so it is safe on the thousandth firing as well as the first.
      */
-    assertConversationAdmissionOpen();
+    await assertConversationAdmissionOpenAsync();
     await checkQuota?.(ownerUserId);
     await conversations.getOrCreateThread({
       threadId,

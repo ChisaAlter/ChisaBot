@@ -408,3 +408,50 @@ test("midpoint budget reminders fire once at 50% and 75% of maxCalls", () => {
   assert.equal(notices[1].step, 6);
   assert.match(notices[1].notice, /75%/);
 });
+
+test("parallel tool calls keep independent pending slots by callId", () => {
+  const guard = new ToolLoopGuard({ maxCalls: 20, maxRepeats: 4, grace: 1 });
+  // Two tools admitted in parallel before either finishes.
+  assert.equal(guard.admit(1, "tool_a", { id: 1 }, "call-a").kind, "run");
+  assert.equal(guard.admit(1, "tool_b", { id: 2 }, "call-b").kind, "run");
+
+  // call-a finishes first with COMMAND_BUDGET_EXHAUSTED, then call-b finishes with COMMAND_BUDGET_EXHAUSTED.
+  // Previously call-b overwrote single-slot pending so call-b's observe() was silently dropped.
+  const obsA = guard.observe(
+    {
+      result: {
+        content: "COMMAND_BUDGET_EXHAUSTED",
+        errorCode: "COMMAND_BUDGET_EXHAUSTED",
+      },
+    },
+    "call-a",
+  );
+  assert.equal(obsA.stop, false);
+  const obsB = guard.observe(
+    {
+      result: {
+        content: "COMMAND_BUDGET_EXHAUSTED",
+        errorCode: "COMMAND_BUDGET_EXHAUSTED",
+      },
+    },
+    "call-b",
+  );
+  assert.equal(obsB.stop, true);
+  assert.equal(obsB.reason, "unrecoverable");
+  assert.equal(guard.failed, 2);
+  assert.equal(guard.consecutiveFailures, 2);
+  assert.equal(guard.executed.get("tool_a"), 1);
+  assert.equal(guard.executed.get("tool_b"), 1);
+
+  // Unknown or already-observed callId does not consume another call's slot.
+  const guard2 = new ToolLoopGuard({ maxCalls: 20, maxRepeats: 4, grace: 1 });
+  assert.equal(guard2.admit(1, "read_a", {}, "c1").kind, "run");
+  assert.equal(guard2.admit(1, "read_b", {}, "c2").kind, "run");
+  assert.equal(guard2.observe({ deferred: true }, "c1").stop, false);
+  assert.equal(guard2.attempts, 1);
+  assert.equal(guard2.observe({ result: { content: "ok" } }, "c1").stop, false);
+  assert.equal(guard2.succeeded, 0);
+  assert.equal(guard2.observe({ result: { content: "ok" } }, "c2").stop, false);
+  assert.equal(guard2.succeeded, 1);
+  assert.equal(guard2.executed.get("read_b"), 1);
+});

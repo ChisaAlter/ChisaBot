@@ -13,7 +13,7 @@ import type { IdentifyActor } from "../conversation-runtime";
 import type { LocalConversationBackend } from "../local-conversations";
 import { publicErrorMessage } from "../public-error";
 import type { ConversationCommandRecord } from "./commands";
-import { assertConversationAdmissionOpen } from "./maintenance";
+import { assertConversationAdmissionOpenAsync } from "./maintenance";
 import type { ToolOperationStore } from "./tool-operations";
 import { sanitizeWireEvent } from "./wire-events";
 
@@ -213,7 +213,7 @@ export function createConversationRoutes(options: {
     agentId: string,
     input: import("@ag-ui/client").RunAgentInput,
   ) {
-    await assertConversationAdmissionOpen();
+    await assertConversationAdmissionOpenAsync();
     const actor = await identifyActor(request);
     await options.checkQuota?.({
       id: actor.id,
@@ -339,7 +339,7 @@ export function createConversationRoutes(options: {
           })
         : undefined;
       if (agent) {
-        await assertConversationAdmissionOpen();
+        await assertConversationAdmissionOpenAsync();
         await options.checkQuota?.({
           id: actor.id,
           isAdmin: actor.role === "admin",

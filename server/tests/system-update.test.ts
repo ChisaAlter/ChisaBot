@@ -79,24 +79,24 @@ test("build info: parsed strictly, dev fallback, version payload has no image", 
   ).toBe("dev");
 });
 
-test("not configured without the shared directories", () => {
+test("not configured without the shared directories", async () => {
   const service = createSystemUpdateService({
     dir: "/nonexistent-sysupd",
     running,
     now: () => NOW,
   });
   expect(service.configured).toBe(false);
-  expect(service.overview().configured).toBe(false);
-  expect(service.request("update", { id: "u1" })).toEqual({
+  expect((await service.overview()).configured).toBe(false);
+  expect(await service.request("update", { id: "u1" })).toEqual({
     error: "这个部署没有安装宿主机更新程序。",
     status: 503,
   });
 });
 
-test("requests are written atomically as whitelisted JSON and guarded by state", () => {
+test("requests are written atomically as whitelisted JSON and guarded by state", async () => {
   const dir = spool(fresh);
   const service = createSystemUpdateService({ dir, running, now: () => NOW });
-  const result = service.request(
+  const result = await service.request(
     "update",
     { id: "user-1", name: "Admin" },
     "b".repeat(40),
@@ -114,30 +114,35 @@ test("requests are written atomically as whitelisted JSON and guarded by state",
     expectCommit: "b".repeat(40),
   });
   // A second update while one is queued is refused; a check is still fine.
-  expect(service.request("update", { id: "user-1" })).toEqual({
+  expect(await service.request("update", { id: "user-1" })).toEqual({
     error: "已经有一个更新或回滚在进行中。",
     status: 409,
   });
-  expect(service.request("rollback", { id: "user-1" })).toMatchObject({
+  expect(await service.request("rollback", { id: "user-1" })).toMatchObject({
     status: 409,
   });
-  expect("id" in service.request("check", { id: "user-1" })).toBe(true);
-  expect(service.overview().pending.sort()).toEqual(["check", "update"]);
+  expect("id" in (await service.request("check", { id: "user-1" }))).toBe(true);
+  expect((await service.overview()).pending.sort()).toEqual([
+    "check",
+    "update",
+  ]);
 });
 
-test("refusals: offline updater, no previous, external run, running job", () => {
+test("refusals: offline updater, no previous, external run, running job", async () => {
   const offline = createSystemUpdateService({
     dir: spool({ ...fresh, updatedAt: "2026-10-12T01:00:00Z" }),
     running,
     now: () => NOW,
   });
-  expect(offline.request("update", { id: "u" })).toMatchObject({ status: 503 });
+  expect(await offline.request("update", { id: "u" })).toMatchObject({
+    status: 503,
+  });
   const noPrev = createSystemUpdateService({
     dir: spool({ ...fresh, previous: null }),
     running,
     now: () => NOW,
   });
-  expect(noPrev.request("rollback", { id: "u" })).toEqual({
+  expect(await noPrev.request("rollback", { id: "u" })).toEqual({
     error: "没有可以回滚到的上一版。",
     status: 409,
   });
@@ -146,10 +151,10 @@ test("refusals: offline updater, no previous, external run, running job", () => 
     running,
     now: () => NOW,
   });
-  expect(external.request("update", { id: "u" })).toMatchObject({
+  expect(await external.request("update", { id: "u" })).toMatchObject({
     status: 409,
   });
-  expect("id" in external.request("check", { id: "u" })).toBe(true);
+  expect("id" in (await external.request("check", { id: "u" }))).toBe(true);
   const busy = createSystemUpdateService({
     dir: spool({
       ...fresh,
@@ -163,21 +168,23 @@ test("refusals: offline updater, no previous, external run, running job", () => 
     running,
     now: () => NOW,
   });
-  expect(busy.request("rollback", { id: "u" })).toMatchObject({ status: 409 });
+  expect(await busy.request("rollback", { id: "u" })).toMatchObject({
+    status: 409,
+  });
 });
 
-test("deps changed: the update is accepted as a full build", () => {
+test("deps changed: the update is accepted as a full build", async () => {
   const dir = spool({
     ...fresh,
     depsChanged: true,
     fullReason: "这些提交改动了依赖",
   });
   const service = createSystemUpdateService({ dir, running, now: () => NOW });
-  expect(service.overview()).toMatchObject({
+  expect(await service.overview()).toMatchObject({
     depsChanged: true,
     fullReason: "这些提交改动了依赖",
   });
-  const result = service.request("update", { id: "u" }, "b".repeat(40));
+  const result = await service.request("update", { id: "u" }, "b".repeat(40));
   expect("id" in result).toBe(true);
   const files = readdirSync(path.join(dir, "requests")).filter(
     (name) => name.endsWith(".json") && !name.startsWith("."),
@@ -192,10 +199,10 @@ test("deps changed: the update is accepted as a full build", () => {
   });
 });
 
-test("a full rebuild can be forced; a code update carries no mode", () => {
+test("a full rebuild can be forced; a code update carries no mode", async () => {
   const dir = spool(fresh);
   const service = createSystemUpdateService({ dir, running, now: () => NOW });
-  service.request("update", { id: "u" }, undefined, { full: true });
+  await service.request("update", { id: "u" }, undefined, { full: true });
   const files = readdirSync(path.join(dir, "requests")).filter(
     (name) => name.endsWith(".json") && !name.startsWith("."),
   );
@@ -205,10 +212,11 @@ test("a full rebuild can be forced; a code update carries no mode", () => {
     ).mode,
   ).toBe("full");
   const plain = spool(fresh);
-  createSystemUpdateService({ dir: plain, running, now: () => NOW }).request(
-    "update",
-    { id: "u" },
-  );
+  await createSystemUpdateService({
+    dir: plain,
+    running,
+    now: () => NOW,
+  }).request("update", { id: "u" });
   const names = readdirSync(path.join(plain, "requests")).filter(
     (name) => name.endsWith(".json") && !name.startsWith("."),
   );
@@ -294,7 +302,7 @@ test("routes: admins only, no-store, audit rows for update requests", async () =
   expect(audits).toHaveLength(2);
 });
 
-test("updater not installed yet / old / misconfigured: overview says so, request write failure is a 503", () => {
+test("updater not installed yet / old / misconfigured: overview says so, request write failure is a 503", async () => {
   // Docker created the mounted directories itself (no host updater): no state, requests dir not writable.
   const empty = spool();
   const none = createSystemUpdateService({
@@ -303,7 +311,7 @@ test("updater not installed yet / old / misconfigured: overview says so, request
     running,
     now: () => NOW,
   });
-  const view = none.overview();
+  const view = await none.overview();
   expect(view).toMatchObject({
     configured: true,
     updaterOnline: false,
@@ -313,7 +321,7 @@ test("updater not installed yet / old / misconfigured: overview says so, request
   expect(view.updatedAt).toBeUndefined();
   rmSync(path.join(empty, "requests"), { recursive: true });
   writeFileSync(path.join(empty, "requests"), "not a directory");
-  expect(none.request("check", { id: "u" })).toEqual({
+  expect(await none.request("check", { id: "u" })).toEqual({
     error: "无法写入更新请求：宿主机更新服务没有安装好。",
     status: 503,
   });
@@ -323,7 +331,7 @@ test("updater not installed yet / old / misconfigured: overview says so, request
     running,
     now: () => NOW,
   });
-  expect(old.overview()).toMatchObject({
+  expect(await old.overview()).toMatchObject({
     updaterVersion: 2,
     updaterOutdated: true,
     warnings: [],
@@ -338,11 +346,39 @@ test("updater not installed yet / old / misconfigured: overview says so, request
     running,
     now: () => NOW,
   });
-  const ok = current.overview();
+  const ok = await current.overview();
   expect(ok).toMatchObject({
     updaterVersion: 4,
     updaterOutdated: false,
     warnings: ["health_url_example", "buildx_missing"],
   });
   expect(ok.sourceDir).toBeUndefined();
+});
+
+test("overview caches state reads for 1s and invalidates after request()", async () => {
+  let clock = NOW;
+  const dir = spool({ ...fresh, behind: 1 });
+  const service = createSystemUpdateService({
+    dir,
+    running,
+    now: () => clock,
+  });
+  expect((await service.overview()).behind).toBe(1);
+
+  writeFileSync(
+    path.join(dir, "state", "state.json"),
+    JSON.stringify({ ...fresh, behind: 3 }),
+  );
+  // Within 1s TTL, cached overview is returned.
+  clock += 500;
+  expect((await service.overview()).behind).toBe(1);
+
+  // After 1s TTL expires, disk state is re-read asynchronously.
+  clock += 600;
+  expect((await service.overview()).behind).toBe(3);
+
+  // Writing a request immediately invalidates cached overview.
+  const req = await service.request("check", { id: "u1" });
+  expect("id" in req).toBe(true);
+  expect((await service.overview()).pending).toEqual(["check"]);
 });

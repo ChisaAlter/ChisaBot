@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   AbstractAgent,
   type BaseEvent,
@@ -875,7 +876,7 @@ export class DshRuntimeAgent extends AbstractAgent {
                 value: { status: "reconnecting" },
               } as BaseEvent);
             }
-            let delay = 250;
+            let backoffMs = 250;
             const reconnectStartedAt = Date.now();
             while (!follow.signal.aborted) {
               /*
@@ -903,7 +904,13 @@ export class DshRuntimeAgent extends AbstractAgent {
                   await readFile(target.connectionFile, "utf8"),
                 ) as { endpoint: string };
                 const next = await DshHostClient.connect(address.endpoint);
-                const current = await next.health();
+                let current: Awaited<ReturnType<typeof next.health>>;
+                try {
+                  current = await next.health();
+                } catch (healthError) {
+                  await next.close().catch(() => {});
+                  throw healthError;
+                }
                 if (
                   current.generation !== health.generation ||
                   current.ownerUserId !== scope.actorId
@@ -938,10 +945,12 @@ export class DshRuntimeAgent extends AbstractAgent {
                   error.message.startsWith("DSH_HOST_RESTARTED:")
                 )
                   throw error;
-                await new Promise<void>((resolve) =>
-                  setTimeout(resolve, delay),
-                );
-                delay = Math.min(delay * 2, 5000);
+                try {
+                  await delay(backoffMs, undefined, { signal: follow.signal });
+                } catch {
+                  return;
+                }
+                backoffMs = Math.min(backoffMs * 2, 5000);
               }
             }
           })().finally(() => {

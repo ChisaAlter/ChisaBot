@@ -98,6 +98,8 @@ type Connection = {
   clientVersion: string | null;
   /** 设备平台（win32 / darwin / linux 等）。 */
   platform: string | null;
+  /** 25s 心跳定时器，统一在 dropConnection 中清理。 */
+  ping?: ReturnType<typeof setInterval>;
 };
 
 type Approval = {
@@ -428,6 +430,10 @@ export function createDeviceHub(options: {
   }
 
   function dropConnection(connection: Connection, reason: string) {
+    if (connection.ping) {
+      clearInterval(connection.ping);
+      connection.ping = undefined;
+    }
     if (connections.get(connection.deviceId) === connection)
       connections.delete(connection.deviceId);
     desktopSnapshots.clearDevice(connection.deviceId);
@@ -682,6 +688,7 @@ export function createDeviceHub(options: {
         25_000,
       );
       unref(ping as unknown as ReturnType<typeof setTimeout>);
+      connection.ping = ping;
 
       return {
         onMessage: async (raw: string) => {

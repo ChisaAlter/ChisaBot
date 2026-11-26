@@ -505,7 +505,12 @@ export async function apply(ctx, config) {
               throw new Error(
                 "The invocation has no committed DSH tool-call identity.",
               );
-            const verdict = state.loopGuard.admit(call.turn, tool.name, args);
+            const verdict = state.loopGuard.admit(
+              call.turn,
+              tool.name,
+              args,
+              execution.callId,
+            );
             if (verdict.kind === "conclude") {
               // The model ignored the stop notice. End the turn here with a plain account of what
               // happened (projected to the person as the turn's answer) instead of spinning on.
@@ -544,12 +549,12 @@ export async function apply(ctx, config) {
               );
             } catch (error) {
               // Gateway 409 / transport failure: not an actual execution (QA513 P3).
-              state.loopGuard.observe({ rejected: true });
+              state.loopGuard.observe({ rejected: true }, execution.callId);
               throw error;
             }
             if (result.waiting) {
               // Approval pause: the call has not run yet; do not count it as executed.
-              state.loopGuard.observe({ deferred: true });
+              state.loopGuard.observe({ deferred: true }, execution.callId);
               state.waiting = result.waiting;
               appendPluginRecord(agent.session, "plugin:chisabot/waiting", {
                 callId: execution.callId,
@@ -624,7 +629,10 @@ export async function apply(ctx, config) {
                 };
               }
             }
-            const outcome = state.loopGuard.observe({ result: finalResult });
+            const outcome = state.loopGuard.observe(
+              { result: finalResult },
+              execution.callId,
+            );
             if (outcome?.stop) {
               if (state.loopConcluded !== call.turn) {
                 state.loopConcluded = call.turn;

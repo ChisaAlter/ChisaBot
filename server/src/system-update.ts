@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
@@ -36,18 +37,19 @@ import { atomicWriteFileUniqueSync } from "./security/file-hygiene";
 
 export type SystemUpdateService = {
   readonly configured: boolean;
-  overview(): SystemUpdateOverview;
+  overview(): Promise<SystemUpdateOverview>;
   request(
     action: SystemUpdateAction,
     actor: { id: string; name?: string | null; email?: string | null },
     expectCommit?: string,
     options?: { full?: boolean },
-  ): { id: string } | { error: string; status: 409 | 503 };
+  ): Promise<{ id: string } | { error: string; status: 409 | 503 }>;
   /** 宿主机写完一个任务后，补一条审计（每个任务只记一次）。 */
   pollFinishedJobs(record: (job: NonNullable<SystemUpdateOverview["job"]>) => Promise<void>): Promise<void>;
 };
 
 const MAX_STATE_BYTES = 512 * 1024;
+const OVERVIEW_CACHE_TTL_MS = 1_000;
 
 export function createSystemUpdateService(options: {
   dir?: string;
@@ -63,11 +65,13 @@ export function createSystemUpdateService(options: {
   const magpieFile = dir ? path.join(dir, "state", "magpie.json") : "";
   const auditedFile = dir ? path.join(requestsDir, ".audited.json") : "";
   const configured = Boolean(dir && existsSync(requestsDir) && existsSync(path.dirname(stateFile)));
+  let cachedOverview: { value: SystemUpdateOverview; expiresAt: number } | null = null;
+  let inflightOverview: Promise<SystemUpdateOverview> | null = null;
 
-  function readState(): unknown {
+  async function readState(): Promise<unknown> {
     if (!configured) return null;
     try {
-      const text = readFileSync(stateFile, "utf8");
+      const text = await readFile(stateFile, "utf8");
       if (text.length > MAX_STATE_BYTES) return null;
       return JSON.parse(text);
     } catch {
@@ -75,10 +79,10 @@ export function createSystemUpdateService(options: {
     }
   }
 
-  function readMagpie(): unknown {
+  async function readMagpie(): Promise<unknown> {
     if (!configured || !magpieFile) return null;
     try {
-      const text = readFileSync(magpieFile, "utf8");
+      const text = await readFile(magpieFile, "utf8");
       if (text.length > MAX_STATE_BYTES) return null;
       return JSON.parse(text);
     } catch {
@@ -86,29 +90,49 @@ export function createSystemUpdateService(options: {
     }
   }
 
-  function pending(): SystemUpdateAction[] {
+  async function pending(): Promise<SystemUpdateAction[]> {
     if (!configured) return [];
-    const out: SystemUpdateAction[] = [];
+    let names: string[];
     try {
-      for (const name of readdirSync(requestsDir)) {
-        if (!/^[A-Za-z0-9_-]{6,64}\.json$/u.test(name)) continue;
-        try {
-          const body = JSON.parse(readFileSync(path.join(requestsDir, name), "utf8"));
-          if ((SYSTEM_UPDATE_ACTIONS as readonly string[]).includes(body?.action)) out.push(body.action);
-        } catch {
-          /* 宿主机正在取走 */
-        }
-      }
+      names = await readdir(requestsDir);
     } catch {
       return [];
     }
-    return out;
+    const candidates = names.filter((name) => /^[A-Za-z0-9_-]{6,64}\.json$/u.test(name));
+    const actions = await Promise.all(
+      candidates.map(async (name): Promise<SystemUpdateAction | null> => {
+        try {
+          const body = JSON.parse(await readFile(path.join(requestsDir, name), "utf8"));
+          return (SYSTEM_UPDATE_ACTIONS as readonly string[]).includes(body?.action)
+            ? (body.action as SystemUpdateAction)
+            : null;
+        } catch {
+          /* 宿主机正在取走 */
+          return null;
+        }
+      }),
+    );
+    return actions.filter((action): action is SystemUpdateAction => action !== null);
   }
 
   const sourceDir = options.sourceDir?.trim();
   const source = sourceDir && /^\/[A-Za-z0-9._/-]{1,200}$/u.test(sourceDir) ? { sourceDir } : {};
 
-  function overview(): SystemUpdateOverview {
+  async function loadOverview(): Promise<SystemUpdateOverview> {
+    const [rawState, rawMagpie, pendingActions] = await Promise.all([
+      readState(),
+      readMagpie(),
+      pending(),
+    ]);
+    const magpie = projectMagpieGatewayState(rawMagpie);
+    return {
+      ...projectSystemUpdateState(rawState, options.running, pendingActions, now()),
+      ...(magpie ? { magpie } : {}),
+      ...source,
+    };
+  }
+
+  async function overview(opts?: { bypassCache?: boolean }): Promise<SystemUpdateOverview> {
     if (!configured) {
       return {
         ...projectSystemUpdateState(null, options.running, [], now()),
@@ -116,20 +140,34 @@ export function createSystemUpdateService(options: {
         ...source,
       };
     }
-    const magpie = projectMagpieGatewayState(readMagpie());
-    return {
-      ...projectSystemUpdateState(readState(), options.running, pending(), now()),
-      ...(magpie ? { magpie } : {}),
-      ...source,
-    };
+    const currentNow = now();
+    if (!opts?.bypassCache && cachedOverview && currentNow < cachedOverview.expiresAt) {
+      return cachedOverview.value;
+    }
+    if (!opts?.bypassCache && inflightOverview) {
+      return inflightOverview;
+    }
+    const load = loadOverview().then((value) => {
+      cachedOverview = { value, expiresAt: now() + OVERVIEW_CACHE_TTL_MS };
+      return value;
+    });
+    if (!opts?.bypassCache) {
+      inflightOverview = load;
+      try {
+        return await load;
+      } finally {
+        if (inflightOverview === load) inflightOverview = null;
+      }
+    }
+    return await load;
   }
 
   return {
     configured,
-    overview,
-    request(action, actor, expectCommit, options) {
+    overview: () => overview(),
+    async request(action, actor, expectCommit, requestOptions) {
       if (!configured) return { error: "这个部署没有安装宿主机更新程序。", status: 503 };
-      const state = overview();
+      const state = await overview({ bypassCache: true });
       if (!state.updaterOnline && action !== "check")
         return { error: "宿主机更新程序没有在运行，暂时不能更新或回滚。", status: 503 };
       const busy =
@@ -149,7 +187,7 @@ export function createSystemUpdateService(options: {
         actor: (actor.name || actor.email || actor.id).slice(0, 80),
         actorId: actor.id.slice(0, 80),
         ...(expectCommit && /^[0-9a-f]{40}$/u.test(expectCommit) ? { expectCommit } : {}),
-        ...(action === "update" && (options?.full || state.depsChanged) ? { mode: "full" } : {}),
+        ...(action === "update" && (requestOptions?.full || state.depsChanged) ? { mode: "full" } : {}),
       };
       try {
         atomicWriteFileUniqueSync(
@@ -161,16 +199,17 @@ export function createSystemUpdateService(options: {
         // 目录是 Docker 自己建的（root 所有）= 宿主机更新服务没装：页面上有安装命令。
         return { error: "无法写入更新请求：宿主机更新服务没有安装好。", status: 503 };
       }
+      cachedOverview = null;
       return { id };
     },
     async pollFinishedJobs(record) {
       if (!configured) return;
-      const job = overview().job;
+      const job = (await overview()).job;
       if (!job || job.action === "check") return;
       if (job.status !== "succeeded" && job.status !== "failed" && job.status !== "rolled_back") return;
       let audited: string[] = [];
       try {
-        audited = JSON.parse(readFileSync(auditedFile, "utf8"));
+        audited = JSON.parse(await readFile(auditedFile, "utf8"));
         if (!Array.isArray(audited)) audited = [];
       } catch {
         audited = [];
@@ -235,7 +274,7 @@ export function createSystemUpdateRoutes(options: {
         }),
       )
       .catch(() => undefined);
-    return context.json(service.overview());
+    return context.json(await service.overview());
   });
 
   for (const action of SYSTEM_UPDATE_ACTIONS) {
@@ -252,7 +291,7 @@ export function createSystemUpdateRoutes(options: {
           expectCommit = undefined;
         }
       }
-      const result = service.request(action, actor, expectCommit, { full });
+      const result = await service.request(action, actor, expectCommit, { full });
       if ("error" in result) {
         if (action !== "check")
           await audit(actor.id, { change: `system_update.${action}.refused`, detail: result.error });
@@ -265,7 +304,7 @@ export function createSystemUpdateRoutes(options: {
           ...(expectCommit ? { commit: expectCommit } : {}),
           ...(full ? { mode: "full" } : {}),
         });
-      return context.json({ id: result.id, overview: service.overview() }, 202);
+      return context.json({ id: result.id, overview: await service.overview() }, 202);
     });
   }
 

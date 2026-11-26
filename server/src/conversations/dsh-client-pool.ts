@@ -1,11 +1,13 @@
 import { DshHostClient } from "../../../runtime/dsh/src/client.mjs";
 
 type PooledEntry = {
+  endpoint: string;
   client: DshHostClient;
   idleTimer: ReturnType<typeof setTimeout>;
 };
 
 export const DEFAULT_DSH_POOL_MAX_IDLE_PER_ENDPOINT = 4;
+export const DEFAULT_DSH_POOL_MAX_TOTAL_IDLE = 32;
 export const DEFAULT_DSH_POOL_IDLE_TTL_MS = 60_000;
 
 /**
@@ -14,22 +16,39 @@ export const DEFAULT_DSH_POOL_IDLE_TTL_MS = 60_000;
  */
 export class DshClientPool {
   private readonly idleByEndpoint = new Map<string, PooledEntry[]>();
+  private readonly idleLru = new Set<PooledEntry>();
   private readonly inUse = new WeakSet<DshHostClient>();
   private readonly connectFn: (endpoint: string) => Promise<DshHostClient>;
   private readonly maxIdlePerEndpoint: number;
+  private readonly maxTotalIdle: number;
   private readonly idleTtlMs: number;
   private closed = false;
 
   constructor(options?: {
     connect?: (endpoint: string) => Promise<DshHostClient>;
     maxIdlePerEndpoint?: number;
+    maxTotalIdle?: number;
     idleTtlMs?: number;
   }) {
     this.connectFn =
       options?.connect ?? ((endpoint) => DshHostClient.connect(endpoint));
     this.maxIdlePerEndpoint =
       options?.maxIdlePerEndpoint ?? DEFAULT_DSH_POOL_MAX_IDLE_PER_ENDPOINT;
+    this.maxTotalIdle =
+      options?.maxTotalIdle ?? DEFAULT_DSH_POOL_MAX_TOTAL_IDLE;
     this.idleTtlMs = options?.idleTtlMs ?? DEFAULT_DSH_POOL_IDLE_TTL_MS;
+  }
+
+  private evictEntry(entry: PooledEntry): void {
+    this.idleLru.delete(entry);
+    clearTimeout(entry.idleTimer);
+    const list = this.idleByEndpoint.get(entry.endpoint);
+    if (list) {
+      const index = list.indexOf(entry);
+      if (index !== -1) list.splice(index, 1);
+      if (list.length === 0) this.idleByEndpoint.delete(entry.endpoint);
+    }
+    void entry.client.close().catch(() => {});
   }
 
   async acquire(endpoint: string): Promise<DshHostClient> {
@@ -40,6 +59,7 @@ export class DshClientPool {
     while (bucket?.length) {
       const entry = bucket.pop();
       if (!entry) break;
+      this.idleLru.delete(entry);
       clearTimeout(entry.idleTimer);
       if (bucket.length === 0) this.idleByEndpoint.delete(endpoint);
       if ("isConnected" in entry.client && entry.client.isConnected === false) {
@@ -58,6 +78,8 @@ export class DshClientPool {
     this.inUse.delete(client);
     if (
       this.closed ||
+      this.maxTotalIdle <= 0 ||
+      this.maxIdlePerEndpoint <= 0 ||
       ("isConnected" in client && client.isConnected === false)
     ) {
       void client.close().catch(() => {});
@@ -68,18 +90,23 @@ export class DshClientPool {
       void client.close().catch(() => {});
       return;
     }
-    const idleTimer = setTimeout(() => {
-      const list = this.idleByEndpoint.get(endpoint);
-      if (!list) return;
-      const index = list.findIndex((entry) => entry.client === client);
-      if (index === -1) return;
-      list.splice(index, 1);
-      if (list.length === 0) this.idleByEndpoint.delete(endpoint);
-      void client.close().catch(() => {});
-    }, this.idleTtlMs);
-    idleTimer.unref?.();
-    bucket.push({ client, idleTimer });
+    const entry: PooledEntry = {
+      endpoint,
+      client,
+      idleTimer: setTimeout(() => {
+        if (!this.idleLru.has(entry)) return;
+        this.evictEntry(entry);
+      }, this.idleTtlMs),
+    };
+    entry.idleTimer.unref?.();
+    bucket.push(entry);
     this.idleByEndpoint.set(endpoint, bucket);
+    this.idleLru.add(entry);
+    while (this.idleLru.size > this.maxTotalIdle) {
+      const oldest = this.idleLru.values().next().value;
+      if (!oldest) break;
+      this.evictEntry(oldest);
+    }
   }
 
   async invalidate(client: DshHostClient | undefined): Promise<void> {
@@ -89,7 +116,10 @@ export class DshClientPool {
       const index = list.findIndex((entry) => entry.client === client);
       if (index !== -1) {
         const [removed] = list.splice(index, 1);
-        if (removed) clearTimeout(removed.idleTimer);
+        if (removed) {
+          this.idleLru.delete(removed);
+          clearTimeout(removed.idleTimer);
+        }
         if (list.length === 0) this.idleByEndpoint.delete(endpoint);
       }
     }
@@ -100,20 +130,17 @@ export class DshClientPool {
     if (endpoint !== undefined) {
       return this.idleByEndpoint.get(endpoint)?.length ?? 0;
     }
-    let total = 0;
-    for (const list of this.idleByEndpoint.values()) total += list.length;
-    return total;
+    return this.idleLru.size;
   }
 
   async closeAll(): Promise<void> {
     this.closed = true;
     const closing: Promise<void>[] = [];
-    for (const list of this.idleByEndpoint.values()) {
-      for (const entry of list) {
-        clearTimeout(entry.idleTimer);
-        closing.push(entry.client.close().catch(() => {}));
-      }
+    for (const entry of this.idleLru) {
+      clearTimeout(entry.idleTimer);
+      closing.push(entry.client.close().catch(() => {}));
     }
+    this.idleLru.clear();
     this.idleByEndpoint.clear();
     await Promise.all(closing);
   }

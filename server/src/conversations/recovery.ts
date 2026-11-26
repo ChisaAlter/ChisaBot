@@ -4,7 +4,7 @@ import { reasonWithoutStatement } from "../db/query-failure";
 import type { LocalConversationBackend } from "../local-conversations";
 import { isGroupChatProps } from "../memory/tools";
 import { executionClass } from "./capacity";
-import { conversationAdmissionClosed } from "./maintenance";
+import { conversationAdmissionClosedAsync } from "./maintenance";
 import type { DshRunJournal } from "./run-journal";
 
 /**
@@ -106,7 +106,7 @@ export async function recoverConversations(options: {
     }
   };
   for (const record of pending) await start(record, record.initiator);
-  if (conversationAdmissionClosed()) return;
+  if (await conversationAdmissionClosedAsync()) return;
   for (const record of await backend.capacity.queued()) {
     if (occupied.has(record.thread_id)) continue;
     const saved = record.execution;

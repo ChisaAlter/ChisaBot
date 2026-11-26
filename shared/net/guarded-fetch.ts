@@ -191,6 +191,17 @@ function oneHop(
     const send = url.protocol === "https:" ? httpsRequest : httpRequest;
     const hostname = url.hostname.replace(/^\[|\]$/g, "");
     let settled = false;
+    let activeRes: import("node:http").IncomingMessage | undefined;
+    let activeDecoder: ReturnType<typeof decoderFor> | undefined;
+    const teardownStream = () => {
+      if (activeRes && activeDecoder) {
+        activeRes.unpipe(activeDecoder);
+      }
+      activeDecoder?.destroy();
+      activeRes?.destroy();
+      activeDecoder = undefined;
+      activeRes = undefined;
+    };
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
@@ -248,6 +259,8 @@ function oneHop(
           );
         }
         const decoder = decoderFor(headers["content-encoding"]);
+        activeRes = res;
+        activeDecoder = decoder;
         const stream = decoder ? res.pipe(decoder) : res;
         const chunks: Buffer[] = [];
         let size = 0;
@@ -256,6 +269,23 @@ function oneHop(
           options.stopAfterBytes ?? options.maxBytes,
           options.maxBytes,
         );
+        const onStreamError = (error: Error) => {
+          teardownStream();
+          req.destroy();
+          finish(() =>
+            chunks.length
+              ? resolve({
+                  status,
+                  headers,
+                  body: Buffer.concat(chunks),
+                  truncated: true,
+                })
+              : reject(error),
+          );
+        };
+        if (decoder) {
+          res.on("error", onStreamError);
+        }
         stream.on("data", (chunk: Buffer) => {
           if (settled) return;
           size += chunk.length;
@@ -264,6 +294,7 @@ function oneHop(
               chunk.subarray(0, Math.max(0, chunk.length - (size - stopAt))),
             );
             truncated = size > options.maxBytes || stopAt < options.maxBytes;
+            teardownStream();
             req.destroy();
             return finish(() =>
               resolve({
@@ -286,25 +317,16 @@ function oneHop(
             }),
           ),
         );
-        stream.on("error", (error: Error) =>
-          finish(() =>
-            chunks.length
-              ? resolve({
-                  status,
-                  headers,
-                  body: Buffer.concat(chunks),
-                  truncated: true,
-                })
-              : reject(error),
-          ),
-        );
+        stream.on("error", onStreamError);
       },
     );
     const timer = setTimeout(() => {
+      teardownStream();
       req.destroy();
       finish(() => reject(new Error("请求超时")));
     }, remaining);
     const onAbort = () => {
+      teardownStream();
       req.destroy();
       finish(() => reject(new Error("已取消")));
     };

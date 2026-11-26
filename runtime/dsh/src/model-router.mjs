@@ -36,14 +36,19 @@ const breakerCodes = new Set([
   "INVALID_REQUEST",
 ]);
 const PROBE_STALE_MS = 300_000;
+export const MAX_MODEL_BREAKER_ENTRIES = 256;
 const seconds = (name, fallback) => {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
 };
 
 export class ModelBreakers {
-  constructor(now = () => Date.now()) {
+  constructor(now = () => Date.now(), maxEntries = MAX_MODEL_BREAKER_ENTRIES) {
     this.now = now;
+    this.maxEntries =
+      Number.isInteger(maxEntries) && maxEntries > 0
+        ? maxEntries
+        : MAX_MODEL_BREAKER_ENTRIES;
     this.entries = new Map();
   }
   get baseMs() {
@@ -51,6 +56,23 @@ export class ModelBreakers {
   }
   get maxMs() {
     return seconds("CHISABOT_MODEL_BREAKER_MAX_COOLDOWN_S", 600) * 1000;
+  }
+  /** Remove expired entries first, then oldest keys if still above `maxEntries`. */
+  prune(now = this.now(), protectedKey) {
+    for (const [key, entry] of this.entries) {
+      if (key === protectedKey) continue;
+      const probeActive =
+        entry.probing && now - entry.probeStarted < PROBE_STALE_MS;
+      if (!probeActive && entry.openUntil <= now) {
+        this.entries.delete(key);
+      }
+    }
+    if (this.entries.size <= this.maxEntries) return;
+    for (const key of this.entries.keys()) {
+      if (this.entries.size <= this.maxEntries) break;
+      if (key === protectedKey) continue;
+      this.entries.delete(key);
+    }
   }
   /** The open entry while it still gates this key, else undefined. */
   cooling(key) {
@@ -85,7 +107,12 @@ export class ModelBreakers {
         now + Math.min(this.baseMs * 2 ** entry.opens, this.maxMs);
       entry.opens++;
     }
+    // Refresh insertion order so active keys stay at the tail for LRU eviction.
+    this.entries.delete(key);
     this.entries.set(key, entry);
+    if (this.entries.size > this.maxEntries) {
+      this.prune(now, key);
+    }
   }
   ok(key) {
     this.entries.delete(key);
