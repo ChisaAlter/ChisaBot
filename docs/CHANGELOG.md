@@ -1,5 +1,7 @@
 ## Unreleased
 
+- **修复聊天输入框附件上传失败持久化、重试保护与草稿恢复竞态**：`PersistedDraftFile` 新增 `failedReason` 持久化与恢复区分，新增 `mergeDraftAttachments` 在异步草稿恢复期间与实时增删/发送状态合并防覆盖，修复 `StrictMode`/切会话恢复中断与重试异常回写/禁用状态漏洞，并补充回归单测（`composer.tsx` · `draft-attachment-store.ts` · `composer-draft-restore.test.tsx`）。
+
 ## 0.1.191 — 2026-11-26
 
 - 全端发版：`0.1.191`，Android `versionCode 371`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `40004bb3640818a0`；无新增数据库迁移。

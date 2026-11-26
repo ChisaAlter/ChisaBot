@@ -16,6 +16,7 @@ export type PersistedDraftFile = {
   file: File;
   attachment?: Attachment;
   submission?: DraftFileSubmission;
+  failedReason?: string;
 };
 
 export type DraftAttachmentSnapshot = {
@@ -125,6 +126,45 @@ async function transact<T>(
   }
 }
 
+function snapshotDraftFiles(
+  files: readonly PersistedDraftFile[],
+): PersistedDraftFile[] {
+  // Sending keeps its files until admission while the next draft remains editable.
+  const limit = MAX_ATTACHMENTS_PER_MESSAGE * 2;
+  if (files.length > limit) {
+    throw new Error(`当前与发送中的附件草稿最多保存 ${limit} 个文件。`);
+  }
+  for (const { file } of files) {
+    const fileLimit = isChatDocumentFile(file.name, file.type)
+      ? MAX_CHAT_FILE_BYTES
+      : classifyAttachment(file.type) === "text"
+        ? MAX_FILE_BYTES
+        : MAX_IMAGE_BYTES;
+    if (file.size > fileLimit) {
+      throw new Error(`附件“${file.name}”超过保存上限。`);
+    }
+  }
+  // Snapshot metadata now, before an older IndexedDB operation finishes.
+  return files.map(({ id, file, attachment, submission, failedReason }) => ({
+    id,
+    file,
+    ...(attachment ? { attachment: structuredClone(attachment) } : {}),
+    ...(submission ? { submission: { ...submission } } : {}),
+    ...(failedReason ? { failedReason } : {}),
+  }));
+}
+
+function draftEntryTrackingId(
+  attachment: Attachment | undefined,
+): string | undefined {
+  const rowId = attachment?.metadata?.attachmentId;
+  if (typeof rowId === "string" && rowId) return rowId;
+  const chatFileId = attachment?.metadata?.chatFileId;
+  return typeof chatFileId === "string" && chatFileId
+    ? `cf:${chatFileId}`
+    : undefined;
+}
+
 /** Original files stay local; account and conversation form the complete key. */
 export async function writeDraftAttachments(
   accountId: string,
@@ -132,28 +172,7 @@ export async function writeDraftAttachments(
   files: readonly PersistedDraftFile[],
 ): Promise<void> {
   const key = keyOf(accountId, draftKey);
-  // Sending keeps its files until admission while the next draft remains editable.
-  const limit = MAX_ATTACHMENTS_PER_MESSAGE * 2;
-  if (files.length > limit) {
-    throw new Error(`当前与发送中的附件草稿最多保存 ${limit} 个文件。`);
-  }
-  for (const { file } of files) {
-    const limit = isChatDocumentFile(file.name, file.type)
-      ? MAX_CHAT_FILE_BYTES
-      : classifyAttachment(file.type) === "text"
-        ? MAX_FILE_BYTES
-        : MAX_IMAGE_BYTES;
-    if (file.size > limit) {
-      throw new Error(`附件“${file.name}”超过保存上限。`);
-    }
-  }
-  // Snapshot metadata now, before an older IndexedDB operation finishes.
-  const snapshot = files.map(({ id, file, attachment, submission }) => ({
-    id,
-    file,
-    ...(attachment ? { attachment: structuredClone(attachment) } : {}),
-    ...(submission ? { submission: { ...submission } } : {}),
-  }));
+  const snapshot = snapshotDraftFiles(files);
   const at = Date.now();
   return inOrder(accountId, () =>
     transact<void>((store, done) => {
@@ -169,6 +188,56 @@ export async function writeDraftAttachments(
       }
       prune(store, accountId, at);
       done(undefined);
+    }),
+  );
+}
+
+/** Merge live draft mutations with existing persisted files while an async restore is in flight. */
+export async function mergeDraftAttachments(
+  accountId: string,
+  draftKey: string,
+  files: readonly PersistedDraftFile[],
+  excluded: {
+    removedIds?: readonly string[];
+    acceptedTrackingIds?: readonly string[];
+  } = {},
+): Promise<void> {
+  const key = keyOf(accountId, draftKey);
+  const incoming = snapshotDraftFiles(files);
+  const incomingIds = new Set(incoming.map((entry) => entry.id));
+  const removedIds = new Set(excluded.removedIds ?? []);
+  const acceptedIds = new Set(excluded.acceptedTrackingIds ?? []);
+  const at = Date.now();
+  return inOrder(accountId, () =>
+    transact<void>((store, done) => {
+      const request = store.get(key);
+      request.onsuccess = () => {
+        const existing =
+          (request.result as StoredDraft | undefined)?.files ?? [];
+        const kept = existing.filter((entry) => {
+          if (incomingIds.has(entry.id) || removedIds.has(entry.id)) {
+            return false;
+          }
+          const trackingId = draftEntryTrackingId(entry.attachment);
+          return !trackingId || !acceptedIds.has(trackingId);
+        });
+        const merged = [...kept, ...incoming].slice(
+          0,
+          MAX_ATTACHMENTS_PER_MESSAGE * 2,
+        );
+        if (merged.length) {
+          store.put({
+            key,
+            accountId,
+            at,
+            files: merged,
+          } satisfies StoredDraft);
+        } else {
+          store.delete(key);
+        }
+        prune(store, accountId, at);
+        done(undefined);
+      };
     }),
   );
 }

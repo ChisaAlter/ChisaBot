@@ -65,6 +65,7 @@ import {
 } from "@/lib/conversations/send-mode";
 import { promoteAllQueued, queuedFor } from "@/lib/conversations/thread-inbox";
 import {
+  mergeDraftAttachments,
   type PersistedDraftFile,
   readDraftAttachments,
   writeDraftAttachments,
@@ -504,15 +505,23 @@ function ComposerImpl({
   queuedAttachmentCount = 0,
 }: ComposerProps) {
   const accountId = currentDraftFileAccount();
+  const accountIdRef = useRef(accountId);
+  accountIdRef.current = accountId;
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
   const simpleMode = useSimpleMode();
   const conversationScope = useConversationScope();
   const fileDraft = useRef(new Map<string, PersistedDraftFile>());
   const pendingBusyModeRef = useRef<BusySendMode | null>(null);
-  const fileDraftRevision = useRef(0);
-  const fileDraftRead = useRef(false);
+  const fileDraftReadKey = useRef<string | null>(null);
+  const lastSeenDraftKey = useRef<string | undefined>(draftKey);
   const fileDraftAlive = useRef(true);
   const restoringFiles = useRef(false);
   const acceptedDuringRestore = useRef(new Set<string>());
+  const removedDuringRestore = useRef(new Set<string>());
+  const activeRetries = useRef(new Map<string, object>());
   useExternalConnection(true, () => {
     fileDraftAlive.current = true;
     return () => {
@@ -525,12 +534,20 @@ function ComposerImpl({
     storageErrorShown.current = true;
     toast.error("附件草稿未能保存在本机，请先发送或保留原文件后再刷新。");
   }, []);
-  const saveFileDraft = useCallback(() => {
-    if (!accountId || !draftKey) return;
-    void writeDraftAttachments(accountId, draftKey, [
-      ...fileDraft.current.values(),
-    ]).catch(reportFileStorageError);
+  const persistFileDraft = useCallback(() => {
+    if (!accountId || !draftKey) return Promise.resolve();
+    const files = [...fileDraft.current.values()];
+    const write = restoringFiles.current
+      ? mergeDraftAttachments(accountId, draftKey, files, {
+          removedIds: [...removedDuringRestore.current],
+          acceptedTrackingIds: [...acceptedDuringRestore.current],
+        })
+      : writeDraftAttachments(accountId, draftKey, files);
+    return write.catch(reportFileStorageError);
   }, [accountId, draftKey, reportFileStorageError]);
+  const saveFileDraft = useCallback(() => {
+    void persistFileDraft();
+  }, [persistFileDraft]);
   const [value, setValue] = useState<Segment[]>(
     () =>
       rememberedDraft(
@@ -816,13 +833,28 @@ function ComposerImpl({
        * they stay in the refusal list.
        */
       if (failure.reason === "upload-failed") {
+        const existing = fileDraft.current.get(failedKey);
+        if (existing) {
+          const { attachment: _attachment, ...rest } = existing;
+          fileDraft.current.set(failedKey, {
+            ...rest,
+            failedReason: failure.message,
+          });
+        } else {
+          fileDraft.current.set(failedKey, {
+            id: failedKey,
+            file: failure.file,
+            failedReason: failure.message,
+          });
+        }
+        saveFileDraft();
         setFailedUploads((current) => [
           ...current,
           { id: failedKey, file: failure.file, reason: failure.message },
         ]);
         return;
       }
-      fileDraftRevision.current++;
+      if (restoringFiles.current) removedDuringRestore.current.add(failedKey);
       fileDraft.current.delete(failedKey);
       saveFileDraft();
       setRejected((current) => [
@@ -922,13 +954,21 @@ function ComposerImpl({
         pastedTexts.current.delete(uploadIdentity.keyOf(attachment));
       }
       if (accepted) {
-        fileDraftRevision.current++;
+        if (restoringFiles.current) {
+          for (const attachment of released) {
+            const trackingId = draftTrackingId(attachment);
+            if (trackingId) acceptedDuringRestore.current.add(trackingId);
+            removedDuringRestore.current.add(uploadIdentity.keyOf(attachment));
+          }
+        }
         const releasedIds = new Set(
           released.map((attachment) => attachment.id),
         );
         for (const [key, saved] of fileDraft.current)
-          if (saved.attachment && releasedIds.has(saved.attachment.id))
+          if (saved.attachment && releasedIds.has(saved.attachment.id)) {
+            if (restoringFiles.current) removedDuringRestore.current.add(key);
             fileDraft.current.delete(key);
+          }
         saveFileDraft();
       }
     },
@@ -1118,9 +1158,11 @@ function ComposerImpl({
           controller?.abort();
         }
       }
-      fileDraftRevision.current++;
-      if (attachment)
-        fileDraft.current.delete(uploadIdentity.keyOf(attachment));
+      if (attachment) {
+        const key = uploadIdentity.keyOf(attachment);
+        if (restoringFiles.current) removedDuringRestore.current.add(key);
+        fileDraft.current.delete(key);
+      }
       saveFileDraft();
       removeAttachment(id);
     },
@@ -1277,10 +1319,11 @@ function ComposerImpl({
       staging.current += screened.accepted.length;
       // Each file gets its own local id here, before the SDK draws its placeholder (see
       // `upload-identity.ts`); a long paste's preview text is filed under that id.
-      fileDraftRevision.current++;
+      const stagedEntries: { id: string; sent: File }[] = [];
       const outgoing = screened.accepted.map((file) => {
         const sent = withMediaTypeOnly(file);
         const id = uploadIdentity.assign(sent);
+        stagedEntries.push({ id, sent });
         fileDraft.current.set(id, { id, file });
         const pasted = pastedSources.current.get(file);
         if (pasted !== undefined) pastedTexts.current.set(id, pasted);
@@ -1289,6 +1332,17 @@ function ComposerImpl({
       saveFileDraft();
       try {
         await processFiles(outgoing);
+      } catch (error) {
+        for (const { id, sent } of stagedEntries) {
+          uploadIdentity.forget(sent);
+          const entry = fileDraft.current.get(id);
+          if (entry && !entry.attachment && !entry.failedReason) {
+            if (restoringFiles.current) removedDuringRestore.current.add(id);
+            fileDraft.current.delete(id);
+          }
+        }
+        saveFileDraft();
+        throw error;
       } finally {
         staging.current -= screened.accepted.length;
       }
@@ -1303,6 +1357,8 @@ function ComposerImpl({
       saveFileDraft,
     ],
   );
+  const stageFilesRef = useRef(stageFiles);
+  stageFilesRef.current = stageFiles;
 
   /** Put a failed upload back through the same door it came in by — screening, cap and all. */
   /** Tiles already retried: a double click must not put the same file up twice. */
@@ -1311,12 +1367,20 @@ function ComposerImpl({
     (id: string) => {
       const failed = failedUploads.find((upload) => upload.id === id);
       if (!failed || retried.current.has(id)) return;
+      if (!failed.saved && disabledRef.current) return;
       const original = fileDraft.current.get(id);
-      if (!original) return;
+      const token = {};
+      const startingDraftKey = draftKeyRef.current;
+      let handedOffToStage = false;
       const stillOwned = () =>
-        fileDraftAlive.current && fileDraft.current.get(id) === original;
+        fileDraftAlive.current &&
+        draftKeyRef.current === startingDraftKey &&
+        activeRetries.current.get(id) === token &&
+        (handedOffToStage ||
+          original === undefined ||
+          fileDraft.current.get(id) === original);
       retried.current.add(id);
-      fileDraftRevision.current++;
+      activeRetries.current.set(id, token);
       void (async () => {
         let status: "staged" | "accepted" | "missing" | "interrupted" =
           "interrupted";
@@ -1337,12 +1401,15 @@ function ComposerImpl({
             : await restoreSavedRef.current(failed.saved);
         }
         if (!stillOwned()) return;
-        setFailedUploads((current) =>
-          current.filter((upload) => upload.id !== id),
-        );
         const saved = failed.saved;
         const restoredAttachment = saved?.attachment;
         if (status === "staged" && saved && restoredAttachment) {
+          setFailedUploads((current) =>
+            current.filter((upload) => upload.id !== id),
+          );
+          if (!fileDraft.current.has(saved.id)) {
+            fileDraft.current.set(saved.id, saved);
+          }
           uploadIdentity.restore(saved.file, saved.id, restoredAttachment.id);
           const rowId = stagedRowId(restoredAttachment);
           if (rowId) uploadedRows.current.add(rowId);
@@ -1350,33 +1417,60 @@ function ComposerImpl({
           if (chatFileId) uploadedChatFiles.current.add(chatFileId);
           stagedCount.current++;
           restoreAttachments([restoredAttachment]);
-        } else {
-          fileDraft.current.delete(id);
-          saveFileDraft();
-          if (status !== "accepted") await stageFiles([failed.file]);
+          return;
+        }
+        if (status !== "accepted" && disabledRef.current) return;
+        setFailedUploads((current) =>
+          current.filter((upload) => upload.id !== id),
+        );
+        if (restoringFiles.current) removedDuringRestore.current.add(id);
+        fileDraft.current.delete(id);
+        saveFileDraft();
+        if (status !== "accepted") {
+          handedOffToStage = true;
+          await stageFilesRef.current([failed.file]);
         }
       })()
         .catch((error) => {
           if (!stillOwned()) return;
+          const reason =
+            error instanceof Error
+              ? error.message
+              : handedOffToStage
+                ? "上传失败，请重试。"
+                : "附件状态暂时无法核对，请重试。";
+          if (handedOffToStage) {
+            if (restoringFiles.current) removedDuringRestore.current.delete(id);
+            fileDraft.current.set(id, {
+              id,
+              file: failed.file,
+              failedReason: reason,
+            });
+            saveFileDraft();
+            setFailedUploads((current) =>
+              current.some((upload) => upload.id === id)
+                ? current.map((upload) =>
+                    upload.id === id ? { ...upload, reason } : upload,
+                  )
+                : [...current, { id, file: failed.file, reason }],
+            );
+            return;
+          }
           setFailedUploads((current) =>
             current.map((upload) =>
-              upload.id === id
-                ? {
-                    ...upload,
-                    reason:
-                      error instanceof Error
-                        ? error.message
-                        : "附件状态暂时无法核对，请重试。",
-                  }
-                : upload,
+              upload.id === id ? { ...upload, reason } : upload,
             ),
           );
         })
-        .finally(() => retried.current.delete(id));
+        .finally(() => {
+          if (activeRetries.current.get(id) === token) {
+            activeRetries.current.delete(id);
+          }
+          retried.current.delete(id);
+        });
     },
     [
       failedUploads,
-      stageFiles,
       conversationScope?.threadId,
       uploadIdentity,
       restoreAttachments,
@@ -1385,7 +1479,8 @@ function ComposerImpl({
   );
   const dismissFailedUpload = useCallback(
     (id: string) => {
-      fileDraftRevision.current++;
+      activeRetries.current.delete(id);
+      if (restoringFiles.current) removedDuringRestore.current.add(id);
       fileDraft.current.delete(id);
       saveFileDraft();
       setFailedUploads((current) =>
@@ -1488,7 +1583,8 @@ function ComposerImpl({
           saved.attachment === attachment
         )
           continue;
-        fileDraft.current.set(key, { ...saved, attachment });
+        const { failedReason: _failedReason, ...rest } = saved;
+        fileDraft.current.set(key, { ...rest, attachment });
         changed = true;
       }
       if (changed) saveFileDraft();
@@ -1503,6 +1599,7 @@ function ComposerImpl({
       for (const [key, saved] of fileDraft.current) {
         const trackingId = draftTrackingId(saved.attachment);
         if (!trackingId || !accepted.has(trackingId)) continue;
+        if (restoringFiles.current) removedDuringRestore.current.add(key);
         fileDraft.current.delete(key);
         const rowId = stagedRowId(saved.attachment);
         if (rowId) uploadedRows.current.delete(rowId);
@@ -1511,14 +1608,13 @@ function ComposerImpl({
         changed = true;
       }
       if (changed) {
-        fileDraftRevision.current++;
         saveFileDraft();
       }
     }),
   );
   useExternalConnection(
     accountId && draftKey
-      ? `${accountId}\0${draftKey}\0${objectKey(reportFileStorageError)}`
+      ? `${accountId}\0${draftKey}\0${objectKey(persistFileDraft)}`
       : false,
     () =>
       listenDraftFileSubmissions(async (ids, submission) => {
@@ -1532,10 +1628,7 @@ function ComposerImpl({
           changed = true;
         }
         if (changed) {
-          fileDraftRevision.current++;
-          await writeDraftAttachments(accountId, draftKey, [
-            ...fileDraft.current.values(),
-          ]).catch(reportFileStorageError);
+          await persistFileDraft();
         }
       }),
   );
@@ -1592,7 +1685,6 @@ function ComposerImpl({
           accountId ?? "",
           draftKey,
           conversationScope?.threadId ?? "",
-          objectKey(stageFiles),
           objectKey(restoreSavedFile),
           objectKey(restoreAttachments),
           objectKey(uploadIdentity),
@@ -1601,24 +1693,40 @@ function ComposerImpl({
         ].join("\0")
       : false,
     (_activeKey, signal) => {
-      if (!draftKey || !canAttach || fileDraftRead.current) return;
-      fileDraftRead.current = true;
-      if (fileDraftRevision.current > 0) return;
+      if (lastSeenDraftKey.current !== draftKey) {
+        if (lastSeenDraftKey.current !== undefined) {
+          fileDraft.current.clear();
+        }
+        acceptedDuringRestore.current.clear();
+        removedDuringRestore.current.clear();
+        fileDraftReadKey.current = null;
+        lastSeenDraftKey.current = draftKey;
+      }
+      if (!draftKey || !canAttach || fileDraftReadKey.current === draftKey)
+        return;
       const stagedInMemory = takeDraftFiles(draftKey);
       if (stagedInMemory.length) {
-        void stageFiles(stagedInMemory);
+        fileDraftReadKey.current = draftKey;
+        void stageFilesRef.current(stagedInMemory);
         return;
       }
       if (!accountId) return;
+      const activeDraftKey = draftKey;
+      fileDraftReadKey.current = activeDraftKey;
       let alive = true;
       let completed = false;
       restoringFiles.current = true;
-      const revision = fileDraftRevision.current;
-      const current = () =>
-        alive && !signal.aborted && revision === fileDraftRevision.current;
+      const current = () => alive && !signal.aborted;
       void (async () => {
-        const saved = await readDraftAttachments(accountId, draftKey);
-        if (!current() || !saved?.files.length) return;
+        const saved = await readDraftAttachments(accountId, activeDraftKey);
+        if (!current()) return;
+        if (!saved?.files.length) {
+          if (fileDraft.current.size > 0) {
+            restoringFiles.current = false;
+            saveFileDraft();
+          }
+          return;
+        }
         // Queued supplements can still be staged: consult the existing inbox before restoring.
         const state = conversationScope?.threadId
           ? await inboxState(conversationScope.threadId, { signal })
@@ -1629,7 +1737,10 @@ function ComposerImpl({
             attachmentIdsInContent(item.message.content),
           ) ?? [],
         );
-        const restored: Attachment[] = [];
+        const restored: {
+          entry: PersistedDraftFile;
+          attachment: Attachment;
+        }[] = [];
         const restoredDraft = new Map<string, PersistedDraftFile>();
         const interrupted: (Omit<FailedUpload, "name"> & {
           file: File;
@@ -1637,26 +1748,53 @@ function ComposerImpl({
         })[] = [];
         for (const entry of saved.files) {
           if (!current()) return;
+          if (removedDuringRestore.current.has(entry.id)) continue;
           const trackingId = draftTrackingId(entry.attachment);
-          if (trackingId && queuedIds.has(trackingId)) continue;
+          if (
+            trackingId &&
+            (queuedIds.has(trackingId) ||
+              acceptedDuringRestore.current.has(trackingId))
+          ) {
+            continue;
+          }
           try {
             if (trackingId && conversationScope?.threadId && !state)
               throw new Error("尚未确认附件的排队状态，联网后点重试。");
-            const status = await restoreSavedFile(entry, signal);
+            const status =
+              entry.failedReason && !entry.attachment
+                ? ("failed" as const)
+                : await restoreSavedFile(entry, signal);
             if (!current()) return;
             if (status === "accepted") continue;
+            if (
+              removedDuringRestore.current.has(entry.id) ||
+              (trackingId && acceptedDuringRestore.current.has(trackingId))
+            ) {
+              continue;
+            }
             restoredDraft.set(entry.id, entry);
             if (status === "staged" && entry.attachment) {
-              restored.push(entry.attachment);
+              restored.push({ entry, attachment: entry.attachment });
             } else {
               interrupted.push({
                 id: entry.id,
                 file: entry.file,
-                reason: "上传尚未完成，点击重试。",
+                reason:
+                  status === "failed" && entry.failedReason
+                    ? entry.failedReason
+                    : status === "missing"
+                      ? "附件已失效，点击重试。"
+                      : "上传尚未完成，点击重试。",
               });
             }
           } catch (error) {
             if (!current()) return;
+            if (
+              removedDuringRestore.current.has(entry.id) ||
+              (trackingId && acceptedDuringRestore.current.has(trackingId))
+            ) {
+              continue;
+            }
             restoredDraft.set(entry.id, entry);
             interrupted.push({
               id: entry.id,
@@ -1670,33 +1808,50 @@ function ComposerImpl({
           }
         }
         if (!current()) return;
+        const mergedDraft = new Map<string, PersistedDraftFile>();
+        const restoredIds = new Set<string>();
         for (const [key, entry] of restoredDraft) {
+          if (removedDuringRestore.current.has(key)) continue;
           const trackingId = draftTrackingId(entry.attachment);
           if (trackingId && acceptedDuringRestore.current.has(trackingId))
-            restoredDraft.delete(key);
+            continue;
+          if (fileDraft.current.has(key)) continue;
+          mergedDraft.set(key, entry);
+          restoredIds.add(key);
         }
-        fileDraft.current = restoredDraft;
-        const ready = restored.filter((attachment) => {
-          const trackingId = draftTrackingId(attachment);
-          return !trackingId || !acceptedDuringRestore.current.has(trackingId);
-        });
-        for (const entry of restoredDraft.values()) {
-          if (!entry.attachment || !ready.includes(entry.attachment)) continue;
-          uploadIdentity.restore(entry.file, entry.id, entry.attachment.id);
-          const rowId = stagedRowId(entry.attachment);
+        for (const [key, entry] of fileDraft.current) {
+          mergedDraft.set(key, entry);
+        }
+        fileDraft.current = mergedDraft;
+        const ready: Attachment[] = [];
+        for (const { entry, attachment } of restored) {
+          if (!restoredIds.has(entry.id)) continue;
+          uploadIdentity.restore(entry.file, entry.id, attachment.id);
+          const rowId = stagedRowId(attachment);
           if (rowId) uploadedRows.current.add(rowId);
-          const chatFileId = chatFileRowId(entry.attachment);
+          const chatFileId = chatFileRowId(attachment);
           if (chatFileId) uploadedChatFiles.current.add(chatFileId);
+          ready.push(attachment);
         }
         if (ready.length) {
           stagedCount.current += ready.length;
           restoreAttachments(ready);
         }
-        if (interrupted.length)
-          setFailedUploads((old) => [
-            ...old,
-            ...interrupted.filter((entry) => restoredDraft.has(entry.id)),
-          ]);
+        if (interrupted.length) {
+          const toAdd = interrupted.filter((entry) =>
+            restoredIds.has(entry.id),
+          );
+          if (toAdd.length) {
+            setFailedUploads((old) => {
+              const existingIds = new Set(old.map((upload) => upload.id));
+              const fresh = toAdd.filter(
+                (upload) => !existingIds.has(upload.id),
+              );
+              return fresh.length ? [...old, ...fresh] : old;
+            });
+          }
+        }
+        restoringFiles.current = false;
         saveFileDraft();
       })()
         .catch(() => {
@@ -1707,25 +1862,28 @@ function ComposerImpl({
           completed = true;
           restoringFiles.current = false;
           acceptedDuringRestore.current.clear();
+          removedDuringRestore.current.clear();
         });
       return () => {
         alive = false;
         restoringFiles.current = false;
-        acceptedDuringRestore.current.clear();
-        if (!completed) fileDraftRead.current = false;
+        if (completed) {
+          acceptedDuringRestore.current.clear();
+          removedDuringRestore.current.clear();
+        } else if (fileDraftReadKey.current === activeDraftKey) {
+          fileDraftReadKey.current = null;
+        }
       };
     },
   );
-  useExternalConnection(
-    draftKey && canAttach ? `${draftKey}\0${objectKey(stageFiles)}` : false,
-    () =>
-      draftKey
-        ? listenDraftFiles(draftKey, (files) => void stageFiles(files))
-        : undefined,
+  useExternalConnection(draftKey && canAttach ? draftKey : false, () =>
+    draftKey
+      ? listenDraftFiles(draftKey, (files) => void stageFilesRef.current(files))
+      : undefined,
   );
   useExternalConnection(`${accountId ?? ""}\0${draftKey ?? ""}`, () => () => {
     // Account-scoped persistence owns the files; old in-memory handoffs must not replay them.
-    if (accountId) return;
+    if (accountIdRef.current) return;
     if (draftKey)
       stashDraftFiles(
         draftKey,
@@ -2316,7 +2474,6 @@ function ComposerImpl({
         return;
       }
 
-      fileDraftRevision.current++;
       submitInFlight.current = true;
       clearSubmittedQuote();
       setIsSubmitting(true);
@@ -2831,7 +2988,9 @@ function ComposerImpl({
           <button
             aria-label={replyQuoteOpen ? "取消引用" : undefined}
             className="composer-reply-clear"
-            data-testid={replyQuoteOpen ? "composer-reply-quote-clear" : undefined}
+            data-testid={
+              replyQuoteOpen ? "composer-reply-quote-clear" : undefined
+            }
             disabled={!replyQuoteOpen}
             onClick={() => {
               quoteRevision.current++;
