@@ -2,7 +2,7 @@
  * 白盒可观测与能力控制共享契约：
  * - 本地时区 + 按用途（kind）+ 思考 Token（reasoning）细分用量账本
  * - 按需脱敏抓包观测器
- * - Harness 7 项高影响 AI 能力热开关台
+ * - Harness 高影响 AI 能力热开关台
  */
 
 import type { ResolvedReasoningEffort } from "./model-routing";
@@ -122,22 +122,8 @@ export const DEFAULT_HARNESS_FLAGS: Readonly<HarnessFlags> = Object.freeze({
   teachByDemo: true,
 });
 
+/** 已接入真实后端运行时的 Harness 能力开关列表（隐藏未实现的假开关，数据库列仍保留以保证回滚安全）。 */
 export const HARNESS_FLAG_DESCRIPTORS: readonly HarnessFlagDescriptor[] = [
-  {
-    key: "memoryDreaming",
-    title: "后台记忆整理（Memory Dreaming）",
-    description:
-      "定期自动去重、合并碎片记忆并提炼长期偏好，会消耗额外模型 Token。",
-    defaultValue: false,
-    consumesTokens: true,
-  },
-  {
-    key: "interactiveForms",
-    title: "交互表单（Interactive Forms）",
-    description:
-      "需要用户补充结构化参数或确认信息时，在对话内渲染交互表单卡片。",
-    defaultValue: true,
-  },
   {
     key: "browserSubagent",
     title: "浏览器子 Agent（Browser Subagent）",

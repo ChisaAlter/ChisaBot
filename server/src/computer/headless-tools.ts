@@ -17,6 +17,7 @@ import {
   COMMAND_TIMEOUT_GUIDE,
   normalizeCommandTimeout,
 } from "../../../shared/command-timeout";
+import { getHarnessFlags } from "../admin/harness-settings";
 import { withRuntimeSurfaceTools } from "../agents/runtime-tool-context";
 import {
   currentApprovalContext,
@@ -426,6 +427,23 @@ export const SIGN_IN_TOOL_DESCRIPTION =
   "Ask the person you work for to sign you in to a website. They get a private sign-in form outside this conversation (or take over the browser), and their login is typed straight into your browser by the computer. You never see the username, password or code, and must never ask for them any other way. Open the site's sign-in page first, then call this with the site's address. This turn pauses until they answer; you are then told only whether it worked.";
 
 /** Shipped browser/file/command tools, with identity bound before the model supplies arguments. */
+const BROWSER_SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "computer_navigate",
+  "computer_read",
+  "computer_snapshot",
+  "computer_screenshot",
+  "computer_click",
+  "computer_type",
+  "computer_key",
+  "computer_scroll",
+  "computer_request_help",
+  "computer_request_secret",
+  "computer_request_sign_in",
+]);
+
+const BROWSER_SUBAGENT_DISABLED_ZH =
+  "管理员已在 Harness 开关台关闭「浏览器子 Agent（browserSubagent）」。";
+
 export function createHeadlessComputerTools(options: {
   gateway: ComputerGateway;
   botId: string;
@@ -456,6 +474,18 @@ export function createHeadlessComputerTools(options: {
         const input = schema.parse(args);
         if (context.signal.aborted)
           throw new Error("The computer action was stopped.");
+        if (
+          BROWSER_SUBAGENT_TOOL_NAMES.has(name) &&
+          !getHarnessFlags().browserSubagent
+        ) {
+          return {
+            ok: false,
+            refused: true,
+            rule: "harness:browserSubagent",
+            reason: BROWSER_SUBAGENT_DISABLED_ZH,
+            error: BROWSER_SUBAGENT_DISABLED_ZH,
+          };
+        }
         try {
           // 确认卡片（server/src/confirmations）要知道这次是谁发起的（网页聊天才能出卡片）。
           return await withConfirmActor(actor.initiator, () =>

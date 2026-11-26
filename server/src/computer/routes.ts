@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { isHandoffSource } from "../../../shared/computer-control";
 import { downloadHeaders } from "../../../shared/file-download";
+import { getHarnessFlags } from "../admin/harness-settings";
 import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AuditReader } from "../audit";
 import type { AppVariables } from "../auth/guards";
@@ -565,6 +566,15 @@ export function createComputerRoutes(
       onError: (context) => context.json({ error: "请求体过大。" }, 413),
     }),
     async (context) => {
+      if (!getHarnessFlags().teachByDemo) {
+        return context.json(
+          {
+            error:
+              "管理员已在 Harness 开关台关闭「演示教学录制（teachByDemo）」。",
+          },
+          403,
+        );
+      }
       if (!demonstrations) {
         return context.json({ error: "当前部署未启用演示录制功能。" }, 501);
       }
@@ -596,6 +606,15 @@ export function createComputerRoutes(
       onError: (context) => context.json({ error: "请求体过大。" }, 413),
     }),
     (context) => {
+      if (!getHarnessFlags().teachByDemo) {
+        return context.json(
+          {
+            error:
+              "管理员已在 Harness 开关台关闭「演示教学录制（teachByDemo）」。",
+          },
+          403,
+        );
+      }
       if (!demonstrations) {
         return context.json({ error: "当前部署未启用演示录制功能。" }, 501);
       }
@@ -620,6 +639,15 @@ export function createComputerRoutes(
   );
 
   routes.get("/:botId/demonstrations/:recordingId", (context) => {
+    if (!getHarnessFlags().teachByDemo) {
+      return context.json(
+        {
+          error:
+            "管理员已在 Harness 开关台关闭「演示教学录制（teachByDemo）」。",
+        },
+        403,
+      );
+    }
     if (!demonstrations) {
       return context.json({ error: "当前部署未启用演示录制功能。" }, 501);
     }

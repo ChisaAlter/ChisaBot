@@ -222,7 +222,11 @@ import {
 } from "./computer/provider";
 import { createSnapshotStore } from "./computer/snapshot-store";
 import { loadConfig, readConversationRuntimeEnvDefaults } from "./config";
-import { markTurnTainted, withTurnTaint } from "./confirmations/context";
+import {
+  isTurnTainted,
+  markTurnTainted,
+  withTurnTaint,
+} from "./confirmations/context";
 import { createConfirmations } from "./confirmations/service";
 import {
   type IdentifyActor,
@@ -1010,15 +1014,18 @@ const confirmAwareGate: typeof approvalService.gate = async (candidate) => {
   }
   if (
     !isApprovalRecheck() &&
+    !isTurnTainted() &&
     candidate.toolRef.startsWith("computer_") &&
     candidate.effect !== "read"
   ) {
     const threadId = (candidate.continuation ?? currentApprovalContext())
       ?.threadId;
+    const pageUrl = (candidate.target as { pageUrl?: string } | undefined)
+      ?.pageUrl;
     if (
       threadId &&
       (await confirmations
-        .purchaseConfirmed(candidate.actorId, threadId)
+        .purchaseConfirmed(candidate.actorId, threadId, pageUrl)
         .catch(() => false))
     )
       return undefined;

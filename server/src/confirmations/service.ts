@@ -145,6 +145,102 @@ type RequestRow = {
 
 export class ConfirmError extends Error {}
 const iso = (value: Date | string) => new Date(value).toISOString();
+
+const MULTI_LABEL_PUBLIC_SUFFIXES: ReadonlySet<string> = new Set([
+  "co.uk",
+  "org.uk",
+  "gov.uk",
+  "ac.uk",
+  "com.cn",
+  "net.cn",
+  "org.cn",
+  "gov.cn",
+  "edu.cn",
+  "com.hk",
+  "net.hk",
+  "org.hk",
+  "com.tw",
+  "net.tw",
+  "org.tw",
+  "com.au",
+  "net.au",
+  "org.au",
+  "co.jp",
+  "ne.jp",
+  "or.jp",
+  "ac.jp",
+  "co.kr",
+  "com.sg",
+  "com.br",
+  "com.mx",
+  "com.in",
+  "co.nz",
+  "co.za",
+]);
+
+function extractHost(urlOrHost: string | null | undefined): string {
+  const raw = urlOrHost?.trim();
+  if (!raw) return "";
+  try {
+    const candidate = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw)
+      ? raw
+      : `https://${raw}`;
+    const parsed = new URL(candidate);
+    if (!/^(https?:)$/.test(parsed.protocol)) return "";
+    const host = parsed.hostname.toLowerCase().replace(/\.+$/, "");
+    if (!host) return "";
+    // 非 localhost/IP 且不含点号的字符串（例如中文对象名）不作为域名参与站点绑定。
+    const isIp = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(":");
+    if (host !== "localhost" && !isIp && !host.includes(".")) return "";
+    return host;
+  } catch {
+    return "";
+  }
+}
+
+/** 提取可注册域名（eTLD+1）或有效主机，保证同站多步操作不断开、跨站跳转立即失效。 */
+export function registrableDomain(
+  urlOrHost: string | null | undefined,
+): string {
+  const host = extractHost(urlOrHost);
+  if (!host) return "";
+  if (
+    host === "localhost" ||
+    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) ||
+    host.includes(":")
+  ) {
+    return host;
+  }
+  const labels = host.split(".").filter(Boolean);
+  if (labels.length <= 2) return labels.join(".");
+  const lastTwo = `${labels.at(-2)}.${labels.at(-1)}`;
+  if (MULTI_LABEL_PUBLIC_SUFFIXES.has(lastTwo) && labels.length >= 3) {
+    return labels.slice(-3).join(".");
+  }
+  return labels.slice(-2).join(".");
+}
+
+function sameRegistrableDomain(
+  approvedTarget: string | null | undefined,
+  currentUrl: string | null | undefined,
+): boolean {
+  const a = registrableDomain(approvedTarget);
+  const b = registrableDomain(currentUrl);
+  return Boolean(a && b && a === b);
+}
+
+function normalizeTargetForStorage(target: string | undefined): string | null {
+  const trimmed = target?.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      return new URL(trimmed).origin;
+    } catch {
+      return trimmed;
+    }
+  }
+  return trimmed;
+}
 const jsonList = (value: unknown): unknown[] => {
   let v = value;
   if (typeof v === "string") {
@@ -1020,29 +1116,41 @@ export function createConfirmations(
     return { ...view, ...(continuation ? { continuation } : {}) };
   }
 
-  /** 在网页上确认过付款（confirm_action 类别 purchase）之后，这段对话里一段时间内云端浏览器的操作直接放行。 */
-  async function purchaseConfirmed(owner: string, threadId: string) {
-    const rows = await sql.unsafe(
-      `SELECT 1 FROM chisabot_confirm_requests WHERE owner_user_id = $1 AND thread_id = $2 AND category = 'purchase'
-       AND status = 'approved' AND decided_at > now() - $3::int * interval '1 millisecond' LIMIT 1`,
+  /** 在网页上确认过付款（confirm_action 类别 purchase）之后，同可注册域名下非污点回合内一段时间内云端浏览器的操作直接放行。 */
+  async function purchaseConfirmed(
+    owner: string,
+    threadId: string,
+    pageUrl?: string | null,
+  ) {
+    if (isTurnTainted()) return false;
+    if (!registrableDomain(pageUrl)) return false;
+    const rows = await sql.unsafe<{ target: string | null }[]>(
+      `SELECT target FROM chisabot_confirm_requests WHERE owner_user_id = $1 AND thread_id = $2 AND category = 'purchase'
+       AND status = 'approved' AND decided_at > now() - $3::int * interval '1 millisecond'
+       ORDER BY decided_at DESC LIMIT 20`,
       [owner, threadId, PURCHASE_WINDOW_MS],
     );
-    return rows.length > 0;
+    return rows.some((row) => sameRegistrableDomain(row.target, pageUrl));
   }
 
-  /** 这段对话里最近确认过这一类（发消息 / 删除）的卡片——网页上接着点「发送 / 删除」就不再问。 */
+  /** 这段对话里最近确认过这一类（发消息 / 删除）的卡片——同可注册域名且非污点回合下不再问。 */
   async function categoryConfirmed(
     owner: string,
     threadId: string,
     category: ConfirmCategory,
     windowMs: number,
+    pageUrl?: string | null,
   ) {
-    const rows = await sql.unsafe(
-      `SELECT 1 FROM chisabot_confirm_requests WHERE owner_user_id = $1 AND thread_id = $2 AND category = $3
-       AND status = 'approved' AND decided_at > now() - $4::int * interval '1 millisecond' LIMIT 1`,
+    if (isTurnTainted()) return false;
+    const rows = await sql.unsafe<{ target: string | null }[]>(
+      `SELECT target FROM chisabot_confirm_requests WHERE owner_user_id = $1 AND thread_id = $2 AND category = $3
+       AND status = 'approved' AND decided_at > now() - $4::int * interval '1 millisecond'
+       ORDER BY decided_at DESC LIMIT 20`,
       [owner, threadId, category, windowMs],
     );
-    return rows.length > 0;
+    if (pageUrl === undefined) return rows.length > 0;
+    if (!registrableDomain(pageUrl)) return false;
+    return rows.some((row) => sameRegistrableDomain(row.target, pageUrl));
   }
 
   /**
@@ -1061,12 +1169,14 @@ export function createConfirmations(
     if (!category) return null;
     const threadId = input.threadId ?? currentConfirmTurn()?.threadId ?? null;
     if (
+      !isTurnTainted() &&
       threadId &&
       (await categoryConfirmed(
         input.ownerUserId,
         threadId,
         category,
         PAGE_ACTION_WINDOW_MS,
+        input.pageUrl,
       ))
     )
       return { ok: true, via: "grant" };
@@ -1234,23 +1344,24 @@ export function createConfirmations(
           target?: string;
           details?: ConfirmDetail[];
         }) => {
+          const normalizedTarget = normalizeTargetForStorage(input.target);
           const outcome = await check({
             ownerUserId: owner,
             agentId,
             category: input.category,
             tool: "confirm_action",
             title: input.title,
-            target: input.target ?? null,
+            target: normalizedTarget,
             details: input.details ?? [],
             matchText: [
               input.title,
-              input.target ?? "",
+              normalizedTarget ?? "",
               flattenForMatch(input.details),
             ].join(" "),
             digest: digestOf("confirm_action", {
               category: input.category,
               title: input.title,
-              target: input.target ?? "",
+              target: normalizedTarget ?? "",
             }),
             ...(initiator ? { initiator } : {}),
           });
@@ -1532,7 +1643,11 @@ export function createConfirmations(
         requestId: c.req.param("id"),
       });
       return c.json({
-        request: await decide(c.var.actor.id, parsed.requestId, parsed.decision),
+        request: await decide(
+          c.var.actor.id,
+          parsed.requestId,
+          parsed.decision,
+        ),
       });
     });
     app.post("/requests/:id/retry", async (c) => {

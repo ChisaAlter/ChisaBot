@@ -10,6 +10,7 @@ import {
   GIT_SUBCOMMANDS,
 } from "../../../shared/devices";
 import type { AuditInitiator } from "../audit";
+import { getHarnessFlags } from "../admin/harness-settings";
 import { redactText } from "../computer/activity-redact";
 import {
   currentConfirmTurn,
@@ -802,6 +803,17 @@ export function deviceTools(options: {
   }
 
   /** 和 run 一样，但成功时返回原始结果对象（上传 / 下载要分块循环）。失败返回给模型看的字符串。 */
+  const DESKTOP_CONTROL_OPERATIONS: ReadonlySet<DeviceOperation> = new Set([
+    "screenshot",
+    "window_screenshot",
+    "input",
+    "desktop_windows",
+    "desktop_snapshot",
+    "desktop_act",
+  ]);
+  const DESKTOP_CONTROL_DISABLED_ZH =
+    "管理员已在 Harness 开关台关闭「桌面图形操作（desktopControl）」。";
+
   async function raw(
     operation: DeviceOperation,
     selector: string | undefined,
@@ -812,6 +824,12 @@ export function deviceTools(options: {
   ): Promise<unknown> {
     const signal = currentToolAbort();
     if (signal?.aborted) return `${REFUSAL_MARKER} ${TOOL_STOPPED_ZH}`;
+    if (
+      DESKTOP_CONTROL_OPERATIONS.has(operation) &&
+      !getHarnessFlags().desktopControl
+    ) {
+      return `${REFUSAL_MARKER} ${DESKTOP_CONTROL_DISABLED_ZH}`;
+    }
     const picked = await resolveDevice(store, actorId, selector, (id) =>
       hub.isOnline(id),
     );
@@ -1698,6 +1716,9 @@ export function deviceTools(options: {
         "列出、聚焦（置顶激活）、启动或关闭用户电脑上的本地桌面软件与浏览器窗口。list 优先走只读无感的 desktop_windows 协议（无需命令行能力），并返回窗口句柄 hwnd、进程名、PID、窗口标题、是否前台及屏幕坐标矩形（left/top/width/height），便于配合 device_desktop_snapshot / device_desktop_act / device_window_screenshot 在后台无感操作本地软件。",
       parameters: schemas.windows,
       execute: async (input) => {
+        if (!getHarnessFlags().desktopControl) {
+          return `${REFUSAL_MARKER} ${DESKTOP_CONTROL_DISABLED_ZH}`;
+        }
         const args = schemas.windows.parse(input ?? {});
         const effectiveQuery = (
           args.query ??

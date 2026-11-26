@@ -11,6 +11,7 @@ import {
   type ServerToDevice,
 } from "../../../shared/devices";
 import { compareSemver } from "../../../shared/system-update";
+import { getHarnessFlags } from "../admin/harness-settings";
 import { redactText } from "../computer/activity-redact";
 import { TOOL_STOPPED_ZH } from "../confirmations/context";
 import {
@@ -30,6 +31,18 @@ import {
 
 /** 和 store.ts MAX_ROOTS 一致。 */
 const MAX_ALLOWED_ROOTS = 20;
+
+const DESKTOP_CONTROL_OPERATIONS: ReadonlySet<DeviceOperation> = new Set([
+  "screenshot",
+  "window_screenshot",
+  "input",
+  "desktop_windows",
+  "desktop_snapshot",
+  "desktop_act",
+]);
+
+const DESKTOP_CONTROL_DISABLED_ZH =
+  "管理员已在 Harness 开关台关闭「桌面图形操作（desktopControl）」。";
 
 /** 0.1.8 之前的客户端只有这些操作；更新的操作要看 hello.features。 */
 const LEGACY_OPERATIONS = new Set<DeviceOperation>([
@@ -815,6 +828,12 @@ export function createDeviceHub(options: {
       args: Record<string, unknown>,
       timeoutMs = 20_000,
     ): Promise<unknown> {
+      if (
+        DESKTOP_CONTROL_OPERATIONS.has(operation) &&
+        !getHarnessFlags().desktopControl
+      ) {
+        throw new DeviceRefusedError(DESKTOP_CONTROL_DISABLED_ZH);
+      }
       const connection = connections.get(record.id);
       if (!connection) throw new DeviceRefusedError("这台设备当前离线。");
       if (
@@ -1154,6 +1173,11 @@ export function createDeviceHub(options: {
       if (record.revoked) return refuse("refused", "这台设备已被撤销。");
       if (record.paused)
         return refuse("refused", "这台设备已紧急停止，所有远程操作都被拒绝。");
+      if (
+        DESKTOP_CONTROL_OPERATIONS.has(input.operation) &&
+        !getHarnessFlags().desktopControl
+      )
+        return refuse("refused", DESKTOP_CONTROL_DISABLED_ZH);
       if (policy === "off")
         return refuse(
           "refused",

@@ -300,9 +300,9 @@ export function HarnessAndObservationPanel() {
 
   return (
     <div className="space-y-8" data-testid="harness-and-observation">
-      {/* Harness 7 项高影响 AI 能力开关台 */}
+      {/* Harness 高影响 AI 能力开关台 */}
       <PageSection
-        description="集中热控 7 项高影响 AI 能力开关，无需重启即可实时生效。"
+        description="集中热控已接入运行时的内置高影响 AI 能力开关，无需重启即可实时生效。"
         settingItem="workbench.harness-observation"
         title="Harness 能力开关台与脱敏观测"
       >
@@ -310,7 +310,7 @@ export function HarnessAndObservationPanel() {
           <Card className="p-5 space-y-3" data-testid="harness-switches-card">
             <div className="flex items-center gap-2 font-medium text-sm">
               <IconAdjustmentsHorizontal className="size-4" />
-              {"7 项内置高影响能力热开关"}
+              {"内置高影响能力热开关"}
             </div>
             {harnessQuery.isPending ? (
               <PageSkeleton rows={4} />

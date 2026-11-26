@@ -22,6 +22,7 @@ import {
   COMMAND_DEFAULT_TIMEOUT_SEC,
   commandTimeoutNote,
 } from "../../../shared/command-timeout";
+import { getHarnessFlags } from "../admin/harness-settings";
 import { type ApprovalGate, currentApprovalContext } from "../approvals/types";
 import {
   type AuditInitiator,
@@ -102,6 +103,26 @@ import {
   type SnapshotStore,
   type StoredSnapshot,
 } from "./snapshot-store";
+
+const BROWSER_SUBAGENT_TOOLS: ReadonlySet<string> = new Set([
+  "computer_navigate",
+  "computer_click",
+  "computer_type",
+  "computer_key",
+  "computer_scroll",
+]);
+
+const BROWSER_SUBAGENT_DISABLED_ZH =
+  "管理员已在 Harness 开关台关闭「浏览器子 Agent（browserSubagent）」。";
+
+function assertBrowserSubagentEnabled() {
+  if (!getHarnessFlags().browserSubagent) {
+    throw new ActionRefusedError(
+      BROWSER_SUBAGENT_DISABLED_ZH,
+      "harness:browserSubagent",
+    );
+  }
+}
 
 export class ActionRefusedError extends Error {
   /** The rule that refused it, so the surface can show which one and an operator can find it. */
@@ -583,6 +604,9 @@ export function createComputerGateway(
     },
     run: (address?: string) => Promise<T>,
   ): Promise<T> {
+    if (BROWSER_SUBAGENT_TOOLS.has(toolName)) {
+      assertBrowserSubagentEnabled();
+    }
     const { ref, filePath, snapshotId } = subject;
     // Loaded from the store, not this process's memory: the snapshot these refs belong to was very
     // likely taken by another replica, and resolving against a local map would find nothing there.
@@ -815,6 +839,7 @@ export function createComputerGateway(
     },
 
     async tabAction(botId, actor, input) {
+      assertBrowserSubagentEnabled();
       if (!TAB_ACTIONS.has(input.action))
         throw new Error("标签页操作只能是 new / activate / close。");
       if (input.action === "new") {

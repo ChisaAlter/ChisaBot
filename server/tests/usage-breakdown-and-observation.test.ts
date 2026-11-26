@@ -678,7 +678,7 @@ describe("按需脱敏模型请求观测器与代理链路集成", () => {
   });
 });
 
-describe("Harness 7 项高影响 AI 能力热开关台", () => {
+describe("Harness 高影响 AI 能力热开关台", () => {
   test("默认值、持久化保存、严格校验、运行时 getHarnessFlags() 与 HTTP 路由", async () => {
     const storage = createMemoryHarnessSettingsStorage();
     const service = createHarnessSettingsService(storage);
@@ -702,6 +702,20 @@ describe("Harness 7 项高影响 AI 能力热开关台", () => {
       expect(saved.updatedBy).toBe("admin-1");
       expect(getHarnessFlags().memoryDreaming).toBe(true);
       expect(getHarnessFlags().desktopControl).toBe(false);
+
+      // 未实现运行时的假开关必须从 descriptors 中隐藏
+      expect(saved.descriptors.map((d) => d.key)).toEqual([
+        "browserSubagent",
+        "cookieImport",
+        "passkeyForward",
+        "desktopControl",
+        "teachByDemo",
+      ]);
+      expect(
+        saved.descriptors.some(
+          (d) => d.key === "memoryDreaming" || d.key === "interactiveForms",
+        ),
+      ).toBe(false);
 
       // 未知字段或非布尔值必须拒绝
       await expect(
@@ -729,13 +743,16 @@ describe("Harness 7 项高影响 AI 能力热开关台", () => {
       expect(getResp.status).toBe(200);
       const getJson = (await getResp.json()) as {
         flags: Record<string, boolean>;
-        descriptors: Array<{ key: string; consumesTokens?: boolean }>;
+        descriptors: Array<{ key: string }>;
       };
       expect(getJson.flags.memoryDreaming).toBe(true);
-      expect(
-        getJson.descriptors.find((d) => d.key === "memoryDreaming")
-          ?.consumesTokens,
-      ).toBe(true);
+      expect(getJson.descriptors.map((d) => d.key)).toEqual([
+        "browserSubagent",
+        "cookieImport",
+        "passkeyForward",
+        "desktopControl",
+        "teachByDemo",
+      ]);
 
       const putResp = await adminApp.request("/api/admin/harness", {
         method: "PUT",

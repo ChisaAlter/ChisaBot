@@ -25,7 +25,9 @@ import {
   tidyItems,
   tidyUndoHref,
 } from "../../../shared/memory-notes";
+import { scanContentSafety } from "../../../shared/content-safety-scanner";
 import type { AppVariables } from "../auth/guards";
+import { isTurnTainted } from "../confirmations/context";
 import type { Database } from "../db/client";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import {
@@ -76,6 +78,102 @@ type Row = {
 };
 
 export class MemoryNoteError extends Error {}
+
+export const TAINTED_MEMORY_MARKER = "[inferred:tainted]";
+
+const PRIVATE_KEY_PEM_RE =
+  /-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+|PGP\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----/;
+const HIGH_RISK_CREDENTIAL_RE =
+  /(?:^|[\s"'`=:(/[{])(?:sk-(?:proj-|ant-|live-|test-)?[A-Za-z0-9_-]{16,}\b|(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|github_pat_[A-Za-z0-9_]{20,}\b|xox[baprs]-[A-Za-z0-9-]{12,}\b|AKIA[0-9A-Z]{16}\b|AIza[0-9A-Za-z_-]{30,}\b)|(?:\bBearer\s+eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b)|\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^:\s"']+:[^@\s"']+/i;
+const PASSWORD_SECRET_ASSIGN_RE =
+  /(?:\b(?:password|passwd|passphrase|secret_?key|api_?key|access_?token|refresh_?token|private_?key)\b|(?:登录密码|支付密码|交易密码|银行卡密码|密码|私钥))\s*(?:[:=：]|是|为)\s*["']?[A-Za-z0-9!@#$%^&*_+\-=.~]{6,}["']?/i;
+const KEYWORD_CARD_NUMBER_RE =
+  /(?:银行卡|卡号|信用卡|借记卡|储蓄卡|card\s*(?:no|number)?)\s*(?:[:=：]|是|为)?\s*(?:\d[\s-]?){12,18}\d/i;
+const STANDALONE_CARD_CANDIDATE_RE = /(?<!\d)(?:\d[\s-]?){13,18}\d(?!\d)/g;
+const CARD_BIN_RE =
+  /^(?:4\d{15}|5[1-5]\d{14}|2(?:2[2-9][1-9]|[3-6]\d\d|7[01]\d|720)\d{12}|3[47]\d{13}|62\d{14,17}|6011\d{12}|65\d{14}|35(?:2[89]|[3-8]\d)\d{12})$/;
+const OTP_CODE_RE =
+  /(?:一次性验证码|短信验证码|邮箱验证码|验证码|动态口令|动态码|校验码|otp|verification\s*code|2fa\s*code|auth\s*code)\s*(?:[:=：]|是|为)?\s*\d{4,8}\b/i;
+
+function isValidLuhn(digits: string): boolean {
+  let sum = 0;
+  let shouldDouble = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let digit = digits.charCodeAt(i) - 48;
+    if (digit < 0 || digit > 9) return false;
+    if (shouldDouble) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+    shouldDouble = !shouldDouble;
+  }
+  return sum % 10 === 0;
+}
+
+/**
+ * 轻量高危凭据/密码/私钥/银行卡/一次性验证码检测，避免误伤普通手机号、订单号或金额文本。
+ */
+export function detectSensitiveMemorySecret(text: string): string | null {
+  if (!text) return null;
+  if (PRIVATE_KEY_PEM_RE.test(text)) return "私钥内容";
+  if (HIGH_RISK_CREDENTIAL_RE.test(text)) return "高危凭据或密钥";
+  if (PASSWORD_SECRET_ASSIGN_RE.test(text)) return "密码或密钥字段";
+  if (OTP_CODE_RE.test(text)) return "一次性验证码";
+  if (KEYWORD_CARD_NUMBER_RE.test(text)) return "银行卡号";
+  STANDALONE_CARD_CANDIDATE_RE.lastIndex = 0;
+  let match: RegExpExecArray | null = STANDALONE_CARD_CANDIDATE_RE.exec(text);
+  while (match !== null) {
+    const digits = match[0].replace(/[\s-]/g, "");
+    if (CARD_BIN_RE.test(digits) && isValidLuhn(digits)) {
+      STANDALONE_CARD_CANDIDATE_RE.lastIndex = 0;
+      return "银行卡号";
+    }
+    match = STANDALONE_CARD_CANDIDATE_RE.exec(text);
+  }
+  STANDALONE_CARD_CANDIDATE_RE.lastIndex = 0;
+  return null;
+}
+
+function assertSafeMemoryInput(fields: {
+  subject: string | null;
+  content: string;
+  context: string | null;
+}): void {
+  const checks: Array<[string, string | null]> = [
+    ["主题", fields.subject],
+    ["正文", fields.content],
+    ["情境", fields.context],
+  ];
+  for (const [label, value] of checks) {
+    if (!value) continue;
+    const safety = scanContentSafety(value, { source: `memory:${label}` });
+    if (safety.level === "block") {
+      const reason =
+        safety.findings.find((f) => f.severity === "block")?.message ??
+        "包含高风险控制符或安全载荷";
+      throw new MemoryNoteError(
+        `记忆${label}触发安全拦截（${reason}），已拒绝保存。`,
+      );
+    }
+    const secretKind = detectSensitiveMemorySecret(value);
+    if (secretKind) {
+      throw new MemoryNoteError(
+        `记忆${label}疑似包含${secretKind}，严禁写入长期记忆。`,
+      );
+    }
+  }
+}
+
+function withTaintedMarker(contextValue: string | null): string | null {
+  if (!isTurnTainted()) return contextValue;
+  if (!contextValue) return TAINTED_MEMORY_MARKER;
+  if (contextValue.includes(TAINTED_MEMORY_MARKER)) return contextValue;
+  const suffix = ` ${TAINTED_MEMORY_MARKER}`;
+  const maxPrefix = MEMORY_LIMITS.context - suffix.length;
+  const prefix = contextValue.slice(0, Math.max(0, maxPrefix)).trimEnd();
+  return prefix ? `${prefix}${suffix}` : TAINTED_MEMORY_MARKER;
+}
 
 const iso = (value: Date | string) => new Date(value).toISOString();
 const view = (row: Row): MemoryNoteView => {
@@ -627,7 +725,9 @@ export function createMemoryNotes(
     const content = clean(input.content, MEMORY_LIMITS.content);
     if (!content) throw new MemoryNoteError("内容不能为空。");
     let subject = clean(input.subject, MEMORY_LIMITS.subject);
-    const context = clean(input.context, MEMORY_LIMITS.context);
+    const rawContext = clean(input.context, MEMORY_LIMITS.context);
+    assertSafeMemoryInput({ subject, content, context: rawContext });
+    const context = withTaintedMarker(rawContext);
     let visibility: MemoryVisibility;
     if (input.visibility !== undefined) {
       visibility = visibilitySchema.parse(input.visibility);
@@ -670,9 +770,11 @@ export function createMemoryNotes(
         const merged = `${same.content}\n${content}`.slice(
           -MEMORY_LIMITS.content,
         );
+        const mergedContext =
+          rawContext !== null ? context : withTaintedMarker(same.context);
         const [row] = await sql.unsafe<Row[]>(
           "UPDATE chisabot_memory_notes SET content = $3, context = COALESCE($4, context), updated_at = now() WHERE id = $1 AND owner_user_id = $2 RETURNING *",
-          [same.id, owner, merged, context],
+          [same.id, owner, merged, mergedContext],
         );
         if (!row) throw new Error("记忆笔记更新后没有返回记录。");
         return { note: view(row), merged: true, unchanged: false };
@@ -744,10 +846,12 @@ export function createMemoryNotes(
       throw new MemoryNoteError(
         `「${MEMORY_KIND_LABELS[kind]}」要写主题（名字）。`,
       );
-    const context =
+    const rawContext =
       patch.context === undefined
         ? row.context
         : clean(patch.context, MEMORY_LIMITS.context);
+    assertSafeMemoryInput({ subject, content, context: rawContext });
+    const context = withTaintedMarker(rawContext);
     const currentVisibility = resolveMemoryVisibility(row);
     let visibility: MemoryVisibility = currentVisibility;
     if (patch.visibility !== undefined) {
@@ -1135,7 +1239,9 @@ export function createMemoryNotes(
             },
             agentId,
           );
-          return `已写进 ${result.note.subject} 的日志。`;
+          return result.note.context?.includes(TAINTED_MEMORY_MARKER)
+            ? `已写进 ${result.note.subject} 的日志（已标注 ${TAINTED_MEMORY_MARKER}）。`
+            : `已写进 ${result.note.subject} 的日志。`;
         },
       ),
       dreamTool(),
