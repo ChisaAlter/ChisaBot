@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **修复聊天输入框附件上传失败持久化、重试保护与草稿恢复竞态**：
+  - `PersistedDraftFile` 保留 `failedReason` 并在上传失败时继续写入 IndexedDB，刷新恢复时直接呈现原失败原因并区分已失效附件与未完成上传；新增 `mergeDraftAttachments` 与 `removedDuringRestore` / `acceptedDuringRestore` 合并门控，消除异步草稿恢复期间选文件/删文件/发送入队导致的覆盖丢件与 `StrictMode`/切会话状态串台，同时补齐重试禁用保护、失败回写及 `composer-draft-restore.test.tsx` 回归测试（纯前端修复，无新增数据库迁移或手动操作）。
+
 ## 0.1.191 — 2026-11-26
 
 全端版本 `0.1.191`，Android `versionCode 371`：修复大于 512 KiB 图片/附件上传被同前缀通配 `bodyLimit` 拦截返回 `413` 的缺陷（同步解除 `/api/bots` 资料库大文件上传遮蔽），纳入定时任务结构化条件基线与边沿触发（`67e070c`）、云端浏览器限流提示与点击接管（`9e88ea2`）、Android `VoiceCallAudioManager` 同源桥（`619c357`）、DSH 泄漏/循环/命令预算护栏（`33a0c95`）及浏览器审批时间窗域绑定与记忆防污染加固（`1e90265`）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `40004bb3640818a0`；无新增数据库迁移。
