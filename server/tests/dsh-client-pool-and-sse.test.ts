@@ -77,6 +77,43 @@ describe("DshClientPool", () => {
     expect(pool.idleCount()).toBe(0);
     expect(third.closedCount).toBe(1);
   });
+
+  test("evicts oldest idle clients globally via LRU when exceeding maxTotalIdle", async () => {
+    const byEndpoint = new Map<string, FakeClient>();
+    const pool = new DshClientPool({
+      maxIdlePerEndpoint: 4,
+      maxTotalIdle: 2,
+      idleTtlMs: 60_000,
+      connect: async (endpoint) => {
+        const c = makeFakeClient(true);
+        byEndpoint.set(endpoint, c);
+        return c;
+      },
+    });
+
+    const c1 = (await pool.acquire("http://127.0.0.1:4101")) as FakeClient;
+    const c2 = (await pool.acquire("http://127.0.0.1:4102")) as FakeClient;
+    const c3 = (await pool.acquire("http://127.0.0.1:4103")) as FakeClient;
+
+    pool.release("http://127.0.0.1:4101", c1);
+    pool.release("http://127.0.0.1:4102", c2);
+    expect(pool.idleCount()).toBe(2);
+
+    // Releasing a 3rd endpoint evicts c1 (oldest LRU) and closes it.
+    pool.release("http://127.0.0.1:4103", c3);
+    expect(pool.idleCount()).toBe(2);
+    expect(pool.idleCount("http://127.0.0.1:4101")).toBe(0);
+    expect(pool.idleCount("http://127.0.0.1:4102")).toBe(1);
+    expect(pool.idleCount("http://127.0.0.1:4103")).toBe(1);
+    expect(c1.closedCount).toBe(1);
+    expect(c2.closedCount).toBe(0);
+    expect(c3.closedCount).toBe(0);
+
+    await pool.closeAll();
+    expect(pool.idleCount()).toBe(0);
+    expect(c2.closedCount).toBe(1);
+    expect(c3.closedCount).toBe(1);
+  });
 });
 
 describe("Conversation routes single-hop SSE & backpressure coalescing", () => {
@@ -855,5 +892,245 @@ describe("PostgresAgentRunner non-blocking live deltas & 50ms DB coalescing", ()
       runSub.unsubscribe();
       await new Promise((r) => setTimeout(r, 20));
     }
+  });
+
+  test("connect() on an empty thread emits synthetic RUN_STARTED -> snapshots -> RUN_FINISHED without chisabot.execution", async () => {
+    const threadRow = {
+      id: "t-empty",
+      owner_user_id: "u-empty",
+      agent_id: "bot-empty",
+      name: "Empty",
+      archived: false,
+      messages: [],
+      state: {},
+      run_id: null as string | null,
+      lock_expires_at: null as Date | null,
+      created_at: new Date(),
+      updated_at: new Date(),
+      snapshot_sequence: "0",
+    };
+    const unsafe = async (sql: string) => {
+      const q = sql.trim().replace(/\s+/g, " ");
+      if (/^SELECT .+ FROM chisabot_local_threads WHERE id = \$1\b/.test(q)) {
+        return [{ ...threadRow }];
+      }
+      return [];
+    };
+    const dbClient = Object.assign(
+      (strings: TemplateStringsArray, ..._values: unknown[]) =>
+        unsafe(strings.join("?")),
+      {
+        unsafe,
+        begin: async <T>(fn: (tx: { unsafe: typeof unsafe }) => Promise<T>) =>
+          fn({ unsafe }),
+        close: async () => {},
+      },
+    );
+    const backend = await createLocalConversations({
+      $client: dbClient,
+    } as never);
+
+    const events: Array<BaseEvent & { runId?: string; name?: string }> = [];
+    await new Promise<void>((resolve, reject) => {
+      backend.runner
+        .connect({ threadId: "t-empty", agentId: "bot-empty" })
+        .subscribe({
+          next(event) {
+            events.push(
+              event as BaseEvent & { runId?: string; name?: string },
+            );
+          },
+          error: reject,
+          complete: resolve,
+        });
+    });
+
+    expect(events.map((e) => e.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.MESSAGES_SNAPSHOT,
+      EventType.STATE_SNAPSHOT,
+      EventType.RUN_FINISHED,
+    ]);
+    const startedRunId = events[0]?.runId ?? "";
+    expect(startedRunId.startsWith("connect:t-empty:")).toBe(true);
+    expect(events[3]?.runId).toBe(startedRunId);
+    expect(events.some((e) => e.name === "chisabot.execution")).toBe(false);
+  });
+
+  test("persisted RUN_STARTED strips context/tools and stopped RUN_ERROR flushes pending delta before buildStopSummaryFromDb without duplicate RUN_ERROR", async () => {
+    let seq = 0n;
+    const insertedEvents: Array<
+      Record<string, unknown> & { type: string; message?: string }
+    > = [];
+    let summarySawDelta = false;
+    const threadRow = {
+      id: "t-stop-race",
+      owner_user_id: "u-stop",
+      agent_id: "bot-stop",
+      name: "StopRace",
+      archived: false,
+      messages: [],
+      state: {},
+      run_id: null as string | null,
+      lock_expires_at: null as Date | null,
+      created_at: new Date(),
+      updated_at: new Date(),
+      snapshot_sequence: "0",
+    };
+
+    const unsafe = async (sql: string, params: unknown[] = []) => {
+      const q = sql.trim().replace(/\s+/g, " ");
+      if (/^SELECT .+ FROM chisabot_local_threads WHERE id = \$1\b/.test(q)) {
+        return [{ ...threadRow }];
+      }
+      if (q.startsWith("UPDATE chisabot_local_threads SET run_id = $2")) {
+        threadRow.run_id = String(params[1] ?? "run-stop");
+        return [{ id: threadRow.id }];
+      }
+      if (q.startsWith("INSERT INTO chisabot_local_runs")) {
+        return [{ run_id: String(params[1] ?? "run-stop") }];
+      }
+      if (q.startsWith("INSERT INTO chisabot_local_events")) {
+        seq += 1n;
+        insertedEvents.push(
+          JSON.parse(String(params[2])) as Record<string, unknown> & {
+            type: string;
+            message?: string;
+          },
+        );
+        return [{ sequence: String(seq) }];
+      }
+      if (
+        q.startsWith(
+          "SELECT event FROM chisabot_local_events WHERE thread_id = $1 AND run_id = $2",
+        )
+      ) {
+        // Simulate slow DB read for buildStopSummaryFromDb; verify pending delta was already persisted.
+        await new Promise((r) => setTimeout(r, 25));
+        summarySawDelta = insertedEvents.some(
+          (e) =>
+            e.type === EventType.TEXT_MESSAGE_CONTENT &&
+            String(e.delta ?? "").includes("buffered-tail"),
+        );
+        return insertedEvents.map((event) => ({ event }));
+      }
+      if (q.startsWith("SELECT call_id, tool_name, args, status, result")) {
+        return [];
+      }
+      if (q.startsWith("UPDATE chisabot_local_threads")) {
+        return [{ id: threadRow.id }];
+      }
+      if (q.startsWith("UPDATE chisabot_local_runs")) {
+        return [{ run_id: String(params[1] ?? "") }];
+      }
+      return [];
+    };
+
+    const dbClient = Object.assign(
+      (strings: TemplateStringsArray, ...values: unknown[]) =>
+        unsafe(strings.join("?"), values),
+      {
+        unsafe,
+        begin: async <T>(fn: (tx: { unsafe: typeof unsafe }) => Promise<T>) =>
+          fn({ unsafe }),
+        close: async () => {},
+      },
+    );
+
+    const backend = await createLocalConversations({
+      $client: dbClient,
+    } as never);
+
+    let emitCancelled!: () => void;
+    class StopRaceAgent extends AbstractAgent {
+      acknowledgesStop = true;
+      run(input: RunAgentInput): Observable<BaseEvent> {
+        return new Observable((subscriber) => {
+          subscriber.next({
+            type: EventType.RUN_STARTED,
+            threadId: input.threadId,
+            runId: input.runId,
+          } as BaseEvent);
+          subscriber.next({
+            type: EventType.TEXT_MESSAGE_START,
+            messageId: "m-sr",
+            role: "assistant",
+          } as BaseEvent);
+          subscriber.next({
+            type: EventType.TEXT_MESSAGE_CONTENT,
+            messageId: "m-sr",
+            delta: "first-",
+          } as BaseEvent);
+          subscriber.next({
+            type: EventType.TEXT_MESSAGE_CONTENT,
+            messageId: "m-sr",
+            delta: "buffered-tail",
+          } as BaseEvent);
+          emitCancelled = () => {
+            subscriber.next({
+              type: EventType.RUN_ERROR,
+              code: "DSH_RUN_CANCELLED",
+              message: "用户已停止这一轮。",
+            } as BaseEvent);
+            subscriber.complete();
+          };
+        });
+      }
+      override abortRun() {
+        emitCancelled?.();
+      }
+    }
+
+    const streamed: BaseEvent[] = [];
+    const done = new Promise<void>((resolve, reject) => {
+      backend.runner
+        .run({
+          threadId: "t-stop-race",
+          agent: new StopRaceAgent({ agentId: "bot-stop" }),
+          input: {
+            threadId: "t-stop-race",
+            runId: "run-stop",
+            messages: [{ id: "u-sr", role: "user", content: "hi" }],
+            tools: [
+              {
+                name: "big_tool",
+                description: "should not be persisted in RUN_STARTED",
+                parameters: {},
+              },
+            ],
+            context: [{ description: "big-ctx", value: "should be stripped" }],
+            state: {},
+            forwardedProps: {},
+          } as RunAgentInput,
+        })
+        .subscribe({
+          next(event) {
+            streamed.push(event);
+          },
+          error: reject,
+          complete: resolve,
+        });
+    });
+
+    await new Promise((r) => setTimeout(r, 15));
+    await backend.runner.stop({ threadId: "t-stop-race" });
+    await done;
+
+    // P1-2: persisted RUN_STARTED strips context & tools while keeping messages
+    const startedEvent = insertedEvents.find(
+      (e) => e.type === EventType.RUN_STARTED,
+    ) as
+      | { input?: { context?: unknown[]; tools?: unknown[]; messages?: unknown[] } }
+      | undefined;
+    expect(startedEvent?.input?.context).toEqual([]);
+    expect(startedEvent?.input?.tools).toEqual([]);
+    expect(startedEvent?.input?.messages).toHaveLength(1);
+
+    // P0-5: buffered delta flushed before buildStopSummaryFromDb, and exactly 1 terminal event emitted/persisted
+    expect(summarySawDelta).toBe(true);
+    const isTerminal = (e: { type: string }) =>
+      e.type === EventType.RUN_ERROR || e.type === EventType.RUN_FINISHED;
+    expect(insertedEvents.filter(isTerminal)).toHaveLength(1);
+    expect(streamed.filter(isTerminal)).toHaveLength(1);
   });
 });

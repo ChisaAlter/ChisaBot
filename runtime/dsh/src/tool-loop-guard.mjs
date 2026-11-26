@@ -205,7 +205,7 @@ export class ToolLoopGuard {
     this.unrecoverableCounts = new Map();
     this.warnedMidpoint50 = false;
     this.warnedMidpoint75 = false;
-    this.pending = undefined;
+    this.pending = new Map();
     this.stopped = undefined;
     this.refused = 0;
   }
@@ -219,7 +219,7 @@ export class ToolLoopGuard {
    * Decide one tool call. Returns `{ kind: "run", notice? }`, `{ kind: "refuse", message }` (a model-facing
    * error; the call is not executed) or `{ kind: "conclude", text }` (end the turn with `text`).
    */
-  admit(turn, name, args) {
+  admit(turn, name, args, callId) {
     if (turn !== this.turn) {
       this.turn = turn;
       this.reset();
@@ -262,7 +262,11 @@ export class ToolLoopGuard {
         return { kind: "conclude", text: this.conclusion() };
       return { kind: "refuse", message: this.notice() };
     }
-    this.pending = { name, signature };
+    const pendingKey =
+      callId !== undefined && callId !== null && String(callId) !== ""
+        ? String(callId)
+        : Symbol("pending");
+    this.pending.set(pendingKey, { name, signature });
 
     let budgetNotice;
     const ratio = this.attempts / this.limits.maxCalls;
@@ -287,17 +291,44 @@ export class ToolLoopGuard {
    * Record the outcome of a call that `admit` allowed. Gateway rejects are not "实际执行"
    * (QA513 P3). A different result for the same call, or a mutating tool, resets the repeat streak.
    */
-  observe(outcome) {
-    const pending = this.pending;
-    this.pending = undefined;
+  observe(outcome, callId) {
+    const rawCallId = callId ?? outcome?.callId;
+    let pending;
+    if (
+      rawCallId !== undefined &&
+      rawCallId !== null &&
+      String(rawCallId) !== ""
+    ) {
+      const key = String(rawCallId);
+      pending = this.pending.get(key);
+      if (pending) this.pending.delete(key);
+    } else {
+      let fallbackKey;
+      for (const key of this.pending.keys()) {
+        if (typeof key === "symbol") {
+          fallbackKey = key;
+          break;
+        }
+      }
+      if (fallbackKey === undefined) {
+        const first = this.pending.keys().next();
+        if (!first.done) fallbackKey = first.value;
+      }
+      if (fallbackKey !== undefined) {
+        pending = this.pending.get(fallbackKey);
+        this.pending.delete(fallbackKey);
+      }
+    }
     if (!pending) return { stop: false };
     const { name, signature } = pending;
     // Approval pause: call has not run yet. Drop the pending slot and roll back the admit
     // that reserved attempts/streak, so a resume of the same call is counted once
     // (QA513 r2 P2: otherwise rebind + re-admit double-counts and can refuse an approved call).
     if (outcome?.deferred) {
-      this.attempts -= 1;
-      this.streak -= 1;
+      this.attempts = Math.max(0, this.attempts - 1);
+      if (this.lastSignature === signature) {
+        this.streak = Math.max(0, this.streak - 1);
+      }
       return { stop: false };
     }
     if (outcome?.rejected) {
@@ -323,7 +354,7 @@ export class ToolLoopGuard {
     // via lastSignature — no need to special-case mutating names here, or a repeated
     // `run_tests` with the same failure would never trip the guard.
     if (previous !== undefined && previous !== fingerprint) {
-      this.streak = 1;
+      if (this.lastSignature === signature) this.streak = 1;
       // 任一签名结果指纹变化意味着状态推进，立即重置状态循环窗口。
       this.recentCycle = [];
       this.cycleBlockedSignatures.clear();

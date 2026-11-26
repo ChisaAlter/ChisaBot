@@ -22,7 +22,7 @@ import {
 import { gatewayClientIp } from "../auth/gateway-identity";
 import type { AppVariables } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
-import { conversationAdmissionClosed } from "../conversations/maintenance";
+import { conversationAdmissionClosedAsync } from "../conversations/maintenance";
 import { decryptSecret, encryptSecret } from "../credentials";
 import type { Database } from "../db/client";
 import {
@@ -1184,7 +1184,7 @@ export function createImService(options: ImServiceOptions) {
       return;
     }
     const queueKey = `${row.id}|${key}`;
-    if (conversationAdmissionClosed()) {
+    if (await conversationAdmissionClosedAsync()) {
       await reply(
         row,
         entry.adapter,

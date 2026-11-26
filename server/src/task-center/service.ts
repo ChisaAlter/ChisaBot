@@ -39,7 +39,7 @@ import {
   executionDeadline,
   withCapacityFeedback,
 } from "../conversations/capacity";
-import { conversationAdmissionClosed } from "../conversations/maintenance";
+import { conversationAdmissionClosedAsync } from "../conversations/maintenance";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
 import { BackgroundTurnNeedsReview } from "../turns/durable-outcome";
@@ -1590,7 +1590,7 @@ export function createTaskCenter(
     }
   }
   async function sweepPass(forceRecover: boolean): Promise<boolean> {
-    if (sweeping || conversationAdmissionClosed()) return false;
+    if (sweeping || (await conversationAdmissionClosedAsync())) return false;
     sweeping = true;
     let hadWork = false;
     try {

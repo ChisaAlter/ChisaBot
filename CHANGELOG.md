@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **全量审查 M1 — 服务端 CI 基线清零、核心状态机修复与性能内存治理**：
+  - 修复 `origin/main` 既有 2 条 CI 基线失败（清理 `route-access-registry.ts` 过时通配项，对齐 `restart-interrupted-run.integration.test.ts` 的 `buildStopSummary` 契约）；修复空频道 `/connect` 缺失 `RUN_STARTED`/`RUN_FINISHED` 信封引发前端控制台报错的问题；修复 DSH `ToolLoopGuard` 并行工具调用单槽覆写及 `local-conversations.ts` `emit()` 终态竞态。
+  - 新增非破坏性迁移 `0071_tool_operations_run_created_idx.sql` 补全 `chisabot_tool_operations(run_id, created_at)` 索引（自动执行，无需手动操作）；落盘 `RUN_STARTED` 剔除冗余 `context`/`tools` 并在 `audit-retention.ts` 新增带 advisory lock 的历史中间事件分批归档清理（`CB-031`）；将 20 处热路径维护态检测切换至异步缓存 `*Async()`；修复 `DshRuntimeAgent.reconnect()` 句柄泄漏与可中止退避、`agents/lifecycle.ts` 5s 轮询防重入与批量查库，并加固 `guarded-fetch` 压缩流清理、`ModelBreakers`/`DshClientPool` 上限、`devices/hub` ping 回收与 `system-update` 异步读取。
+
 - **聊天输入框上传图片支持点击大图预览，并从第一性原理结构性根治发送后对话记录反复弹跳**：
   - **输入框图片点击预览**：`AttachmentStrip` 与 `Composer` 复用 `Lightbox` 组件支持点击待发送图片缩略图弹出大图预览，兼容本地上传中 `blob:` URL 与已上传服务端 URL；同草稿多张图片支持按实际可预览索引定位及左右/方向键切换，`Esc` 关闭恢复焦点，并隔离右上角移除与重试按钮冒泡防止误触发，补充双端与组件单测。
   - **对话记录弹跳根治**：拆除 `shadcn-react-message-scroller` 与 `SettleAtEnd` 双滚动状态机互搏及 `.scroll-smooth` 隐式平滑插值冲突，收敛为单源 `pinned` 同步 `instant` 落底并在贴底态通过 `data-cb-pinned="true"` 关闭原生 `overflow-anchor` 防互搏；移除 `.chat-slack` 弹性 `floor`、`BUSY_SLACK_SETTLE_MS` 释放循环与 `onScroll` 反向补留白；同步更新 `ComposerDock` 即时 `padding-bottom` 写入、`BotBubbles` 流式结束不折叠塌缩、`.chat-status-slot` Grid 同格叠放、`/sync` 结构等价短路及 `VirtualTranscriptRows` 贴底防护，并堵住 `tests/chat-scroll/send-jump.mjs` `upLimit=Infinity` 测试盲区，新增 `tests/chat-scroll/bounce-regression.mjs` 多阶段流式实机回归（纯前端改动，更新客户端指纹，无新增数据库迁移）。

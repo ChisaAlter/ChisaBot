@@ -147,12 +147,16 @@ suite("a run cut off by a restart is closed on the next boot", () => {
       EventType.TOOL_CALL_RESULT,
       EventType.RUN_ERROR,
     ]);
-    const result = rows.at(-2)!.event;
-    expect(result.toolCallId).toBe("call-open");
-    expect(JSON.parse(result.content!).message).toBe(
-      RESTART_INTERRUPTED_MESSAGE,
-    );
-    expect(rows.at(-1)!.event.message).toBe(RESTART_INTERRUPTED_MESSAGE);
+    const result = rows.at(-2)?.event;
+    expect(result?.toolCallId).toBe("call-open");
+    const toolMessage = JSON.parse(result?.content ?? "{}").message as string;
+    expect(toolMessage.startsWith(RESTART_INTERRUPTED_MESSAGE)).toBe(true);
+    expect(toolMessage).toContain("已执行 2 次工具调用（成功 1、未决 1）");
+    expect(toolMessage).toContain("device_run_shell");
+    const runErrorMessage = rows.at(-1)?.event.message ?? "";
+    expect(runErrorMessage.startsWith(RESTART_INTERRUPTED_MESSAGE)).toBe(true);
+    expect(runErrorMessage).toContain("已执行 2 次工具调用（成功 1、未决 1）");
+    expect(runErrorMessage).toContain("device_run_shell");
     // 已经有结果的那一步不再补。
     expect(
       rows.filter(
@@ -182,5 +186,50 @@ suite("a run cut off by a restart is closed on the next boot", () => {
 
   test("closing twice adds nothing", async () => {
     expect(await closeInterruptedRun(database, thread, runId)).toBe(false);
+  });
+
+  test("interrupted run with no tool calls keeps plain RESTART_INTERRUPTED_MESSAGE", async () => {
+    const plainThread = `${owner}-plain-thread`;
+    const plainRunId = `${owner}-plain-run`;
+    await backend.client.getOrCreateThread({
+      threadId: plainThread,
+      userId: owner,
+      agentId: `${owner}-bot`,
+    });
+    await database.$client.unsafe(
+      "UPDATE chisabot_local_threads SET messages = $2::text::jsonb, run_id = NULL WHERE id = $1",
+      [
+        plainThread,
+        JSON.stringify([{ id: "u-plain", role: "user", content: "你好" }]),
+      ],
+    );
+    await database.$client.unsafe(
+      "INSERT INTO chisabot_local_runs (thread_id, run_id, status) VALUES ($1, $2, 'interrupted')",
+      [plainThread, plainRunId],
+    );
+    await database.$client.unsafe(
+      "INSERT INTO chisabot_local_events (thread_id, run_id, event) VALUES ($1, $2, $3::text::jsonb)",
+      [
+        plainThread,
+        plainRunId,
+        JSON.stringify({
+          type: EventType.RUN_STARTED,
+          threadId: plainThread,
+          runId: plainRunId,
+        }),
+      ],
+    );
+
+    expect(await closeInterruptedRun(database, plainThread, plainRunId)).toBe(
+      true,
+    );
+    const rows = await database.$client.unsafe<
+      { event: { type: string; message?: string } }[]
+    >(
+      "SELECT event FROM chisabot_local_events WHERE thread_id = $1 AND run_id = $2 ORDER BY sequence",
+      [plainThread, plainRunId],
+    );
+    expect(rows.at(-1)?.event.type).toBe(EventType.RUN_ERROR);
+    expect(rows.at(-1)?.event.message).toBe(RESTART_INTERRUPTED_MESSAGE);
   });
 });

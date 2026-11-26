@@ -251,7 +251,7 @@ import { createConfirmationResumer } from "./conversations/confirmation-resume";
 import { dispatchContinuationWork } from "./conversations/continuation-work";
 import { createConversationInteractions } from "./conversations/interactions";
 import { createModelKeyPool } from "./conversations/key-pool";
-import { conversationAdmissionClosed } from "./conversations/maintenance";
+import { conversationAdmissionClosedAsync } from "./conversations/maintenance";
 import {
   authenticationRequired,
   isConversationPath,
@@ -4668,7 +4668,7 @@ const resumeConfirmation = localBackend
   : undefined;
 const confirmationOwner = workOwner("conversation-confirmation");
 const confirmationSweep = repeatAfterEach(async () => {
-  if (conversationAdmissionClosed()) return;
+  if (await conversationAdmissionClosedAsync()) return;
   if (!resumeConfirmation) return;
   const [item] = await approvalQueue.claim({
     kind: "conversation.confirmation-response",
@@ -4699,7 +4699,7 @@ const confirmationSweep = repeatAfterEach(async () => {
 }, 1000);
 const interactionOwner = workOwner("conversation-interaction");
 const interactionSweep = repeatAfterEach(async () => {
-  if (conversationAdmissionClosed()) return;
+  if (await conversationAdmissionClosedAsync()) return;
   const [item] = await approvalQueue.claim({
     kind: "conversation.interaction-response",
     owner: interactionOwner,
@@ -4721,7 +4721,7 @@ const interactionSweep = repeatAfterEach(async () => {
   );
 }, 1000);
 const approvalSweep = repeatAfterEach(async () => {
-  if (conversationAdmissionClosed()) return;
+  if (await conversationAdmissionClosedAsync()) return;
   try {
     const [item] = await approvalQueue.claim({
       kind: "approval.resume",

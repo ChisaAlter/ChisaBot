@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ModelBreakers } from "../src/model-router.mjs";
+import {
+  MAX_MODEL_BREAKER_ENTRIES,
+  ModelBreakers,
+} from "../src/model-router.mjs";
 
 test("breaker opens on failure, doubles its cooldown up to the cap, and closes on success", () => {
   let now = 0;
@@ -42,4 +45,30 @@ test("a probe that never reports stops gating after five minutes", () => {
   assert.ok(breakers.cooling("m"));
   now += 1;
   assert.equal(breakers.cooling("m"), undefined);
+});
+
+test("prunes expired entries first and enforces the 256-entry cap", () => {
+  assert.equal(MAX_MODEL_BREAKER_ENTRIES, 256);
+  let now = 0;
+  const breakers = new ModelBreakers(() => now, 4);
+  breakers.fail("old-1", "TIMEOUT");
+  breakers.fail("old-2", "TIMEOUT");
+  now = 100_000;
+  breakers.fail("live-1", "SERVER");
+  breakers.fail("live-2", "SERVER");
+  breakers.fail("live-3", "SERVER");
+  // Expired old-1 / old-2 are pruned before evicting active breakers.
+  assert.equal(breakers.entries.size, 3);
+  assert.equal(breakers.entries.has("old-1"), false);
+  assert.equal(breakers.entries.has("old-2"), false);
+  assert.ok(breakers.cooling("live-1"));
+  assert.ok(breakers.cooling("live-2"));
+  assert.ok(breakers.cooling("live-3"));
+
+  // Adding beyond cap while all are active evicts the oldest active key.
+  breakers.fail("live-4", "SERVER");
+  breakers.fail("live-5", "SERVER");
+  assert.equal(breakers.entries.size, 4);
+  assert.equal(breakers.entries.has("live-1"), false);
+  assert.ok(breakers.cooling("live-5"));
 });

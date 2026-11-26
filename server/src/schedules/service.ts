@@ -36,8 +36,8 @@ import {
 import type { AuditInitiator } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import {
-  assertConversationAdmissionOpen,
-  conversationAdmissionClosed,
+  assertConversationAdmissionOpenAsync,
+  conversationAdmissionClosedAsync,
 } from "../conversations/maintenance";
 import type { Database } from "../db/client";
 import { reasonWithoutStatement } from "../db/query-failure";
@@ -1278,7 +1278,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
     owner: string,
     id: string,
   ): Promise<{ runId: string; schedule: ScheduleView }> {
-    assertConversationAdmissionOpen();
+    await assertConversationAdmissionOpenAsync();
     const trimmedId = id.trim();
     if (dedupLedger.isRunning(trimmedId)) {
       throw new ScheduleError("这个任务正在运行，等它跑完。");
@@ -2284,7 +2284,7 @@ export function createSchedules(database: Database, deps: ScheduleDeps) {
    */
   async function sweep(): Promise<{ fired: string[]; skipped: string[] }> {
     const report = { fired: [] as string[], skipped: [] as string[] };
-    if (conversationAdmissionClosed()) return report;
+    if (await conversationAdmissionClosedAsync()) return report;
     await reconcileDurableRuns();
     const due = await sql.unsafe<Row[]>(
       "SELECT * FROM chisabot_schedules WHERE status = 'active' AND next_run_at <= now() ORDER BY next_run_at LIMIT 20",

@@ -498,6 +498,13 @@
       "when": 1795353094295,
       "tag": "0070_core_performance_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1795440000000,
+      "tag": "0071_tool_operations_run_created_idx",
+      "breakpoints": true
     }
   ]
 }

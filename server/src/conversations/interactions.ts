@@ -18,7 +18,7 @@ import {
   retryContinuation,
 } from "./continuation-work";
 import {
-  assertConversationAdmissionOpen,
+  assertConversationAdmissionOpenAsync,
   ConversationMaintenanceError,
 } from "./maintenance";
 import { createDshRunJournal } from "./run-journal";
@@ -95,7 +95,7 @@ export function createConversationInteractions(
       );
     },
     async resume(callId: string, runTurn: TurnRunner, onAdmitted?: () => void) {
-      assertConversationAdmissionOpen();
+      await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
       const [row] = await sql.unsafe<
         (Row & { continuation: unknown; agent_id: string })[]
       >(
@@ -214,7 +214,7 @@ export function createConversationInteractions(
             return context.json({ error: "技能保存暂不可用。" }, 503);
           const answer = body.data.answer as { values?: unknown };
           try {
-            assertConversationAdmissionOpen();
+            await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
             const committed: (() => void)[] = [];
             await database.transaction(async (transaction) => {
               const [row] = await transaction.execute<
@@ -228,7 +228,7 @@ export function createConversationInteractions(
                 await transaction.execute(query`SELECT d.run_id FROM chisabot_dsh_runs d WHERE d.thread_id=${row.thread_id} AND d.run_id=${row.run_id}
                 AND (d.stop_requested OR NOT EXISTS(SELECT 1 FROM chisabot_runtime_bindings b WHERE b.thread_id=d.thread_id AND b.active AND b.revision=d.binding_revision))`);
               if (stale) throw new Error("这一轮已停止或被编辑，技能未保存。");
-              assertConversationAdmissionOpen();
+              await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
               const result = await saveSkill({
                 actor: context.var.actor,
                 values: answer.values,

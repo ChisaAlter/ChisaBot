@@ -14,7 +14,7 @@
  * A process that never wired it (a unit test of some other module) answers "not paused", because
  * there is nobody who could have paused anything.
  */
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { botLifecycle, updateRoutingPreferences } from "../db/schema/lifecycle";
 import { reasonWithoutStatement } from "../db/query-failure";
@@ -69,7 +69,8 @@ const state: {
   /** Consecutive failed pause reads per pair, reset by the next read that answers. */
   unreadable: Map<string, number>;
   watcher?: ReturnType<typeof setInterval>;
-} = { running: new Map(), unreadable: new Map() };
+  checking: boolean;
+} = { running: new Map(), unreadable: new Map(), checking: false };
 
 const keyOf = (ownerUserId: string, agentId: string) =>
   JSON.stringify([ownerUserId, agentId]);
@@ -89,6 +90,7 @@ export function resetBotLifecycleForTests() {
   state.unreadable.clear();
   if (state.watcher) clearInterval(state.watcher);
   state.watcher = undefined;
+  state.checking = false;
 }
 
 /** Whether this person has paused this Bot, or `undefined` when the read failed (and is logged). */
@@ -188,34 +190,94 @@ function startWatcher() {
   state.watcher.unref?.();
 }
 
+async function readPauses(
+  database: Database,
+  pairs: readonly { key: string; ownerUserId: string; agentId: string }[],
+): Promise<Map<string, boolean> | undefined> {
+  if (pairs.length === 0) return new Map();
+  try {
+    const predicates = pairs.map(({ ownerUserId, agentId }) =>
+      and(
+        eq(botLifecycle.ownerUserId, ownerUserId),
+        eq(botLifecycle.agentId, agentId),
+      ),
+    );
+    const whereClause =
+      predicates.length === 1 ? predicates[0] : or(...predicates);
+    const rows = await database
+      .select({
+        ownerUserId: botLifecycle.ownerUserId,
+        agentId: botLifecycle.agentId,
+        pausedAt: botLifecycle.pausedAt,
+      })
+      .from(botLifecycle)
+      .where(whereClause)
+      .limit(pairs.length);
+    const pausedByKey = new Map<string, boolean>();
+    for (const pair of pairs) pausedByKey.set(pair.key, false);
+    for (const row of rows) {
+      if (row.ownerUserId !== undefined && row.agentId !== undefined) {
+        pausedByKey.set(
+          keyOf(row.ownerUserId, row.agentId),
+          Boolean(row.pausedAt),
+        );
+      } else if (pairs.length === 1 && pairs[0]) {
+        pausedByKey.set(pairs[0].key, Boolean(row.pausedAt));
+      }
+    }
+    return pausedByKey;
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        type: "bot-pause-check-failed",
+        pairCount: pairs.length,
+        error: reasonWithoutStatement(error),
+      }),
+    );
+    return undefined;
+  }
+}
+
 async function checkRunningTurns() {
-  const now = Date.now();
-  for (const [key, turns] of state.running) {
-    for (const turn of turns)
-      if (now - turn.startedAt > TURN_RETENTION_MS) turns.delete(turn);
-    if (turns.size === 0) {
-      state.running.delete(key);
+  if (state.checking) return;
+  state.checking = true;
+  try {
+    const now = Date.now();
+    for (const [key, turns] of state.running) {
+      for (const turn of turns)
+        if (now - turn.startedAt > TURN_RETENTION_MS) turns.delete(turn);
+      if (turns.size === 0) {
+        state.running.delete(key);
+        state.unreadable.delete(key);
+      }
+    }
+    if (state.running.size === 0) {
+      if (state.watcher) clearInterval(state.watcher);
+      state.watcher = undefined;
+      return;
+    }
+    const database = state.database;
+    if (!database) return;
+    const pairs = [...state.running.keys()].map((key) => {
+      const [ownerUserId, agentId] = JSON.parse(key) as [string, string];
+      return { key, ownerUserId, agentId };
+    });
+    const pauses = await readPauses(database, pairs);
+    if (pauses === undefined) {
+      for (const { key } of pairs) {
+        if (!state.running.has(key)) continue;
+        const failures = (state.unreadable.get(key) ?? 0) + 1;
+        state.unreadable.set(key, failures);
+        if (failures >= UNREADABLE_CHECKS_BEFORE_STOP) stopRunningTurns(key);
+      }
+      return;
+    }
+    for (const { key } of pairs) {
       state.unreadable.delete(key);
+      if (pauses.get(key)) stopRunningTurns(key);
     }
-  }
-  if (state.running.size === 0) {
-    if (state.watcher) clearInterval(state.watcher);
-    state.watcher = undefined;
-    return;
-  }
-  const database = state.database;
-  if (!database) return;
-  for (const key of [...state.running.keys()]) {
-    const [ownerUserId, agentId] = JSON.parse(key) as [string, string];
-    const paused = await readPause(database, ownerUserId, agentId);
-    if (paused === undefined) {
-      const failures = (state.unreadable.get(key) ?? 0) + 1;
-      state.unreadable.set(key, failures);
-      if (failures >= UNREADABLE_CHECKS_BEFORE_STOP) stopRunningTurns(key);
-      continue;
-    }
-    state.unreadable.delete(key);
-    if (paused) stopRunningTurns(key);
+  } finally {
+    state.checking = false;
   }
 }
 

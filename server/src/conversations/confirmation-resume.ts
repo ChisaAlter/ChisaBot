@@ -18,7 +18,7 @@ import {
   ContinuationDeferred,
   existingContinuation,
 } from "./continuation-work";
-import { assertConversationAdmissionOpen } from "./maintenance";
+import { assertConversationAdmissionOpenAsync } from "./maintenance";
 import { runAssertionValue } from "./protocol";
 import { createDshRunJournal } from "./run-journal";
 import { stripWaitingContinuationMessages } from "./wire-events";
@@ -48,7 +48,7 @@ export function createConfirmationResumer(options: {
     requestId: string,
     onAdmitted?: () => void,
   ) => {
-    assertConversationAdmissionOpen();
+    await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
     const decision = await options.confirmations.durableDecision(
       ownerUserId,
       requestId,
@@ -158,7 +158,7 @@ export function createConfirmationResumer(options: {
     }, 1000);
     let result: Awaited<ReturnType<typeof agent.resumeConfirmation>>;
     try {
-      assertConversationAdmissionOpen();
+      await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
       const refusal = await journal.continuationRefusal(
         snapshot.threadId,
         snapshot.runId,
