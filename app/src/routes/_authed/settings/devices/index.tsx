@@ -8,6 +8,7 @@ import {
   AddDeviceCard,
   AddPhoneCard,
   ApprovalsCard,
+  ChromeExtensionCard,
   ConnectionCard,
   DeviceRow,
   NoDevices,
@@ -81,7 +82,7 @@ function DevicesPage() {
             ) : null}
           </span>
         }
-        description="关联到你账号的全部设备（电脑、服务器、手机），由你的所有机器人共用：机器人只能在每台设备开启的能力和允许的文件夹里操作在线设备，「询问」的操作先问你，每一步都有记录，随时可以紧急停止。需要时可以为某台设备打开「完全访问」。"
+        description="关联到你账号的全部设备（电脑、Chrome / Edge 浏览器扩展、服务器、手机），由你的所有机器人共用：机器人只能在每台设备开启的能力和允许的文件夹里操作在线设备，「询问」的操作先问你，每一步都有记录，随时可以紧急停止。需要时可以为某台设备打开「完全访问」。"
         title="设备"
       >
         {list.isPending ? (
@@ -121,8 +122,8 @@ function DevicesPage() {
               title="设备列表"
             >
               {active.length ? (
-                // 按类型分组：电脑 / 服务器 / 手机（只有一种时不写组名）。
-                (["pc", "server", "phone"] as DeviceKind[]).map((kind) => {
+                // 按类型分组：电脑 / 浏览器扩展 / 服务器 / 手机（只有一种时不写组名）。
+                (["pc", "extension", "server", "phone"] as DeviceKind[]).map((kind) => {
                   const group = active.filter((device) => deviceKind(device) === kind);
                   if (!group.length) return null;
                   const kinds = new Set(active.map((device) => deviceKind(device)));
@@ -155,6 +156,9 @@ function DevicesPage() {
             ) : null}
           </>
         )}
+        <PageSection settingItem="devices.add-extension" title="添加浏览器扩展">
+          <ChromeExtensionCard />
+        </PageSection>
         <PageSection settingItem="devices.add-phone" title="添加一台手机">
           <AddPhoneCard />
         </PageSection>

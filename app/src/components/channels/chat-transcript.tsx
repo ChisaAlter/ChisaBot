@@ -3271,7 +3271,8 @@ function ChatTranscriptImpl({
   const chatConfig = useConversationScope();
   const chatThreadId = chatConfig?.threadId ?? null;
   const hasTools = useMemo(
-    () => items.some((item) => item.kind === "tool"),
+    () =>
+      items.some((item) => item.kind === "tool" || item.kind === "browser"),
     [items],
   );
   const confirmations = useThreadConfirmations(
@@ -3409,13 +3410,14 @@ function ChatTranscriptImpl({
       if (!work.quiet) continue;
       const item = rowItems.get(anchor);
       const draws =
-        (item?.kind === "tool" || item?.kind === "activity") &&
-        toolDrawsCard(item, {
-          renderers: toolRenderers,
-          activities: activityRenderers,
-          ...(scopeAgentId ? { agentId: scopeAgentId } : {}),
-          asked: confirmed,
-        });
+        item?.kind === "browser" ||
+        ((item?.kind === "tool" || item?.kind === "activity") &&
+          toolDrawsCard(item, {
+            renderers: toolRenderers,
+            activities: activityRenderers,
+            ...(scopeAgentId ? { agentId: scopeAgentId } : {}),
+            asked: confirmed,
+          }));
       if (draws) workOnly.add(anchor);
       else rows.add(anchor);
     }
@@ -3603,7 +3605,7 @@ function ChatTranscriptImpl({
           ) {
             visible = true;
           } else if (item.kind === "browser") {
-            visible = false;
+            visible = true;
           } else {
             visible = toolDrawsCard(item, {
               renderers: toolRenderers,
@@ -4223,8 +4225,14 @@ function ChatTranscriptImpl({
       >
         <Arriving delay={delays.delayFor(item.id, index, items.length)}>
           <BrowserActivity
+            active={
+              live &&
+              (index === items.length - 1 ||
+                item.steps.some((step) => step.result === undefined))
+            }
+            agentId={agentId}
             group={item}
-            active={busy && index === items.length - 1}
+            recent={index >= items.length - 8}
           />
         </Arriving>
         {workRowFor(item.id)}
