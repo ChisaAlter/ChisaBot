@@ -1,11 +1,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import type { AbstractAgent, Message } from "@ag-ui/client";
+import type { AbstractAgent, BaseEvent, Message } from "@ag-ui/client";
+import { RunAgentInputSchema } from "@ag-ui/core/schemas";
 import { serve } from "bun";
 import { and, eq, isNull, sql } from "drizzle-orm";
+import { Observable } from "rxjs";
 import { z } from "zod";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
+import { isBrowserCompanionOperation } from "../../shared/browser-companion";
+import { connectSnapshotAnchors } from "../../shared/connect-snapshot";
 import { DICTATION_HTTP_IDLE_SECONDS } from "../../shared/dictation";
 import { RENDER_UI_TOOL } from "../../shared/json-render/catalog";
 import { guardedFetch } from "../../shared/net/guarded-fetch";
@@ -203,6 +207,7 @@ import { createComputerGateway } from "./computer/gateway";
 import {
   createHeadlessComputerTools,
   HeadlessToolSuspension,
+  HeadlessToolsMiddleware,
 } from "./computer/headless-tools";
 import { createPageFrameStore } from "./computer/page-frames";
 import { startPolicyListener } from "./computer/policy-listener";
@@ -251,13 +256,17 @@ import { createConfirmationResumer } from "./conversations/confirmation-resume";
 import { dispatchContinuationWork } from "./conversations/continuation-work";
 import { createConversationInteractions } from "./conversations/interactions";
 import { createModelKeyPool } from "./conversations/key-pool";
-import { conversationAdmissionClosedAsync } from "./conversations/maintenance";
+import {
+  assertConversationAdmissionOpenAsync,
+  conversationAdmissionClosedAsync,
+} from "./conversations/maintenance";
 import {
   authenticationRequired,
   isConversationPath,
   runAssertionValue,
 } from "./conversations/protocol";
 import { recoverConversations } from "./conversations/recovery";
+import { eventStream } from "./conversations/routes";
 import { createDshRunJournal } from "./conversations/run-journal";
 import { loadDshTargets } from "./conversations/runtime-targets";
 import { createSessionSearchTools } from "./conversations/session-search";
@@ -295,9 +304,16 @@ import {
 } from "./delivery/reply-notifier";
 import { createDeliveryStore } from "./delivery/store";
 import type { DeliveryScope } from "./delivery/types";
+import {
+  createBrowserCompanionService,
+  extractBrowserCompanionProps,
+} from "./devices/browser-companion";
 import { createDeviceHub } from "./devices/hub";
 import { createPcReleaseWatcher } from "./devices/pc-release-watcher";
-import { createDeviceRoutes } from "./devices/routes";
+import {
+  type CompanionRouteBridge,
+  createDeviceRoutes,
+} from "./devices/routes";
 import { createDeviceStore } from "./devices/store";
 import { deviceTools } from "./devices/tools";
 import {
@@ -1788,6 +1804,39 @@ await deviceStore.ensure();
 const deviceHub = createDeviceHub({
   store: deviceStore,
   confirm: confirmations.deviceHook,
+});
+let saveBrowserCompanionShot:
+  | ((
+      ownerUserId: string,
+      botId: string,
+      id: string,
+      frame: { base64: string; url?: string },
+    ) => Promise<{ ok: boolean; shown?: boolean; url?: string | null }>)
+  | null = null;
+const browserCompanion = createBrowserCompanionService({
+  store: deviceStore,
+  hub: deviceHub,
+  saveScreenshot: async (ownerUserId, botId, id, frame) => {
+    if (!saveBrowserCompanionShot) {
+      throw new Error("chatShots not ready");
+    }
+    return saveBrowserCompanionShot(ownerUserId, botId, id, frame);
+  },
+});
+deviceHub.setCompanionHooks({
+  getState: (deviceId) => browserCompanion.getStateReport(deviceId),
+  onStateReport: (record, report) => {
+    browserCompanion.applyStateReport(record, report);
+  },
+  onDisconnect: (deviceId) => {
+    browserCompanion.onDisconnect(deviceId);
+  },
+  onKillSwitch: (deviceId) => {
+    browserCompanion.onKillSwitch(deviceId);
+  },
+  onRevoke: (deviceId) => {
+    browserCompanion.onRevoke(deviceId);
+  },
 });
 const pcReleaseWatcher = createPcReleaseWatcher({
   hub: deviceHub,
@@ -4159,6 +4208,8 @@ workflowEngineInstance = createWorkflowEngine({
  */
 // 对话里的截图缩略图按人存在服务器上，换设备也看得到（chat-shots.ts）。
 const chatShots = await createChatShots(database);
+saveBrowserCompanionShot = (ownerUserId, botId, id, frame) =>
+  chatShots.saveScreenshot(ownerUserId, botId, id, frame);
 // 聊天里的链接预览卡（link-preview/service.ts，DESIGN.md §31 / §48）：只连公网；没有 og:image 时的截图默认关闭，
 // CHISABOT_LINK_PREVIEW_SHOTS=1 才由内置浏览器截（仅共享计算机部署）。
 const linkPreviews = await createLinkPreviews(database, {
@@ -4393,11 +4444,93 @@ const actorAgentResolver = createActorAgentResolver({
         recovered.length || sessionTools.length
           ? [...withLocal, ...recovered, ...sessionTools]
           : withLocal;
+      // 浏览器伴侣扩展双模路由：扩展侧栏附着优先，跨端显式点名且开启 allowRemoteDispatch 也可调度本机 Chrome。
+      const companionProps = extractBrowserCompanionProps(input.forwardedProps);
+      const imUntrustedForCompanion =
+        Boolean(imOf) && imUntrustedScopeStore.getStore() === true;
+      const allowCompanionRouting =
+        !props?.chisabotWorker &&
+        !imUntrustedForCompanion &&
+        (!imOf || Boolean(imService?.allowsDevices(imOf))) &&
+        (!initiator ||
+          initiator.kind === "person" ||
+          Boolean(imOf) ||
+          Boolean(props?.chisabotWorkerDelivery));
+      const latestPromptText = (() => {
+        if (!Array.isArray(input.messages)) return null;
+        for (let i = input.messages.length - 1; i >= 0; i -= 1) {
+          const msg = input.messages[i];
+          if (msg?.role !== "user") continue;
+          if (typeof msg.content === "string" && msg.content.trim()) {
+            return msg.content.trim();
+          }
+          if (Array.isArray(msg.content)) {
+            const joined = msg.content
+              .map((part) =>
+                part &&
+                typeof part === "object" &&
+                typeof (part as { text?: unknown }).text === "string"
+                  ? (part as { text: string }).text
+                  : "",
+              )
+              .join(" ")
+              .trim();
+            if (joined) return joined;
+          }
+        }
+        return null;
+      })();
+      const companionTools = allowCompanionRouting
+        ? await restrictNamedToolsForWorkflow(initiator, async () => {
+            const owner = await pluginStore
+              .agentOwner(botId)
+              .catch(() => undefined);
+            if (typeof owner === "string" && owner !== actorId) return [];
+            if (input.threadId && companionProps.attachedExtensionDeviceId) {
+              browserCompanion.bindThreadAttachment({
+                ownerUserId: actorId,
+                threadId: input.threadId,
+                deviceId: companionProps.attachedExtensionDeviceId,
+                attached: companionProps.attached !== false,
+              });
+            }
+            const route = await browserCompanion.resolveRoute({
+              ownerUserId: actorId,
+              attachedExtensionDeviceId:
+                companionProps.attachedExtensionDeviceId,
+              ...(companionProps.attached !== undefined
+                ? { attached: companionProps.attached }
+                : {}),
+              ...(companionProps.attachedTab !== undefined
+                ? { attachedTab: companionProps.attachedTab }
+                : {}),
+              ...(companionProps.preferLocalChrome
+                ? { preferLocalChrome: true }
+                : {}),
+              userPromptText: latestPromptText,
+            });
+            if (route.mode !== "extension") return [];
+            const botName = await agentProfileStore
+              .get(await actorFor(actorId), botId)
+              .then((profile) => profile?.name ?? null)
+              .catch(() => null);
+            return browserCompanion.toolsForRoute({
+              route,
+              actorId,
+              botId,
+              botName,
+              ...(initiator ? { initiator } : {}),
+            });
+          })().catch(() => [])
+        : [];
+      const withCompanion = companionTools.length
+        ? [...withHistory, ...companionTools]
+        : withHistory;
       const sessionId = props?.panelAuthoring?.sessionId;
       if (typeof sessionId !== "string" || !sessionId || sessionId.length > 128)
-        return withHistory;
+        return withCompanion;
       return [
-        ...withHistory,
+        ...withCompanion,
         ...(await restrictNamedToolsForWorkflow(initiator, () =>
           panels.authoring.tools({ actorId, botId }, sessionId),
         )()),
@@ -6132,6 +6265,37 @@ const app = createApp(
       const text = executeRenderUi(args);
       return { text, isError: text.startsWith(REFUSAL_MARKER) };
     }
+    if (name.startsWith("browser_") && isBrowserCompanionOperation(name)) {
+      if (
+        imUntrusted ||
+        (imConnection && !imService?.allowsDevices(imConnection))
+      ) {
+        return {
+          text: `${REFUSAL_MARKER} IM 群聊、非号主私聊或未开启设备开关的连接不可操作主人本机浏览器扩展。`,
+          isError: true,
+        };
+      }
+      const owner = await pluginStore.agentOwner(botId).catch(() => undefined);
+      if (typeof owner === "string" && owner !== actorId) {
+        return {
+          text: `${REFUSAL_MARKER} 团队共享机器人不可操作你的本机浏览器扩展。`,
+          isError: true,
+        };
+      }
+      const botName = await agentProfileStore
+        .get(await actorFor(actorId), botId)
+        .then((profile) => profile?.name ?? null)
+        .catch(() => null);
+      return browserCompanion.executeAgentToolCall({
+        ownerUserId: actorId,
+        botId,
+        botName,
+        ...(input.run.threadId ? { threadId: input.run.threadId } : {}),
+        operation: name,
+        args,
+        ...(initiator ? { initiator } : {}),
+      });
+    }
     if (name.startsWith("device_")) {
       if (
         imUntrusted ||
@@ -6464,7 +6628,495 @@ const app = createApp(
           auditStore: bootAuditStore,
           toolsFor: (actorId, botId) => deviceToolsFor(actorId, botId),
           checkPcRelease: (opts) => pcReleaseWatcher.checkNow(opts),
+          companion: browserCompanion,
+          companionBridge: ((): CompanionRouteBridge => {
+            async function resolveCompanionChannel(
+              actor: AgentActor,
+              input: { botId?: string; threadId?: string; fresh?: boolean },
+            ) {
+              let resolvedBotId = input.botId;
+              if (!resolvedBotId && input.threadId) {
+                const existingThread = await localBackend.client
+                  .getThread({
+                    threadId: input.threadId,
+                    userId: actor.id,
+                  })
+                  .catch(() => null);
+                if (existingThread?.agentId) {
+                  resolvedBotId = existingThread.agentId;
+                }
+              }
+              if (!resolvedBotId) {
+                const primary = await primaryAgentService
+                  .getStatus(actor)
+                  .catch(() => null);
+                resolvedBotId = primary?.primaryAgent?.id ?? undefined;
+              }
+              if (!resolvedBotId) {
+                const profiles = await agentProfileStore.list(actor, false);
+                resolvedBotId = profiles[0]?.id;
+              }
+              if (!resolvedBotId) {
+                return {
+                  ok: false as const,
+                  status: 404 as const,
+                  error: "当前账号下没有可用机器人。",
+                };
+              }
+              const profile = await agentProfileStore
+                .get(actor, resolvedBotId)
+                .catch(() => null);
+              if (!profile || profile.deletedAt) {
+                return {
+                  ok: false as const,
+                  status: 404 as const,
+                  error: "找不到这个机器人。",
+                };
+              }
+              if (input.fresh) {
+                const created = await channelStore.create(actor, [profile.id]);
+                await botThreads
+                  .setCurrent(actor.id, profile.id, created.threadId, false)
+                  .catch(() => {});
+                return { ok: true as const, profile, channel: created };
+              }
+              if (input.threadId) {
+                const opened = await channelStore
+                  .openThread?.(actor, profile.id, input.threadId)
+                  .catch(() => null);
+                if (!opened) {
+                  return {
+                    ok: false as const,
+                    status: 404 as const,
+                    error: "找不到这段对话。",
+                  };
+                }
+                await botThreads
+                  .setCurrent(actor.id, profile.id, opened.threadId, false)
+                  .catch(() => {});
+                return { ok: true as const, profile, channel: opened };
+              }
+              const synced = await botThreads
+                .current(actor.id, profile.id)
+                .catch(() => null);
+              if (synced?.threadId) {
+                const opened = await channelStore
+                  .openThread?.(actor, profile.id, synced.threadId)
+                  .catch(() => null);
+                if (opened) {
+                  return { ok: true as const, profile, channel: opened };
+                }
+              }
+              const direct = await channelStore.direct(actor, profile.id);
+              await botThreads
+                .setCurrent(actor.id, profile.id, direct.threadId, true)
+                .catch(() => {});
+              return { ok: true as const, profile, channel: direct };
+            }
+
+            return {
+              async bootstrap(device) {
+                const actor = await actorFor(device.ownerUserId);
+                const [userRows, profiles, primary, prefs] = await Promise.all([
+                  database
+                    .select({
+                      id: users.id,
+                      name: users.name,
+                      email: users.email,
+                      image: users.image,
+                    })
+                    .from(users)
+                    .where(eq(users.id, device.ownerUserId))
+                    .limit(1)
+                    .catch(() => []),
+                  agentProfileStore.list(actor, false).catch(() => []),
+                  primaryAgentService.getStatus(actor).catch(() => null),
+                  userPreferencesStore
+                    .read(device.ownerUserId)
+                    .catch(() => null),
+                ]);
+                const userRow = userRows[0];
+                const companionConfig = browserCompanion.getConfig(
+                  device.id,
+                  device.ownerUserId,
+                );
+                const defaultBotId =
+                  primary?.primaryAgent?.id ??
+                  prefs?.mainBotId ??
+                  profiles[0]?.id ??
+                  null;
+                const pendingApprovals = deviceHub.listApprovals(
+                  device.ownerUserId,
+                );
+                return {
+                  user: {
+                    id: actor.id,
+                    name: userRow?.name ?? userRow?.email ?? "用户",
+                    email: userRow?.email ?? null,
+                    role: actor.role,
+                    image: userRow?.image ?? null,
+                  },
+                  device: {
+                    id: device.id,
+                    name: device.name,
+                    platform: device.platform,
+                    paused: device.paused,
+                    revoked: device.revoked,
+                  },
+                  bots: profiles.map((p) => ({
+                    id: p.id,
+                    name: p.name,
+                    title: p.title ?? null,
+                    hidden: p.hidden,
+                    // 扩展侧栏运行在 chrome-extension:// 协议下，避免返回依赖 Cookie 会话的相对路径导致 404 破图。
+                    avatarUrl: null,
+                    description: p.roleDescription ?? null,
+                  })),
+                  defaultBotId,
+                  config: companionConfig,
+                  companionConfig,
+                  appearance: {
+                    theme: "sky",
+                    colorMode: "system",
+                    material: "glass",
+                  },
+                  pendingApprovals,
+                  approvals: pendingApprovals,
+                  state: browserCompanion.getStateReport(device.id),
+                };
+              },
+
+              async openThread(device, input) {
+                const actor = await actorFor(device.ownerUserId);
+                const resolved = await resolveCompanionChannel(actor, input);
+                if (!resolved.ok) return resolved;
+                const { profile, channel } = resolved;
+                const [loaded, history] = await Promise.all([
+                  localBackend.client
+                    .getThreadMessages({
+                      threadId: channel.threadId,
+                      userId: actor.id,
+                    })
+                    .catch(() => ({ messages: [] })),
+                  botThreads.history(actor.id, profile.id).catch(() => []),
+                ]);
+                return {
+                  ok: true,
+                  data: {
+                    channelId: channel.id,
+                    threadId: channel.threadId,
+                    botId: profile.id,
+                    botName: profile.name,
+                    running: localBackend.control.isActive(channel.threadId),
+                    messages: loaded.messages,
+                    history,
+                  },
+                };
+              },
+
+              async send(device, input) {
+                const actor = await actorFor(device.ownerUserId);
+                try {
+                  await assertConversationAdmissionOpenAsync({ ttlMs: 0 });
+                  await quotaService.checkAdmission(
+                    actor.id,
+                    actor.role === "admin",
+                  );
+                } catch (error) {
+                  const status =
+                    error &&
+                    typeof error === "object" &&
+                    "status" in error &&
+                    typeof error.status === "number" &&
+                    (error.status === 429 || error.status === 503)
+                      ? error.status
+                      : 503;
+                  return {
+                    ok: false,
+                    status,
+                    error:
+                      error instanceof Error
+                        ? error.message
+                        : "当前暂时无法发起对话。",
+                  };
+                }
+                const resolved = await resolveCompanionChannel(actor, {
+                  ...(input.botId ? { botId: input.botId } : {}),
+                  ...(input.threadId ? { threadId: input.threadId } : {}),
+                });
+                if (!resolved.ok) return resolved;
+                const { profile, channel } = resolved;
+
+                browserCompanion.noteAttachedTab(
+                  device,
+                  input.attached !== false,
+                  input.attachedTab,
+                );
+                browserCompanion.bindThreadAttachment({
+                  ownerUserId: actor.id,
+                  threadId: channel.threadId,
+                  deviceId: device.id,
+                  attached: input.attached !== false,
+                });
+
+                const runInput = RunAgentInputSchema.parse({
+                  threadId: channel.threadId,
+                  runId: input.runId ?? randomUUID(),
+                  state: {},
+                  messages: [
+                    {
+                      id: input.messageId ?? randomUUID(),
+                      role: "user",
+                      content: input.text,
+                    },
+                  ],
+                  tools: [],
+                  context: [],
+                  forwardedProps: {
+                    attachedExtensionDeviceId: device.id,
+                    ...(input.attached !== undefined
+                      ? { attached: input.attached }
+                      : {}),
+                    ...(input.attachedTab !== undefined
+                      ? { attachedTab: input.attachedTab }
+                      : {}),
+                    browserCompanion: {
+                      deviceId: device.id,
+                      attached: input.attached !== false,
+                      ...(input.attachedTab !== undefined
+                        ? { tab: input.attachedTab }
+                        : {}),
+                    },
+                  },
+                });
+
+                const agent = await actorAgentResolver.resolveAgentForActor(
+                  actor,
+                  profile.id,
+                  { initiator: PERSON_INITIATOR },
+                );
+                if (
+                  !config.dshKernel &&
+                  hasConfiguredComputer() &&
+                  canUseComputer(profile, actor)
+                ) {
+                  agent.use(
+                    new HeadlessToolsMiddleware(
+                      [
+                        ...createHeadlessComputerTools({
+                          gateway: computerGateway,
+                          botId: profile.id,
+                          actor: {
+                            id: actor.id,
+                            userId: actor.id,
+                            initiator: PERSON_INITIATOR,
+                          },
+                          auditStore: bootAuditStore,
+                          ...(signInService ? { signIn: signInService } : {}),
+                        }),
+                      ],
+                      PERSON_INITIATOR,
+                    ),
+                  );
+                }
+
+                await localBackend.client.getOrCreateThread({
+                  threadId: channel.threadId,
+                  userId: actor.id,
+                  agentId: profile.id,
+                });
+                const admission = await localBackend.commands.accept(
+                  actor.id,
+                  profile.id,
+                  runInput,
+                );
+                const { record } = admission;
+                if (!admission.alreadyAccepted) {
+                  localBackend.runner
+                    .run({
+                      threadId: record.thread_id,
+                      agent,
+                      input: record.input,
+                    })
+                    .subscribe({
+                      error: (error) =>
+                        console.warn(
+                          JSON.stringify({
+                            type: "companion-dispatch-error",
+                            runId: record.run_id,
+                            reason:
+                              error instanceof Error
+                                ? error.message
+                                : String(error),
+                          }),
+                        ),
+                    });
+                }
+                void channelStore
+                  .recordActivity(actor, channel.id, {
+                    text: input.text.slice(0, 500),
+                    agentId: null,
+                    at: new Date(),
+                  })
+                  .catch(() => {});
+
+                const receipt = {
+                  accepted: true,
+                  alreadyAccepted: admission.alreadyAccepted,
+                  commandId: record.command_id,
+                  runId: record.run_id,
+                  threadId: record.thread_id,
+                  channelId: channel.id,
+                  botId: profile.id,
+                  status: record.status,
+                };
+                if (!input.wantsStream) {
+                  return {
+                    ok: true,
+                    status: admission.alreadyAccepted ? 200 : 202,
+                    body: receipt,
+                  };
+                }
+                const liveSource = localBackend.runner.connect({
+                  threadId: record.thread_id,
+                  agentId: profile.id,
+                  commandId: record.command_id,
+                });
+                const withAdmission = new Observable<BaseEvent>(
+                  (subscriber) => {
+                    let admissionSent = false;
+                    const emitAdmission = () => {
+                      if (admissionSent) return;
+                      admissionSent = true;
+                      subscriber.next({
+                        type: "CUSTOM",
+                        name: "chisabot.admission",
+                        value: {
+                          commandId: record.command_id,
+                          runId: record.run_id,
+                        },
+                      } as BaseEvent);
+                    };
+                    const sub = liveSource.subscribe({
+                      next: (event) => {
+                        subscriber.next(event);
+                        if (event.type === "RUN_STARTED") emitAdmission();
+                      },
+                      error: (error) => subscriber.error(error),
+                      complete: () => {
+                        emitAdmission();
+                        subscriber.complete();
+                      },
+                    });
+                    return () => sub.unsubscribe();
+                  },
+                );
+                return {
+                  ok: true,
+                  response: eventStream(withAdmission, {
+                    "x-chisabot-command-id": record.command_id,
+                    "x-chisabot-run-id": record.run_id,
+                  }),
+                };
+              },
+
+              async events(device, input) {
+                let thread: { agentId: string };
+                try {
+                  thread = await localBackend.client.getThread({
+                    threadId: input.threadId,
+                    userId: device.ownerUserId,
+                  });
+                } catch {
+                  return {
+                    ok: false,
+                    status: 404,
+                    error: "找不到这段对话。",
+                  };
+                }
+                if (input.commandId) {
+                  const cmd = await localBackend.commands.get(
+                    device.ownerUserId,
+                    input.threadId,
+                    input.commandId,
+                  );
+                  if (!cmd) {
+                    return {
+                      ok: false,
+                      status: 404,
+                      error: "找不到这条会话指令。",
+                    };
+                  }
+                }
+                const anchors = connectSnapshotAnchors(input.snapshotAfter);
+                return {
+                  ok: true,
+                  response: eventStream(
+                    localBackend.runner.connect({
+                      threadId: input.threadId,
+                      agentId: input.agentId ?? thread.agentId,
+                      ...(input.commandId
+                        ? { commandId: input.commandId }
+                        : {}),
+                      ...(anchors ? { snapshotAfter: anchors } : {}),
+                    }),
+                  ),
+                };
+              },
+
+              async stop(device, input) {
+                if (!input.threadId) {
+                  return { ok: true, stopped: false };
+                }
+                try {
+                  await localBackend.client.getThread({
+                    threadId: input.threadId,
+                    userId: device.ownerUserId,
+                  });
+                } catch {
+                  return {
+                    ok: false,
+                    status: 404,
+                    error: "找不到这段对话。",
+                  };
+                }
+                const stopped = await localBackend.runner.stop({
+                  threadId: input.threadId,
+                  ...(input.runId ? { runId: input.runId } : {}),
+                });
+                return { ok: true, stopped: Boolean(stopped) };
+              },
+
+              async decideConfirmation(ownerUserId, requestId, decision) {
+                try {
+                  await confirmations.decide(
+                    ownerUserId,
+                    requestId,
+                    decision,
+                    "device",
+                  );
+                  return true;
+                } catch {
+                  return false;
+                }
+              },
+
+              async readShot(ownerUserId, shotId) {
+                const rows = await database.$client.unsafe<
+                  { mime: string; data: Uint8Array; url: string | null }[]
+                >(
+                  "SELECT mime, data, url FROM chisabot_chat_shots WHERE owner_user_id = $1 AND id = $2",
+                  [ownerUserId, shotId],
+                );
+                const row = rows[0];
+                return row
+                  ? { mime: row.mime, data: row.data, url: row.url }
+                  : null;
+              },
+            };
+          })(),
           ...(config.appDistDir ? { appDistDir: config.appDistDir } : {}),
+          ...(config.sourceDir ? { sourceDir: config.sourceDir } : {}),
           ...(gatewaySecret ? { localCallerSecret: gatewaySecret } : {}),
         }),
       ],

@@ -6,11 +6,13 @@ import {
 } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, notInArray } from "drizzle-orm";
 import {
+  BROWSER_EXTENSION_PLATFORM,
   type DeviceAuditEntry,
   type DeviceCapabilities,
   type DeviceView,
   defaultCapabilities,
   initialCapabilities,
+  isBrowserExtensionPlatform,
   isFactoryOff,
   isMobilePlatform,
   MOBILE_PLATFORMS,
@@ -36,6 +38,16 @@ import { deviceAuditEvents, deviceBotAccess, devices } from "../db/schema";
 export const DEVICE_TOKEN_PREFIX = "cbd_";
 const MAX_ROOTS = 20;
 const MAX_NAME = 64;
+
+/** 浏览器伴侣扩展的默认设备能力：仅允许浏览器操作相关能力，系统/文件/剪贴板能力硬关闭。 */
+export function browserExtensionCapabilities(): DeviceCapabilities {
+  return {
+    ...defaultCapabilities(),
+    screenshot: "allow",
+    open: "allow",
+    input: "allow",
+  };
+}
 
 export function hashDeviceToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -293,20 +305,26 @@ export function createDeviceStore(database: Database) {
       const id = `dev_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
       const hostname = short(input.hostname, 120);
       const platform = short(input.platform, 32) ?? "unknown";
+      const isExt = isBrowserExtensionPlatform(platform);
       await database.insert(devices).values({
         id,
         ownerUserId: input.ownerUserId,
-        name: cleanName(input.name, hostname ?? "我的电脑"),
+        name: cleanName(
+          input.name,
+          hostname ?? (isExt ? "Chrome 浏览器扩展" : "我的电脑"),
+        ),
         platform,
         osVersion: short(input.osVersion, 120),
         hostname,
         arch: short(input.arch, 32),
         clientVersion: short(input.clientVersion, 32),
         tokenHash: hashDeviceToken(token),
-        // 电脑默认全部「询问」（每次审批）；手机不是节点，保持关闭。
+        // 电脑默认全部「询问」（每次审批）；手机不是节点保持关闭；浏览器扩展仅开浏览器能力（风险由三档策略控制）。
         capabilities: (isMobilePlatform(platform)
           ? defaultCapabilities()
-          : initialCapabilities()) as unknown as Record<string, unknown>,
+          : isExt
+            ? browserExtensionCapabilities()
+            : initialCapabilities()) as unknown as Record<string, unknown>,
         allowedRoots: [] as unknown as Record<string, unknown>,
         paused: false,
         lastIp: input.ip ?? null,
@@ -416,8 +434,9 @@ export function createDeviceStore(database: Database) {
     },
 
     /**
-     * 属于 owner 的全部未撤销设备。设备属于账号而不是某个机器人：用户的每个机器人都能使用它们
-     * （能力开关、允许的文件夹、审批、紧急停止照常生效）。扫码绑定的手机只用来登录聊天，不算在内。
+     * 属于 owner 的全部未撤销电脑/服务器节点。设备属于账号而不是某个机器人：用户的每个机器人都能使用它们
+     * （能力开关、允许的文件夹、审批、紧急停止照常生效）。扫码绑定的手机和 Chrome 浏览器伴侣扩展不在此列，
+     * 避免把 browser_extension 误当作 PC shell 节点分配系统工具。
      */
     async forOwner(ownerUserId: string): Promise<DeviceRecord[]> {
       const rows = await database
@@ -427,7 +446,26 @@ export function createDeviceStore(database: Database) {
           and(
             eq(devices.ownerUserId, ownerUserId),
             isNull(devices.revokedAt),
-            notInArray(devices.platform, [...MOBILE_PLATFORMS]),
+            notInArray(devices.platform, [
+              ...MOBILE_PLATFORMS,
+              BROWSER_EXTENSION_PLATFORM,
+            ]),
+          ),
+        )
+        .orderBy(desc(devices.createdAt));
+      return hydrate(rows);
+    },
+
+    /** 属于 owner 的全部未撤销浏览器伴侣扩展设备（与 PC 节点严格隔离）。 */
+    async extensionsForOwner(ownerUserId: string): Promise<DeviceRecord[]> {
+      const rows = await database
+        .select()
+        .from(devices)
+        .where(
+          and(
+            eq(devices.ownerUserId, ownerUserId),
+            isNull(devices.revokedAt),
+            eq(devices.platform, BROWSER_EXTENSION_PLATFORM),
           ),
         )
         .orderBy(desc(devices.createdAt));
@@ -477,7 +515,10 @@ export function createDeviceStore(database: Database) {
         .where(
           and(
             isNull(devices.revokedAt),
-            notInArray(devices.platform, [...MOBILE_PLATFORMS]),
+            notInArray(devices.platform, [
+              ...MOBILE_PLATFORMS,
+              BROWSER_EXTENSION_PLATFORM,
+            ]),
           ),
         );
       const changed: string[] = [];

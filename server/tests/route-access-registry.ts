@@ -350,6 +350,14 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/devices/:id/activity": { access: "user" },
   "GET /api/devices/:id/audit": { access: "user" },
   "GET /api/devices/:id/screenshots/:shotId": { access: "user" },
+  "GET /api/devices/agent/companion/bootstrap": {
+    access: "machine",
+    reason: "browser extension device token, not a session",
+  },
+  "GET /api/devices/agent/companion/shots/:shotId": {
+    access: "machine",
+    reason: "browser extension device token, not a session",
+  },
   "GET /api/devices/agent/node/chisabot-node.cjs": {
     access: "public",
     reason: "public node-agent bundle (documented no-secret)",
@@ -374,6 +382,8 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   },
   "GET /api/devices/approvals": { access: "user" },
   "GET /api/devices/bot-tools/:botId": { access: "user" },
+  "GET /api/devices/extension/download": { access: "user" },
+  "GET /api/devices/extension/meta": { access: "user" },
   "GET /api/devices/pairing/:pairingId": { access: "user" },
   "GET /api/federation/identity": { access: "admin" },
   "GET /api/federation/peers": { access: "admin" },
@@ -586,6 +596,10 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "PATCH /api/approvals/team/rules/:id": { access: "admin" },
   "PATCH /api/browser-bookmarks/:id": { access: "user" },
   "PATCH /api/devices/:id": { access: "user" },
+  "PATCH /api/devices/agent/companion/settings": {
+    access: "machine",
+    reason: "browser extension device token, not a session",
+  },
   "PATCH /api/im/connections/:id": { access: "user" },
   "PATCH /api/live-panels/:id": { access: "user" },
   "PATCH /api/local-agents/instances/:id": {
@@ -728,6 +742,26 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/devices/:id/jobs/:jobId/kill": { access: "user" },
   "POST /api/devices/:id/revoke": { access: "user" },
   "POST /api/devices/:id/test": { access: "user" },
+  "POST /api/devices/agent/companion/approvals/:id": {
+    access: "machine",
+    reason: "browser extension device token, not a session",
+  },
+  "POST /api/devices/agent/companion/events": {
+    access: "machine",
+    reason: "browser extension device token, not a session",
+  },
+  "POST /api/devices/agent/companion/open-thread": {
+    access: "machine",
+    reason: "browser extension device token, not a session",
+  },
+  "POST /api/devices/agent/companion/send": {
+    access: "machine",
+    reason: "browser extension device token, not a session",
+  },
+  "POST /api/devices/agent/companion/stop": {
+    access: "machine",
+    reason: "browser extension device token, not a session",
+  },
   "POST /api/devices/agent/pair": {
     access: "machine",
     reason: "one-time pairing code, not a session",

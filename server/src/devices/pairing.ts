@@ -51,15 +51,17 @@ type Entry = {
   endedAt: number | null;
   state: "pending" | "redeeming" | "bound" | "cancelled";
   device: { id: string; name: string } | null;
-  /** phone = 手机扫码；node = 服务器节点（chisabot-node 安装命令里的一次性码，docs/pc-node.md §14）。 */
+  /** phone = 手机扫码；node = 服务器节点（chisabot-node 安装命令里的一次性码，docs/pc-node.md §14）；extension = 浏览器伴侣扩展配对码。 */
   kind: PairingKind;
   e2eePub?: string | null;
   peerE2eePub?: string | null;
 };
 
-export type PairingKind = "phone" | "node";
+export type PairingKind = "phone" | "node" | "extension";
 /** 服务器节点的安装码多给点时间（复制命令、登录服务器、粘贴）。 */
 export const NODE_PAIRING_TTL_MS = 30 * 60_000;
+/** 浏览器伴侣扩展配对码默认 10 分钟有效（打开侧栏粘贴配对）。 */
+export const EXTENSION_PAIRING_TTL_MS = 10 * 60_000;
 
 export type RedeemResult =
   | {
@@ -85,7 +87,12 @@ export function isPairingCode(value: unknown): value is string {
 }
 
 export function createPairingStore(
-  options: { now?: () => number; ttlMs?: number; nodeTtlMs?: number } = {},
+  options: {
+    now?: () => number;
+    ttlMs?: number;
+    nodeTtlMs?: number;
+    extensionTtlMs?: number;
+  } = {},
 ) {
   const now = options.now ?? Date.now;
   const ttl = options.ttlMs ?? PAIRING_TTL_MS;
@@ -173,7 +180,9 @@ export function createPairingStore(
       const life =
         kind === "node"
           ? Math.max(ttl, options.nodeTtlMs ?? NODE_PAIRING_TTL_MS)
-          : ttl;
+          : kind === "extension"
+            ? Math.max(ttl, options.extensionTtlMs ?? EXTENSION_PAIRING_TTL_MS)
+            : ttl;
       const e2eePub =
         issueOptions?.e2eePub && isValidE2eePublicKey(issueOptions.e2eePub)
           ? issueOptions.e2eePub.trim()
