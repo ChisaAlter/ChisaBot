@@ -94,11 +94,14 @@ export function AuthedShell() {
  */
 const KeptPanelRail = memo(PanelRail);
 
-/** 空闲时把设置页的代码块先取好（jank P1-6）：设置路由没有 loader，所以只下载 JS，不发 `/api/settings/*`。 */
+/** 空闲时把设置页与设置左栏的代码块先取好（jank P1-6）：设置路由没有 loader，所以只下载 JS，不发 `/api/settings/*`。 */
 function useIdleSettingsPrefetch(scope: string) {
   const router = useRouter();
   useIdleTask(
-    () => void router.preloadRoute({ to: "/settings" }).catch(() => undefined),
+    () => {
+      void router.preloadRoute({ to: "/settings" }).catch(() => undefined);
+      void SettingsSidebar.preload();
+    },
     scope === "app",
     4000,
     scope,

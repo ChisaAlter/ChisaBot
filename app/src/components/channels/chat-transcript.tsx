@@ -956,6 +956,10 @@ function SettleAtEnd({
       if (!element || !content) return;
       const s = state.current;
       const held = () => isMessageHeld(element);
+      // 聊天被 KeepAliveStage 藏起（content-visibility: hidden, data-visible="false"）时绝不读
+      // scrollHeight/clientHeight/scrollTop，避免切入设置页首帧被迫同步重排整页与隐藏对话。
+      const keptPage = element.closest<HTMLElement>('[data-testid="kept-page"]');
+      const isKeptHidden = () => keptPage?.dataset.visible === "false";
 
       const syncPinnedAttr = () => {
         const activePin = s.pinned && !s.restore && !s.anchorHold && !held();
@@ -1001,6 +1005,7 @@ function SettleAtEnd({
       };
 
       const pinNow = () => {
+        if (isKeptHidden()) return;
         syncPinnedAttr();
         if (held()) return;
         if (s.restore) {

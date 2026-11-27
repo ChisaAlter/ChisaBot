@@ -66,4 +66,29 @@ test("hidden chat and panel rail are memoized; idle prefetch has no loader calls
   // 设置路由不能有 loader，否则空闲预取会发请求。
   expect(src("routes/_authed/settings/route.tsx")).not.toContain("loader");
   expect(src("routes/_authed/settings/index.tsx")).not.toContain("loader");
+  // 空闲预取必须覆盖设置主页索引（/_authed/settings/）以及设置左栏，避免只预取到 0.1KB 的 Outlet 壳。
+  expect(src("routes/_authed/_app.tsx")).toContain('"/_authed/settings/"');
+  expect(shell).toContain("SettingsSidebar.preload()");
+});
+
+test("opening account menu only prefetches settings entry, not heavy secondary routes or dialogs", () => {
+  const menu = src("components/layout/account-menu.tsx");
+  const openHandler = menu.match(/onOpenChange=\{\(next\) => \{([\s\S]*?)\}\}/)?.[1] ?? "";
+  expect(openHandler).toContain('router.preloadRoute({ to: "/settings" })');
+  expect(openHandler).toContain("settings-sidebar");
+  expect(openHandler).not.toContain("/approvals");
+  expect(openHandler).not.toContain("/settings/schedules");
+  expect(openHandler).not.toContain("preloadAccountDialog");
+});
+
+test("PageShell mount avoids synchronous scrollTo + scrollTop forced layout", () => {
+  const pageShell = src("components/layout/page-shell.tsx");
+  expect(pageShell).toContain("lastPathnameRef.current !== pathname");
+  expect(pageShell).not.toMatch(/sync\(\);\s*el\.addEventListener\("scroll"/);
+});
+
+test("SettleAtEnd skips layout reads while chat is hidden in KeepAliveStage", () => {
+  const transcript = src("components/channels/chat-transcript.tsx");
+  expect(transcript).toContain('element.closest<HTMLElement>(\'[data-testid="kept-page"]\')');
+  expect(transcript).toContain("if (isKeptHidden()) return;");
 });

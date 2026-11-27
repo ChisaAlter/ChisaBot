@@ -108,19 +108,29 @@ export function PageShell({
 }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const lastPathnameRef = useRef(pathname);
   useExternalConnection(pathname || "/", () => {
     const el = scrollRef.current;
     if (!el) return;
-    if (typeof el.scrollTo === "function") el.scrollTo({ top: 0 });
-    else el.scrollTop = 0;
+    // 新挂载的滚动容器天然位于顶部，跳过 scrollTo + 同步读 scrollTop 避免切入页面首帧触发全页强制重排；
+    // 仅在同一 PageShell 实例跨路由复用时回滚顶部，滚动态只由被动 scroll 监听按状态变化更新。
+    if (lastPathnameRef.current !== pathname) {
+      lastPathnameRef.current = pathname;
+      if (typeof el.scrollTo === "function") el.scrollTo({ top: 0 });
+      else el.scrollTop = 0;
+    }
+    delete document.body.dataset.pageScrolled;
+    let scrolled = false;
     const sync = () => {
-      if (el.scrollTop > 8) {
+      const next = el.scrollTop > 8;
+      if (next === scrolled) return;
+      scrolled = next;
+      if (next) {
         document.body.dataset.pageScrolled = "true";
       } else {
         delete document.body.dataset.pageScrolled;
       }
     };
-    sync();
     el.addEventListener("scroll", sync, { passive: true });
     return () => {
       el.removeEventListener("scroll", sync);

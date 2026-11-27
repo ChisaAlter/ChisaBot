@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **修复点击「设置」耗时数秒的切页延迟（拆解头像菜单预加载炸弹、补齐设置空闲预取与消除挂载强制重排）**：
+  - **拆除头像菜单预加载炸弹**：将 `AccountMenu` 展开时的并发预加载收敛为仅预取最高频的设置主入口（`/settings`）与设置左栏（`SettingsSidebar`），其余入口（`个人资料`、`定时任务`、`待处理`、`绑定手机`）改为在悬停 / 聚焦 / 按压对应菜单项时按需预取；同步将 `_authed/_app/approvals.tsx` 从 `route-app-secondary` 独立拆块，避免预取 `/approvals` 连带下载执行 `workflows` / `editor` / `task-center.css` 等十余个无关分包并触发整页样式失效。
+  - **补齐空闲预取与消除切页强制重排**：修复 `_app.tsx` `IDLE_PRELOAD` 遗漏 `"/_authed/settings/"` 导致只预取到 0.1 KB `Outlet` 壳的问题，并在 `AuthedShell` 空闲预取中同步预取 `SettingsSidebar`；优化 `PageShell` 挂载逻辑跳过首帧 `scrollTo(0)` + 同步读 `scrollTop`，并修复 `ChatTranscript` `SettleAtEnd` 在聊天被 `KeepAliveStage` 隐藏（`data-visible="false"` / `content-visibility: hidden`）时仍同步读 `scrollHeight`/`clientHeight`/`scrollTop` 触发全页与隐藏对话强制重排的问题（纯前端改动，更新客户端指纹，无新增数据库迁移）。
+
 - **全量审查 M6 — Android 原生壳内存泄漏、主线程 I/O 与更新安全加固**：
   - `Updater.kt` 与 `MainActivity.kt` 补齐 `close()`/`cancel()` 在 `onDestroy` 释放 `AlertDialog`、取消 `ioScope` 并清理半截 APK；新增 `requireHttpsUpdateUrl()` 强制 HTTPS 无凭据更新源与下载链接，新增 `validateUpdateVersion()` 与 `resolveSafeUpdateApkFile()` `canonicalPath` 校验防止路径穿越。
   - `WebScreen.kt` 改用 `MainFrameUrlHolder` `@Volatile` 实时维护主框架 URL，彻底删除 `VoiceAudioBridge` 500ms `CountDownLatch` 阻塞；接入 `LifecycleEventObserver` 补齐 `webView.onPause()`/`onResume()`、`onRelease` 有序销毁及过期拍照缓存清理；`DownloadManager` 改用 `applicationContext` 隔离广播并对 API ≤ 28 未授存储权限时降级写入应用私有下载目录避免崩溃。
