@@ -12,7 +12,14 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useId, useState } from "react";
-import { isMobilePlatform } from "../../../../../../shared/devices";
+import {
+  BROWSER_PERMISSION_INFO,
+  isBrowserPermissionTier,
+} from "../../../../../../shared/browser-companion";
+import {
+  isBrowserExtensionPlatform,
+  isMobilePlatform,
+} from "../../../../../../shared/devices";
 import { DeviceActivityPanel, FullAccessBadge } from "@/components/devices/full-access";
 import { ApprovalsCard, AuditList, DeviceIcon, DevicePermissions, StatusBadge, ThisPcBadge, ThisPcPanel } from "@/components/devices/devices";
 import { DeviceCrumbs, DeviceNotFound, DeviceOfflineNote } from "@/components/devices/device-page-parts";
@@ -126,10 +133,27 @@ function DevicePage() {
   const isThisPc = !!local && local.deviceId === d.id && !d.revoked;
   // 扫码绑定的手机只用来登录聊天：没有能力 / 测试连接 / 紧急停止，只有操作记录和设备（重命名、撤销）。
   const mobile = isMobilePlatform(d.platform);
-  const tabs = TABS.filter((item) => (!item.thisPcOnly || isThisPc) && !(mobile && (item.id === "permissions" || item.id === "activity" || item.id === "agents")));
-  const activeTab: Tab = mobile
-    ? tab === "settings" ? "settings" : "audit"
-    : tab === "local" && !isThisPc ? "permissions" : tab;
+  // 浏览器扩展权限档位与黑名单在扩展侧栏独立管理，设备页提供在线状态、操作记录、紧急停止与撤销。
+  const extension = isBrowserExtensionPlatform(d.platform);
+  const companionTierLabel =
+    extension &&
+    d.companionState &&
+    isBrowserPermissionTier(d.companionState.tier)
+      ? BROWSER_PERMISSION_INFO[d.companionState.tier].label
+      : null;
+  const tabs = TABS.filter(
+    (item) =>
+      (!item.thisPcOnly || isThisPc) &&
+      !((mobile || extension) && (item.id === "permissions" || item.id === "activity" || item.id === "agents")),
+  );
+  const activeTab: Tab =
+    mobile || extension
+      ? tab === "settings"
+        ? "settings"
+        : "audit"
+      : tab === "local" && !isThisPc
+        ? "permissions"
+        : tab;
   // 离线时测试连接 / 紧急停止 / 开启完全访问都到不了电脑（O8）：禁用并用 aria-describedby 指向说明。
   const offline = !d.online && !d.revoked;
   const approvals = (list.data?.approvals ?? []).filter((approval) => approval.deviceId === d.id);
@@ -143,8 +167,13 @@ function DevicePage() {
             <StatusBadge device={d} />
             <FullAccessBadge device={d} />
             <span className="device-badge"><T>{platformLabel(d.platform)}</T></span>
-            {d.clientVersion ? <span className="device-badge"><T>{`客户端 ${d.clientVersion}`}</T></span> : null}
-            {!mobile && !d.revoked ? <DeviceProfileBadge device={d} /> : null}
+            {companionTierLabel ? (
+              <span className="device-badge is-accent">
+                <T>{companionTierLabel}</T>
+              </span>
+            ) : null}
+            {d.clientVersion ? <span className="device-badge"><T>{`${extension ? "扩展" : "客户端"} ${d.clientVersion}`}</T></span> : null}
+            {!mobile && !extension && !d.revoked ? <DeviceProfileBadge device={d} /> : null}
           </div>
           <p className="device-hero-s">
             {[d.osVersion, d.hostname, seenText(d.lastSeenAt, d.online), d.lastIp ? `IP ${d.lastIp}` : null, d.lastUsedBy ? `最近使用：${lastUsedText(d.lastUsedBy)}` : null]
@@ -192,9 +221,11 @@ function DevicePage() {
       {d.paused && !d.revoked && !mobile ? (
         <div className="device-stopbar" role="status">
           <IconPlayerStopFilled className="size-4" />
-          {isThisPc
-            ? "紧急停止中：这台电脑拒绝一切远程操作，进行中的操作已取消。解除时会在这台电脑上再确认一次。"
-            : "紧急停止中：这台电脑拒绝一切远程操作，进行中的操作已取消。可以在这里或 PC 托盘菜单解除。"}
+          {extension
+            ? "紧急停止中：这个浏览器扩展已拒绝一切远程操作并释放当前接管标签页。可以在这里解除。"
+            : isThisPc
+              ? "紧急停止中：这台电脑拒绝一切远程操作，进行中的操作已取消。解除时会在这台电脑上再确认一次。"
+              : "紧急停止中：这台电脑拒绝一切远程操作，进行中的操作已取消。可以在这里或 PC 托盘菜单解除。"}
         </div>
       ) : null}
 

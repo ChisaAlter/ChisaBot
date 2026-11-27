@@ -1,10 +1,12 @@
 import { queryOptions } from "@tanstack/react-query";
 import { ClientError, client, tryClient } from "@/lib/client";
-import type {
-  DeviceApprovalView,
-  DeviceAuditEntry,
-  DeviceCapabilities,
-  DeviceView,
+import type { CompanionExtensionDownloadMeta } from "../../../shared/browser-companion";
+import {
+  type DeviceApprovalView,
+  type DeviceAuditEntry,
+  type DeviceCapabilities,
+  type DeviceView,
+  isBrowserExtensionPlatform,
 } from "../../../shared/devices";
 
 /**
@@ -19,6 +21,7 @@ export const deviceKeys = {
   audit: (id: string) => ["devices", "audit", id] as const,
   activity: (id: string) => ["devices", "activity", id] as const,
   download: ["devices", "download"] as const,
+  extensionMeta: ["devices", "extension-meta"] as const,
 };
 
 export type DeviceList = {
@@ -75,11 +78,13 @@ export type DevicePatch = {
   fullAccess?: "1h" | "24h" | "permanent" | "off";
 };
 
-/** 电脑 / 服务器 / 手机：手机看平台；服务器 = chisabot-node（客户端版本带 -node）；其余是 PC 客户端。 */
-export type DeviceKind = "pc" | "server" | "phone";
+/** 电脑 / 浏览器扩展 / 服务器 / 手机。 */
+export type DeviceKind = "pc" | "extension" | "server" | "phone";
+
 export function deviceKind(
   device: Pick<DeviceView, "platform" | "clientVersion">,
 ): DeviceKind {
+  if (isBrowserExtensionPlatform(device.platform)) return "extension";
   if (device.platform === "android" || device.platform === "ios")
     return "phone";
   if (
@@ -91,6 +96,7 @@ export function deviceKind(
 }
 export const DEVICE_KIND_LABEL: Record<DeviceKind, string> = {
   pc: "电脑",
+  extension: "浏览器扩展",
   server: "服务器",
   phone: "手机",
 };
@@ -218,7 +224,72 @@ export function pcDownloadQueryOptions() {
   });
 }
 
+/** 服务端托管的 Chrome / Edge 浏览器伴侣扩展安装包元信息（GET /api/devices/extension/meta）。 */
+export type BrowserExtensionDownloadMeta = CompanionExtensionDownloadMeta;
+
+export function browserExtensionDownloadQueryOptions() {
+  return queryOptions({
+    queryKey: deviceKeys.extensionMeta,
+    queryFn: async ({ signal }): Promise<CompanionExtensionDownloadMeta | null> => {
+      const response = await tryClient("/api/devices/extension/meta", {
+        signal,
+      });
+      if (!response.ok) return null;
+      const type = response.headers.get("content-type") ?? "";
+      if (!type.includes("json")) return null;
+      const raw = (await response.json().catch(() => null)) as
+        | Partial<CompanionExtensionDownloadMeta>
+        | null;
+      if (!raw || typeof raw !== "object") return null;
+      return {
+        available: raw.available === true,
+        version: typeof raw.version === "string" ? raw.version : null,
+        filename:
+          typeof raw.filename === "string" && raw.filename.trim()
+            ? raw.filename.trim()
+            : "chisabot-chrome-extension.zip",
+        bytes:
+          typeof raw.bytes === "number" && Number.isFinite(raw.bytes)
+            ? raw.bytes
+            : null,
+        sha256: typeof raw.sha256 === "string" ? raw.sha256 : null,
+        downloadUrl:
+          typeof raw.downloadUrl === "string" && raw.downloadUrl.trim()
+            ? raw.downloadUrl.trim()
+            : "/api/devices/extension/download",
+      };
+    },
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+}
+
+/** 经统一 client（带凭据与错误处理）下载浏览器扩展 ZIP 安装包并触发浏览器保存。 */
+export async function downloadBrowserExtensionZip(
+  downloadUrl = "/api/devices/extension/download",
+  filename = "chisabot-chrome-extension.zip",
+): Promise<void> {
+  const response = await client(downloadUrl, {
+    fallback: "无法下载浏览器扩展包，请确认服务端已完成扩展构建",
+    timeoutMs: 60_000,
+  });
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  }
+}
+
 export function platformLabel(platform: string) {
+  if (isBrowserExtensionPlatform(platform)) return "Chrome / Edge 扩展";
   if (platform === "win32") return "Windows";
   if (platform === "darwin") return "macOS";
   if (platform === "linux") return "Linux";
@@ -317,16 +388,29 @@ export const ACTION_LABEL: Record<string, string> = {
   system_info: "系统信息",
   mcp_call: "调用本地 MCP",
   mcp_discover: "发现本地 MCP 配置",
+  browser_tabs: "管理浏览器标签页",
+  browser_snapshot: "读取页面快照",
+  browser_read: "读取网页正文",
+  browser_navigate: "打开网页",
+  browser_click: "点击网页元素",
+  browser_hover: "悬停网页元素",
+  browser_type: "填写网页表单",
+  browser_key: "发送网页按键",
+  browser_scroll: "滚动网页",
+  browser_screenshot: "截取网页画面",
+  browser_control: "切换浏览器接管",
 };
 
 // ---- 手机扫码绑定（DESIGN.md §33） ----
+
+export type PairingKind = "phone" | "node" | "extension";
 
 export type PairingTicket = {
   id: string;
   code: string;
   expiresAt: string;
   ttlSeconds: number;
-  kind?: "phone" | "node";
+  kind?: PairingKind;
   alternateOrigins?: string[];
   e2eePublicKey?: string;
 };
@@ -356,11 +440,15 @@ function isTransientPairingError(error: unknown): boolean {
 
 export function pairingErrorMessage(
   error: unknown,
-  kind: "phone" | "node" = "phone",
+  kind: PairingKind = "phone",
 ): string {
   const retry = kind === "phone" ? "点「刷新二维码」重试" : "重试";
   const fallback =
-    kind === "node" ? "无法生成安装命令，请重试" : "无法生成二维码，请重试";
+    kind === "node"
+      ? "无法生成安装命令，请重试"
+      : kind === "extension"
+        ? "无法生成扩展绑定码，请重试"
+        : "无法生成二维码，请重试";
   if (isTimeoutError(error)) {
     return `连接服务器超时，请${retry}`;
   }
@@ -380,7 +468,9 @@ export function pairingErrorMessage(
     if (error.status === 404) {
       return kind === "node"
         ? "服务器暂不支持节点安装，请先更新服务器"
-        : "服务器暂不支持扫码绑定，请先更新服务器";
+        : kind === "extension"
+          ? "服务器暂不支持浏览器扩展绑定，请先更新服务器"
+          : "服务器暂不支持扫码绑定，请先更新服务器";
     }
     if (error.status === 429) {
       return "操作太频繁，请稍后再试";
@@ -396,11 +486,15 @@ export function pairingErrorMessage(
 }
 
 export async function createPairing(
-  kind: "phone" | "node" = "phone",
+  kind: PairingKind = "phone",
   options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<PairingTicket> {
   const fallback =
-    kind === "node" ? "无法生成安装命令，请重试" : "无法生成二维码，请重试";
+    kind === "node"
+      ? "无法生成安装命令，请重试"
+      : kind === "extension"
+        ? "无法生成扩展绑定码，请重试"
+        : "无法生成二维码，请重试";
   const timeoutMs = options?.timeoutMs ?? PAIRING_TIMEOUT_MS;
   const runOnce = () =>
     client("/api/devices/pairing", {

@@ -7,6 +7,10 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  type ActiveBrowserStatus,
+  deriveActiveBrowserStatus,
+} from "@/components/channels/browser-activity";
 import { ChatTranscript } from "@/components/channels/chat-transcript";
 import {
   type AgentOption,
@@ -19,6 +23,10 @@ import {
   reduceQueue,
 } from "@/components/channels/composer";
 import { ComposerDock } from "@/components/channels/composer/dock";
+import {
+  type BrowserOpenTabTarget,
+  BrowserStatusBar,
+} from "@/components/computer/browser-live-card";
 import { useExternalConnection } from "@/hooks";
 import { releaseStagedAttachment as releaseStagedAttachmentRow } from "@/lib/channels/staged-attachment";
 import { deleteChatFile } from "@/lib/chat-files";
@@ -70,6 +78,8 @@ export function ConversationView({
   fallbacks,
   lastSentAt,
   queueToServer,
+  browserStatus,
+  onOpenBrowserTab,
 }: {
   /** 这段对话的机器人（在想那一行画它的形象头像）。 */
   agentId?: string;
@@ -178,6 +188,10 @@ export function ConversationView({
   onSubmit: (draft: ComposerDraft) => void | Promise<void>;
   /** Stop the Bot mid-answer; forwarded to turn the send button into a stop button. */
   onStop?: () => void;
+  /** 可选外部浏览器实时状态（例如扩展侧栏注入）；未传时自动从当前运行轮消息派生。 */
+  browserStatus?: ActiveBrowserStatus | null;
+  /** 可选外部覆盖「打开标签页」行为（供输入框上方状态横条复用）。 */
+  onOpenBrowserTab?: (target: BrowserOpenTabTarget) => void | Promise<void>;
 }) {
   /*
    * THE QUEUE LIVES HERE BECAUSE BOTH HALVES OF IT DO.
@@ -540,6 +554,7 @@ export function ConversationView({
     onRetryTurn,
     onBeforeRetry,
     onWithdrawTurn,
+    onOpenBrowserTab,
     queueToServer,
     submit,
     apply,
@@ -552,6 +567,7 @@ export function ConversationView({
       onRetryTurn,
       onBeforeRetry,
       onWithdrawTurn,
+      onOpenBrowserTab,
       queueToServer,
       submit,
       apply,
@@ -605,6 +621,23 @@ export function ConversationView({
       ?.focus();
   }, []);
   const withdrawTurn = useCallback(() => latest.current.onWithdrawTurn?.(), []);
+  const openBrowserTab = useCallback(
+    (target: BrowserOpenTabTarget) => latest.current.onOpenBrowserTab?.(target),
+    [],
+  );
+  const derivedBrowserStatus = useMemo(
+    () =>
+      browserStatus !== undefined
+        ? browserStatus
+        : deriveActiveBrowserStatus(messages, busy || threadLive),
+    [browserStatus, messages, busy, threadLive],
+  );
+  const browserBarActive = Boolean(derivedBrowserStatus?.active);
+  const browserBarSource = derivedBrowserStatus?.source ?? "cloud";
+  const browserBarStep = derivedBrowserStatus?.stepLabel;
+  const browserBarUrl = derivedBrowserStatus?.tabUrl;
+  const browserBarTitle = derivedBrowserStatus?.tabTitle;
+  const browserBarTabId = derivedBrowserStatus?.tabId;
 
   return (
     <div className="flex flex-col flex-1 min-h-0 relative">
@@ -644,6 +677,15 @@ export function ConversationView({
       {/* 输入框悬浮在对话底边上：不占排版位，消息能滚到卡片上方（DESIGN.md §24 / §92，styles.css `.chat-composer-box`、`composer/dock.tsx`）。 */}
       <ComposerDock dockRef={composerBoxRef}>
         {notice}
+        <BrowserStatusBar
+          active={browserBarActive}
+          onOpenTab={onOpenBrowserTab ? openBrowserTab : undefined}
+          source={browserBarSource}
+          stepLabel={browserBarStep}
+          tabId={browserBarTabId}
+          tabTitle={browserBarTitle}
+          tabUrl={browserBarUrl}
+        />
         <Composer
           modelControl={modelControl}
           leadingControl={leadingControl}

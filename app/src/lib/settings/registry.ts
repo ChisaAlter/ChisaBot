@@ -593,6 +593,23 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
     ],
     items: [
       {
+        id: "add-extension",
+        title: "添加浏览器扩展",
+        description: "下载 Chrome / Edge 浏览器伴侣扩展安装包并生成绑定码",
+        find: "添加浏览器扩展",
+        keywords: [
+          "浏览器扩展",
+          "chrome",
+          "edge",
+          "插件",
+          "extension",
+          "伴侣",
+          "侧边栏",
+          "下载",
+          "绑定码",
+        ],
+      },
+      {
         id: "add-pc",
         title: "添加一台电脑",
         description: "装 ChisaBot 客户端并配对",

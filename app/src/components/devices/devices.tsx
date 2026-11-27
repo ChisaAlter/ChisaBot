@@ -1,6 +1,7 @@
 import {
   IconBrandAndroid,
   IconBrandApple,
+  IconBrandChrome,
   IconBrandWindows,
   IconCheck,
   IconChevronRight,
@@ -64,6 +65,7 @@ import {
   ACTION_LABEL,
   bytesText,
   DEVICE_KIND_LABEL,
+  type DeviceKind,
   decideApproval,
   deleteDevice,
   deviceKeys,
@@ -86,6 +88,10 @@ import {
 } from "@/lib/pc-bridge";
 import { cn } from "@/lib/utils";
 import {
+  BROWSER_PERMISSION_INFO,
+  isBrowserPermissionTier,
+} from "../../../../shared/browser-companion";
+import {
   CAPABILITY_INFO,
   type CapabilityPolicy,
   DEVICE_CAPABILITIES,
@@ -94,11 +100,15 @@ import {
   type DeviceCapabilities,
   type DeviceCapability,
   type DeviceView,
+  isBrowserExtensionPlatform,
   isMobilePlatform,
   OPERATION_LABEL,
 } from "../../../../shared/devices";
+import { ChromeExtensionCard } from "./chrome-extension-card";
 import { FullAccessBadge, FullAccessCard } from "./full-access";
 import { PairPhoneButton } from "./pair-phone";
+
+export { ChromeExtensionCard };
 
 const CAP_ICON: Record<DeviceCapability, typeof IconTerminal2> = {
   shell: IconTerminal2,
@@ -110,10 +120,9 @@ const CAP_ICON: Record<DeviceCapability, typeof IconTerminal2> = {
   clipboard: IconClipboard,
 };
 
-export function platformIcon(
-  platform: string,
-  kind?: "pc" | "server" | "phone",
-) {
+export function platformIcon(platform: string, kind?: DeviceKind) {
+  if (kind === "extension" || isBrowserExtensionPlatform(platform))
+    return IconBrandChrome;
   if (kind === "server") return IconServer;
   if (platform === "win32") return IconBrandWindows;
   if (platform === "android") return IconBrandAndroid;
@@ -220,6 +229,13 @@ export function DeviceRow({
   const [renaming, setRenaming] = useState(false);
   const caps = enabledCaps(device.capabilities);
   const mobile = isMobilePlatform(device.platform);
+  const extension = isBrowserExtensionPlatform(device.platform);
+  const companionTierLabel =
+    extension &&
+    device.companionState &&
+    isBrowserPermissionTier(device.companionState.tier)
+      ? BROWSER_PERMISSION_INFO[device.companionState.tier].label
+      : null;
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: deviceKeys.all });
   const revoke = useAsyncAction(
@@ -292,6 +308,26 @@ export function DeviceRow({
                   <span className="device-cap-chip is-off">
                     <T>{"令牌已作废"}</T>
                   </span>
+                ) : extension ? (
+                  <>
+                    <span className="device-cap-chip is-extension">
+                      <T>
+                        {companionTierLabel
+                          ? `本机浏览器伴侣 · ${companionTierLabel}`
+                          : "本机浏览器伴侣 · 侧栏实时接管与审计"}
+                      </T>
+                    </span>
+                    {device.companionState?.allowRemoteDispatch ? (
+                      <span className="device-cap-chip">
+                        <T>{"允许跨端调度"}</T>
+                      </span>
+                    ) : null}
+                    {device.companionState && device.companionState.tabCount > 0 ? (
+                      <span className="device-cap-chip">
+                        <T>{`${device.companionState.tabCount} 个受控标签页`}</T>
+                      </span>
+                    ) : null}
+                  </>
                 ) : mobile ? (
                   <span className="device-cap-chip is-mobile">
                     <T>{"扫码绑定 · 用于登录聊天"}</T>
@@ -353,7 +389,7 @@ export function DeviceRow({
           </DropdownMenuItem>
           {!device.revoked ? (
             <>
-              {mobile ? null : (
+              {mobile || extension ? null : (
                 <DropdownMenuItem
                   className="glass-mi"
                   onClick={() =>
@@ -386,7 +422,9 @@ export function DeviceRow({
                   title: `撤销「${device.name}」？`,
                   description: mobile
                     ? "这台手机会在半分钟内退出登录，回到登录页。需要重新扫码才能再次绑定。"
-                    : "这台设备会立即断开，所有机器人都不能再使用它。客户端需要重新登录才能再次关联。",
+                    : extension
+                      ? "这个浏览器扩展会立即断开连接，所有机器人都不能再操作该浏览器标签页。需要在扩展侧栏重新登录或配对。"
+                      : "这台设备会立即断开，所有机器人都不能再使用它。客户端需要重新登录才能再次关联。",
                   confirmLabel: "撤销",
                   destructive: true,
                 });
@@ -801,9 +839,12 @@ export function ConnectionCard({
     ? devices.find((device) => device.id === local.deviceId)
     : undefined;
   const pcConnected = local ? local.agentState === "online" : false;
+  const pcOnline = online.filter(
+    (device) => !isBrowserExtensionPlatform(device.platform),
+  );
   const allOff =
-    online.length > 0 &&
-    online.every((device) => enabledCaps(device.capabilities).length === 0);
+    pcOnline.length > 0 &&
+    pcOnline.every((device) => enabledCaps(device.capabilities).length === 0);
   // 网页里看不到 PC 就不显示（没有设备时「添加一台电脑」已经说清楚了）。
   if (!devices.length && !local) return null;
   const summary = online.length
@@ -829,12 +870,12 @@ export function ConnectionCard({
           description="机器人现在只能看到电脑在线、读系统信息。要让它截图、读写文件或操作鼠标键盘，进入设备详情 → 权限，把需要的能力设为「询问」或「允许」。"
           title="能力全部关闭"
         >
-          {online[0] ? (
+          {pcOnline[0] ? (
             <Button
               nativeButton={false}
               render={
                 <Link
-                  params={{ deviceId: online[0].id }}
+                  params={{ deviceId: pcOnline[0].id }}
                   search={{ tab: "permissions" }}
                   to="/settings/devices/$deviceId"
                 />

@@ -5070,6 +5070,576 @@ a.live-panel-src:hover { color: var(--ink-1); text-decoration: underline; text-u
 .shot-zoom { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 32px; background: rgba(8, 12, 20, 0.78); cursor: zoom-out; }
 .shot-zoom img { max-width: 100%; max-height: 100%; border-radius: 12px; box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42), 0 4px 12px rgba(0, 0, 0, 0.24); }
 
+/* ── 全端浏览器实时预览大卡 + 角色头像动作徽章 + 输入框上方状态横条 ─────────
+ * 严格遵循纯 CSS 5 层单通道令牌与 [data-surface] 矩阵（零 backdrop-filter 声明、零 !important、零 :has()）。 */
+.browser-live-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  max-width: min(460px, 100%);
+  margin: 6px 0;
+  min-width: 0;
+}
+
+.browser-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 3px 11px 3px 4px;
+  border-radius: var(--r-pill);
+  font-size: 12.5px;
+  line-height: 1.3;
+  color: var(--ink-1);
+}
+
+.browser-live-badge-ava {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-full);
+  overflow: hidden;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.browser-live-badge-name {
+  flex: none;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.browser-live-badge-sep {
+  flex: none;
+  color: var(--ink-4);
+}
+
+.browser-live-badge-phase {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+.browser-live-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-full);
+  background: var(--task-info);
+  animation: browser-live-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes browser-live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.38; transform: scale(0.84); }
+}
+
+.browser-live-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  gap: 10px;
+  border-radius: var(--r-bubble);
+  color: var(--ink-1);
+  transition: border-color var(--dur-1) var(--ease-out);
+}
+
+.browser-live-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.browser-live-icon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.browser-live-head-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.browser-live-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.browser-live-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink-1);
+}
+
+.browser-live-source-tag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+
+.browser-live-source-tag.is-issue {
+  color: var(--sem-warn);
+  background: var(--sem-warn-soft);
+}
+
+.browser-live-step {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-live-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+}
+
+.browser-live-toggle:hover {
+  color: var(--ink-1);
+  background: var(--hover-wash);
+  border-color: var(--line-strong);
+}
+
+.browser-live-toggle:focus-visible {
+  outline: 2px solid var(--focus-line);
+  outline-offset: 2px;
+}
+
+.browser-live-toggle-chevron {
+  transition: transform var(--dur-1) var(--ease-out);
+}
+
+.browser-live-toggle[aria-expanded="true"] .browser-live-toggle-chevron {
+  transform: rotate(180deg);
+}
+
+.browser-live-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--r-12);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.browser-live-stage-btn {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  text-align: left;
+}
+
+.browser-live-stage-btn:focus-visible {
+  outline: 2px solid var(--focus-line);
+  outline-offset: -2px;
+}
+
+.browser-live-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+.browser-live-img.is-loading {
+  opacity: 0.45;
+}
+
+.browser-live-zoom-hint {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-8);
+  background: rgba(15, 23, 42, 0.68);
+  color: #f8fafc;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+.browser-live-stage-btn:hover .browser-live-zoom-hint,
+.browser-live-stage-btn:focus-visible .browser-live-zoom-hint {
+  opacity: 1;
+}
+
+.browser-live-page-pill {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  width: fit-content;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  background: rgba(15, 23, 42, 0.76);
+  color: #f8fafc;
+  font-size: 11.5px;
+  line-height: 18px;
+  pointer-events: none;
+}
+
+.browser-live-page-pill > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-live-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+  color: var(--ink-3);
+}
+
+.browser-live-skel {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 14px;
+  animation: browser-live-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes browser-live-breathe {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.48; }
+}
+
+.browser-live-skel-bar {
+  height: 10px;
+  border-radius: var(--r-pill);
+  background: var(--line-strong);
+}
+
+.browser-live-skel-block {
+  flex: 1;
+  margin-block: 10px;
+  border-radius: var(--r-8);
+  background: var(--line);
+}
+
+.browser-live-placeholder-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.browser-live-placeholder-sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ink-4);
+}
+
+.browser-live-steps {
+  margin: 0;
+  padding: 10px 12px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-radius: var(--r-sm);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.browser-live-step-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.browser-live-step-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.browser-live-step-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  transform: translateY(-1px);
+  background: var(--sem-success);
+}
+
+.browser-live-step-dot.is-pending {
+  background: var(--task-info);
+}
+
+.browser-live-step-dot.is-failed {
+  background: var(--sem-danger);
+}
+
+.browser-live-step-label {
+  flex: none;
+  color: var(--ink-2);
+}
+
+.browser-live-step-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
+}
+
+.browser-live-step-link:hover {
+  text-decoration-color: currentColor;
+}
+
+.browser-live-step-state {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--ink-4);
+}
+
+.browser-live-step-err {
+  margin: 0 0 0 14px;
+  font-size: 12px;
+  color: var(--sem-danger);
+}
+
+.browser-live-open-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--hover-wash);
+  color: var(--ink-1);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out);
+}
+
+.browser-live-open-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent-ring);
+  color: var(--accent-ink);
+}
+
+.browser-live-open-btn:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+}
+
+.browser-live-open-btn:focus-visible {
+  outline: 2px solid var(--focus-line);
+  outline-offset: 2px;
+}
+
+.browser-live-open-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 输入框正上方运行期单行实时状态横条 */
+.browser-status-slot {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.browser-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: var(--r-12);
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink-1);
+}
+
+.browser-status-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-ink);
+}
+
+.browser-status-prefix {
+  flex: none;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.browser-status-sep {
+  flex: none;
+  color: var(--ink-4);
+}
+
+.browser-status-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+.browser-status-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+}
+
+.browser-status-action:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-ring);
+}
+
+.browser-status-action:focus-visible {
+  outline: 2px solid var(--focus-line);
+  outline-offset: 2px;
+}
+
+/* 设备页 Chrome / Edge 扩展卡片与配对码面板 */
+.ext-pair-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.ext-pair-code-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ext-pair-code {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: var(--r-8);
+  font-family: var(--font-code);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+}
+
+.ext-pair-hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.device-cap-chip.is-extension {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
 /* ── 接管大屏（2026-10-13 第二轮）：卡片不透明、右上角关闭 = 交还、录制工作流默认收起 ── */
 .computer-takeover-card { background: rgba(248, 251, 255, 0.98); border: 1px solid var(--line); }
 .dark .computer-takeover-card { background: rgba(18, 25, 38, 0.98); }
@@ -10050,6 +10620,8 @@ html[data-resizing] :is(
     animation: none;
   }
   .live-panel-spin,
+  .browser-live-dot,
+  .browser-live-skel,
   .glass-ghost-btn-ico,
   .wf-step-out,
   .wf-approval,
@@ -10107,6 +10679,8 @@ html[data-motion-rest="1"] :is(
   .lc-skel .lc-skel-bar,
   .p3-dots,
   .live-panel-spin,
+  .browser-live-dot,
+  .browser-live-skel,
   .worker-icon.is-running svg,
   .animate-pulse,
   .animate-bounce
@@ -10140,6 +10714,8 @@ html:is([data-perf="on"], [data-static-bg="on"]) :is(
   .device-job-dot.is-running,
   .jr-product-ph.is-loading,
   .chisabot-wallpaper-img-enter,
+  .browser-live-dot,
+  .browser-live-skel,
   .glass-rail[data-rail-motion] > .rail-card
 ) {
   animation: none;
