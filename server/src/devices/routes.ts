@@ -1,13 +1,30 @@
+import { createHash } from "node:crypto";
+import { createReadStream, existsSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { Readable } from "node:stream";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import {
+  type CompanionAttachedTabContext,
+  type CompanionBootstrapResponse,
+  type CompanionExtensionDownloadMeta,
+  type CompanionSettingsPatch,
+  type CompanionStateReport,
+  isBrowserPermissionTier,
+  normalizeBlockedDomains,
+} from "../../../shared/browser-companion";
 import { isValidE2eePublicKey } from "../../../shared/device-e2ee";
 import {
+  BROWSER_EXTENSION_PLATFORM,
   DEVICE_CAPABILITIES,
+  type DeviceApprovalView,
   type DeviceCapabilities,
   FULL_ACCESS_DURATIONS,
   FULL_ACCESS_FOREVER,
   type FullAccessDuration,
+  isBrowserExtensionPlatform,
 } from "../../../shared/devices";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import {
@@ -19,8 +36,8 @@ import { type AppVariables, requireAdmin } from "../auth/guards";
 import { upgradeWebSocket } from "../channels/socket";
 import { type GrantedTool, REFUSAL_MARKER } from "../plugins/tools";
 import { liveConnections } from "../security/http-hardening";
+import type { BrowserCompanionService } from "./browser-companion";
 import { type DeviceHub, DeviceRefusedError, describeChange } from "./hub";
-import type { PcReleaseCheckResult } from "./pc-release-watcher";
 import { installScript, readNodeBundle } from "./node-install";
 import {
   createPairingStore,
@@ -28,6 +45,7 @@ import {
   isMobilePlatform,
   type PairingStore,
 } from "./pairing";
+import type { PcReleaseCheckResult } from "./pc-release-watcher";
 import {
   type DevicePatch,
   type DeviceRecord,
@@ -44,6 +62,182 @@ const NODE_PLATFORMS = new Set([
   "sunos",
   "aix",
 ]);
+
+const EXTENSION_ZIP_FILENAME = "chisabot-chrome-extension.zip";
+const EXTENSION_DOWNLOAD_URL = "/api/devices/extension/download";
+const SHOT_ID_RE = /^[A-Za-z0-9_.:-]{1,200}$/;
+
+export type CompanionOpenThreadResult = {
+  channelId: string;
+  threadId: string;
+  botId: string;
+  botName: string;
+  running: boolean;
+  messages: unknown[];
+  history?: unknown[];
+};
+
+export type CompanionRouteBridge = {
+  bootstrap(device: DeviceRecord): Promise<
+    CompanionBootstrapResponse & {
+      approvals?: DeviceApprovalView[];
+      state?: CompanionStateReport | null;
+    }
+  >;
+  openThread(
+    device: DeviceRecord,
+    input: { botId?: string; threadId?: string; fresh?: boolean },
+  ): Promise<
+    | { ok: true; data: CompanionOpenThreadResult }
+    | { ok: false; status: 400 | 403 | 404 | 409 | 500; error: string }
+  >;
+  send(
+    device: DeviceRecord,
+    input: {
+      botId?: string;
+      threadId?: string;
+      text: string;
+      messageId?: string;
+      runId?: string;
+      attached?: boolean;
+      attachedTab?: CompanionAttachedTabContext | null;
+      wantsStream: boolean;
+    },
+  ): Promise<
+    | { ok: true; response: Response }
+    | { ok: true; status: 200 | 202; body: Record<string, unknown> }
+    | {
+        ok: false;
+        status: 400 | 403 | 404 | 409 | 429 | 503 | 500;
+        error: string;
+      }
+  >;
+  events(
+    device: DeviceRecord,
+    input: {
+      threadId: string;
+      agentId?: string;
+      commandId?: string;
+      snapshotAfter?: unknown;
+    },
+  ): Promise<
+    | { ok: true; response: Response }
+    | { ok: false; status: 400 | 403 | 404 | 500; error: string }
+  >;
+  stop(
+    device: DeviceRecord,
+    input: { threadId?: string; runId?: string; detach?: boolean },
+  ): Promise<
+    | { ok: true; stopped: boolean }
+    | { ok: false; status: 400 | 403 | 404 | 500; error: string }
+  >;
+  decideConfirmation?(
+    ownerUserId: string,
+    requestId: string,
+    decision: "approve" | "deny",
+  ): Promise<boolean>;
+  readShot?(
+    ownerUserId: string,
+    shotId: string,
+  ): Promise<{ mime: string; data: Uint8Array; url: string | null } | null>;
+};
+
+function parseAttachedTab(
+  raw: unknown,
+): CompanionAttachedTabContext | null | undefined | "invalid" {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) return "invalid";
+  const obj = raw as Record<string, unknown>;
+  if (
+    typeof obj.tabId !== "number" ||
+    !Number.isInteger(obj.tabId) ||
+    obj.tabId < 0
+  ) {
+    return "invalid";
+  }
+  const url = typeof obj.url === "string" ? obj.url.slice(0, 4000) : "";
+  const title = typeof obj.title === "string" ? obj.title.slice(0, 300) : "";
+  return {
+    tabId: obj.tabId,
+    url,
+    title,
+    ...(typeof obj.windowId === "number" && Number.isInteger(obj.windowId)
+      ? { windowId: obj.windowId }
+      : {}),
+    ...(typeof obj.favIconUrl === "string"
+      ? { favIconUrl: obj.favIconUrl.slice(0, 1000) }
+      : {}),
+    ...(typeof obj.groupId === "number" && Number.isInteger(obj.groupId)
+      ? { groupId: obj.groupId }
+      : {}),
+  };
+}
+
+function parseCompanionSettingsPatch(
+  body: Record<string, unknown>,
+): CompanionSettingsPatch | string {
+  const patch: CompanionSettingsPatch = {};
+  if (body.tier !== undefined) {
+    if (!isBrowserPermissionTier(body.tier))
+      return "权限档位无效（仅支持 observe / cautious / full）。";
+    patch.tier = body.tier;
+  }
+  if (body.blockedDomains !== undefined) {
+    if (
+      !Array.isArray(body.blockedDomains) ||
+      !body.blockedDomains.every((item) => typeof item === "string")
+    ) {
+      return "站点黑名单必须是字符串数组。";
+    }
+    patch.blockedDomains = normalizeBlockedDomains(body.blockedDomains);
+  }
+  if (body.allowRemoteDispatch !== undefined) {
+    if (typeof body.allowRemoteDispatch !== "boolean")
+      return "allowRemoteDispatch 必须是布尔值。";
+    patch.allowRemoteDispatch = body.allowRemoteDispatch;
+  }
+  if (body.attached !== undefined) {
+    if (typeof body.attached !== "boolean") return "attached 必须是布尔值。";
+    patch.attached = body.attached;
+  }
+  if (body.attachedTabId !== undefined) {
+    if (
+      body.attachedTabId !== null &&
+      (typeof body.attachedTabId !== "number" ||
+        !Number.isInteger(body.attachedTabId) ||
+        body.attachedTabId < 0)
+    ) {
+      return "attachedTabId 必须是非负整数或 null。";
+    }
+    patch.attachedTabId = body.attachedTabId;
+  }
+  if (body.tabGroupId !== undefined) {
+    if (
+      body.tabGroupId !== null &&
+      (typeof body.tabGroupId !== "number" ||
+        !Number.isInteger(body.tabGroupId) ||
+        body.tabGroupId < 0)
+    ) {
+      return "tabGroupId 必须是非负整数或 null。";
+    }
+    patch.tabGroupId = body.tabGroupId;
+  }
+  if (body.selectedBotId !== undefined) {
+    if (body.selectedBotId !== null && typeof body.selectedBotId !== "string") {
+      return "selectedBotId 必须是字符串或 null。";
+    }
+    patch.selectedBotId =
+      typeof body.selectedBotId === "string"
+        ? body.selectedBotId.trim() || null
+        : null;
+  }
+  if (body.paused !== undefined) {
+    if (typeof body.paused !== "boolean") return "paused 必须是布尔值。";
+    patch.paused = body.paused;
+  }
+  return patch;
+}
 
 /**
  * /api/devices（docs/pc-node.md §6）。
@@ -181,8 +375,16 @@ export function createDeviceRoutes(options: {
   toolsFor?: (actorId: string, botId: string) => Promise<GrantedTool[]>;
   /** 手机扫码绑定的一次性绑定码（默认放在本进程内存里）。 */
   pairing?: PairingStore;
-  /** 网页构建目录：服务器节点程序 node-agent/chisabot-node.cjs 在里面。 */
+  /** 网页构建目录：服务器节点程序 node-agent/chisabot-node.cjs 与扩展包可能在里面。 */
   appDistDir?: string;
+  /** 仓库源码根目录（可选，供开发态解析 browser-extension/dist 安装包）。 */
+  sourceDir?: string;
+  /** 显式覆盖 Chrome 扩展 ZIP 安装包路径（测试与自定义部署用）。 */
+  extensionZipPath?: string;
+  /** 浏览器伴侣运行时状态与配置服务。 */
+  companion?: BrowserCompanionService;
+  /** 浏览器伴侣扩展侧栏直连 API 桥接（bootstrap / open-thread / send / events / stop / approvals / shots）。 */
+  companionBridge?: CompanionRouteBridge;
   /**
    * 配了网关密钥时：/agent/state 也要求 X-ChisaBot-Local-Caller（与 resolveGatewayRequest 同一把钥匙）。
    * 未配 = 保持旧行为（仅拦带 X-Forwarded-For 的公网探测）。
@@ -198,6 +400,132 @@ export function createDeviceRoutes(options: {
   const { store, hub, requireUser, auditStore, toolsFor } = options;
   const pairing = options.pairing ?? createPairingStore();
   const routes = new Hono<{ Variables: Variables }>();
+  let extensionMetaCache: {
+    path: string;
+    mtimeMs: number;
+    size: number;
+    meta: CompanionExtensionDownloadMeta;
+  } | null = null;
+
+  function resolveExtensionZipPath(): string | null {
+    const candidates: string[] = [];
+    if (
+      typeof options.extensionZipPath === "string" &&
+      options.extensionZipPath
+    ) {
+      candidates.push(options.extensionZipPath);
+    }
+    if (typeof options.appDistDir === "string" && options.appDistDir) {
+      candidates.push(
+        join(options.appDistDir, "extension", EXTENSION_ZIP_FILENAME),
+        join(options.appDistDir, EXTENSION_ZIP_FILENAME),
+      );
+    }
+    if (typeof options.sourceDir === "string" && options.sourceDir) {
+      candidates.push(
+        join(
+          options.sourceDir,
+          "browser-extension",
+          "dist",
+          EXTENSION_ZIP_FILENAME,
+        ),
+      );
+    }
+    const repoRoot = resolve(import.meta.dir, "../../..");
+    candidates.push(
+      join(repoRoot, "browser-extension", "dist", EXTENSION_ZIP_FILENAME),
+      join(process.cwd(), "browser-extension", "dist", EXTENSION_ZIP_FILENAME),
+    );
+    for (const candidate of candidates) {
+      try {
+        if (existsSync(candidate) && statSync(candidate).isFile()) {
+          return candidate;
+        }
+      } catch {
+        // 忽略不可访问路径，继续尝试下一个候选位置。
+      }
+    }
+    return null;
+  }
+
+  async function readExtensionVersion(zipPath: string): Promise<string | null> {
+    const zipDir = dirname(zipPath);
+    const manifestCandidates = [
+      join(zipDir, "manifest.json"),
+      join(zipDir, "..", "manifest.json"),
+      join(zipDir, "..", "public", "manifest.json"),
+      ...(typeof options.sourceDir === "string" && options.sourceDir
+        ? [join(options.sourceDir, "browser-extension", "manifest.json")]
+        : []),
+      join(
+        resolve(import.meta.dir, "../../.."),
+        "browser-extension",
+        "manifest.json",
+      ),
+    ];
+    for (const candidate of manifestCandidates) {
+      try {
+        if (!existsSync(candidate) || !statSync(candidate).isFile()) continue;
+        const parsed = JSON.parse(await readFile(candidate, "utf8")) as {
+          version?: unknown;
+        };
+        if (typeof parsed.version === "string" && parsed.version.trim()) {
+          return parsed.version.trim().slice(0, 64);
+        }
+      } catch {
+        // 继续尝试下一个候选 manifest.json。
+      }
+    }
+    return null;
+  }
+
+  async function readExtensionMeta(): Promise<{
+    zipPath: string | null;
+    meta: CompanionExtensionDownloadMeta;
+  }> {
+    const zipPath = resolveExtensionZipPath();
+    if (!zipPath) {
+      extensionMetaCache = null;
+      return {
+        zipPath: null,
+        meta: {
+          available: false,
+          version: null,
+          filename: EXTENSION_ZIP_FILENAME,
+          bytes: null,
+          sha256: null,
+          downloadUrl: EXTENSION_DOWNLOAD_URL,
+        },
+      };
+    }
+    const stats = statSync(zipPath);
+    if (
+      extensionMetaCache &&
+      extensionMetaCache.path === zipPath &&
+      extensionMetaCache.mtimeMs === stats.mtimeMs &&
+      extensionMetaCache.size === stats.size
+    ) {
+      return { zipPath, meta: extensionMetaCache.meta };
+    }
+    const bytes = await readFile(zipPath);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const version = await readExtensionVersion(zipPath);
+    const meta: CompanionExtensionDownloadMeta = {
+      available: true,
+      version,
+      filename: EXTENSION_ZIP_FILENAME,
+      bytes: bytes.byteLength,
+      sha256,
+      downloadUrl: EXTENSION_DOWNLOAD_URL,
+    };
+    extensionMetaCache = {
+      path: zipPath,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      meta,
+    };
+    return { zipPath, meta };
+  }
   const deviceBodyLimit = bodyLimit({
     maxSize: 4 * 1024 * 1024,
     onError: (context) => context.json({ error: "设备接口请求体过大。" }, 413),
@@ -255,35 +583,56 @@ export function createDeviceRoutes(options: {
     }
   }
 
-  const requireDevice: MiddlewareHandler<{ Variables: Variables }> = async (
-    context,
-    next,
-  ) => {
-    const ip = clientIp(context.req.raw);
-    if (limited(ip))
-      return context.json({ error: "失败次数过多，请稍后再试。" }, 429);
-    const token = context.req.header("x-device-token")?.trim() ?? "";
-    const device = token ? await store.authenticate(token) : null;
-    if (device === "revoked")
+  const authenticateDeviceRequest = (
+    allowQueryToken: boolean,
+  ): MiddlewareHandler<{ Variables: Variables }> => {
+    return async (context, next) => {
+      const ip = clientIp(context.req.raw);
+      if (limited(ip))
+        return context.json({ error: "失败次数过多，请稍后再试。" }, 429);
+      const headerToken = context.req.header("x-device-token")?.trim() ?? "";
+      const queryToken = allowQueryToken
+        ? (context.req.query("token")?.trim() ?? "")
+        : "";
+      const token = headerToken || queryToken;
+      const device = token ? await store.authenticate(token) : null;
+      if (device === "revoked")
+        return context.json(
+          { error: "这台设备已被撤销，请重新登录。", revoked: true },
+          401,
+        );
+      if (!device) {
+        fail(ip);
+        return context.json({ error: "设备令牌无效，请重新登录。" }, 401);
+      }
+      context.set("device", device);
+      await next();
+    };
+  };
+
+  const requireDevice = authenticateDeviceRequest(false);
+  const requireDeviceWs = authenticateDeviceRequest(true);
+
+  const requireBrowserExtension: MiddlewareHandler<{
+    Variables: Variables;
+  }> = async (context, next) => {
+    const device = context.get("device");
+    if (!isBrowserExtensionPlatform(device.platform)) {
       return context.json(
-        { error: "这台设备已被撤销，请重新登录。", revoked: true },
-        401,
+        { error: "此接口仅限 ChisaBot 浏览器伴侣扩展调用。" },
+        403,
       );
-    if (!device) {
-      fail(ip);
-      return context.json({ error: "设备令牌无效，请重新登录。" }, 401);
     }
-    context.set("device", device);
     await next();
   };
 
-  // ---- PC 节点 ----
+  // ---- PC 节点与浏览器伴侣扩展 ----
 
   routes.get(
     "/agent/ws",
-    requireDevice,
+    requireDeviceWs,
     async (context, next) => {
-      // 扫码绑定的手机只用来登录聊天，不能作为机器人可操作的节点接入。
+      // 扫码绑定的手机只用来登录聊天，不能作为机器人可操作的节点接入；browser_extension 允许接入。
       if (isMobilePlatform(context.get("device").platform))
         return context.json({ error: "手机设备不能作为电脑节点连接。" }, 403);
       await next();
@@ -341,10 +690,11 @@ export function createDeviceRoutes(options: {
     context.json({ device: hub.view(context.get("device")) }),
   );
 
-  /** PC 端「退出登录」：设备自己作废自己的令牌。 */
+  /** PC 端 / 手机 / 浏览器扩展「退出登录」：设备自己作废自己的令牌。 */
   routes.post("/agent/unenroll", requireDevice, async (context) => {
     const device = context.get("device");
     const mobile = isMobilePlatform(device.platform);
+    const isExt = isBrowserExtensionPlatform(device.platform);
     await store.revoke(device.id);
     hub.kick(device.id);
     liveConnections.revokePrincipal(device.id, "device_unenrolled");
@@ -354,17 +704,351 @@ export function createDeviceRoutes(options: {
       ownerUserId: device.ownerUserId,
       actorType: "device",
       actorId: device.id,
-      actorName: mobile ? "手机客户端" : "PC 客户端",
+      actorName: mobile ? "手机客户端" : isExt ? "浏览器扩展" : "PC 客户端",
       action: "unenrolled",
       summary: mobile
         ? "在手机上退出登录，令牌已作废"
-        : "在 PC 上退出登录，令牌已作废",
+        : isExt
+          ? "在浏览器扩展上退出登录，令牌已作废"
+          : "在 PC 上退出登录，令牌已作废",
       outcome: "succeeded",
       detail: null,
       durationMs: null,
     });
     return context.json({ ok: true });
   });
+
+  // ---- 浏览器伴侣扩展侧栏直连 API（走 /api/devices/agent/* 令牌通道，免改公网网关） ----
+
+  routes.get(
+    "/agent/companion/bootstrap",
+    requireDevice,
+    requireBrowserExtension,
+    async (context) => {
+      const bridge = options.companionBridge;
+      if (!bridge) {
+        return context.json({ error: "浏览器伴侣侧栏服务未就绪。" }, 503);
+      }
+      const data = await bridge.bootstrap(context.get("device"));
+      context.header("cache-control", "no-store");
+      return context.json(data);
+    },
+  );
+
+  routes.post(
+    "/agent/companion/open-thread",
+    requireDevice,
+    requireBrowserExtension,
+    async (context) => {
+      const bridge = options.companionBridge;
+      if (!bridge) {
+        return context.json({ error: "浏览器伴侣侧栏服务未就绪。" }, 503);
+      }
+      const body = (await readJsonObject(context.req)) ?? {};
+      const botId =
+        typeof body.botId === "string" && body.botId.trim()
+          ? body.botId.trim()
+          : undefined;
+      const threadId =
+        typeof body.threadId === "string" && body.threadId.trim()
+          ? body.threadId.trim()
+          : undefined;
+      const fresh = body.fresh === true;
+      const outcome = await bridge.openThread(context.get("device"), {
+        ...(botId ? { botId } : {}),
+        ...(threadId ? { threadId } : {}),
+        fresh,
+      });
+      if (!outcome.ok) {
+        return context.json({ error: outcome.error }, outcome.status);
+      }
+      context.header("cache-control", "no-store");
+      return context.json(outcome.data);
+    },
+  );
+
+  routes.post(
+    "/agent/companion/send",
+    requireDevice,
+    requireBrowserExtension,
+    async (context) => {
+      const bridge = options.companionBridge;
+      if (!bridge) {
+        return context.json({ error: "浏览器伴侣侧栏服务未就绪。" }, 503);
+      }
+      const body = await readJsonObject(context.req);
+      if (!body) return context.json({ error: "请求格式无效。" }, 400);
+      const rawText = typeof body.text === "string" ? body.text.trim() : "";
+      if (!rawText || rawText.length > 64_000) {
+        return context.json(
+          { error: "消息内容不能为空且不能超过 64000 字。" },
+          400,
+        );
+      }
+      const attachedTab = parseAttachedTab(body.attachedTab);
+      if (attachedTab === "invalid") {
+        return context.json({ error: "attachedTab 格式无效。" }, 400);
+      }
+      if (body.attached !== undefined && typeof body.attached !== "boolean") {
+        return context.json({ error: "attached 必须是布尔值。" }, 400);
+      }
+      const botId =
+        typeof body.botId === "string" && body.botId.trim()
+          ? body.botId.trim()
+          : undefined;
+      const threadId =
+        typeof body.threadId === "string" && body.threadId.trim()
+          ? body.threadId.trim()
+          : undefined;
+      const messageId =
+        typeof body.messageId === "string" && body.messageId.trim()
+          ? body.messageId.trim().slice(0, 200)
+          : undefined;
+      const runId =
+        typeof body.runId === "string" && body.runId.trim()
+          ? body.runId.trim().slice(0, 200)
+          : undefined;
+      const wantsStream =
+        body.stream === true ||
+        (context.req.header("accept") ?? "").includes("text/event-stream");
+      const outcome = await bridge.send(context.get("device"), {
+        ...(botId ? { botId } : {}),
+        ...(threadId ? { threadId } : {}),
+        text: rawText,
+        ...(messageId ? { messageId } : {}),
+        ...(runId ? { runId } : {}),
+        ...(typeof body.attached === "boolean"
+          ? { attached: body.attached }
+          : {}),
+        ...(attachedTab !== undefined ? { attachedTab } : {}),
+        wantsStream,
+      });
+      if (!outcome.ok) {
+        return context.json({ error: outcome.error }, outcome.status);
+      }
+      if ("response" in outcome) {
+        return outcome.response;
+      }
+      return context.json(outcome.body, outcome.status);
+    },
+  );
+
+  routes.post(
+    "/agent/companion/events",
+    requireDevice,
+    requireBrowserExtension,
+    async (context) => {
+      const bridge = options.companionBridge;
+      if (!bridge) {
+        return context.json({ error: "浏览器伴侣侧栏服务未就绪。" }, 503);
+      }
+      const body = await readJsonObject(context.req);
+      if (!body) return context.json({ error: "请求格式无效。" }, 400);
+      const threadId =
+        typeof body.threadId === "string" ? body.threadId.trim() : "";
+      if (!threadId || threadId.length > 512) {
+        return context.json({ error: "threadId 不能为空。" }, 400);
+      }
+      const agentId =
+        typeof body.agentId === "string" && body.agentId.trim()
+          ? body.agentId.trim()
+          : typeof body.botId === "string" && body.botId.trim()
+            ? body.botId.trim()
+            : undefined;
+      const commandId =
+        typeof body.commandId === "string" && body.commandId.trim()
+          ? body.commandId.trim()
+          : undefined;
+      const outcome = await bridge.events(context.get("device"), {
+        threadId,
+        ...(agentId ? { agentId } : {}),
+        ...(commandId ? { commandId } : {}),
+        ...(body.snapshotAfter !== undefined
+          ? { snapshotAfter: body.snapshotAfter }
+          : {}),
+      });
+      if (!outcome.ok) {
+        return context.json({ error: outcome.error }, outcome.status);
+      }
+      return outcome.response;
+    },
+  );
+
+  routes.post(
+    "/agent/companion/stop",
+    requireDevice,
+    requireBrowserExtension,
+    async (context) => {
+      const device = context.get("device");
+      const body = (await readJsonObject(context.req)) ?? {};
+      const threadId =
+        typeof body.threadId === "string" && body.threadId.trim()
+          ? body.threadId.trim()
+          : undefined;
+      const runId =
+        typeof body.runId === "string" && body.runId.trim()
+          ? body.runId.trim()
+          : undefined;
+      const detach = body.detach !== false;
+      if (detach) {
+        hub.cancelAllFor(device.id, "已在扩展侧栏停止当前回合。");
+        options.companion?.sendCommand(device.id, {
+          command: "detach",
+          reason: "用户在扩展侧栏停止了当前回合",
+        });
+      }
+      let stopped = false;
+      if (options.companionBridge) {
+        const outcome = await options.companionBridge.stop(device, {
+          ...(threadId ? { threadId } : {}),
+          ...(runId ? { runId } : {}),
+          detach,
+        });
+        if (!outcome.ok) {
+          return context.json({ error: outcome.error }, outcome.status);
+        }
+        stopped = outcome.stopped;
+      }
+      return context.json({ ok: true, stopped });
+    },
+  );
+
+  routes.post(
+    "/agent/companion/approvals/:id",
+    requireDevice,
+    requireBrowserExtension,
+    async (context) => {
+      const device = context.get("device");
+      const id = context.req.param("id");
+      const body = await readJsonObject(context.req);
+      const decision = body?.decision;
+      if (decision !== "approve" && decision !== "deny") {
+        return context.json(
+          { error: "decision 必须是 approve 或 deny。" },
+          400,
+        );
+      }
+      const owner = hub.approvalOwner(id);
+      if (owner) {
+        if (owner !== device.ownerUserId) {
+          return context.json({ error: "这个审批已经处理过或已过期。" }, 404);
+        }
+        const done = hub.decide(id, decision === "approve", "device");
+        if (!done) {
+          return context.json({ error: "这个审批已经处理过或已过期。" }, 404);
+        }
+        return context.json({ ok: true, kind: "device" });
+      }
+      if (options.companionBridge?.decideConfirmation) {
+        const done = await options.companionBridge.decideConfirmation(
+          device.ownerUserId,
+          id,
+          decision,
+        );
+        if (done) {
+          return context.json({ ok: true, kind: "confirmation" });
+        }
+      }
+      return context.json({ error: "这个审批已经处理过或已过期。" }, 404);
+    },
+  );
+
+  routes.patch(
+    "/agent/companion/settings",
+    requireDevice,
+    requireBrowserExtension,
+    async (context) => {
+      const device = context.get("device");
+      const body = await readJsonObject(context.req);
+      if (!body) return context.json({ error: "请求格式无效。" }, 400);
+      const patch = parseCompanionSettingsPatch(body);
+      if (typeof patch === "string") {
+        return context.json({ error: patch }, 400);
+      }
+      let fresh = device;
+      const pausedChanged =
+        patch.paused !== undefined && patch.paused !== device.paused;
+      if (patch.paused !== undefined) {
+        const updated = await store.update(device.id, { paused: patch.paused });
+        if (!updated) {
+          return context.json({ error: "这台设备不存在或已被撤销。" }, 404);
+        }
+        fresh = updated;
+        if (updated.paused) {
+          hub.cancelAllFor(updated.id, "已在扩展侧栏紧急停止。");
+          if (!options.companion) {
+            hub.sendCompanionCommand(updated.id, {
+              command: "kill_switch",
+              reason: "已在扩展侧栏紧急停止。",
+            });
+          }
+        }
+      }
+      const runtimeUpdated = options.companion?.updateConfig(fresh, patch);
+      await hub.pushConfig(fresh.id);
+      const summaryParts: string[] = [];
+      if (patch.tier !== undefined)
+        summaryParts.push(`权限档位：${patch.tier}`);
+      if (patch.blockedDomains !== undefined)
+        summaryParts.push(`黑名单：${patch.blockedDomains.length} 项`);
+      if (patch.allowRemoteDispatch !== undefined)
+        summaryParts.push(
+          `跨端远程调度：${patch.allowRemoteDispatch ? "开" : "关"}`,
+        );
+      if (pausedChanged)
+        summaryParts.push(patch.paused ? "紧急停止：开" : "紧急停止：关");
+      await auditControlChange({
+        deviceId: fresh.id,
+        ownerUserId: fresh.ownerUserId,
+        actorType: "device",
+        actorId: fresh.id,
+        actorName: "浏览器扩展",
+        action: pausedChanged
+          ? patch.paused
+            ? "kill_switch_on"
+            : "kill_switch_off"
+          : "config_changed",
+        summary: summaryParts.join("；") || "同步扩展配置",
+        outcome: "succeeded",
+        detail: "扩展侧栏",
+        durationMs: null,
+      });
+      return context.json({
+        ok: true,
+        device: hub.view(fresh),
+        ...(runtimeUpdated
+          ? { config: runtimeUpdated.config, state: runtimeUpdated.state }
+          : {}),
+      });
+    },
+  );
+
+  routes.get(
+    "/agent/companion/shots/:shotId",
+    requireDevice,
+    requireBrowserExtension,
+    async (context) => {
+      const shotId = context.req.param("shotId");
+      if (!SHOT_ID_RE.test(shotId)) {
+        return context.json({ error: "没有这张截图。" }, 404);
+      }
+      const shot = await options.companionBridge?.readShot?.(
+        context.get("device").ownerUserId,
+        shotId,
+      );
+      if (!shot) {
+        return context.json({ error: "没有这张截图。" }, 404);
+      }
+      return new Response(Buffer.from(shot.data), {
+        headers: {
+          "content-type": shot.mime,
+          "cache-control": "private, max-age=86400",
+          "x-content-type-options": "nosniff",
+          ...(shot.url ? { "x-shot-url": encodeURI(shot.url) } : {}),
+        },
+      });
+    },
+  );
 
   // ---- 手机扫码绑定（DESIGN.md §33） ----
 
@@ -466,6 +1150,75 @@ export function createDeviceRoutes(options: {
         pairing.fail(result.pairingId);
         return context.json(
           { error: "登记失败，请在网页上重新生成安装命令后重试。" },
+          500,
+        );
+      }
+    }
+    if (result.kind === "extension") {
+      try {
+        const browserHint =
+          typeof body.browser === "string" && body.browser.trim()
+            ? body.browser.trim().slice(0, 80)
+            : typeof body.hostname === "string" && body.hostname.trim()
+              ? body.hostname.trim().slice(0, 80)
+              : null;
+        const { device, token } = await store.enroll({
+          ownerUserId: result.ownerUserId,
+          name: body.name ?? browserHint ?? "Chrome 浏览器扩展",
+          platform: BROWSER_EXTENSION_PLATFORM,
+          osVersion: body.osVersion,
+          hostname: browserHint,
+          arch: body.arch ?? null,
+          clientVersion: body.clientVersion,
+          ip,
+        });
+        await store.touch(device.id, { ip });
+        await auditControlChange({
+          deviceId: device.id,
+          ownerUserId: result.ownerUserId,
+          actorType: "device",
+          actorId: device.id,
+          actorName: "浏览器扩展",
+          action: "enrolled",
+          summary: `配对码绑定浏览器伴侣扩展「${device.name}」${device.clientVersion ? `（v${device.clientVersion}）` : ""}`,
+          outcome: "succeeded",
+          detail: null,
+          durationMs: null,
+        });
+        await mainAudit(
+          result.ownerUserId,
+          device.id,
+          "device_enrolled",
+          device.name,
+        );
+        const fresh = (await store.get(device.id)) ?? device;
+        pairing.complete(
+          result.pairingId,
+          fresh,
+          peerE2eePub ? { peerE2eePub } : undefined,
+        );
+        return context.json(
+          {
+            device: hub.view(fresh),
+            token,
+            ...(result.e2eePub || peerE2eePub
+              ? {
+                  e2ee: {
+                    accepted: Boolean(peerE2eePub),
+                    ...(result.e2eePub
+                      ? { serverPublicKey: result.e2eePub }
+                      : {}),
+                    ...(peerE2eePub ? { peerPublicKey: peerE2eePub } : {}),
+                  },
+                }
+              : {}),
+          },
+          201,
+        );
+      } catch {
+        pairing.fail(result.pairingId);
+        return context.json(
+          { error: "扩展配对失败，请在网页上重新生成配对码后重试。" },
           500,
         );
       }
@@ -720,11 +1473,16 @@ export function createDeviceRoutes(options: {
     });
   });
 
-  /** 网页「绑定手机」：签发一次性绑定码（5 分钟），网页把它和服务器地址一起画成二维码。 */
+  /** 网页「绑定手机 / 服务器节点 / 浏览器扩展」：签发一次性绑定码。 */
   routes.post("/pairing", userGuard, async (context) => {
     const actor = context.var.actor;
     const raw = await readJsonObject(context.req);
-    const kind = raw?.kind === "node" ? "node" : "phone";
+    const kind =
+      raw?.kind === "node"
+        ? "node"
+        : raw?.kind === "extension"
+          ? "extension"
+          : "phone";
     if (raw?.e2eePub !== undefined && !isValidE2eePublicKey(raw.e2eePub)) {
       return context.json({ error: "E2EE 公钥格式无效。" }, 400);
     }
@@ -849,6 +1607,35 @@ export function createDeviceRoutes(options: {
     return context.json({ ok: !failed, result }, failed ? 409 : 200);
   });
 
+  routes.get("/extension/meta", userGuard, async (context) => {
+    const { meta } = await readExtensionMeta();
+    context.header("cache-control", "no-store");
+    return context.json(meta);
+  });
+
+  routes.get("/extension/download", userGuard, async (context) => {
+    const { zipPath, meta } = await readExtensionMeta();
+    if (!zipPath || !meta.available || meta.bytes === null) {
+      return context.json(
+        { error: "当前部署尚未打包浏览器伴侣扩展安装包。" },
+        404,
+      );
+    }
+    const stream = Readable.toWeb(
+      createReadStream(zipPath),
+    ) as unknown as ReadableStream<Uint8Array>;
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        "content-type": "application/zip",
+        "content-length": String(meta.bytes),
+        "content-disposition": `attachment; filename="${EXTENSION_ZIP_FILENAME}"`,
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  });
+
   routes.get("/:id", userGuard, async (context) => {
     const device = await owned(context, context.req.param("id"));
     if (!device) return context.json({ error: "没有这台设备。" }, 404);
@@ -871,6 +1658,14 @@ export function createDeviceRoutes(options: {
         );
       if (isMobilePlatform(before.platform))
         return context.json({ error: "手机不是可操作的设备。" }, 400);
+      if (isBrowserExtensionPlatform(before.platform))
+        return context.json(
+          {
+            error:
+              "浏览器伴侣扩展请通过扩展三档权限管理，不支持 PC 完全访问开关。",
+          },
+          400,
+        );
       if (before.paused && patch.paused !== false)
         return context.json(
           { error: "这台设备在紧急停止中，先解除紧急停止。" },
@@ -880,7 +1675,12 @@ export function createDeviceRoutes(options: {
     const after = await store.update(before.id, patch);
     if (!after) return context.json({ error: "没有这台设备。" }, 404);
     // Enforce persisted permissions before audit I/O: a failed audit cannot defer an emergency stop.
-    if (after.paused) hub.cancelAllFor(after.id, "已在网页上紧急停止。");
+    if (after.paused) {
+      hub.cancelAllFor(after.id, "已在网页上紧急停止。");
+      if (isBrowserExtensionPlatform(after.platform)) {
+        options.companion?.onKillSwitch(after.id);
+      }
+    }
     await hub.pushConfig(after.id);
     const fullBefore = fullAccessActive(before);
     const fullAfter = fullAccessActive(after);
@@ -1032,19 +1832,22 @@ export function createDeviceRoutes(options: {
     return context.json({ entries });
   });
 
-  /** 从网页对设备做一次无害的连通性测试（读取系统信息），同样走审计。 */
+  /** 从网页对设备做一次无害的连通性测试（读取系统信息或扩展标签页列表），同样走审计。 */
   routes.post("/:id/test", userGuard, async (context) => {
     const device = await owned(context, context.req.param("id"));
     if (!device) return context.json({ error: "没有这台设备。" }, 404);
     const actor = context.var.actor;
+    const isExt = isBrowserExtensionPlatform(device.platform);
     try {
       const result = await hub.invoke({
         device,
-        operation: "system_info",
-        args: {},
+        operation: isExt ? "browser_tabs" : "system_info",
+        args: isExt ? { action: "list" } : {},
         bot: { id: actor.id, name: "网页连通性测试" },
         actorType: "user",
-        summary: "网页上点击「测试连接」",
+        summary: isExt
+          ? "网页上点击「测试连接」（浏览器扩展）"
+          : "网页上点击「测试连接」",
         timeoutMs: 15_000,
       });
       return context.json({ ok: true, result });

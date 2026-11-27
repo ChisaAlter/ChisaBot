@@ -8,9 +8,10 @@ import {
   DESKTOP_BG_ACTIONS,
   type DeviceOperation,
   GIT_SUBCOMMANDS,
+  isBrowserExtensionPlatform,
 } from "../../../shared/devices";
-import type { AuditInitiator } from "../audit";
 import { getHarnessFlags } from "../admin/harness-settings";
+import type { AuditInitiator } from "../audit";
 import { redactText } from "../computer/activity-redact";
 import {
   currentConfirmTurn,
@@ -530,7 +531,9 @@ export async function resolveDevice(
   selector: string | undefined,
   isOnline: (id: string) => boolean,
 ): Promise<DeviceRecord | string> {
-  const owned = await store.forOwner(ownerUserId);
+  const owned = (await store.forOwner(ownerUserId)).filter(
+    (device) => !isBrowserExtensionPlatform(device.platform),
+  );
   const wanted = selector?.trim();
   if (wanted) {
     const byId = owned.find((device) => device.id === wanted);
@@ -707,8 +710,11 @@ export function deviceGuidance(
   isOnline: (id: string) => boolean,
   now = Date.now(),
 ): string {
-  if (!devices.length) return "";
-  const describe = (device: (typeof devices)[number]) => {
+  const pcDevices = devices.filter(
+    (device) => !isBrowserExtensionPlatform(device.platform),
+  );
+  if (!pcDevices.length) return "";
+  const describe = (device: (typeof pcDevices)[number]) => {
     const enabled = Object.entries(device.capabilities)
       .filter(([, policy]) => policy !== "off")
       .map(
@@ -732,10 +738,10 @@ export function deviceGuidance(
       : `offline (last connected ${agoText(device.lastSeenAt, now)})`;
     return `- 「${device.name}」 (${device.osVersion || platformName(device.platform)}, deviceId ${device.id}): ${state}; enabled capabilities: ${enabled.length ? enabled.join("、") : "none yet (只能读系统信息)"}.`;
   };
-  const online = devices.filter((device) => isOnline(device.id));
+  const online = pcDevices.filter((device) => isOnline(device.id));
   const lines = [
     "The person's own computers. Besides your own cloud browser (the computer_* tools), the person has linked these computers of theirs to their account through the ChisaBot desktop app. They are shared by all of the person's Bots, including you:",
-    ...devices.map(describe),
+    ...pcDevices.map(describe),
   ];
   if (online.length) {
     lines.push(
@@ -766,14 +772,15 @@ export function deviceTools(options: {
   workspace?: DeviceWorkspace;
 }): GrantedTool[] {
   const { store, hub, botId, actorId } = options;
-  if (!options.devices.length) return [];
-  const botName = options.botName ?? null;
-  const onlineDevices = options.devices.filter((device) =>
-    hub.isOnline(device.id),
+  const pcDevices = options.devices.filter(
+    (device) => !isBrowserExtensionPlatform(device.platform),
   );
-  const guidance = deviceGuidance(options.devices, (id) => hub.isOnline(id));
+  if (!pcDevices.length) return [];
+  const botName = options.botName ?? null;
+  const onlineDevices = pcDevices.filter((device) => hub.isOnline(device.id));
+  const guidance = deviceGuidance(pcDevices, (id) => hub.isOnline(id));
 
-  const roster = options.devices
+  const roster = pcDevices
     .map((device) => {
       const caps = Object.entries(device.capabilities)
         .filter(([, policy]) => policy !== "off")

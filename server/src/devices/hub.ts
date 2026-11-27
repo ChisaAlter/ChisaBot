@@ -1,11 +1,18 @@
 import { randomUUID } from "node:crypto";
 import {
+  type CompanionServerCommand,
+  type CompanionSettingsPatch,
+  type CompanionStateReport,
+  isBrowserCompanionOperation,
+} from "../../../shared/browser-companion";
+import {
   capabilityFor,
   type DeviceApprovalView,
   type DeviceCapabilities,
   type DeviceOperation,
   type DeviceToServer,
   type DeviceView,
+  isBrowserExtensionPlatform,
   isProtectedSelfTarget,
   OPERATION_LABEL,
   type ServerToDevice,
@@ -130,6 +137,26 @@ export type InvokeInput = {
   conversationId?: string;
   /** 可选显式回合代际序号。 */
   directionEpoch?: number;
+  /** 浏览器伴侣扩展操作的服务端风险裁决（严禁被 PC fullAccess 或审批偏好 auto/full 绕过）。 */
+  browserRiskPolicy?: {
+    decision: "allow" | "ask" | "deny";
+    reason?: string;
+    locked?: boolean;
+    category?: string;
+    isPasswordTarget?: boolean;
+  };
+};
+
+/** 浏览器伴侣扩展状态同步与生命周期回调。 */
+export type DeviceCompanionHooks = {
+  getState?(deviceId: string): CompanionStateReport | null;
+  onStateReport?(
+    record: DeviceRecord,
+    report: Partial<CompanionStateReport>,
+  ): void;
+  onDisconnect?(deviceId: string): void;
+  onKillSwitch?(deviceId: string): void;
+  onRevoke?(deviceId: string): void;
 };
 
 /**
@@ -224,7 +251,18 @@ function scrubPasswordElementsInResult(
 function sanitizeArgsForConfirm(
   operation: DeviceOperation,
   args: Record<string, unknown>,
+  isPasswordTarget = false,
 ): Record<string, unknown> {
+  if (operation === "browser_type") {
+    if (
+      isPasswordTarget &&
+      typeof args.text === "string" &&
+      args.text.length > 0
+    ) {
+      return { ...args, text: "[已隐藏密码]" };
+    }
+    return args;
+  }
   if (operation !== "desktop_act") return args;
   const resolved = args._resolved as
     | { element?: { isPassword?: unknown } }
@@ -290,6 +328,8 @@ export function createDeviceHub(options: {
   desktopSnapshots?: DesktopSnapshotStore;
   /** 可选：解析已签发给该设备的桥接 / 无障碍 scopes（写入 DeviceView.grantedScopes）。 */
   resolveDeviceScopes?: (record: DeviceRecord) => readonly string[];
+  /** 可选：浏览器伴侣扩展状态同步与生命周期回调。 */
+  companionHooks?: DeviceCompanionHooks;
 }) {
   const { store } = options;
   const now = options.now ?? Date.now;
@@ -302,6 +342,8 @@ export function createDeviceHub(options: {
     options.desktopSnapshots ?? createDesktopSnapshotStore({ now });
   let scopeResolver: ((record: DeviceRecord) => readonly string[]) | null =
     options.resolveDeviceScopes ?? null;
+  let companionHooks: DeviceCompanionHooks | null =
+    options.companionHooks ?? null;
   let confirm = options.confirm;
   const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let extension: DeviceHubExtension | null = null;
@@ -319,14 +361,21 @@ export function createDeviceHub(options: {
 
   function view(record: DeviceRecord): DeviceView {
     const { tokenHash: _omit, ...rest } = record;
+    const isExt = isBrowserExtensionPlatform(record.platform);
     // 手机不连 /agent/ws：最近一次会话校验（网关约每 30 秒一次）在窗口内就算在线。
     const online = isMobilePlatform(record.platform)
       ? !record.revoked &&
         !!record.lastSeenAt &&
         Date.now() - Date.parse(record.lastSeenAt) < MOBILE_ONLINE_WINDOW_MS
       : connections.has(record.id);
-    const full = fullAccessActive(record, now());
+    const full = isExt ? false : fullAccessActive(record, now());
     const features = connections.get(record.id)?.features;
+    const companionState =
+      isExt && companionHooks?.getState
+        ? online
+          ? companionHooks.getState(record.id)
+          : null
+        : undefined;
     let grantedScopes: string[] | undefined;
     if (scopeResolver) {
       try {
@@ -345,6 +394,7 @@ export function createDeviceHub(options: {
           ? Date.parse(record.fullAccessUntil) - now()
           : null,
       features: features ? [...features] : null,
+      ...(companionState !== undefined ? { companionState } : {}),
       ...(grantedScopes ? { grantedScopes } : {}),
     };
   }
@@ -437,6 +487,7 @@ export function createDeviceHub(options: {
     if (connections.get(connection.deviceId) === connection)
       connections.delete(connection.deviceId);
     desktopSnapshots.clearDevice(connection.deviceId);
+    companionHooks?.onDisconnect?.(connection.deviceId);
     for (const [id, pending] of connection.pending) {
       clearTimeout(pending.timer);
       pending.cleanup?.();
@@ -463,31 +514,40 @@ export function createDeviceHub(options: {
     connection: Connection,
     message: Extract<DeviceToServer, { type: "set_config" }>,
   ) {
+    const before = await store.get(connection.deviceId);
+    if (!before) return;
+    const isExt = isBrowserExtensionPlatform(before.platform);
     const patch: DevicePatch = {};
     if (message.name !== undefined) patch.name = message.name;
-    if (message.capabilities) patch.capabilities = message.capabilities;
-    if (message.allowedRoots) patch.allowedRoots = message.allowedRoots;
+    if (!isExt && message.capabilities)
+      patch.capabilities = message.capabilities;
+    if (!isExt && message.allowedRoots)
+      patch.allowedRoots = message.allowedRoots;
     if (message.paused !== undefined) patch.paused = message.paused;
     // PC 本机只能关闭完全访问（拒绝开启 / 托盘关闭），永远不能打开。
-    if (message.fullAccess === "off") patch.fullAccessUntil = null;
-    const before = await store.get(connection.deviceId);
+    if (!isExt && message.fullAccess === "off") patch.fullAccessUntil = null;
     const after = await store.update(connection.deviceId, patch);
-    if (!before || !after) return;
-    if (patch.paused === true)
-      cancelAllFor(connection.deviceId, "已在 PC 上紧急停止。");
+    if (!after) return;
+    if (patch.paused === true) {
+      cancelAllFor(
+        connection.deviceId,
+        isExt ? "已在浏览器扩展上紧急停止。" : "已在 PC 上紧急停止。",
+      );
+      if (isExt) companionHooks?.onKillSwitch?.(connection.deviceId);
+    }
     await pushConfig(connection.deviceId);
     await store.audit({
       deviceId: connection.deviceId,
       ownerUserId: connection.ownerUserId,
       actorType: "device",
       actorId: connection.deviceId,
-      actorName: "PC 客户端",
+      actorName: isExt ? "浏览器扩展" : "PC 客户端",
       action:
         patch.paused !== undefined && patch.paused !== before.paused
           ? patch.paused
             ? "kill_switch_on"
             : "kill_switch_off"
-          : message.fullAccess === "off" && before.fullAccessUntil
+          : !isExt && message.fullAccess === "off" && before.fullAccessUntil
             ? "full_access_off"
             : "config_changed",
       summary: describeChange(before, after),
@@ -606,7 +666,11 @@ export function createDeviceHub(options: {
             deviceName: record.name,
             operationLabel: OPERATION_LABEL[input.operation] ?? input.operation,
             summary: view.summary,
-            args: sanitizeArgsForConfirm(input.operation, input.args),
+            args: sanitizeArgsForConfirm(
+              input.operation,
+              input.args,
+              input.browserRiskPolicy?.isPasswordTarget === true,
+            ),
             diff: view.diff ?? null,
             expiresAt: view.expiresAt,
           })
@@ -624,10 +688,18 @@ export function createDeviceHub(options: {
   return {
     view,
     isOnline: (deviceId: string) => connections.has(deviceId),
-    /** 在线设备是否支持某个操作（旧客户端只支持最初的 10 个）。离线返回 false。 */
+    /** 在线设备是否支持某个操作（旧客户端只支持最初的 10 个；浏览器扩展仅支持 browser_* 操作）。离线返回 false。 */
     supports(deviceId: string, operation: DeviceOperation) {
       const connection = connections.get(deviceId);
       if (!connection) return false;
+      const isExt = isBrowserExtensionPlatform(connection.platform ?? "");
+      if (isExt) {
+        return (
+          isBrowserCompanionOperation(operation) &&
+          (connection.features ? connection.features.has(operation) : true)
+        );
+      }
+      if (isBrowserCompanionOperation(operation)) return false;
       return connection.features
         ? connection.features.has(operation)
         : LEGACY_OPERATIONS.has(operation);
@@ -705,6 +777,7 @@ export function createDeviceHub(options: {
           }
           switch (message.type) {
             case "hello": {
+              const isExt = isBrowserExtensionPlatform(record.platform);
               const { suggestedRoots, features, ...facts } = message;
               if (Array.isArray(features))
                 connection.features = new Set(
@@ -716,31 +789,51 @@ export function createDeviceHub(options: {
               ) {
                 connection.clientVersion = facts.clientVersion.trim();
               }
-              if (typeof facts.platform === "string" && facts.platform.trim()) {
+              // 浏览器伴侣扩展不允许借 hello 伪造或改写 platform 为 PC 平台。
+              if (
+                !isExt &&
+                typeof facts.platform === "string" &&
+                facts.platform.trim()
+              ) {
                 connection.platform = facts.platform.trim();
               }
-              await store.touch(record.id, { ip: connection.ip, ...facts });
-              // PC 0.1.7 起带上默认文件夹（桌面 / 文档 / 下载）；只在列表为空、从没被人改过时采用。
-              if (Array.isArray(suggestedRoots) && store.seedRoots)
+              await store.touch(record.id, {
+                ip: connection.ip,
+                clientVersion: facts.clientVersion,
+                ...(isExt ? {} : { platform: facts.platform }),
+                osVersion: facts.osVersion,
+                hostname: facts.hostname,
+                arch: facts.arch,
+              });
+              // PC 0.1.7 起带上默认文件夹（桌面 / 文档 / 下载）；浏览器扩展没有本机文件夹概念。
+              if (!isExt && Array.isArray(suggestedRoots) && store.seedRoots)
                 await store
                   .seedRoots(record.id, suggestedRoots)
                   .catch(() => false);
               await pushConfig(record.id);
-              const latest = getLatestClientVersion?.()?.trim() || null;
-              if (
-                latest &&
-                connection.clientVersion &&
-                compareSemver(latest, connection.clientVersion) > 0
-              ) {
-                send(connection, {
-                  type: "check_update",
-                  version: latest,
-                  reason: "hello_behind",
-                });
+              if (!isExt) {
+                const latest = getLatestClientVersion?.()?.trim() || null;
+                if (
+                  latest &&
+                  connection.clientVersion &&
+                  compareSemver(latest, connection.clientVersion) > 0
+                ) {
+                  send(connection, {
+                    type: "check_update",
+                    version: latest,
+                    reason: "hello_behind",
+                  });
+                }
+                void Promise.resolve(extension?.onHello?.(record)).catch(
+                  () => {},
+                );
               }
-              void Promise.resolve(extension?.onHello?.(record)).catch(
-                () => {},
-              );
+              return;
+            }
+            case "companion_state": {
+              if (isBrowserExtensionPlatform(record.platform)) {
+                companionHooks?.onStateReport?.(record, message);
+              }
               return;
             }
             case "result": {
@@ -755,7 +848,9 @@ export function createDeviceHub(options: {
                   new DeviceRefusedError(
                     typeof message.error === "string" && message.error
                       ? message.error.slice(0, 600)
-                      : "PC 端执行失败。",
+                      : isBrowserExtensionPlatform(record.platform)
+                        ? "浏览器扩展执行失败。"
+                        : "PC 端执行失败。",
                   ),
                 );
               return;
@@ -779,7 +874,9 @@ export function createDeviceHub(options: {
                 ownerUserId: record.ownerUserId,
                 actorType: "device",
                 actorId: record.id,
-                actorName: "PC 客户端",
+                actorName: isBrowserExtensionPlatform(record.platform)
+                  ? "浏览器扩展"
+                  : "PC 客户端",
                 action: String(message.action ?? "local").slice(0, 64),
                 summary: message.summary ? String(message.summary) : null,
                 outcome: String(message.outcome ?? "succeeded").slice(0, 32),
@@ -788,7 +885,10 @@ export function createDeviceHub(options: {
               });
               return;
             default:
-              if (extension?.onMessage)
+              if (
+                !isBrowserExtensionPlatform(record.platform) &&
+                extension?.onMessage
+              )
                 await Promise.resolve(
                   extension.onMessage(
                     record,
@@ -811,8 +911,9 @@ export function createDeviceHub(options: {
       };
     },
 
-    /** 撤销：通知 PC 并断开。 */
+    /** 撤销：通知 PC / 浏览器扩展并立即断开。 */
     kick(deviceId: string) {
+      companionHooks?.onRevoke?.(deviceId);
       const connection = connections.get(deviceId);
       if (!connection) return;
       cancelAllFor(deviceId, "设备已被撤销。");
@@ -825,6 +926,28 @@ export function createDeviceHub(options: {
 
     cancelAllFor,
 
+    setCompanionHooks(hooks: DeviceCompanionHooks | null) {
+      companionHooks = hooks;
+    },
+
+    /** 向在线浏览器伴侣扩展下发控制/配置同步指令。 */
+    sendCompanionCommand(
+      deviceId: string,
+      payload: {
+        command: CompanionServerCommand;
+        tabId?: number | null;
+        reason?: string;
+        config?: CompanionSettingsPatch;
+      },
+    ) {
+      const connection = connections.get(deviceId);
+      if (!connection) return false;
+      return send(connection, {
+        type: "companion_command",
+        ...payload,
+      });
+    },
+
     /**
      * 网页上设备页的直接请求（设备主人本人发起，不是机器人）：查看运行中的命令、结束一个后台命令。
      * 不走能力开关和审批（这是主人管理自己的设备），离线 / 旧客户端直接报错。
@@ -835,6 +958,18 @@ export function createDeviceHub(options: {
       args: Record<string, unknown>,
       timeoutMs = 20_000,
     ): Promise<unknown> {
+      const isExt = isBrowserExtensionPlatform(record.platform);
+      const isBrowserOp = isBrowserCompanionOperation(operation);
+      if (isExt && !isBrowserOp) {
+        throw new DeviceRefusedError(
+          "浏览器伴侣扩展仅支持浏览器操作，拒绝执行系统/电脑节点指令。",
+        );
+      }
+      if (!isExt && isBrowserOp) {
+        throw new DeviceRefusedError(
+          "该设备不是浏览器伴侣扩展，无法执行扩展浏览器指令。",
+        );
+      }
       if (
         DESKTOP_CONTROL_OPERATIONS.has(operation) &&
         !getHarnessFlags().desktopControl
@@ -843,11 +978,14 @@ export function createDeviceHub(options: {
       }
       const connection = connections.get(record.id);
       if (!connection) throw new DeviceRefusedError("这台设备当前离线。");
-      if (
-        !(connection.features
+      const supported = isExt
+        ? connection.features
           ? connection.features.has(operation)
-          : LEGACY_OPERATIONS.has(operation))
-      )
+          : true
+        : connection.features
+          ? connection.features.has(operation)
+          : LEGACY_OPERATIONS.has(operation);
+      if (!supported)
         throw new DeviceRefusedError(
           "这台设备上的客户端版本太旧，不支持这个操作。",
         );
@@ -895,6 +1033,7 @@ export function createDeviceHub(options: {
       let pushed = 0;
       for (const connection of connections.values()) {
         if (connection.ownerUserId !== ownerUserId) continue;
+        if (isBrowserExtensionPlatform(connection.platform ?? "")) continue;
         if (
           send(connection, {
             type: "direction_epoch_advance",
@@ -932,6 +1071,10 @@ export function createDeviceHub(options: {
           })()
         : [...connections.values()];
       for (const connection of targets) {
+        if (isBrowserExtensionPlatform(connection.platform ?? "")) {
+          skipped++;
+          continue;
+        }
         if (
           version &&
           connection.clientVersion &&
@@ -1021,6 +1164,16 @@ export function createDeviceHub(options: {
      */
     async invoke(input: InvokeInput): Promise<unknown> {
       const record = input.device;
+      const isExt = isBrowserExtensionPlatform(record.platform);
+      const isBrowserOp = isBrowserCompanionOperation(input.operation);
+      let platformIsolationRefusal: string | null = null;
+      if (isExt && !isBrowserOp) {
+        platformIsolationRefusal =
+          "浏览器伴侣扩展仅支持浏览器操作，拒绝执行系统/电脑节点指令。";
+      } else if (!isExt && isBrowserOp) {
+        platformIsolationRefusal =
+          "该设备不是浏览器伴侣扩展，无法执行扩展浏览器指令。";
+      }
       let preRefusal: string | null = null;
       if (input.operation === "desktop_act") {
         const rawRef = typeof input.args.ref === "string" ? input.args.ref : "";
@@ -1103,14 +1256,29 @@ export function createDeviceHub(options: {
         };
       }
       const capability = capabilityFor(input.operation, input.args);
-      const full = fullAccessActive(record, now());
+      const full = isExt ? false : fullAccessActive(record, now());
       let policy = full
         ? "allow"
         : capability
           ? (record.capabilities as DeviceCapabilities)[capability]
           : "allow";
+      if (isExt && isBrowserOp && input.browserRiskPolicy) {
+        if (input.browserRiskPolicy.decision === "deny") {
+          platformIsolationRefusal =
+            platformIsolationRefusal ??
+            (input.browserRiskPolicy.reason || "命中浏览器安全拦截策略。");
+        } else if (input.browserRiskPolicy.decision === "ask") {
+          if (policy !== "off") policy = "ask";
+        } else if (
+          input.browserRiskPolicy.decision === "allow" &&
+          policy !== "off"
+        ) {
+          policy = "allow";
+        }
+      }
       // git push 总要人点头（完全访问除外）：推送是对外可见、难撤回的操作。
       if (
+        !isExt &&
         !full &&
         policy === "allow" &&
         input.operation === "git" &&
@@ -1119,6 +1287,7 @@ export function createDeviceHub(options: {
         policy = "ask";
       // 权限档位（docs/local-agents.md）：档位之外的操作，能力是「允许」也改成先审批；从不放宽。完全访问开着时不再收紧。
       if (
+        !isExt &&
         !input.signal?.aborted &&
         !full &&
         policy === "allow" &&
@@ -1134,7 +1303,7 @@ export function createDeviceHub(options: {
       }
       // 允许的文件夹之外的路径：照样审批（「允许」也改成问），批准后把文件夹加进去再执行（roots.ts）。
       const outside =
-        !full && policy !== "off"
+        !isExt && !full && policy !== "off"
           ? outsideRoots(
               record.platform,
               record.allowedRoots,
@@ -1180,6 +1349,8 @@ export function createDeviceHub(options: {
       if (record.revoked) return refuse("refused", "这台设备已被撤销。");
       if (record.paused)
         return refuse("refused", "这台设备已紧急停止，所有远程操作都被拒绝。");
+      if (platformIsolationRefusal)
+        return refuse("refused", platformIsolationRefusal);
       if (
         DESKTOP_CONTROL_OPERATIONS.has(input.operation) &&
         !getHarnessFlags().desktopControl
@@ -1199,20 +1370,35 @@ export function createDeviceHub(options: {
         );
       {
         const connection = connections.get(record.id);
-        const supported = connection?.features
-          ? connection.features.has(input.operation)
-          : LEGACY_OPERATIONS.has(input.operation);
+        const supported = isExt
+          ? isBrowserOp &&
+            (connection?.features
+              ? connection.features.has(input.operation)
+              : true)
+          : !isBrowserOp &&
+            (connection?.features
+              ? connection.features.has(input.operation)
+              : LEGACY_OPERATIONS.has(input.operation));
         if (!supported)
           return refuse(
             "refused",
-            `这台设备上的 ChisaBot 客户端（${record.clientVersion ?? "旧版"}）还不支持「${OPERATION_LABEL[input.operation] ?? input.operation}」。请把 ChisaBot 客户端更新到 0.1.8 或更新版本（服务器节点重新运行安装命令即可）。`,
+            isExt
+              ? `当前浏览器伴侣扩展（${record.clientVersion ?? "旧版"}）还不支持「${OPERATION_LABEL[input.operation] ?? input.operation}」。`
+              : `这台设备上的 ChisaBot 客户端（${record.clientVersion ?? "旧版"}）还不支持「${OPERATION_LABEL[input.operation] ?? input.operation}」。请把 ChisaBot 客户端更新到 0.1.8 或更新版本（服务器节点重新运行安装命令即可）。`,
           );
       }
       if (preRefusal) return refuse("refused", preRefusal);
 
       let approvalNote: string | null = null;
+      let userApproved = false;
+      // 浏览器伴侣风险评估判定的 ask（付款确认、高危按钮、谨慎/观察档位拦截）严禁被通用审批偏好 auto/full 绕过。
+      const skipAutoApproval =
+        isExt && input.browserRiskPolicy?.decision === "ask";
       const preference =
-        policy === "ask" && confirm && input.actorType !== "user"
+        policy === "ask" &&
+        !skipAutoApproval &&
+        confirm &&
+        input.actorType !== "user"
           ? await confirm
               .before({
                 ownerUserId: record.ownerUserId,
@@ -1221,7 +1407,11 @@ export function createDeviceHub(options: {
                 operationLabel:
                   OPERATION_LABEL[input.operation] ?? input.operation,
                 summary: input.summary,
-                args: sanitizeArgsForConfirm(input.operation, input.args),
+                args: sanitizeArgsForConfirm(
+                  input.operation,
+                  input.args,
+                  input.browserRiskPolicy?.isPasswordTarget === true,
+                ),
               })
               .catch(() => "ask" as const)
           : "ask";
@@ -1251,7 +1441,9 @@ export function createDeviceHub(options: {
           return refuse("cancelled", TOOL_STOPPED_ZH);
         const who =
           decision.by === "device"
-            ? "PC 上"
+            ? isExt
+              ? "扩展侧栏上"
+              : "PC 上"
             : decision.by === "expired"
               ? ""
               : "网页上";
@@ -1263,6 +1455,7 @@ export function createDeviceHub(options: {
               : `用户在${who}拒绝了这次操作。`,
           );
         approvalNote = `已在${who}批准`;
+        userApproved = true;
         // 审批期间配置可能变了（例如按了紧急停止、关闭能力或移除允许目录）。
         const fresh = await store.get(record.id);
         if (input.signal?.aborted) return refuse("cancelled", TOOL_STOPPED_ZH);
@@ -1325,7 +1518,9 @@ export function createDeviceHub(options: {
             send(connection, { type: "cancel", id });
             reject(
               new DeviceRefusedError(
-                `PC 端 ${Math.round(timeoutMs / 1000)} 秒内没有返回结果。`,
+                isExt
+                  ? `浏览器扩展 ${Math.round(timeoutMs / 1000)} 秒内没有返回结果。`
+                  : `PC 端 ${Math.round(timeoutMs / 1000)} 秒内没有返回结果。`,
               ),
             );
           }, timeoutMs);
@@ -1336,11 +1531,17 @@ export function createDeviceHub(options: {
             onAbort();
             return;
           }
+          const outboundArgs: Record<string, unknown> = isExt
+            ? (() => {
+                const { _approved: _forged, ...clean } = input.args;
+                return userApproved ? { ...clean, _approved: true } : clean;
+              })()
+            : input.args;
           const sent = send(connection, {
             type: "call",
             id,
             operation: input.operation,
-            args: input.args,
+            args: outboundArgs,
             botName: input.bot.name,
             timeoutMs,
           });
