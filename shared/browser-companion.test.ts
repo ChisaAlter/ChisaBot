@@ -157,6 +157,10 @@ describe("blocked origin & protocol anti-bypass", () => {
       "https://MICROSOFTEDGE.MICROSOFT.COM./ADDONS/detail/abc",
       "https://microsoftedge.microsoft.com/foo/../addons/detail/abc",
       "https://microsoftedge.microsoft.com/foo/%2e%2e/%61ddons/detail/abc",
+      "https://microsoftedge.microsoft.com/%61ddons/detail/%ZZ",
+      "https://microsoftedge.microsoft.com/addons;v=1/detail/1",
+      "https://microsoftedge.microsoft.com/addons%3bv=1/detail/1",
+      "https://microsoftedge.microsoft.com/foo/..;x=1/%61ddons;v=2/%ZZ",
       "https://1password.com/signin",
       "https://my.1PASSWORD.com.:8443/vault",
       "https://vault.bitwarden.com/#/login",
@@ -182,6 +186,10 @@ describe("blocked origin & protocol anti-bypass", () => {
     // 非 addons 路径的普通微软文档页面不应被误杀，非子域名相似前缀也不应误杀。
     expect(
       matchBlockedOrigin("https://microsoftedge.microsoft.com/welcome").blocked,
+    ).toBe(false);
+    expect(
+      matchBlockedOrigin("https://microsoftedge.microsoft.com/welcome;v=1")
+        .blocked,
     ).toBe(false);
     expect(matchBlockedOrigin("https://not1password.com/").blocked).toBe(false);
     expect(matchBlockedOrigin("https://fake-bitwarden.com/").blocked).toBe(
@@ -249,6 +257,16 @@ describe("assessBrowserActionRisk permission tiers & purchase lock", () => {
       "Wire Transfer",
       "Subscribe",
       "btn_payNow",
+      "PAYNow",
+      "BUYNow",
+      "btnPAYNow",
+      "Pay\u200bNow",
+      "付 款",
+      "支 付",
+      "购 买",
+      "确 认 下 单",
+      "付\u200b款",
+      "支\u3000付",
     ];
 
     for (const name of purchaseLabels) {
@@ -385,6 +403,16 @@ describe("assessBrowserActionRisk permission tiers & purchase lock", () => {
       "Send Message",
       "Change Password",
       "Revoke Token",
+      "删 除",
+      "提 交",
+      "重 启",
+      "关 机",
+      "注 销",
+      "删\u3000除",
+      "删\u200b除",
+      "DELETEItem",
+      "SUBMITForm",
+      "RESTARTServer",
     ];
     for (const name of highRiskNames) {
       const res = assessBrowserActionRisk({

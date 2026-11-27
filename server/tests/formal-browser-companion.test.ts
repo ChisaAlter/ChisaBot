@@ -62,6 +62,9 @@ const ADVERSARIAL_BLOCKED_URLS = [
   "chrome-extension://abcdefg/popup.html",
   "https://CHROMEWEBSTORE.GOOGLE.COM./detail/x",
   "https://microsoftedge.microsoft.com/foo/%2e%2e/%61ddons/detail/x",
+  "https://microsoftedge.microsoft.com/%61ddons/detail/%ZZ",
+  "https://microsoftedge.microsoft.com/addons;v=1/detail/1",
+  "https://microsoftedge.microsoft.com/foo/..;x=1/%61ddons;v=2/%ZZ",
   "https://my.1PASSWORD.com.:8443/vault",
   "https://pay.mybank.example.com./wire",
 ] as const;
@@ -76,8 +79,18 @@ const PURCHASE_PROBES: readonly BrowserActionRiskInput[] = [
   },
   {
     operation: "browser_click",
+    url: "https://shop.example.com/checkout",
+    element: { role: "button", name: "付 款" },
+  },
+  {
+    operation: "browser_click",
     url: "https://shop.example.com/pay",
     element: { role: "button", name: "Pay Now" },
+  },
+  {
+    operation: "browser_click",
+    url: "https://shop.example.com/pay",
+    element: { role: "button", name: "PAYNow" },
   },
   {
     operation: "browser_click",

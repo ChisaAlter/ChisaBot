@@ -757,19 +757,34 @@ function normalizeHostname(rawHost: string): string | null {
   }
 }
 
+function safeDecodePercentSequences(text: string): string {
+  // 对合法 %XX 序列逐段解码（支持多字节 UTF-8），局部出现非法 %ZZ 时不放弃整条路径解码。
+  return text.replace(/(?:%[0-9a-fA-F]{2})+/g, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run.replace(/%[0-9a-fA-F]{2}/g, (single) => {
+        try {
+          return decodeURIComponent(single);
+        } catch {
+          return single;
+        }
+      });
+    }
+  });
+}
+
 function normalizePathname(rawPathname: string): string {
-  let decoded = rawPathname;
-  try {
-    decoded = decodeURIComponent(rawPathname);
-  } catch {
-    // 保留原路径继续小写与规整，避免非法百分号编码导致抛错绕过。
-  }
+  const decoded = safeDecodePercentSequences(rawPathname);
   const segments = decoded
     .toLowerCase()
     .replaceAll("\\", "/")
     .split("/");
   const resolved: string[] = [];
-  for (const segment of segments) {
+  for (const rawSegment of segments) {
+    // 剥离每个路径段的 `;...` 矩阵参数（防止 `/addons;v=1/` 与 `/foo/..;x=1/addons` 绕过）。
+    const semiIdx = rawSegment.indexOf(";");
+    const segment = semiIdx >= 0 ? rawSegment.slice(0, semiIdx) : rawSegment;
     if (!segment || segment === ".") continue;
     if (segment === "..") {
       resolved.pop();
@@ -1062,9 +1077,22 @@ function collectElementText(
     .trim();
 }
 
+const INVISIBLE_CHAR_REGEX =
+  /[\u00ad\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g;
+
+function stripInvisibleChars(text: string): string {
+  return text.replace(INVISIBLE_CHAR_REGEX, "");
+}
+
+function normalizeForChineseKeyword(text: string): string {
+  // 折叠 Ant Design / Element Plus 等组件库在双字中文按钮中插入的空格/全角空格以及零宽字符。
+  return stripInvisibleChars(text).replace(/\s+/g, "");
+}
+
 function normalizeForEnglishKeyword(text: string): string {
-  return text
+  return stripInvisibleChars(text)
     .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
     .replace(/[_\-/]+/g, " ")
     .replace(/\s+/g, " ")
     .toLowerCase()
@@ -1110,8 +1138,9 @@ const PURCHASE_EN_REGEX =
 
 function matchPurchaseKeyword(text: string): string | null {
   if (!text) return null;
+  const compactZh = normalizeForChineseKeyword(text);
   for (const kw of PURCHASE_ZH_PATTERNS) {
-    if (text.includes(kw)) return kw;
+    if (compactZh.includes(kw)) return kw;
   }
   const normalized = normalizeForEnglishKeyword(text);
   const enMatch = PURCHASE_EN_REGEX.exec(normalized);
@@ -1182,8 +1211,9 @@ const HIGH_RISK_EN_REGEX =
 
 function matchHighRiskKeyword(text: string): string | null {
   if (!text) return null;
+  const compactZh = normalizeForChineseKeyword(text);
   for (const kw of HIGH_RISK_ZH_PATTERNS) {
-    if (text.includes(kw)) return kw;
+    if (compactZh.includes(kw)) return kw;
   }
   const normalized = normalizeForEnglishKeyword(text);
   const enMatch = HIGH_RISK_EN_REGEX.exec(normalized);
