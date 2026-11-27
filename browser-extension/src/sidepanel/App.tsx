@@ -150,7 +150,7 @@ export function App() {
   }, []);
 
   const openBotThread = useCallback(
-    async (bot: BotSummary, channelId?: string) => {
+    async (bot: BotSummary, channelId?: string, fresh = false) => {
       setSelectedBot(bot);
       await rpc({
         type: "PANEL_SELECT_BOT",
@@ -164,13 +164,17 @@ export function App() {
       }>({
         type: "PANEL_OPEN_THREAD",
         botId: bot.id,
-        ...(channelId ? { channelId } : {}),
+        ...(channelId && !fresh ? { channelId } : {}),
+        ...(fresh ? { fresh: true } : {}),
       });
       if (resp.ok && resp.thread) {
         setActiveThreadId(resp.thread.threadId || resp.thread.channelId);
         setThreads(resp.thread.history ?? []);
         setMessages(normalizeHistoryMessages(resp.thread.messages ?? []));
         setRunning(resp.thread.running);
+        if (fresh) {
+          setLiveCard(null);
+        }
       }
     },
     [],
@@ -547,6 +551,10 @@ export function App() {
           setActiveThreadId(null);
           setMessages([]);
           setLiveCard(null);
+          const targetBot = selectedBot ?? bots[0];
+          if (targetBot) {
+            void openBotThread(targetBot, undefined, true);
+          }
         }}
         onSelectThread={(threadId) => {
           if (selectedBot) void openBotThread(selectedBot, threadId);

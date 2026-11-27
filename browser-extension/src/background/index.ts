@@ -1,4 +1,4 @@
-import type { ChromePort } from "../types/chrome";
+import type { ChromeApi, ChromePort } from "../types/chrome";
 import type {
   BrowserCompanionOperation,
   BrowserLiveCardState,
@@ -12,10 +12,14 @@ import type {
   PendingApprovalItem,
 } from "../types/protocol";
 import { createExtensionAuth } from "./auth";
+import {
+  checkExplicitTabScope,
+  evaluateLocalCallRisk,
+  planSafeNavigationTarget,
+} from "./call-guard";
 import { createCdpDriver } from "./cdp-driver";
 import { createCompanionApi } from "./companion-api";
 import {
-  assessBrowserActionRisk,
   type BrowserCompanionEvent,
   type BrowserCompanionSession,
   canCompanionBotAct,
@@ -23,10 +27,15 @@ import {
   getBlockedUrlReason,
   reduceBrowserCompanionSession,
 } from "./security-bridge";
-import { createCompanionStorage, normalizeSettings } from "./storage";
+import {
+  createCompanionStorage,
+  defaultSettings,
+  normalizeSettings,
+} from "./storage";
 import { createTabGroupManager } from "./tab-group-manager";
 import {
   createCompanionWsClient,
+  type WebSocketFactory,
   type WsCallPayload,
   type WsConnectionState,
 } from "./ws-client";
@@ -34,11 +43,11 @@ import {
 /**
  * ChisaBot 浏览器伴侣 MV3 Service Worker 主入口。
  *
- * 职责：
- * - 直接使用 shared/browser-companion.ts 的单一纯函数状态机 `reduceBrowserCompanionSession`；
- * - 统一调度会话级按需 CDP 驱动、Bot 彩色标签组管理器、页内 Closed Shadow DOM HUD 与人机礼让；
- * - 维护与 ChisaBot 服务端的 WSS 节点连接 + HTTP 侧栏伴侣接口；
- * - 向所有打开的 Side Panel Port 实时推送状态快照、浏览器实时大卡帧与流式聊天事件。
+ * MV3 生命周期红线：
+ * - 所有 Chrome 事件监听器（action.onClicked / tabs.* / webNavigation.* / debugger.onDetach /
+ *   runtime.onConnect / runtime.onMessage）必须在顶层同步注册，严禁位于任何 `await` 之后；
+ * - 异步状态恢复（storage.loadAuth / loadSettings / setPanelBehavior）放入 `readyPromise`，
+ *   所有回调在消费持久化状态前统一 `await readyPromise`，确保冷启动与休眠唤醒零丢事件。
  */
 
 const HUD_SCRIPT_PATH = "content/hud.js";
@@ -89,26 +98,27 @@ function humanReadableStep(
   }
 }
 
-function getExtensionVersion(): string {
-  try {
-    return chrome.runtime.getManifest().version || "0.1.0";
-  } catch {
-    return "0.1.0";
-  }
+export interface BackgroundRuntimeDeps {
+  chromeApi?: ChromeApi;
+  fetchImpl?: typeof fetch;
+  createWebSocket?: WebSocketFactory;
 }
 
-async function main() {
-  const storage = createCompanionStorage();
-  const authService = createExtensionAuth();
-  const companionApi = createCompanionApi();
+export function initializeBackgroundRuntime(deps: BackgroundRuntimeDeps = {}) {
+  const api = deps.chromeApi ?? chrome;
+  const storage = createCompanionStorage(api.storage.local);
+  const authService = createExtensionAuth({
+    chromeApi: api,
+    fetchImpl: deps.fetchImpl,
+  });
+  const companionApi = createCompanionApi({ fetchImpl: deps.fetchImpl });
 
-  let auth: CompanionAuthRecord | null = await storage.loadAuth();
-  let settings: CompanionLocalSettings = await storage.loadSettings();
-
+  let auth: CompanionAuthRecord | null = null;
+  let settings: CompanionLocalSettings = defaultSettings();
   let session: BrowserCompanionSession = createInitialBrowserCompanionSession({
     sessionId: `ext-${Date.now()}`,
-    deviceId: auth?.deviceId ?? null,
-    botId: settings.selectedBotId,
+    deviceId: null,
+    botId: null,
     botName: "ChisaBot",
     attached: settings.attachedByDefault,
     allowRemoteDispatch: settings.allowRemoteDispatch,
@@ -135,20 +145,13 @@ async function main() {
     resolve: (resumed: boolean) => void;
   }>();
 
-  // 允许点击扩展工具栏图标直接打开侧边栏
-  try {
-    await chrome.sidePanel?.setPanelBehavior?.({
-      openPanelOnActionClick: true,
-    });
-  } catch {
-    // 某些旧版 Chromium 回退至 action.onClicked
-  }
-
-  chrome.action?.onClicked.addListener((tab) => {
-    if (typeof tab.windowId === "number") {
-      void chrome.sidePanel?.open({ windowId: tab.windowId }).catch(() => {});
+  function getExtensionVersion(): string {
+    try {
+      return api.runtime.getManifest().version || "0.1.0";
+    } catch {
+      return "0.1.0";
     }
-  });
+  }
 
   function buildRuntimeState() {
     const tabSnap = tabGroups.snapshot();
@@ -265,13 +268,13 @@ async function main() {
 
   async function ensureHudInjected(tabId: number): Promise<boolean> {
     try {
-      const tab = await chrome.tabs.get(tabId);
+      const tab = await api.tabs.get(tabId);
       const url = tab.url ?? tab.pendingUrl ?? "";
       if (!/^https?:\/\//i.test(url)) return false;
       if (getBlockedUrlReason(url, settings.blockedDomains)) return false;
 
       if (!hudInjectedTabs.has(tabId)) {
-        await chrome.scripting.executeScript({
+        await api.scripting.executeScript({
           target: { tabId },
           files: [HUD_SCRIPT_PATH],
         });
@@ -293,13 +296,13 @@ async function main() {
       if (!ready) return;
     }
     try {
-      await chrome.tabs.sendMessage(tabId, message);
+      await api.tabs.sendMessage(tabId, message);
     } catch {
       hudInjectedTabs.delete(tabId);
       if (message.type !== "HUD_REMOVE") {
         const retried = await ensureHudInjected(tabId);
         if (retried) {
-          await chrome.tabs.sendMessage(tabId, message).catch(() => {});
+          await api.tabs.sendMessage(tabId, message).catch(() => {});
         }
       }
     }
@@ -349,7 +352,10 @@ async function main() {
     }
   }
 
+  // ---- 同步注册所有标签组与 CDP 监听器（零 await 前置） ----
+
   const tabGroups = createTabGroupManager({
+    chromeApi: api,
     initialAttached: settings.attachedByDefault,
     onChange: () => {
       pushStateSnapshot();
@@ -361,6 +367,7 @@ async function main() {
   });
 
   const cdp = createCdpDriver({
+    chromeApi: api,
     onBeforeSyntheticInput: async (tabId, durationMs) => {
       await sendHudMessage(tabId, {
         type: "HUD_SYNTHETIC_WINDOW",
@@ -388,10 +395,16 @@ async function main() {
     },
   });
 
-  function resolveTargetTabId(args: Record<string, unknown>): number | null {
+  function extractExplicitTabId(args: Record<string, unknown>): number | null {
     if (typeof args.tabId === "number" && Number.isInteger(args.tabId)) {
       return args.tabId;
     }
+    return null;
+  }
+
+  function resolveCandidateTabId(args: Record<string, unknown>): number | null {
+    const explicit = extractExplicitTabId(args);
+    if (explicit !== null) return explicit;
     const snap = tabGroups.snapshot();
     if (snap.controlledTabIds.length > 0) {
       const lastControlled = snap.controlledTabIds.at(-1);
@@ -400,7 +413,7 @@ async function main() {
     if (snap.attached && snap.activeTab) {
       return snap.activeTab.tabId;
     }
-    return snap.activeTab?.tabId ?? null;
+    return null;
   }
 
   function updateLiveCardProgress(patch: {
@@ -486,6 +499,8 @@ async function main() {
     call: WsCallPayload,
     signal: AbortSignal,
   ): Promise<unknown> {
+    await readyPromise;
+
     const botName =
       (typeof call.args.botName === "string" && call.args.botName.trim()) ||
       call.botName ||
@@ -509,6 +524,13 @@ async function main() {
         return { ok: true, state: session.state };
       }
       if (action === "focus_tab" && typeof call.args.tabId === "number") {
+        const scope = checkExplicitTabScope(
+          call.args.tabId,
+          tabGroups.snapshot(),
+        );
+        if (!scope.allowed) {
+          throw new Error(scope.reason ?? "禁止聚焦组外用户标签页。");
+        }
         const focused = await tabGroups.focusTab(call.args.tabId);
         return { ok: focused, activeTabId: call.args.tabId };
       }
@@ -580,13 +602,22 @@ async function main() {
         };
       }
       if (action === "activate" && typeof call.args.tabId === "number") {
+        const scope = checkExplicitTabScope(
+          call.args.tabId,
+          tabGroups.snapshot(),
+        );
+        if (!scope.allowed) {
+          throw new Error(
+            scope.reason ?? "安全限制：不能激活 Bot 标签组外的用户标签页。",
+          );
+        }
         await tabGroups.focusTab(call.args.tabId);
       } else if (action === "close" && typeof call.args.tabId === "number") {
         if (!tabGroups.isControlledTab(call.args.tabId)) {
           throw new Error("安全限制：不能关闭 Bot 标签组外的用户标签页。");
         }
         await cdp.detach(call.args.tabId);
-        await chrome.tabs.remove(call.args.tabId);
+        await api.tabs.remove(call.args.tabId);
       }
       const tabs = await tabGroups.listControlledTabs();
       return {
@@ -622,25 +653,86 @@ async function main() {
       });
     }
 
-    let targetTabId = resolveTargetTabId(call.args);
-    if (call.operation === "browser_navigate" && call.args.newTab === true) {
-      const url = String(call.args.url ?? "").trim();
-      const created = await tabGroups.openTabInBotGroup(url, botName, {
-        active: false,
+    // 显式指定 tabId 时必须满足严格标签组/附着页隔离
+    const explicitTabId = extractExplicitTabId(call.args);
+    let targetTabId: number | null = null;
+    let currentUrl = "";
+    let currentTitle = "";
+
+    if (call.operation === "browser_navigate") {
+      const targetUrl = String(call.args.url ?? "").trim();
+      let candidateTabId = resolveCandidateTabId(call.args);
+      if (candidateTabId === null && explicitTabId === null) {
+        await tabGroups.refreshActiveTab();
+        candidateTabId = resolveCandidateTabId(call.args);
+      }
+      let candidateCurrentUrl: string | null = null;
+      if (candidateTabId !== null) {
+        try {
+          const tab = await api.tabs.get(candidateTabId);
+          candidateCurrentUrl = tab.url ?? tab.pendingUrl ?? null;
+        } catch {
+          candidateCurrentUrl = null;
+        }
+      }
+
+      const plan = planSafeNavigationTarget({
+        targetUrl,
+        newTab: call.args.newTab === true,
+        explicitTabId,
+        candidateTabId,
+        candidateCurrentUrl,
+        tabGroupSnapshot: tabGroups.snapshot(),
+        blockedDomains: settings.blockedDomains,
       });
-      targetTabId = typeof created.id === "number" ? created.id : targetTabId;
+
+      if (!plan.ok || plan.mode === "deny") {
+        throw new Error(plan.reason || "该页面地址或目标标签页禁止导航。");
+      }
+
+      if (plan.mode === "open_new_tab") {
+        // 新建空白受控标签页再导航，绝不对原黑名单标签页收组或挂接 CDP
+        const created = await tabGroups.openTabInBotGroup(
+          "about:blank",
+          botName,
+          { active: false },
+        );
+        if (typeof created.id !== "number") {
+          throw new Error("无法创建受控标签页以完成导航。");
+        }
+        targetTabId = created.id;
+        currentUrl = created.url ?? "about:blank";
+        currentTitle = created.title ?? "";
+      } else {
+        targetTabId = plan.targetTabId ?? null;
+      }
+    } else {
+      if (explicitTabId !== null) {
+        const scope = checkExplicitTabScope(
+          explicitTabId,
+          tabGroups.snapshot(),
+        );
+        if (!scope.allowed) {
+          throw new Error(scope.reason ?? "安全隔离：禁止访问组外标签页。");
+        }
+        targetTabId = explicitTabId;
+      } else {
+        targetTabId = resolveCandidateTabId(call.args);
+        if (targetTabId === null) {
+          await tabGroups.refreshActiveTab();
+          targetTabId = resolveCandidateTabId(call.args);
+        }
+      }
     }
 
     if (targetTabId === null) {
-      await tabGroups.refreshActiveTab();
-      targetTabId = resolveTargetTabId(call.args);
-    }
-    if (targetTabId === null) {
-      throw new Error("未找到可操作的浏览器标签页，请先打开一个网页。");
+      throw new Error("未找到可操作的浏览器标签页，请先在侧边栏附着一个网页。");
     }
 
-    const currentTab = await chrome.tabs.get(targetTabId);
-    const currentUrl = currentTab.url ?? currentTab.pendingUrl ?? "";
+    const currentTab = await api.tabs.get(targetTabId);
+    currentUrl = currentTab.url ?? currentTab.pendingUrl ?? currentUrl;
+    currentTitle = currentTab.title ?? currentTitle;
+
     if (call.operation !== "browser_navigate") {
       const blocked = getBlockedUrlReason(currentUrl, settings.blockedDomains);
       if (blocked) throw new Error(blocked);
@@ -676,7 +768,7 @@ async function main() {
       stepLabel,
       tabId: targetTabId,
       url: currentUrl,
-      title: currentTab.title ?? "",
+      title: currentTitle,
       running: true,
       status: "running",
     });
@@ -1006,30 +1098,42 @@ async function main() {
     getAuth: () => auth,
     getClientVersion: getExtensionVersion,
     getCompanionState: buildCompanionStateReport,
+    createWebSocket: deps.createWebSocket,
     evaluateLocalRisk: async (call) => {
-      const targetTabId = resolveTargetTabId(call.args);
-      let url = typeof call.args.url === "string" ? call.args.url : undefined;
-      if (!url && targetTabId !== null) {
+      await readyPromise;
+      const explicitTabId = extractExplicitTabId(call.args);
+      const candidateTabId = resolveCandidateTabId(call.args);
+      const targetUrl =
+        typeof call.args.url === "string" ? call.args.url : undefined;
+      let currentTabUrl: string | undefined;
+
+      if (candidateTabId !== null) {
         try {
-          const tab = await chrome.tabs.get(targetTabId);
-          url = tab.url ?? tab.pendingUrl;
+          const tab = await api.tabs.get(candidateTabId);
+          currentTabUrl = tab.url ?? tab.pendingUrl;
         } catch {
           // 忽略读取失败
         }
       }
       const element =
-        targetTabId !== null &&
+        candidateTabId !== null &&
         typeof call.args.snapshotId === "number" &&
         typeof call.args.ref === "string"
-          ? cdp.lookupElement(targetTabId, call.args.snapshotId, call.args.ref)
+          ? cdp.lookupElement(
+              candidateTabId,
+              call.args.snapshotId,
+              call.args.ref,
+            )
           : null;
 
-      return assessBrowserActionRisk({
+      return evaluateLocalCallRisk({
         tier: settings.tier,
         operation: call.operation,
         action:
           typeof call.args.action === "string" ? call.args.action : undefined,
-        url,
+        targetUrl,
+        currentTabUrl,
+        explicitTabId,
         element,
         key: typeof call.args.key === "string" ? call.args.key : undefined,
         submit: call.args.submit === true,
@@ -1038,50 +1142,55 @@ async function main() {
     },
     onCall: executeBrowserCall,
     onCompanionCommand: (cmd) => {
-      if (cmd.command === "kill_switch") {
-        void detachAllAndClearHud({
-          stopRemoteRun: true,
-          event: { type: "kill_switch" },
-        });
-        return;
-      }
-      if (cmd.command === "detach") {
-        void detachAllAndClearHud({
-          stopRemoteRun: false,
-          event: { type: "detach", reason: "user_close_hud" },
-        });
-        return;
-      }
-      if (cmd.command === "pause") {
-        yieldNotice = cmd.reason || "服务端已暂停浏览器操控";
-        dispatchSession({ type: "human_input", reason: yieldNotice });
-        void syncHudOnTabs();
-        return;
-      }
-      if (cmd.command === "resume") {
-        dispatchSession({ type: "resume" });
-        wakeYieldWaiters(true);
-        void syncHudOnTabs();
-        return;
-      }
-      if (cmd.command === "focus_tab" && typeof cmd.tabId === "number") {
-        void tabGroups.focusTab(cmd.tabId);
-        return;
-      }
-      if (cmd.command === "sync_config" && cmd.config) {
-        settings = normalizeSettings({
-          ...settings,
-          ...(cmd.config.tier ? { tier: cmd.config.tier } : {}),
-          ...(cmd.config.blockedDomains
-            ? { blockedDomains: cmd.config.blockedDomains }
-            : {}),
-          ...(typeof cmd.config.allowRemoteDispatch === "boolean"
-            ? { allowRemoteDispatch: cmd.config.allowRemoteDispatch }
-            : {}),
-        });
-        void storage.saveSettings(settings);
-        pushStateSnapshot();
-      }
+      void readyPromise.then(() => {
+        if (cmd.command === "kill_switch") {
+          void detachAllAndClearHud({
+            stopRemoteRun: true,
+            event: { type: "kill_switch" },
+          });
+          return;
+        }
+        if (cmd.command === "detach") {
+          void detachAllAndClearHud({
+            stopRemoteRun: false,
+            event: { type: "detach", reason: "user_close_hud" },
+          });
+          return;
+        }
+        if (cmd.command === "pause") {
+          yieldNotice = cmd.reason || "服务端已暂停浏览器操控";
+          dispatchSession({ type: "human_input", reason: yieldNotice });
+          void syncHudOnTabs();
+          return;
+        }
+        if (cmd.command === "resume") {
+          dispatchSession({ type: "resume" });
+          wakeYieldWaiters(true);
+          void syncHudOnTabs();
+          return;
+        }
+        if (cmd.command === "focus_tab" && typeof cmd.tabId === "number") {
+          const scope = checkExplicitTabScope(cmd.tabId, tabGroups.snapshot());
+          if (scope.allowed) {
+            void tabGroups.focusTab(cmd.tabId);
+          }
+          return;
+        }
+        if (cmd.command === "sync_config" && cmd.config) {
+          settings = normalizeSettings({
+            ...settings,
+            ...(cmd.config.tier ? { tier: cmd.config.tier } : {}),
+            ...(cmd.config.blockedDomains
+              ? { blockedDomains: cmd.config.blockedDomains }
+              : {}),
+            ...(typeof cmd.config.allowRemoteDispatch === "boolean"
+              ? { allowRemoteDispatch: cmd.config.allowRemoteDispatch }
+              : {}),
+          });
+          void storage.saveSettings(settings);
+          pushStateSnapshot();
+        }
+      });
     },
     onStateChange: (nextState, error) => {
       wsState = nextState;
@@ -1143,21 +1252,18 @@ async function main() {
     },
   });
 
-  chrome.runtime.onConnect.addListener((port) => {
+  // ---- 顶层同步注册 Action / Port / Runtime 监听器（零 await 前置，MV3 唤醒不丢事件） ----
+
+  const handleActionClick = (tab: { windowId?: number }) => {
+    if (typeof tab.windowId === "number") {
+      void api.sidePanel?.open({ windowId: tab.windowId }).catch(() => {});
+    }
+  };
+  api.action?.onClicked.addListener(handleActionClick);
+
+  const handleConnect = (port: ChromePort) => {
     if (port.name !== "sidepanel") return;
     panelPorts.add(port);
-    void tabGroups.refreshActiveTab().then(() => {
-      port.postMessage({
-        type: "STATE_SNAPSHOT",
-        state: buildRuntimeState(),
-      } satisfies PanelPushMessage);
-      if (liveCard) {
-        port.postMessage({
-          type: "LIVE_CARD_UPDATE",
-          card: liveCard,
-        } satisfies PanelPushMessage);
-      }
-    });
 
     port.onDisconnect.addListener(() => {
       panelPorts.delete(port);
@@ -1168,15 +1274,39 @@ async function main() {
         });
       }
     });
-  });
 
-  chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
+    void readyPromise
+      .then(() => tabGroups.refreshActiveTab())
+      .then(() => {
+        if (!panelPorts.has(port)) return;
+        port.postMessage({
+          type: "STATE_SNAPSHOT",
+          state: buildRuntimeState(),
+        } satisfies PanelPushMessage);
+        if (liveCard) {
+          port.postMessage({
+            type: "LIVE_CARD_UPDATE",
+            card: liveCard,
+          } satisfies PanelPushMessage);
+        }
+      })
+      .catch(() => {});
+  };
+  api.runtime.onConnect.addListener(handleConnect);
+
+  const handleRuntimeMessage = (
+    rawMessage: unknown,
+    _sender: unknown,
+    sendResponse: (response?: unknown) => void,
+  ): boolean | undefined => {
     const msg = rawMessage as (HudOutboundMessage | PanelRequestMessage) | null;
     if (!msg || typeof msg !== "object" || typeof msg.type !== "string") {
       return undefined;
     }
 
     const handleAsync = async (): Promise<unknown> => {
+      await readyPromise;
+
       switch (msg.type) {
         case "HUD_HUMAN_INTERVENTION": {
           yieldNotice = "检测到你在操作页面，已自动礼让暂停";
@@ -1265,6 +1395,7 @@ async function main() {
           });
           wsClient.stop();
           auth = null;
+          activeThreadId = null;
           pendingApprovals = [];
           liveCard = null;
           await storage.saveAuth(null);
@@ -1404,11 +1535,18 @@ async function main() {
         }
         case "PANEL_OPEN_THREAD": {
           if (!auth) return { ok: false, error: "尚未登录。" };
+          if (msg.fresh === true) {
+            activeThreadId = null;
+            liveCard = null;
+          }
           const thread = await companionApi.openThread(auth, {
             botId: msg.botId,
-            ...(msg.channelId ? { threadId: msg.channelId } : {}),
+            ...(msg.channelId && msg.fresh !== true
+              ? { threadId: msg.channelId }
+              : {}),
+            ...(msg.fresh === true ? { fresh: true } : {}),
           });
-          activeThreadId = thread.threadId || thread.channelId;
+          activeThreadId = thread.threadId || thread.channelId || null;
           return { ok: true, thread };
         }
         case "PANEL_SEND_MESSAGE": {
@@ -1419,14 +1557,15 @@ async function main() {
           currentPhaseBadge = msg.text.slice(0, 14);
           liveCard = null;
           const snap = tabGroups.snapshot();
-          const channelKey = msg.channelId || activeThreadId || msg.botId;
+          const targetThreadId = msg.channelId || activeThreadId || undefined;
+          const channelKey = targetThreadId || msg.botId;
 
           void companionApi
             .sendMessageStream(
               auth,
               {
                 botId: msg.botId,
-                threadId: msg.channelId || activeThreadId || undefined,
+                threadId: targetThreadId,
                 text: msg.text,
                 attached: snap.attached && session.attached,
                 attachedTab: snap.activeTab,
@@ -1491,7 +1630,7 @@ async function main() {
           const botQuery = msg.botId
             ? `?agent=${encodeURIComponent(msg.botId)}&voice=1`
             : "?voice=1";
-          await chrome.tabs.create({
+          await api.tabs.create({
             url: `${auth.serverUrl}/channel/new${botQuery}`,
             active: true,
           });
@@ -1511,12 +1650,61 @@ async function main() {
         }),
       );
     return true;
-  });
+  };
+  api.runtime.onMessage.addListener(handleRuntimeMessage);
 
-  if (auth) {
-    wsClient.start();
+  // ---- 后台异步恢复状态（不阻塞上述同步监听器注册） ----
+
+  const readyPromise = (async () => {
+    const [loadedAuth, loadedSettings] = await Promise.all([
+      storage.loadAuth().catch(() => null),
+      storage.loadSettings().catch(() => defaultSettings()),
+    ]);
+    auth = loadedAuth;
+    settings = loadedSettings;
+    tabGroups.setAttached(settings.attachedByDefault);
+    session = createInitialBrowserCompanionSession({
+      sessionId: session.sessionId,
+      deviceId: auth?.deviceId ?? null,
+      botId: settings.selectedBotId,
+      botName: session.botName ?? "ChisaBot",
+      attached: settings.attachedByDefault,
+      allowRemoteDispatch: settings.allowRemoteDispatch,
+      updatedAt: Date.now(),
+    });
+
+    try {
+      await api.sidePanel?.setPanelBehavior?.({
+        openPanelOnActionClick: true,
+      });
+    } catch {
+      // 某些旧版 Chromium 回退至 action.onClicked
+    }
+
+    await tabGroups.refreshActiveTab();
+    if (auth) {
+      wsClient.start();
+    }
+    pushStateSnapshot();
+  })();
+
+  function dispose() {
+    wsClient.stop();
+    tabGroups.dispose();
+    cdp.dispose();
+    api.action?.onClicked.removeListener(handleActionClick);
+    api.runtime.onConnect.removeListener(handleConnect);
+    api.runtime.onMessage.removeListener(handleRuntimeMessage);
   }
-  await tabGroups.refreshActiveTab();
+
+  return {
+    readyPromise,
+    dispose,
+    getRuntimeState: buildRuntimeState,
+    getActiveThreadId: () => activeThreadId,
+  };
 }
 
-void main();
+if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
+  initializeBackgroundRuntime();
+}

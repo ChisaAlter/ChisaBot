@@ -1,4 +1,5 @@
 import {
+  DEFAULT_COMPANION_EXTENSION_CONFIG,
   normalizeBlockedDomainRule,
   normalizeBlockedDomains,
   normalizeBrowserPermissionTier,
@@ -36,12 +37,12 @@ export function defaultAppearance(): AppearancePrefs {
 
 export function defaultSettings(): CompanionLocalSettings {
   return {
-    tier: "cautious",
-    blockedDomains: [],
-    allowRemoteDispatch: true,
+    tier: DEFAULT_COMPANION_EXTENSION_CONFIG.tier,
+    blockedDomains: [...DEFAULT_COMPANION_EXTENSION_CONFIG.blockedDomains],
+    allowRemoteDispatch: DEFAULT_COMPANION_EXTENSION_CONFIG.allowRemoteDispatch,
     appearance: defaultAppearance(),
-    selectedBotId: null,
-    attachedByDefault: true,
+    selectedBotId: DEFAULT_COMPANION_EXTENSION_CONFIG.selectedBotId ?? null,
+    attachedByDefault: DEFAULT_COMPANION_EXTENSION_CONFIG.attached ?? true,
   };
 }
 

@@ -305,6 +305,28 @@ describe("权限纵深防御、共享状态机、认证流程与 WSS 协议", ()
     );
     expect(blockedRes?.ok).toBe(false);
 
+    // 经服务端真实审批通过后注入 _approved: true 的高危调用正常放行执行
+    ws.emit("message", {
+      data: JSON.stringify({
+        type: "call",
+        id: "call-2",
+        operation: "browser_click",
+        args: {
+          url: "https://console.example.com",
+          label: "删除集群",
+          _approved: true,
+        },
+        botName: "鲸鱼娘",
+        timeoutMs: 10000,
+      }),
+    });
+    await new Promise((r) => setTimeout(r, 15));
+    expect(callExecuted).toBe(1);
+    const approvedRes = ws.sent.find(
+      (m) => m.type === "result" && m.id === "call-2",
+    );
+    expect(approvedRes?.ok).toBe(true);
+
     // 收到 revoked 立即停止并不再重连
     ws.emit("message", { data: JSON.stringify({ type: "revoked" }) });
     expect(revokedTriggered).toBe(true);

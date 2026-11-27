@@ -243,7 +243,12 @@ export type PanelRequestMessage =
       decision: "approve" | "deny";
     }
   | { type: "PANEL_BOOTSTRAP" }
-  | { type: "PANEL_OPEN_THREAD"; botId: string; channelId?: string }
+  | {
+      type: "PANEL_OPEN_THREAD";
+      botId: string;
+      channelId?: string;
+      fresh?: boolean;
+    }
   | {
       type: "PANEL_SEND_MESSAGE";
       botId: string;
