@@ -409,13 +409,21 @@ export function createDeviceRoutes(options: {
   } | null = null;
 
   function resolveExtensionZipPath(): string | null {
-    const candidates: string[] = [];
+    // 显式传入 extensionZipPath 时严格以该路径为准，不静默回退到仓库默认 dist 目录。
     if (
       typeof options.extensionZipPath === "string" &&
       options.extensionZipPath
     ) {
-      candidates.push(options.extensionZipPath);
+      try {
+        return existsSync(options.extensionZipPath) &&
+          statSync(options.extensionZipPath).isFile()
+          ? options.extensionZipPath
+          : null;
+      } catch {
+        return null;
+      }
     }
+    const candidates: string[] = [];
     if (typeof options.appDistDir === "string" && options.appDistDir) {
       candidates.push(
         join(options.appDistDir, "extension", EXTENSION_ZIP_FILENAME),
@@ -953,7 +961,7 @@ export function createDeviceRoutes(options: {
         if (!done) {
           return context.json({ error: "这个审批已经处理过或已过期。" }, 404);
         }
-        return context.json({ ok: true, kind: "device" });
+        return context.json({ ok: true, id, decision, kind: "device" });
       }
       if (options.companionBridge?.decideConfirmation) {
         const done = await options.companionBridge.decideConfirmation(
@@ -962,7 +970,12 @@ export function createDeviceRoutes(options: {
           decision,
         );
         if (done) {
-          return context.json({ ok: true, kind: "confirmation" });
+          return context.json({
+            ok: true,
+            id,
+            decision,
+            kind: "confirmation",
+          });
         }
       }
       return context.json({ error: "这个审批已经处理过或已过期。" }, 404);

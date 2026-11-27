@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **新增 ChisaBot Chrome / Edge 浏览器伴侣扩展（Manifest V3）与全端浏览器实时预览大卡**：
+  - **共享契约与形式化验证（`shared/browser-companion.ts`、`shared/devices.ts`）**：建立单一接管会话状态机（`idle / controlling / yielded_to_human / awaiting_approval / detached`）与三档浏览器权限策略（`observe` 仅观察 / `cautious` 谨慎操作默认 / `full` 完全访问）；内置受限协议/扩展商店/密码管理器黑名单（含逐段 `%XX` 安全解码与矩阵参数剥离）与中英文付款强制锁（支持折叠 CJK 间空白/零宽字符及连续大写驼峰），并补齐 `server/tests/formal-browser-companion.test.ts` BFS 状态空间穷举与变异体捕杀验证。
+  - **Chrome / Edge MV3 浏览器扩展本体（`browser-extension/`）**：提供原生 Side Panel 侧边栏聊天（接入六套主题 × 深浅色 × 纯 CSS 三档材质 `[data-surface]`，支持已登录标签页一键免密认领、账号密码与一次性配对码三种绑定方式）、会话级按需 `chrome.debugger`（CDP）无障碍快照/硬件级悬停点击与无遮挡后台截图、Bot 彩色标签组与显式 `tabId` 严格隔离，以及 Closed Shadow DOM 页内蓝色呼吸光框、顶部动作胶囊、真人插手自动礼让与点 `×` 急停；提供 `bun run build:extension` 与 `bun run test:extension` 一键打包测试流水线。
+  - **服务端桥接与双浏览器智能路由（`server/src/devices/`、`deploy/public/nginx.conf`）**：接入 `platform = "browser_extension"` 设备注册、一次性扩展配对码（`kind = "extension"`）与免改网关 `/api/devices/agent/companion/*` 令牌通道；支持侧栏附着优先与跨端远程调度开关（默认关闭）的双模浏览器路由，严格按服务端分区缓存的 `snapshotId` 解析真实控件并经确认卡批准后注入 `_approved: true` 防伪造，截图自动落库 `chat-shots`；新增 `GET /api/devices/extension/{meta,download}` 安装包分发接口（无新增数据库迁移，存量公网网关零改动兼容）。
+  - **全端浏览器实时预览大卡与设备页（`app/`）**：新增 `BrowserLiveCard`（悬浮角色头像动作徽章 + 16:10 实时缩略图大卡/Lightbox + 「打开标签页」按钮 + 审批卡挂接槽）与输入框正上方单行实时状态横条 `BrowserStatusBar`，双源兼容云端 `computer_*` 与本机扩展 `browser_*` 工具；在「设置 → 设备」新增 Chrome / Edge 浏览器扩展下载卡片、一次性扩展绑定码与三步安装指引。
+
 ## 0.1.192 — 2026-11-27
 
 全端版本 `0.1.192`，Android `versionCode 372`：合入全量六模块审查优化（PR #599–#604：服务端核心/迁移 `0071`/性能治理、部署更新链与 CI 提速、Web 体验与首屏瘦身降耗、PC 桌面端与 Android 原生壳加固）、聊天输入框图片点击预览与对话弹跳结构性根治、附件草稿恢复与容器 `agent-runtime` 依赖修复，以及设置页切页延迟专项修复（PR #605）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `1bcf7830ebace34c`；含 1 项非破坏性自动索引迁移 `0071_tool_operations_run_created_idx.sql`（自动执行，无需手动操作）。

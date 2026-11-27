@@ -161,6 +161,7 @@
 | [153](#153-桌面端全面流畅度治理windows-小窗原子落位与竖屏面板零回跳2026-11-22)                               | 桌面端全面流畅度治理、Windows 小窗单步原子落位、竖屏面板开关零回跳、滚动区轻磨砂与防复发性能红线                     | 2026-11-22                                                                 |
 | [154](#154-主题背景画布与纯-css-材质四轴重设计2026-11-23)                                                    | 主题、背景画布与纯 CSS 材质四轴正交重设计、下线重型液态玻璃透镜、单通道 5 层 Token 与 `[data-surface]`、跨端同步与无损迁移 | 2026-11-23                                                                 |
 | [155](#155-六套深度定制主题体系默认天空星空--极光--青花瓷--deepseek--claude--coss-ui2026-11-24)                 | 六套深度定制主题体系：默认天空星空、极光、青花瓷、DeepSeek、Claude、coss ui、3×2 预览卡与无损迁移                      | 2026-11-24                                                                 |
+| [156](#156-chisabot-chrome--edge-浏览器伴侣扩展与全端浏览器实时预览大卡2026-11-28)                             | ChisaBot Chrome / Edge 浏览器伴侣扩展（MV3 侧栏 / CDP 接管 / Shadow DOM HUD / 三档权限）与全端浏览器实时预览大卡      | 2026-11-28                                                                 |
 
 ## 0. 总原则
 
@@ -3182,6 +3183,28 @@ Stop、失败、重启后，未完成补话在服务端持久暂停。刷新、�
   - `VALID_THEME_IDS` 严格固定为 `["sky", "aurora", "porcelain", "deepseek", "claude", "cossui"]`，`DEFAULT_THEME_ID = "sky"`。
   - 退场主题与历史别名通过 `LEGACY_THEME_MAP` 在 `theme-family.ts`、`parseAppearanceConfig`、`migrateLegacyAppearance`、`appearanceBootScript()` 与 PC 端 `pc/src/main.js`（`pc:appearance`）全链路无损映射：`sky/default/azure/ocean → sky`、`aurora/violet/nocturne/emerald → aurora`、`porcelain/celadon → porcelain`、`deepseek/mist/london/stardust → deepseek`、`claude/amber/sunset/gold/sakura/ruby → claude`、`cossui/coss/mono → cossui`。
   - 严格维持单通道与对比度红线：`--side-sec-main-ink` / `--side-sub-ink` / `--avatar-ink` 仅声明于 `:root` 与 `html.dark`；`--task-info` / `--sem-success` / `--sem-warn` / `--sem-danger` 不被任何主题块覆写；不新增非 `none` `backdrop-filter` 规则（`blurringRules.length === 4`）；6 主题 × 浅/深 × 3 材质 × 5 表面 × 净色/极值壁纸全矩阵保持 WCAG AA ≥ 4.5:1、`prefers-contrast: more` 全线 AAA ≥ 7.0:1；同步更新 `pc/src/ui/skyglass-tokens.css` 与 `pc/src/shell-fingerprint.json`。
+
+---
+
+## 156. ChisaBot Chrome / Edge 浏览器伴侣扩展与全端浏览器实时预览大卡（2026-11-28）
+
+- **目标与双模协同架构**：在用户日常使用的 Chrome / Edge 浏览器中提供原生 Manifest V3 伴侣扩展（`browser-extension/`），通过原生 Side Panel 侧边栏与用户自托管的 ChisaBot 服务器建立长连接，在用户已登录的真实网页中协作浏览与执行任务，同时不抢占操作系统物理鼠标、不导出 Cookie；并与服务端云端浏览器（`agent-computer`）组成智能双模路由（侧栏附着当前页优先走本机扩展，跨端调用受「允许从其他设备远程调用此浏览器」默认关闭开关保护，离线或常规后台查资料自动回退云端浏览器）。
+- **共享契约、状态机与安全红线（`shared/browser-companion.ts`、`shared/devices.ts`）**：
+  - 显式定义单一接管会话状态机 `reduceBrowserCompanionSession`（`idle / controlling / yielded_to_human / awaiting_approval / detached`）与三档浏览器权限策略（`observe` 仅观察、`cautious` 谨慎操作默认、`full` 完全访问）。
+  - `assessBrowserActionRisk` 与 `matchBlockedOrigin` 提供确定性安全护栏：受限协议（`chrome:`/`edge:`/`about:`/`file:`/`chrome-extension:`）、扩展商店、密码管理器及用户自定义域名黑名单（含逐段 `%XX` 安全解码、矩阵参数剥离与路径消解）一律 `deny`；中英文付款/购买/转账/结账类控件（支持折叠 CJK 间空白/零宽字符及连续大写驼峰）在全部档位（含 `full`）强制 `ask` + `locked: true`；`observe` 档拦截全部写操作，`cautious` 档拦截删除/重启/提交/发信/改密等高危语义与表单提交。
+  - 服务端按 `(ownerUserId, deviceId)` 分区缓存无障碍快照（抹除密码框明文），写操作强制依据服务端缓存的 `(snapshotId, ref)` 解析真实控件语义并剥离模型自报标签与伪造 `_approved`，仅在用户通过网页或侧栏确认卡真实批准后向出站 WSS 注入 `args._approved = true`，扩展端执行二次本地风险纵深防御校验。
+- **Chrome / Edge MV3 扩展本体（`browser-extension/`）**：
+  - **顶层同步唤醒与会话级 CDP**：MV3 Service Worker 顶层零 `await` 同步注册全部 Chrome 事件监听器（回调统一 `await readyPromise`），消除冷启动/休眠唤醒丢事件；纯聊天零 debugger 横幅，首次页面操作按需挂接 `chrome.debugger` 1.3，实现同构无障碍快照、`mouseMoved` 真实悬停、后台标签无遮挡截图（先隐藏 HUD 一帧后 `finally` 恢复），点页内 `×` / 关闭附着 / 关闭侧栏 / 急停立即 `detach` 并清空 HUD。
+  - **Bot 彩色标签组与隔离**：首次操作自动创建或复用以当前 Bot 命名的蓝色标签组，自动收拢受控页弹出的子标签（上限 8 个）；所有显式 `tabId` 严格校验归属 `controlledTabs` 或当前已附着活跃页，黑名单当前页发起安全导航时强制新开干净标签绝不劫持。
+  - **Closed Shadow DOM 页内 HUD 与人机礼让**：挂载四周非阻塞蓝色呼吸光框（`pointer-events: none`）与顶部居中磨砂胶囊（Bot 头像 + 名称 + 当前动作 + `×`）；非 CDP 合成输入窗口捕获到真人 `isTrusted` 输入立即进入 `yielded_to_human` 礼让暂停，胶囊切为一键「继续交给 Bot」，点 `×` 立即中止并退出接管。
+  - **Side Panel 侧边栏与免密登录**：接入 §154 / §155 六套主题（`sky / aurora / porcelain / deepseek / claude / cossui`）× 深浅色 × 纯 CSS 三档材质 `[data-surface]`（零 `:has()`）；支持自动探测当前浏览器已登录 ChisaBot 标签页一键免密认领（同源 `POST /api/devices/enroll`）、账号密码与一次性配对码 `cbp_...` 三种登录方式。
+- **服务端令牌通道与安装包分发（`server/src/devices/`、`deploy/public/nginx.conf`）**：
+  - 复用 `/api/devices/agent/*` 令牌通道新增 `platform = "browser_extension"` 设备接入与 `/api/devices/agent/companion/{bootstrap,open-thread,send,events,stop,approvals/:id,settings,shots/:shotId}` 侧栏直连 API（`X-Device-Token` 鉴权 + 按人隔离），已有公网 nginx 部署零改动即可直连；与 PC Shell 节点双向隔离（禁用 `device_run_shell` 与 PC `fullAccess`），全动作写入 `device_audit_events` 并支持急停/撤销即时断连；新增 `GET /api/devices/extension/{meta,download}` 提供扩展 ZIP 包流式下载与 SHA-256 校验。
+- **全端浏览器实时预览大卡与设备页（`app/`）**：
+  - `BrowserLiveCard`（`app/src/components/computer/browser-live-card.tsx`）与 `BrowserActivity`（`app/src/components/channels/browser-activity.tsx`）统一承载云端 `computer_*` 与本机扩展 `browser_*` 双源工具：顶部悬浮 `[data-surface="control"]` 角色头像动作徽章，主体 `[data-surface="bubble"]` 轻模糊大卡含 16:10 `[data-surface="inset"]` 实时缩略图（骨架 / Lightbox 放大 / 复用 `chat-shots` 持久化）、步骤折叠、高危审批卡槽与底部全宽「打开标签页」按钮；运行期间在 `ComposerDock` 正上方挂载单行 `BrowserStatusBar`（`🌐 浏览器 · <当前动作>`），回合结束平滑收起。
+  - 「设置 → 设备」新增 `ChromeExtensionCard`（`app/src/components/devices/chrome-extension-card.tsx`），提供异步状态机 ZIP 一键下载、一次性扩展绑定码（`createPairing("extension")`）、SHA-256 与三步安装说明，并在设备列表/详情页完整呈现扩展权限档位、跨端调度、受控标签数、审计记录与急停/撤销控制。
+- **构建与自动门禁**：根 `package.json` 接线 `bun run build:extension`（产出 `browser-extension/dist/` 与 `browser-extension/dist/chisabot-chrome-extension.zip`，临时 staging `finally` 回收）与 `bun run test:extension`；全套覆盖 `shared/browser-companion.test.ts`、`server/tests/formal-browser-companion.test.ts`（BFS 状态空间穷举 + 4 项变异体捕杀）、`server/tests/browser-companion.test.ts`、`app/tests/browser-live-card.test.tsx`、`browser-extension/tests/*` 及全仓 `bun run check` 零警告。
+
 
 
 

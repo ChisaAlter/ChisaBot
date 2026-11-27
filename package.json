@@ -15,6 +15,7 @@
   ],
   "scripts": {
     "build": "bun run generate:app-config && bun run --filter '*' build",
+    "build:extension": "bun browser-extension/scripts/build.mjs",
     "dev": "bun run generate:app-config && bun run --filter app --filter server --parallel dev",
     "generate:app-config": "bun --env-file=.env scripts/generate-app-config.ts",
     "format": "bunx biome format --write .",
@@ -37,6 +38,7 @@
     "mock:knowledge": "bun scripts/mock-knowledge-mcp.ts",
     "pretest:app": "bun run generate:app-config",
     "test:app": "bun scripts/run-app-tests.ts",
+    "test:extension": "bun test browser-extension/tests",
     "perf:jank": "node perf/jank.mjs",
     "perf:compare": "node perf/compare.mjs",
     "verify:ui": "node scripts/verify-ui.mjs"
