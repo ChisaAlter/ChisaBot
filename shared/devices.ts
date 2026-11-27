@@ -1,7 +1,12 @@
 /**
- * ChisaBot 设备（PC 节点）的共享类型与能力表。服务器、网页和 PC 客户端读同一份定义。
+ * ChisaBot 设备（PC 节点与浏览器伴侣扩展）的共享类型与能力表。服务器、网页、PC 客户端与扩展读同一份定义。
  * 设计见 docs/pc-node.md。
  */
+import type {
+  CompanionServerCommand,
+  CompanionSettingsPatch,
+  CompanionStateReport,
+} from "./browser-companion";
 
 /** 可单独开关的能力。system_info（只读基本信息）不算能力，始终可用并照常审计。 */
 export const DEVICE_CAPABILITIES = [
@@ -146,7 +151,15 @@ export function isMobilePlatform(platform: string | null | undefined): boolean {
 /** 手机最近一次会话校验在这个时间内 = 显示「在线」（网关约每 30 秒校验一次）。 */
 export const MOBILE_ONLINE_WINDOW_MS = 3 * 60_000;
 
-/** 每个设备操作需要的能力；system_info 为 null（始终可用）。 */
+/** 浏览器伴侣扩展（Chrome / Edge MV3）的设备平台标识。 */
+export const BROWSER_EXTENSION_PLATFORM = "browser_extension" as const;
+export function isBrowserExtensionPlatform(
+  platform: string | null | undefined,
+): boolean {
+  return platform === BROWSER_EXTENSION_PLATFORM;
+}
+
+/** 每个设备操作需要的能力；system_info / activity / browser_control 为 null（始终可用，仍受急停与审计约束）。 */
 export const OPERATION_CAPABILITY: Record<
   DeviceOperation,
   DeviceCapability | null
@@ -183,6 +196,18 @@ export const OPERATION_CAPABILITY: Record<
   desktop_snapshot: "screenshot",
   desktop_act: "input",
   window_screenshot: "screenshot",
+  // 浏览器伴侣扩展（shared/browser-companion.ts）：读/快照/滚屏/悬停/截图/列标签 = screenshot，导航 = open，点击/填表/按键 = input，会话控制 = null。
+  browser_tabs: "screenshot",
+  browser_snapshot: "screenshot",
+  browser_read: "screenshot",
+  browser_navigate: "open",
+  browser_click: "input",
+  browser_hover: "screenshot",
+  browser_type: "input",
+  browser_key: "input",
+  browser_scroll: "screenshot",
+  browser_screenshot: "screenshot",
+  browser_control: null,
 };
 
 /** git 只读子命令（status / diff / log / show / 列分支…）只要「读取文件」能力；其余要「命令行」。 */
@@ -296,7 +321,18 @@ export type DeviceOperation =
   | "desktop_windows"
   | "desktop_snapshot"
   | "desktop_act"
-  | "window_screenshot";
+  | "window_screenshot"
+  | "browser_tabs"
+  | "browser_snapshot"
+  | "browser_read"
+  | "browser_navigate"
+  | "browser_click"
+  | "browser_hover"
+  | "browser_type"
+  | "browser_key"
+  | "browser_scroll"
+  | "browser_screenshot"
+  | "browser_control";
 
 export const OPERATION_LABEL: Record<DeviceOperation, string> = {
   system_info: "读取系统信息",
@@ -330,6 +366,17 @@ export const OPERATION_LABEL: Record<DeviceOperation, string> = {
   desktop_snapshot: "读取桌面控件树",
   desktop_act: "后台操控桌面控件",
   window_screenshot: "后台截取窗口",
+  browser_tabs: "管理浏览器标签页",
+  browser_snapshot: "读取网页控件树",
+  browser_read: "读取网页正文",
+  browser_navigate: "打开网页",
+  browser_click: "点击网页元素",
+  browser_hover: "悬停网页元素",
+  browser_type: "填写网页表单",
+  browser_key: "网页按键",
+  browser_scroll: "滚动网页",
+  browser_screenshot: "截取网页画面",
+  browser_control: "控制浏览器接管会话",
 };
 
 /** 网页 / PC 看到的设备。不含令牌。 */
@@ -375,6 +422,8 @@ export type DeviceView = {
   features?: string[] | null;
   /** 已签发的桌面桥接 / 无障碍 scopes（如 accessibility_control），同步给 PC 端。 */
   grantedScopes?: string[];
+  /** 浏览器伴侣扩展实时会话状态（仅 platform === "browser_extension" 在线时提供）。 */
+  companionState?: CompanionStateReport | null;
 };
 
 export type DeviceAuditEntry = {
@@ -440,9 +489,10 @@ export type DeviceToServer =
       fullAccess?: "off";
     }
   | { type: "local_audit"; action: string; outcome: string; summary?: string }
+  | ({ type: "companion_state" } & CompanionStateReport)
   | { type: "pong" };
 
-/** WebSocket 协议（服务器 → PC）。 */
+/** WebSocket 协议（服务器 → PC / 浏览器扩展）。 */
 export type ServerToDevice =
   | { type: "welcome"; device: DeviceView; serverTime: string }
   | { type: "config"; device: DeviceView }
@@ -480,7 +530,15 @@ export type ServerToDevice =
       /** 触发原因（release_watch / hello_behind / admin_push）。 */
       reason?: string;
     }
-  | { type: "direction_epoch_advance"; conversationId: string };
+  | { type: "direction_epoch_advance"; conversationId: string }
+  | ({ type: "companion_state" } & CompanionStateReport)
+  | {
+      type: "companion_command";
+      command: CompanionServerCommand;
+      tabId?: number | null;
+      reason?: string;
+      config?: CompanionSettingsPatch;
+    };
 
 /** 打开就等于运行的文件类型（CB-030）。和 pc/src/agent/open-target.js 的 EXECUTABLE_EXT 一致。 */
 export const OPEN_EXECUTABLE_EXT: ReadonlySet<string> = new Set(
