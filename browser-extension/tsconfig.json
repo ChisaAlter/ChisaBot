@@ -1,0 +1,26 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "lib": ["ES2024", "DOM", "DOM.Iterable", "WebWorker"],
+    "typeRoots": ["../node_modules/@types", "../app/node_modules/@types"],
+    "paths": {
+      "react": ["../app/node_modules/@types/react/index.d.ts"],
+      "react/jsx-runtime": [
+        "../app/node_modules/@types/react/jsx-runtime.d.ts"
+      ],
+      "react-dom": ["../app/node_modules/@types/react-dom/index.d.ts"],
+      "react-dom/client": ["../app/node_modules/@types/react-dom/client.d.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.d.ts",
+    "tests/**/*.ts",
+    "tests/**/*.tsx",
+    "../shared/browser-companion.ts",
+    "../shared/devices.ts"
+  ]
+}

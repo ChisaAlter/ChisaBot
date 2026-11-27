@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "ChisaBot 浏览器伴侣",
+  "short_name": "ChisaBot",
+  "version": "0.1.192",
+  "description": "在浏览器侧边栏与你的 ChisaBot 助手实时对话，按需安全读取并协作操控当前网页，支持标签组隔离、页内光框提示与真人礼让。",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "sidePanel",
+    "tabs",
+    "tabGroups",
+    "debugger",
+    "scripting",
+    "storage",
+    "activeTab",
+    "webNavigation"
+  ],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/index.html"
+  },
+  "action": {
+    "default_title": "打开 ChisaBot 浏览器伴侣",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  }
+}
