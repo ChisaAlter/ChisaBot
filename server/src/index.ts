@@ -6944,10 +6944,7 @@ const app = createApp(
                           JSON.stringify({
                             type: "companion-dispatch-error",
                             runId: record.run_id,
-                            reason:
-                              error instanceof Error
-                                ? error.message
-                                : String(error),
+                            reason: reasonWithoutStatement(error),
                           }),
                         ),
                     });
