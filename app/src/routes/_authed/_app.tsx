@@ -4,7 +4,12 @@ import { rememberBotsLocation } from "@/lib/bots-location";
 import { objectConnectionKey } from "@/lib/connection-key";
 
 /** Route chunks the avatar menu leads to, fetched once the app is idle so those clicks never wait. */
-const IDLE_PRELOAD = ["/_authed/settings", "/_authed/settings/connected-accounts/", "/_authed/admin"] as const;
+const IDLE_PRELOAD = [
+  "/_authed/settings",
+  "/_authed/settings/",
+  "/_authed/settings/connected-accounts/",
+  "/_authed/admin",
+] as const;
 
 function useIdleRoutePreload() {
   const router = useRouter();

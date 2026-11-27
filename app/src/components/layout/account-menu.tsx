@@ -41,7 +41,7 @@ import {
 } from "@/lib/simple-mode";
 import type { AppearanceMode } from "@/lib/theme";
 import { cn } from "@/lib/utils";
-import { openAccountDialog, preloadAccountDialogs } from "./account-dialogs";
+import { openAccountDialog, preloadAccountDialog } from "./account-dialogs";
 
 const ACCOUNT_MODE_OPTIONS: readonly {
   value: AppearanceMode;
@@ -148,11 +148,11 @@ export function AccountMenu({
       modal={false}
       onOpenChange={(next) => {
         if (next) {
-          preloadAccountDialogs();
           setLeaving(false);
+          // 菜单打开时只预取最高频的设置主入口与设置左栏；其余菜单项在悬停/聚焦/按压时按需预取，
+          // 避免一开头像菜单就并发拉起审批/定时任务/弹窗等十余个无关分包拖垮主线程与连接池。
           void router.preloadRoute({ to: "/settings" }).catch(() => undefined);
-          void router.preloadRoute({ to: "/approvals" }).catch(() => undefined);
-          void router.preloadRoute({ to: "/settings/schedules" }).catch(() => undefined);
+          void import("@/components/settings/settings-sidebar").catch(() => undefined);
         }
         setOpen(next);
       }}
@@ -197,8 +197,17 @@ export function AccountMenu({
               if (sidebar?.isMobile) sidebar.setOpenMobile(false);
               openAccountDialog("profile");
             }}
+            onPrefetch={() => preloadAccountDialog("profile")}
           />
-          <Row icon={<IconSettings className={icon} />} label={"设置"} onClick={() => go("/settings")} />
+          <Row
+            icon={<IconSettings className={icon} />}
+            label={"设置"}
+            onClick={() => go("/settings")}
+            onPrefetch={() => {
+              void router.preloadRoute({ to: "/settings" }).catch(() => undefined);
+              void import("@/components/settings/settings-sidebar").catch(() => undefined);
+            }}
+          />
           {!simpleMode ? (
             <Row
               icon={<IconListCheck className={icon} />}
@@ -215,6 +224,7 @@ export function AccountMenu({
               icon={<IconAlarm className={icon} />}
               label={"定时任务"}
               onClick={() => go("/settings/schedules")}
+              onPrefetch={() => void router.preloadRoute({ to: "/settings/schedules" }).catch(() => undefined)}
             />
           ) : null}
           {!simpleMode || pending > 0 ? (
@@ -223,6 +233,7 @@ export function AccountMenu({
               icon={<IconInbox className={icon} />}
               label={"待处理"}
               onClick={() => go("/approvals")}
+              onPrefetch={() => void router.preloadRoute({ to: "/approvals" }).catch(() => undefined)}
             />
           ) : null}
         </DropdownMenuGroup>
@@ -237,6 +248,7 @@ export function AccountMenu({
               if (sidebar?.isMobile) sidebar.setOpenMobile(false);
               openAccountDialog("pair-phone");
             }}
+            onPrefetch={() => preloadAccountDialog("pair-phone")}
           />
         </DropdownMenuGroup>
         <DropdownMenuSeparator className="glass-sep" />
@@ -324,18 +336,23 @@ function Row({
   label,
   hint,
   onClick,
+  onPrefetch,
   danger,
 }: {
   icon: ReactNode;
   label: string;
   hint?: string;
   onClick: () => void;
+  onPrefetch?: () => void;
   danger?: boolean;
 }) {
   return (
     <DropdownMenuItem
       className={cn("glass-mi", danger && "is-danger")}
       onClick={onClick}
+      onFocus={onPrefetch}
+      onPointerDown={onPrefetch}
+      onPointerEnter={onPrefetch}
       variant={danger ? "destructive" : "default"}
     >
       <span className="mi-lead">{icon}</span>

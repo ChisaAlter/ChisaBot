@@ -14,9 +14,10 @@ const BrandDialog = lazyDialog(() =>
   import("./brand-mark").then((m) => m.BrandDialog),
 );
 
-export function preloadAccountDialogs() {
-  ProfileDialog.preload();
-  PairPhoneDialog.preload();
+export function preloadAccountDialog(dialog: AccountDialog) {
+  if (dialog === "profile") ProfileDialog.preload();
+  else if (dialog === "pair-phone") PairPhoneDialog.preload();
+  else BrandDialog.preload();
 }
 
 export function openAccountDialog(dialog: AccountDialog) {

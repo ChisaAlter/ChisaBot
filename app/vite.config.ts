@@ -298,7 +298,8 @@ export function selectChisaBotManualChunk(
   }
   if (
     routePath.startsWith("_authed/admin/") ||
-    routePath.startsWith("_authed/settings/")
+    routePath.startsWith("_authed/settings/") ||
+    routePath === "_authed/_app/approvals.tsx"
   ) {
     return undefined;
   }

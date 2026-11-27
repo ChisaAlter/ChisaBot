@@ -78,6 +78,11 @@ test("uses explicit manual chunks for route components", () => {
       "/repo/app/src/routes/_authed/_app/agents/index.tsx?tsr-split=component",
     ),
   ).toBe("route-app-secondary");
+  expect(
+    selectChisaBotManualChunk(
+      "/repo/app/src/routes/_authed/_app/approvals.tsx?tsr-split=component",
+    ),
+  ).toBeUndefined();
 });
 
 test("does not manually chunk lazy content or dependencies", () => {
