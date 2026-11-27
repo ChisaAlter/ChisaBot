@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.192 — 2026-11-27
+
+全端版本 `0.1.192`，Android `versionCode 372`：合入全量六模块审查优化（PR #599–#604：服务端核心/迁移 `0071`/性能治理、部署更新链与 CI 提速、Web 体验与首屏瘦身降耗、PC 桌面端与 Android 原生壳加固）、聊天输入框图片点击预览与对话弹跳结构性根治、附件草稿恢复与容器 `agent-runtime` 依赖修复，以及设置页切页延迟专项修复（PR #605）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `1bcf7830ebace34c`；含 1 项非破坏性自动索引迁移 `0071_tool_operations_run_created_idx.sql`（自动执行，无需手动操作）。
+
 - **修复点击「设置」耗时数秒的切页延迟（拆解头像菜单预加载炸弹、补齐设置空闲预取与消除挂载强制重排）**：
   - **拆除头像菜单预加载炸弹**：将 `AccountMenu` 展开时的并发预加载收敛为仅预取最高频的设置主入口（`/settings`）与设置左栏（`SettingsSidebar`），其余入口（`个人资料`、`定时任务`、`待处理`、`绑定手机`）改为在悬停 / 聚焦 / 按压对应菜单项时按需预取；同步将 `_authed/_app/approvals.tsx` 从 `route-app-secondary` 独立拆块，避免预取 `/approvals` 连带下载执行 `workflows` / `editor` / `task-center.css` 等十余个无关分包并触发整页样式失效。
   - **补齐空闲预取与消除切页强制重排**：修复 `_app.tsx` `IDLE_PRELOAD` 遗漏 `"/_authed/settings/"` 导致只预取到 0.1 KB `Outlet` 壳的问题，并在 `AuthedShell` 空闲预取中同步预取 `SettingsSidebar`；优化 `PageShell` 挂载逻辑跳过首帧 `scrollTo(0)` + 同步读 `scrollTop`，并修复 `ChatTranscript` `SettleAtEnd` 在聊天被 `KeepAliveStage` 隐藏（`data-visible="false"` / `content-visibility: hidden`）时仍同步读 `scrollHeight`/`clientHeight`/`scrollTop` 触发全页与隐藏对话强制重排的问题（纯前端改动，更新客户端指纹，无新增数据库迁移）。
