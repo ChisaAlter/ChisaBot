@@ -721,6 +721,113 @@ describe("browser companion: dual-mode routing", () => {
       attachedTab: { tabId: 7, url: "https://a.com", title: "A" },
     });
   });
+
+  test("agent-tools browser_* path enforces allowRemoteDispatch=false and per-thread attachment targeting", async () => {
+    const { mem, hub, companion } = makeHarness();
+    const { device: extA } = await mem.store.enroll({
+      ownerUserId: "u1",
+      name: "扩展 A（默认关闭跨端）",
+      platform: BROWSER_EXTENSION_PLATFORM,
+    });
+    const { device: extB } = await mem.store.enroll({
+      ownerUserId: "u1",
+      name: "扩展 B（关闭跨端）",
+      platform: BROWSER_EXTENSION_PLATFORM,
+    });
+    const sockA = createFakeSocket();
+    const sockB = createFakeSocket();
+    const handlersA = hub.attach(extA, sockA.socket, "127.0.0.1");
+    const handlersB = hub.attach(extB, sockB.socket, "127.0.0.1");
+
+    // 1. 无侧栏附着且默认 allowRemoteDispatch=false → agent-tools 路径必须拒绝，严禁绕过开关！
+    const denied = await companion.executeAgentToolCall({
+      ownerUserId: "u1",
+      botId: "bot1",
+      botName: "助手",
+      threadId: "thread_remote_only",
+      operation: "browser_tabs",
+      args: { action: "list" },
+    });
+    expect(denied.isError).toBe(true);
+    expect(denied.text).toContain("Refused.");
+    expect(denied.text).toContain("允许从其他设备远程调用此浏览器");
+    expect(sockA.sent.some((m) => m.type === "call")).toBe(false);
+    expect(sockB.sent.some((m) => m.type === "call")).toBe(false);
+
+    // 2. 多扩展在线：extA 附着在 thread_sidepanel（仍关闭跨端），extB 开启跨端调度
+    companion.bindThreadAttachment({
+      ownerUserId: "u1",
+      threadId: "thread_sidepanel",
+      deviceId: extA.id,
+      attached: true,
+    });
+    companion.updateConfig(extB, { allowRemoteDispatch: true });
+
+    // thread_sidepanel 必须精准路由到 extA
+    const sidepanelCall = companion.executeAgentToolCall({
+      ownerUserId: "u1",
+      botId: "bot1",
+      botName: "助手",
+      threadId: "thread_sidepanel",
+      operation: "browser_tabs",
+      args: { action: "list" },
+    });
+    await tick();
+    const callOnA = sockA.sent.find(
+      (m) => m.type === "call" && m.operation === "browser_tabs",
+    ) as { id: string } | undefined;
+    expect(callOnA).toBeDefined();
+    expect(sockB.sent.some((m) => m.type === "call")).toBe(false);
+    await handlersA.onMessage(
+      JSON.stringify({
+        type: "result",
+        id: callOnA?.id,
+        ok: true,
+        result: { tabs: [{ tabId: 1, title: "A" }] },
+      }),
+    );
+    const sidepanelOut = await sidepanelCall;
+    expect(sidepanelOut.isError).toBe(false);
+    expect(JSON.parse(sidepanelOut.text).deviceId).toBe(extA.id);
+
+    // 未附着线程 thread_remote_only 则定向到开启 allowRemoteDispatch=true 的 extB
+    const remoteCall = companion.executeAgentToolCall({
+      ownerUserId: "u1",
+      botId: "bot1",
+      botName: "助手",
+      threadId: "thread_remote_only",
+      operation: "browser_tabs",
+      args: { action: "list" },
+    });
+    await tick();
+    const callOnB = sockB.sent.find(
+      (m) => m.type === "call" && m.operation === "browser_tabs",
+    ) as { id: string } | undefined;
+    expect(callOnB).toBeDefined();
+    await handlersB.onMessage(
+      JSON.stringify({
+        type: "result",
+        id: callOnB?.id,
+        ok: true,
+        result: { tabs: [{ tabId: 2, title: "B" }] },
+      }),
+    );
+    const remoteOut = await remoteCall;
+    expect(remoteOut.isError).toBe(false);
+    expect(JSON.parse(remoteOut.text).deviceId).toBe(extB.id);
+
+    // 3. 跨用户绝不能复用 u1 的 thread_sidepanel 附着绑定
+    const crossUserCall = await companion.executeAgentToolCall({
+      ownerUserId: "u2",
+      botId: "bot1",
+      botName: "助手",
+      threadId: "thread_sidepanel",
+      operation: "browser_tabs",
+      args: { action: "list" },
+    });
+    expect(crossUserCall.isError).toBe(true);
+    expect(crossUserCall.text).toContain("Refused.");
+  });
 });
 
 describe("browser companion: anti-tamper ref resolution, risk gate, confirmation card, blocklist & screenshots", () => {
@@ -1184,9 +1291,14 @@ describe("browser companion: /api/devices/agent/companion/* auth, isolation & /e
       },
     );
     expect(bootRes.status).toBe(200);
-    const boot = (await bootRes.json()) as CompanionBootstrapResponse;
+    const boot = (await bootRes.json()) as CompanionBootstrapResponse & {
+      pendingApprovals?: unknown[];
+    };
     expect(boot.user.id).toBe("u1");
     expect(boot.defaultBotId).toBe("bot1");
+    expect(Array.isArray(boot.pendingApprovals)).toBe(true);
+    expect(boot.companionConfig?.tier).toBe("cautious");
+    expect(boot.bots[0]?.avatarUrl ?? null).toBeNull();
 
     const openRes = await app.request(
       "/api/devices/agent/companion/open-thread",
@@ -1272,6 +1384,25 @@ describe("browser companion: /api/devices/agent/companion/* auth, isolation & /e
       },
     );
     expect(okSettings.status).toBe(200);
+    const okSettingsJson = (await okSettings.json()) as {
+      ok: boolean;
+      config?: {
+        tier: string;
+        allowRemoteDispatch: boolean;
+        blockedDomains: string[];
+      };
+      companionConfig?: {
+        tier: string;
+        allowRemoteDispatch: boolean;
+        blockedDomains: string[];
+      };
+    };
+    expect(okSettingsJson.config?.tier).toBe("observe");
+    expect(okSettingsJson.companionConfig?.tier).toBe("observe");
+    expect(okSettingsJson.companionConfig?.allowRemoteDispatch).toBe(true);
+    expect(okSettingsJson.companionConfig?.blockedDomains).toEqual([
+      "bank.example.com",
+    ]);
     expect(companion.getConfig(extU1.id).tier).toBe("observe");
     expect(companion.getConfig(extU1.id).allowRemoteDispatch).toBe(true);
     expect(
@@ -1301,6 +1432,22 @@ describe("browser companion: /api/devices/agent/companion/* auth, isolation & /e
     await tick();
     const [u1Approval] = hub.listApprovals("u1");
     expect(u1Approval).toBeDefined();
+
+    // 侧栏重连拉取 bootstrap 必须带回本人的 pendingApprovals，且绝不泄露给 u2
+    const bootPendingU1 = (await (
+      await app.request("/api/devices/agent/companion/bootstrap", {
+        headers: { "x-device-token": extU1Token },
+      })
+    ).json()) as { pendingApprovals?: Array<{ id: string }> };
+    expect(bootPendingU1.pendingApprovals?.map((a) => a.id)).toEqual([
+      u1Approval?.id,
+    ]);
+    const bootPendingU2 = (await (
+      await app.request("/api/devices/agent/companion/bootstrap", {
+        headers: { "x-device-token": extU2Token },
+      })
+    ).json()) as { pendingApprovals?: Array<{ id: string }> };
+    expect(bootPendingU2.pendingApprovals).toEqual([]);
 
     const crossApproveRes = await app.request(
       `/api/devices/agent/companion/approvals/${u1Approval?.id}`,

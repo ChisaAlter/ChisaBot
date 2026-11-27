@@ -4486,6 +4486,14 @@ const actorAgentResolver = createActorAgentResolver({
               .agentOwner(botId)
               .catch(() => undefined);
             if (typeof owner === "string" && owner !== actorId) return [];
+            if (input.threadId && companionProps.attachedExtensionDeviceId) {
+              browserCompanion.bindThreadAttachment({
+                ownerUserId: actorId,
+                threadId: input.threadId,
+                deviceId: companionProps.attachedExtensionDeviceId,
+                attached: companionProps.attached !== false,
+              });
+            }
             const route = await browserCompanion.resolveRoute({
               ownerUserId: actorId,
               attachedExtensionDeviceId:
@@ -6274,36 +6282,19 @@ const app = createApp(
           isError: true,
         };
       }
-      const extensions = await browserCompanion.listOwnedExtensions(actorId);
-      const activeExt = extensions.find(
-        (ext) => !ext.revoked && !ext.paused && deviceHub.isOnline(ext.id),
-      );
-      if (!activeExt) {
-        return {
-          text: `${REFUSAL_MARKER} 当前账号下没有在线的 ChisaBot 浏览器伴侣扩展。`,
-          isError: true,
-        };
-      }
       const botName = await agentProfileStore
         .get(await actorFor(actorId), botId)
         .then((profile) => profile?.name ?? null)
         .catch(() => null);
-      try {
-        const result = await browserCompanion.executeAction({
-          ownerUserId: actorId,
-          deviceId: activeExt.id,
-          botId,
-          botName,
-          operation: name,
-          args,
-          ...(initiator ? { initiator } : {}),
-        });
-        return { text: JSON.stringify(result), isError: false };
-      } catch (error) {
-        const msg =
-          error instanceof Error ? error.message : "浏览器伴侣操作失败。";
-        return { text: `${REFUSAL_MARKER} ${msg}`, isError: true };
-      }
+      return browserCompanion.executeAgentToolCall({
+        ownerUserId: actorId,
+        botId,
+        botName,
+        ...(input.run.threadId ? { threadId: input.run.threadId } : {}),
+        operation: name,
+        args,
+        ...(initiator ? { initiator } : {}),
+      });
     }
     if (name.startsWith("device_")) {
       if (
@@ -6754,6 +6745,9 @@ const app = createApp(
                   prefs?.mainBotId ??
                   profiles[0]?.id ??
                   null;
+                const pendingApprovals = deviceHub.listApprovals(
+                  device.ownerUserId,
+                );
                 return {
                   user: {
                     id: actor.id,
@@ -6774,7 +6768,8 @@ const app = createApp(
                     name: p.name,
                     title: p.title ?? null,
                     hidden: p.hidden,
-                    avatarUrl: `/api/bot-avatars/${encodeURIComponent(p.id)}/image`,
+                    // 扩展侧栏运行在 chrome-extension:// 协议下，避免返回依赖 Cookie 会话的相对路径导致 404 破图。
+                    avatarUrl: null,
                     description: p.roleDescription ?? null,
                   })),
                   defaultBotId,
@@ -6785,7 +6780,8 @@ const app = createApp(
                     colorMode: "system",
                     material: "glass",
                   },
-                  approvals: deviceHub.listApprovals(device.ownerUserId),
+                  pendingApprovals,
+                  approvals: pendingApprovals,
                   state: browserCompanion.getStateReport(device.id),
                 };
               },
@@ -6856,6 +6852,12 @@ const app = createApp(
                   input.attached !== false,
                   input.attachedTab,
                 );
+                browserCompanion.bindThreadAttachment({
+                  ownerUserId: actor.id,
+                  threadId: channel.threadId,
+                  deviceId: device.id,
+                  attached: input.attached !== false,
+                });
 
                 const runInput = RunAgentInputSchema.parse({
                   threadId: channel.threadId,

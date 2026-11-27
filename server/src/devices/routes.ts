@@ -80,6 +80,7 @@ export type CompanionOpenThreadResult = {
 export type CompanionRouteBridge = {
   bootstrap(device: DeviceRecord): Promise<
     CompanionBootstrapResponse & {
+      pendingApprovals?: DeviceApprovalView[];
       approvals?: DeviceApprovalView[];
       state?: CompanionStateReport | null;
     }
@@ -729,9 +730,24 @@ export function createDeviceRoutes(options: {
       if (!bridge) {
         return context.json({ error: "浏览器伴侣侧栏服务未就绪。" }, 503);
       }
-      const data = await bridge.bootstrap(context.get("device"));
+      const device = context.get("device");
+      const data = await bridge.bootstrap(device);
+      const pendingApprovals =
+        data.pendingApprovals ??
+        data.approvals ??
+        hub.listApprovals(device.ownerUserId);
+      const companionConfig =
+        data.companionConfig ??
+        data.config ??
+        options.companion?.getConfig(device.id, device.ownerUserId);
       context.header("cache-control", "no-store");
-      return context.json(data);
+      return context.json({
+        ...data,
+        ...(companionConfig
+          ? { config: companionConfig, companionConfig }
+          : {}),
+        pendingApprovals,
+      });
     },
   );
 
@@ -1017,7 +1033,11 @@ export function createDeviceRoutes(options: {
         ok: true,
         device: hub.view(fresh),
         ...(runtimeUpdated
-          ? { config: runtimeUpdated.config, state: runtimeUpdated.state }
+          ? {
+              config: runtimeUpdated.config,
+              companionConfig: runtimeUpdated.config,
+              state: runtimeUpdated.state,
+            }
           : {}),
       });
     },

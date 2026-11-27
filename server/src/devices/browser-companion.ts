@@ -457,6 +457,53 @@ export function createBrowserCompanionService(
   const snapshots =
     options.snapshots ?? createBrowserCompanionSnapshotStore({ now });
   const entries = new Map<string, DeviceStateEntry>();
+  const threadAttachments = new Map<
+    string,
+    {
+      ownerUserId: string;
+      threadId: string;
+      deviceId: string;
+      attached: boolean;
+      updatedAt: number;
+    }
+  >();
+
+  function clearThreadAttachmentsForDevice(deviceId: string) {
+    for (const [key, binding] of threadAttachments) {
+      if (binding.deviceId === deviceId) {
+        threadAttachments.delete(key);
+      }
+    }
+  }
+
+  function bindThreadAttachment(input: {
+    ownerUserId: string;
+    threadId: string | null | undefined;
+    deviceId: string | null | undefined;
+    attached: boolean;
+  }) {
+    const cleanThreadId = input.threadId?.trim();
+    if (!cleanThreadId) return;
+    const key = partitionKey(input.ownerUserId, cleanThreadId);
+    const cleanDeviceId = input.deviceId?.trim();
+    if (!input.attached || !cleanDeviceId) {
+      threadAttachments.delete(key);
+      return;
+    }
+    threadAttachments.delete(key);
+    threadAttachments.set(key, {
+      ownerUserId: input.ownerUserId,
+      threadId: cleanThreadId,
+      deviceId: cleanDeviceId,
+      attached: true,
+      updatedAt: now(),
+    });
+    while (threadAttachments.size > 2000) {
+      const oldest = threadAttachments.keys().next().value;
+      if (oldest === undefined) break;
+      threadAttachments.delete(oldest);
+    }
+  }
 
   function getOrCreateEntry(
     deviceId: string,
@@ -853,6 +900,7 @@ export function createBrowserCompanionService(
 
   function onDisconnect(deviceId: string) {
     snapshots.clearDevice(deviceId);
+    clearThreadAttachmentsForDevice(deviceId);
     const entry = entries.get(deviceId);
     if (!entry) return;
     const ts = now();
@@ -865,6 +913,7 @@ export function createBrowserCompanionService(
 
   function onKillSwitch(deviceId: string) {
     snapshots.clearDevice(deviceId);
+    clearThreadAttachmentsForDevice(deviceId);
     sendCommand(deviceId, { command: "kill_switch", reason: "设备已紧急停止" });
     const entry = entries.get(deviceId);
     if (!entry) return;
@@ -878,6 +927,7 @@ export function createBrowserCompanionService(
 
   function onRevoke(deviceId: string) {
     snapshots.clearDevice(deviceId);
+    clearThreadAttachmentsForDevice(deviceId);
     entries.delete(deviceId);
   }
 
@@ -2030,11 +2080,80 @@ export function createBrowserCompanionService(
     return [...browserTools, ...computerAliases];
   }
 
+  async function resolveAgentToolRoute(input: {
+    ownerUserId: string;
+    threadId?: string | null;
+    attachedExtensionDeviceId?: string | null;
+  }): Promise<BrowserRouteDecision> {
+    const explicitId = input.attachedExtensionDeviceId?.trim() || null;
+    const threadBinding = input.threadId?.trim()
+      ? threadAttachments.get(
+          partitionKey(input.ownerUserId, input.threadId.trim()),
+        )
+      : undefined;
+    const attachedId =
+      explicitId ?? (threadBinding?.attached ? threadBinding.deviceId : null);
+    if (attachedId) {
+      return resolveRoute({
+        ownerUserId: input.ownerUserId,
+        attachedExtensionDeviceId: attachedId,
+        attached: true,
+      });
+    }
+    // 无侧栏附着上下文时严格走跨端路由：必须要求在线扩展显式开启 allowRemoteDispatch === true。
+    return resolveRoute({
+      ownerUserId: input.ownerUserId,
+      preferLocalChrome: true,
+    });
+  }
+
+  async function executeAgentToolCall(input: {
+    ownerUserId: string;
+    botId: string;
+    botName: string | null;
+    threadId?: string | null;
+    attachedExtensionDeviceId?: string | null;
+    operation: BrowserCompanionOperation;
+    args: Record<string, unknown>;
+    initiator?: AuditInitiator;
+  }): Promise<{ text: string; isError: boolean }> {
+    const route = await resolveAgentToolRoute({
+      ownerUserId: input.ownerUserId,
+      ...(input.threadId ? { threadId: input.threadId } : {}),
+      ...(input.attachedExtensionDeviceId
+        ? { attachedExtensionDeviceId: input.attachedExtensionDeviceId }
+        : {}),
+    });
+    if (route.mode !== "extension") {
+      return {
+        text: `${REFUSAL_MARKER} ${route.fallbackNote ?? "当前账号下没有可用于本回合的在线浏览器伴侣扩展。"}`,
+        isError: true,
+      };
+    }
+    try {
+      const result = await executeAction({
+        ownerUserId: input.ownerUserId,
+        deviceId: route.device.id,
+        botId: input.botId,
+        botName: input.botName,
+        operation: input.operation,
+        args: input.args,
+        ...(input.initiator ? { initiator: input.initiator } : {}),
+      });
+      return { text: JSON.stringify(result), isError: false };
+    } catch (error) {
+      const msg =
+        error instanceof Error ? error.message : "浏览器伴侣操作失败。";
+      return { text: `${REFUSAL_MARKER} ${msg}`, isError: true };
+    }
+  }
+
   return {
     snapshots,
     applyStateReport,
     updateConfig,
     noteAttachedTab,
+    bindThreadAttachment,
     onDisconnect,
     onKillSwitch,
     onRevoke,
@@ -2043,7 +2162,9 @@ export function createBrowserCompanionService(
     getTabSession,
     sendCommand,
     resolveRoute,
+    resolveAgentToolRoute,
     executeAction,
+    executeAgentToolCall,
     toolsForRoute,
     listOwnedExtensions,
     supportedOperations: BROWSER_COMPANION_OPERATIONS,
