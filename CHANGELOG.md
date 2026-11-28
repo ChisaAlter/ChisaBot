@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.199 — 2026-11-28
+
+全端版本 `0.1.199`，Android `versionCode 379`：用量分析深化（PR #620，CB-146）——五维分组 / 自定义时间范围 / 失败率与耗时分布 / 成本估算 / metadata-only 明细与管理员 CSV 导出，幂等加列无手动迁移。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `6c65d9728dc6863c`。
+
 - **用量分析深化（CB-146）**：provider / agent / scenario / model / kind 五维分组 + 自定义时间范围（预设 7/30/90 天或起止日期）、失败率与耗时分布（p50/p95/峰值）、内置单价表成本估算（未收录模型不计入并如实标注覆盖率）；metadata-only 请求明细节（游标分页）与管理员 CSV 导出——账本结构本身不含任何 prompt / 输入 / 输出内容。记账 enrichment：成功事件记 provider 与端到端耗时，传输异常与 HTTP 失败两个 seam 记 status=error + errorKind（失败率从此有信号）；chat/summary 主流水路穿线 agent 与 scenario 维度；修复内存存储缺 ORDER BY 与 PG 行为不一致的既有缺陷（`server/src/quotas/usage-analytics.ts` · `server/src/quotas/usage-breakdown.ts` · `server/src/conversations/model-connection-proxy.ts` · `shared/usage-pricing.ts` · `app/src/components/settings/usage-analytics-card.tsx` · `server/tests/usage-analytics.test.ts`）。
 
 ## 0.1.198 — 2026-11-28
