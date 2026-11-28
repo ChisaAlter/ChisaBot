@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.193 — 2026-11-28
+
+全端版本 `0.1.193`，Android `versionCode 373`：落地场景化模型路由契约、存储与管理员 API（PR #607，CB-144 系列第一棒，无运行时行为变化、无数据库迁移）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹因 shared 契约新增更新为 `e733f8f390295482`。
+
 - **场景化模型路由 PR1：契约、存储与管理员 API（CB-144，无行为变化）**：新增 `shared/model-scenario-routing.ts`——闭集场景键（chat / suggestions / completion / summarization / memoryExtraction / review / subagent / automation / title / vision / test）与全字段继承语义校验；`enterprise_settings` 单行存储（key `model_scenario_routes`，回滚到旧镜像时被忽略）+ 30 秒缓存 + 管理员 `GET/PUT /api/admin/scenario-routing`（非法输入 400 逐条说明）。纯增量能力：无界面、无运行时行为变化、无数据库迁移，空配置与升级前完全一致；运行时消费方在后续 PR 接入（`shared/model-scenario-routing.ts` · `server/src/agents/model-scenario-routing.ts` · `server/src/index.ts` · `server/tests/model-scenario-routing.test.ts` · [docs/scenario-routing.md](docs/scenario-routing.md)）。
 
 ## 0.1.192 — 2026-11-27
