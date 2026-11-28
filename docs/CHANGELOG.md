@@ -1,5 +1,10 @@
 ## Unreleased
 
+## 0.1.196 — 2026-11-28
+
+全端版本 `0.1.196`，Android `versionCode 376`：输入助手第二层 AI 输入建议（PR #614）。PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹 `1d26a6ef0f4706c9`。
+
+
 - **输入助手 PR5：AI 输入建议端到端（CB-145）**：回复完成后预判用户下一步可能发送的消息，prefetch 2–4 条候选进候选条（输入为空、设置开启时；带 AI 标记，点选填入不发送）。服务端经场景化路由 suggestions 场景单次调用，硬护栏齐全：每人 1.5s 最小间隔 + 同 key 在飞去重 + 60s 内存缓存 + 8s 超时，失败一律静默回落空；上下文由客户端带来（最近 6 条、逐条截断 500 字），服务端无状态不回读会话库、不写库不进日志；默认关闭，设置 → 输入助手显式打开（开关文案如实说明草稿会发给部署方模型）（`server/src/composer/ai-suggestions.ts` · `server/src/composer/index.ts` · `app/src/lib/composer/queries.ts` · `app/src/components/channels/composer/candidate-strip.tsx` · `app/src/components/channels/conversation-view.tsx` · `server/tests/composer-ai-suggestions.test.ts`）。
 
 ## 0.1.195 — 2026-11-28
