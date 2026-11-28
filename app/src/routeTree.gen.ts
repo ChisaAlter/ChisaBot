@@ -46,6 +46,7 @@ import { Route as AuthedSettingsIndexRouteImport } from './routes/_authed/settin
 import { Route as AuthedSettingsAgentProvidersRouteImport } from './routes/_authed/settings/agent-providers'
 import { Route as AuthedSettingsApprovalsRouteImport } from './routes/_authed/settings/approvals'
 import { Route as AuthedSettingsComponentsGalleryRouteImport } from './routes/_authed/settings/components-gallery'
+import { Route as AuthedSettingsComposerRouteImport } from './routes/_authed/settings/composer'
 import { Route as AuthedSettingsImRouteImport } from './routes/_authed/settings/im'
 import { Route as AuthedSettingsMediaRouteImport } from './routes/_authed/settings/media'
 import { Route as AuthedSettingsMemoryRouteImport } from './routes/_authed/settings/memory'
@@ -271,6 +272,11 @@ const AuthedSettingsComponentsGalleryRoute =
     path: '/components-gallery',
     getParentRoute: () => AuthedSettingsRouteRoute,
   } as any)
+const AuthedSettingsComposerRoute = AuthedSettingsComposerRouteImport.update({
+  id: '/composer',
+  path: '/composer',
+  getParentRoute: () => AuthedSettingsRouteRoute,
+} as any)
 const AuthedSettingsImRoute = AuthedSettingsImRouteImport.update({
   id: '/im',
   path: '/im',
@@ -505,6 +511,7 @@ export interface FileRoutesByFullPath {
   '/settings/agent-providers': typeof AuthedSettingsAgentProvidersRoute
   '/settings/approvals': typeof AuthedSettingsApprovalsRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
+  '/settings/composer': typeof AuthedSettingsComposerRoute
   '/settings/im': typeof AuthedSettingsImRoute
   '/settings/media': typeof AuthedSettingsMediaRoute
   '/settings/memory': typeof AuthedSettingsMemoryRoute
@@ -577,6 +584,7 @@ export interface FileRoutesByTo {
   '/settings/agent-providers': typeof AuthedSettingsAgentProvidersRoute
   '/settings/approvals': typeof AuthedSettingsApprovalsRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
+  '/settings/composer': typeof AuthedSettingsComposerRoute
   '/settings/im': typeof AuthedSettingsImRoute
   '/settings/media': typeof AuthedSettingsMediaRoute
   '/settings/memory': typeof AuthedSettingsMemoryRoute
@@ -653,6 +661,7 @@ export interface FileRoutesById {
   '/_authed/settings/agent-providers': typeof AuthedSettingsAgentProvidersRoute
   '/_authed/settings/approvals': typeof AuthedSettingsApprovalsRoute
   '/_authed/settings/components-gallery': typeof AuthedSettingsComponentsGalleryRoute
+  '/_authed/settings/composer': typeof AuthedSettingsComposerRoute
   '/_authed/settings/im': typeof AuthedSettingsImRoute
   '/_authed/settings/media': typeof AuthedSettingsMediaRoute
   '/_authed/settings/memory': typeof AuthedSettingsMemoryRoute
@@ -730,6 +739,7 @@ export interface FileRouteTypes {
     | '/settings/agent-providers'
     | '/settings/approvals'
     | '/settings/components-gallery'
+    | '/settings/composer'
     | '/settings/im'
     | '/settings/media'
     | '/settings/memory'
@@ -802,6 +812,7 @@ export interface FileRouteTypes {
     | '/settings/agent-providers'
     | '/settings/approvals'
     | '/settings/components-gallery'
+    | '/settings/composer'
     | '/settings/im'
     | '/settings/media'
     | '/settings/memory'
@@ -877,6 +888,7 @@ export interface FileRouteTypes {
     | '/_authed/settings/agent-providers'
     | '/_authed/settings/approvals'
     | '/_authed/settings/components-gallery'
+    | '/_authed/settings/composer'
     | '/_authed/settings/im'
     | '/_authed/settings/media'
     | '/_authed/settings/memory'
@@ -1183,6 +1195,13 @@ declare module '@tanstack/react-router' {
       path: '/components-gallery'
       fullPath: '/settings/components-gallery'
       preLoaderRoute: typeof AuthedSettingsComponentsGalleryRouteImport
+      parentRoute: typeof AuthedSettingsRouteRoute
+    }
+    '/_authed/settings/composer': {
+      id: '/_authed/settings/composer'
+      path: '/composer'
+      fullPath: '/settings/composer'
+      preLoaderRoute: typeof AuthedSettingsComposerRouteImport
       parentRoute: typeof AuthedSettingsRouteRoute
     }
     '/_authed/settings/im': {
@@ -1512,6 +1531,7 @@ interface AuthedSettingsRouteRouteChildren {
   AuthedSettingsAgentProvidersRoute: typeof AuthedSettingsAgentProvidersRoute
   AuthedSettingsApprovalsRoute: typeof AuthedSettingsApprovalsRoute
   AuthedSettingsComponentsGalleryRoute: typeof AuthedSettingsComponentsGalleryRoute
+  AuthedSettingsComposerRoute: typeof AuthedSettingsComposerRoute
   AuthedSettingsImRoute: typeof AuthedSettingsImRoute
   AuthedSettingsMediaRoute: typeof AuthedSettingsMediaRoute
   AuthedSettingsMemoryRoute: typeof AuthedSettingsMemoryRoute
@@ -1534,6 +1554,7 @@ const AuthedSettingsRouteRouteChildren: AuthedSettingsRouteRouteChildren = {
   AuthedSettingsAgentProvidersRoute: AuthedSettingsAgentProvidersRoute,
   AuthedSettingsApprovalsRoute: AuthedSettingsApprovalsRoute,
   AuthedSettingsComponentsGalleryRoute: AuthedSettingsComponentsGalleryRoute,
+  AuthedSettingsComposerRoute: AuthedSettingsComposerRoute,
   AuthedSettingsImRoute: AuthedSettingsImRoute,
   AuthedSettingsMediaRoute: AuthedSettingsMediaRoute,
   AuthedSettingsMemoryRoute: AuthedSettingsMemoryRoute,

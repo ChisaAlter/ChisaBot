@@ -7,12 +7,15 @@ import {
   IconSparkles,
   IconX,
 } from "@tabler/icons-react";
+import { useQuery } from "@tanstack/react-query";
 import { useReducedMotion } from "motion/react";
 import { PromptArea, type PromptAreaHandle } from "prompt-area";
 import {
+  hasChips,
   isSegmentsEmpty,
   mergeAdjacentTextSegments,
   type Segment,
+  segmentsToPlainText,
   text,
 } from "prompt-area/helpers";
 import {
@@ -94,6 +97,8 @@ import {
   wasJustSent,
 } from "@/lib/chat/ui-memory";
 import { tryClient } from "@/lib/client";
+import { composerCandidatesQueryOptions } from "@/lib/composer/queries";
+import { recordComposerHabit } from "@/lib/composer/mutations";
 import { objectConnectionKey } from "@/lib/connection-key";
 import { SendDeliveryUnknownError } from "@/lib/conversations/connection-drop";
 import { shouldStopOnEscape } from "@/lib/conversations/held-supplements";
@@ -108,6 +113,7 @@ import { cn } from "@/lib/utils";
 import { chatFileUrl } from "../../../../../shared/chat-files";
 import { Button } from "../../ui/button";
 import { AttachmentStrip, type FailedUpload } from "./attachment-strip";
+import { CandidateStrip } from "./candidate-strip";
 import {
   attachmentsConfigFor,
   chatFileRowId,
@@ -670,6 +676,30 @@ function ComposerImpl({
   );
   const composerFormRef = useMemo(() => presenceRef("has-composer"), []);
   const promptAreaRef = useRef<PromptAreaHandle>(null);
+  /*
+   * 本地输入候选（快捷短语 + 高频习惯）：跟着整份草稿的纯文本走，防抖 180ms 后按前缀问服务器。
+   * 带 chip（@ / 命令）的草稿不出候选——填入是整框替换，chip 会被抹掉，宁可不出也不毁字。
+   * 候选条只在文本稳定（防抖追平）时显示，打字中途不闪旧候选。
+   */
+  const candidateText = segmentsToPlainText(value).trim();
+  const [candidatePrefix, setCandidatePrefix] = useState("");
+  useTimeout(() => setCandidatePrefix(candidateText), 180, candidateText);
+  const candidatesQuery = useQuery(
+    composerCandidatesQueryOptions(chatFileAgentId ?? null, candidatePrefix),
+  );
+  const composerCandidates =
+    candidateText.length > 0 &&
+    candidateText === candidatePrefix &&
+    !hasChips(value)
+      ? (candidatesQuery.data ?? []).slice(0, 5)
+      : [];
+  const acceptCandidate = useCallback((phrase: string) => {
+    promptAreaRef.current?.setText(phrase);
+    promptAreaRef.current?.focus();
+  }, []);
+  const candidateStrip = (
+    <CandidateStrip candidates={composerCandidates} onAccept={acceptCandidate} />
+  );
   const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(
     () => {
       const draft = threadUi(draftKey);
@@ -2568,6 +2598,12 @@ function ComposerImpl({
         // Released first, for the reason the queue branch above gives: the message carries these
         // rows now, and a reconciler that saw the chips go without being told would delete
         // attachments that have just been sent.
+        if (chatFileAgentId && rawSubmitted.text) {
+          void recordComposerHabit({
+            botId: chatFileAgentId,
+            text: rawSubmitted.text,
+          });
+        }
         releaseStagedRows(submitted.attachments);
         for (const id of riding) {
           removeAttachment(id);
@@ -3169,6 +3205,7 @@ function ComposerImpl({
           <DictationSurface dictation={dictation} canSend={canSendRecording}>
             {filePicker}
             {replyQuoteBar}
+            {candidateStrip}
             <div className={expanded ? "min-w-0" : "glass-composer-bar"}>
               {!expanded ? attachButton : null}
               <PromptArea
@@ -3298,6 +3335,7 @@ function ComposerImpl({
               progress={progressStore}
             />
             {replyQuoteBar}
+            {candidateStrip}
             <PromptArea
               aria-label={"消息"}
               /*
