@@ -198,8 +198,8 @@ import { createHeadlessComponentTools } from "./components/headless";
 import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
 import { createComposerAiSuggester } from "./composer/ai-suggestions";
-import { createInlineCompletionSuggester } from "./composer/inline-completion";
 import { createComposerService } from "./composer/index";
+import { createInlineCompletionSuggester } from "./composer/inline-completion";
 import { withComputerActivity } from "./computer/activity-recorder";
 import {
   createActivityStore as createComputerActivityStore,

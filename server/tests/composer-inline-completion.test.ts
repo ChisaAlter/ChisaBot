@@ -19,7 +19,9 @@ describe("inline completion 纯函数", () => {
   });
 
   test("解析：直接 suffix 原样返回", () => {
-    expect(parseInlineCompletion("写完发出去", "帮我把周报")).toBe("写完发出去");
+    expect(parseInlineCompletion("写完发出去", "帮我把周报")).toBe(
+      "写完发出去",
+    );
   });
 
   test("解析：剥掉模型复述的草稿前缀", () => {
@@ -29,7 +31,9 @@ describe("inline completion 纯函数", () => {
   });
 
   test("解析：多行输出只取第一行", () => {
-    expect(parseInlineCompletion("写完\n再说点别的", "帮我把周报")).toBe("写完");
+    expect(parseInlineCompletion("写完\n再说点别的", "帮我把周报")).toBe(
+      "写完",
+    );
   });
 
   test("解析：空输出与纯复述都无效", () => {
@@ -114,7 +118,9 @@ describe.skipIf(!url)("composer inline completion 端点门槛（PG）", () => {
     });
     expect(result.completion).toBe("写完发出去");
     const before = completerCalls;
-    expect((await service.inlineCompletion(owner, { text: "好" })).completion).toBeNull();
+    expect(
+      (await service.inlineCompletion(owner, { text: "好" })).completion,
+    ).toBeNull();
     expect(completerCalls).toBe(before);
     await service.writeSettings(owner, { enabled: false });
     expect(

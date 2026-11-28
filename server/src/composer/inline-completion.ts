@@ -32,7 +32,10 @@ export function buildInlineCompletionPrompt(draft: string): string {
  * 把模型输出清洗成草稿的 suffix：
  * 取第一行、剥掉复述的草稿前缀、去引号，剩下的才是可追加部分；空则无效。
  */
-export function parseInlineCompletion(raw: string, draft: string): string | null {
+export function parseInlineCompletion(
+  raw: string,
+  draft: string,
+): string | null {
   const firstLine = raw.split("\n")[0] ?? "";
   let text = firstLine.replace(/^["'「『“”]+|["'」』“”]+$/g, "").trim();
   if (!text) return null;
