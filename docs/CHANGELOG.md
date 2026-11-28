@@ -1,5 +1,11 @@
 ## Unreleased
 
+## 0.1.201 — 2026-11-28
+
+全端版本 `0.1.201`，Android `versionCode 381`：输入助手生产级缺陷修复（PR #624）——AI 建议与行内补全信封拆包根治、行内补全 Tab 接受与 Esc 丢弃修复。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `b2420dd17344c61d`。
+
+- **输入助手修复（PR #624）**：实机验收（PR10）发现并根治三个生产级缺陷——①composer settings GET/PUT 路由缺信封导致 AI/补全开关写读失效；②ai-suggestions 与 inline-completion 消费方信封双层拆包，两个 AI 功能在生产从未渲染；③行内补全 caretAtEnd 用 range.collapsed 结构误判致 Tab/右箭头接受从未生效、Esc 丢弃从未实现——全部修复并经真浏览器实证（ghost 出现 / overlay 像素级对齐 dx=0 dy=0 / Tab 精确追加 / Esc 丢弃草稿不动）；另修复 dev 模式 system-update 路由 vite 编译失败与 github 集成测试固定睡眠计时 flake（改轮询）（`server/src/composer/index.ts` · `app/src/lib/composer/queries.ts` · `app/src/components/channels/composer/candidate-strip.tsx` · `app/src/components/channels/composer/inline-completion.tsx` · `app/src/routes/_authed/admin/system-update.tsx` · `server/tests/composer.test.ts` · `server/tests/github.test.ts`）。
+
 ## 0.1.200 — 2026-11-28
 
 全端版本 `0.1.200`，Android `versionCode 380`：结构化用户表单（PR #622，CB-147）——ask_person 可携带 schema 化多字段表单（text / textarea / select / multiselect / confirm + 必填校验 + 默认值），答案经服务端严校验后渲染恢复执行，超时显式终态，凭据味字段一律拒收走 vault。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `7307c25b0c5318aa`。
