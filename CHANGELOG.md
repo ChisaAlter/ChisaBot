@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.198 — 2026-11-28
+
+全端版本 `0.1.198`，Android `versionCode 378`：输入助手习惯反馈记账与排序加权（PR #618，CB-145 系列第七棒）——候选条自动记账 shown/accepted/ignored，被采纳的越排越前、被无视的自然下沉，零反馈行为不变，无数据库迁移。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `8dee5d1db8cbcec3`。
+
 - **输入助手 PR7：习惯反馈记账与排序加权（CB-145）**：候选条自动记账——habit 候选出现记 shown、点选记 accepted、出现后未点消失记 ignored，3s 合批上报、失败静默；排序按 use_count + accepted×2 − ignored 加权（零反馈的老习惯行为不变），被采纳的越排越前、被无视的自然下沉；反馈只对已存在的习惯行记账（行只能由真实发送产生），按 (owner, bot) 严格隔离（`server/src/composer/index.ts` · `app/src/components/channels/composer/candidate-strip.tsx` · `server/tests/composer-habit-feedback.test.ts`）。
 
 ## 0.1.197 — 2026-11-28

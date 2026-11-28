@@ -163,7 +163,7 @@
 - [x] **PR4 quick phrases + 本地候选**（#610 已合并）：常用语 CRUD/排序 + per-bot 高频输入本地匹配，零模型调用，点选填入不直接发送。
 - [x] **PR5 AI 输入建议**（本 PR）：回复完成后 prefetch 2–4 条下一步建议，per-(owner,bot) 60s 内存缓存 + 限流 + 在飞去重，suggestions 场景路由；feedback 记账留 PR7。
 - [x] **PR6 行内补全**（#616 已合并）：ghost text、debounce/abort、IME composition 安全、只追加 suffix、usage kind=`completion`。
-- [ ] **PR7 习惯学习**：发送历史与采纳/忽略反馈影响排序；可关闭、可清空、不跨用户不跨 Bot。
+- [x] **PR7 习惯学习**（#618 已合并）：发送历史与采纳/忽略反馈影响排序；可关闭、可清空、不跨用户不跨 Bot。
 
 ## CB-146
 
