@@ -2071,7 +2071,7 @@ const chatFiles = createChatFiles(database, {
     const connection = await resolveRuntimeConnection().catch(() => null);
     // 识图走 OpenAI 兼容端点（vision-provider.ts）；Anthropic 原生端点形状不同，
     // 场景 vision 只在主连接是 OpenAI 兼容形状时合成，其余情况由管理员在媒体设置里单独配。
-    if (!connection || connection.model.provider !== "openai") return null;
+    if (connection?.model.provider !== "openai") return null;
     if (!connection.apiKey && connection.model.useApiKey !== false) return null;
     const endpoint = runtimeModelEndpoint(connection.model);
     const baseUrl = endpoint.endsWith("/chat/completions")

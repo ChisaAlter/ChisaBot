@@ -77,7 +77,7 @@ describe.skipIf(!url)("vision 场景回退链", () => {
     }
   });
 
-  test("主模型能看图时场景不抢主模型（main 优先）", async () => {
+  test("个人无设置时场景与管理员 custom 同层（先于跟随主模型解析）", async () => {
     mainSees = true;
     scenario = {
       kind: "model",

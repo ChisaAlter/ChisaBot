@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **场景化模型路由 PR2：运行时消费方接入（CB-144）**：chat / summarization / review / title / vision 五个场景接入统一路由——DSH 主链路按场景重组模型链（`useAdaptive:false` 跳过难度分类、`effort` 具体档位覆盖、`maxTokens` 追加封顶），压缩会话改用 summarization 场景且 usage kind 正确记为 `summary`；审批审查独立 completer 支持场景主备链依次切换；标题生成与识图解析按场景覆盖默认模型（vision 仅在管理员未配识图模型时作部署级默认合成，个人 / 管理员显式配置优先）；usage kind 扩展 suggestions / completion / title / vision / automation。空配置与升级前逐字节一致，无数据库迁移（`shared/model-scenario-routing.ts` · `shared/admin-workbench.ts` · `server/src/agents/{dsh-runtime,scenario-connection,agent-resolver}.ts` · `server/src/conversation-runtime.ts` · `server/src/chat-files/media-models.ts` · `server/tests/{scenario-chat-chain,scenario-connection,scenario-vision}.test.ts` · [docs/scenario-routing.md](docs/scenario-routing.md)）。
+
 ## 0.1.193 — 2026-11-28
 
 全端版本 `0.1.193`，Android `versionCode 373`：落地场景化模型路由契约、存储与管理员 API（PR #607，CB-144 系列第一棒，无运行时行为变化、无数据库迁移）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹因 shared 契约新增更新为 `e733f8f390295482`。

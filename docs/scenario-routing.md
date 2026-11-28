@@ -60,7 +60,8 @@
 | ---------- | ------------------------------------------------------ |
 | 共享契约   | `shared/model-scenario-routing.ts`                     |
 | 存储与服务 | `server/src/agents/model-scenario-routing.ts`          |
-| 接线       | `server/src/index.ts`（service 实例与路由挂载）        |
+| 接线       | `server/src/index.ts`（service 实例、路由挂载、场景合成）        |
+| 运行时     | `server/src/agents/dsh-runtime.ts` · `server/src/agents/scenario-connection.ts` · `server/src/chat-files/media-models.ts` |
 | 测试       | `server/tests/model-scenario-routing.test.ts`          |
 
 ## 当前接入情况
@@ -68,8 +69,29 @@
 | 阶段 | 内容                                                         | 状态   |
 | ---- | ------------------------------------------------------------ | ------ |
 | PR1  | 共享契约、校验、存储、缓存、管理员 GET/PUT API               | 本 PR  |
-| PR2  | 运行时消费方接入（review / title / summarization / vision / chat） | 未开始 |
+| PR2  | 运行时消费方接入（review / title / summarization / vision / chat） | 本 PR  |
 | PR3  | 管理员 UI、Dry-run、按场景路由日志                           | 未开始 |
+
+## 运行时接入（PR2）
+
+空配置下每一处行为与升级前逐字节一致；以下为场景配置了主模型 / 备用链时的生效路径。
+
+| 场景            | 接入点与语义                                                                                                                     |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `chat`          | DSH 运行时每一轮：场景主模型替换部署默认模型在链中的位置；`useAdaptive:false` 跳过难度分类；`effort` 具体档位覆盖分类结果；`maxTokens` 在窗口推导上限上再取小 |
+| `summarization` | 压缩 / 摘要会话（`isSummarizationSession`）改用 summarization 场景链而非 chat 场景；usage kind 记为 `summary`                       |
+| `review`        | 审批审查独立 completer：场景主模型 + 备用链按序尝试，任一成功即返回；技能 narrowing 不受场景影响                                     |
+| `title`         | 会话标题生成：连接快照的 `defaultModel` 按场景覆盖（无备用链概念，失败由队列重试）                                                   |
+| `vision`        | 识图解析：管理员未配置 custom 识图模型时，场景主模型用主连接（仅 OpenAI 兼容形状）合成部署级默认；个人 / 管理员显式配置始终优先        |
+
+刻意未接入：
+
+- `test`：连通性自检测的就是管理员在表单里指定的那个模型，场景覆盖违背自检语义；
+- `subagent` / `automation` / `memoryExtraction` / `suggestions` / `completion`：消费方在后续 PR 落地时一并接入；
+- `timeoutMs`：chat 主链路没有按次调用超时机制（一轮是多轮工具循环），将在具备机制的消费方（suggestions / completion / titler）接入。
+
+usage kind 扩展：`suggestions` / `completion` / `title` / `vision` / `automation` 已加入 `USAGE_KINDS`，
+本 PR 中 `summary` 开始按压缩会话正确记账；其余 kind 随消费方落地产生数据。
 
 ## 边界与不做的事
 

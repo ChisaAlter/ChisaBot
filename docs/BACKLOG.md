@@ -15,7 +15,7 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| [CB-144](#cb-144) | 场景化模型路由：按场景独立配置主模型 / 备用链 / 思考强度 / 超时 / 输出上限 | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: settings` · `P1` · `status: in-progress`（分支 `feat/scenario-model-routing`） |
+| [CB-144](#cb-144) | 场景化模型路由：按场景独立配置主模型 / 备用链 / 思考强度 / 超时 / 输出上限 | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: settings` · `P1` · `status: in-progress`（PR1 契约存储已合入 #607；PR2 运行时接入审查中） |
 | [CB-145](#cb-145) | 输入框智能：quick phrases、本地候选、AI 输入建议、行内补全与按 Bot 习惯学习 | 成熟度 Maturity       | `type: feat` · `area: chat` · `P1` · `status: in-progress` |
 | [CB-146](#cb-146) | 用量分析深化：provider/agent/scenario 维度、成本估算、request detail 与 CSV 导出 | 成熟度 Maturity       | `type: feat` · `area: settings` · `P1` · `status: in-progress` |
 | [CB-147](#cb-147) | 结构化用户表单：schema 化多字段表单从问答闭环恢复执行 | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: agents` · `P1` · `status: in-progress` |
