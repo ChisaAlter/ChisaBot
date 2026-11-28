@@ -18,6 +18,10 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
+import {
+  type ComposerAiSuggester,
+  cleanAiSuggestContext,
+} from "./ai-suggestions";
 
 export const COMPOSER_TEXT_MAX = 500;
 export const COMPOSER_PHRASES_MAX = 200;
@@ -41,7 +45,7 @@ export type QuickPhrase = {
 };
 
 export type ComposerCandidate = {
-  source: "phrase" | "habit";
+  source: "phrase" | "habit" | "ai";
   text: string;
   useCount: number;
 };
@@ -76,7 +80,10 @@ function cleanId(input: unknown): string {
   return input;
 }
 
-export function createComposerService(database: Database) {
+export function createComposerService(
+  database: Database,
+  deps?: { aiSuggester?: ComposerAiSuggester },
+) {
   const sql = database.$client;
 
   async function ensure() {
@@ -396,6 +403,36 @@ export function createComposerService(database: Database) {
     return { cleared: rows.length };
   }
 
+  /**
+   * AI 输入建议（PR5）：回复完成后预判用户下一步可能发送的消息。
+   * 上下文由客户端带来（浏览器本来就有最近消息），服务端无状态不回读会话库；
+   * 门槛：总开关 + aiEnabled 都开，且有非空对话上下文。
+   * 模型失败 / 超时 / 限流一律回落空数组，候选条被动增强绝不打扰输入。
+   */
+  async function aiSuggestions(
+    owner: string,
+    input: unknown,
+  ): Promise<{ suggestions: ComposerCandidate[] }> {
+    const settings = await readSettings(owner);
+    if (!settings.enabled || !settings.aiEnabled) return { suggestions: [] };
+    if (!deps?.aiSuggester) return { suggestions: [] };
+    const body = (input ?? {}) as Record<string, unknown>;
+    const botId = cleanId(body.botId);
+    const context = cleanAiSuggestContext(body.context);
+    if (!context.length) return { suggestions: [] };
+    const result = await deps.aiSuggester
+      .suggest(owner, botId, context)
+      .catch(() => null);
+    if (!result) return { suggestions: [] };
+    return {
+      suggestions: result.suggestions.map((suggestion) => ({
+        source: "ai" as const,
+        text: suggestion,
+        useCount: 0,
+      })),
+    };
+  }
+
   // ------------------------------------------------------------------ routes
 
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
@@ -501,6 +538,20 @@ export function createComposerService(database: Database) {
         throw error;
       }
     });
+    app.post("/ai-suggestions", async (context) => {
+      try {
+        return context.json(
+          await aiSuggestions(
+            owner(context),
+            await context.req.json().catch(() => null),
+          ),
+        );
+      } catch (error) {
+        if (error instanceof ComposerValidationError)
+          return context.json({ error: error.message }, error.status);
+        throw error;
+      }
+    });
     app.post("/habits/record", async (context) => {
       try {
         return context.json(
@@ -544,6 +595,7 @@ export function createComposerService(database: Database) {
     recordHabit,
     candidates,
     clearHabits,
+    aiSuggestions,
     routes,
   };
 }

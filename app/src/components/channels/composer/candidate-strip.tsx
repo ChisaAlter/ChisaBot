@@ -3,7 +3,9 @@ import { useState } from "react";
 import { useTimeout } from "@/hooks";
 import {
   type ComposerCandidate,
+  composerAiSuggestionsQueryOptions,
   composerCandidatesQueryOptions,
+  composerSettingsQueryOptions,
 } from "@/lib/composer/queries";
 
 /**
@@ -44,6 +46,9 @@ export function CandidateStrip({
           title={candidate.text}
           type="button"
         >
+          {candidate.source === "ai" ? (
+            <span className="mr-1 text-primary/70">AI</span>
+          ) : null}
           {preview(candidate.text)}
         </button>
       ))}
@@ -60,9 +65,12 @@ export function ComposerCandidates({
   botId,
   text,
   hasChips,
+  aiContext,
   onAccept,
 }: {
   botId: string | null;
+  /** 最近对话上下文（AI 建议用，PR5）：输入为空且设置开启时出下一步建议。 */
+  aiContext?: readonly { role: "user" | "bot"; text: string }[];
   /** 当前草稿纯文本（trim 后）；空串不出候选。 */
   text: string;
   /** 草稿带 @/命令 chip 时不出候选：填入是整框替换，不能毁字。 */
@@ -72,9 +80,38 @@ export function ComposerCandidates({
   const [prefix, setPrefix] = useState("");
   useTimeout(() => setPrefix(text), 180, text);
   const query = useQuery(composerCandidatesQueryOptions(botId, prefix));
-  const candidates =
-    text.length > 0 && text === prefix && !hasChips
-      ? (query.data ?? []).slice(0, 5)
-      : [];
+
+  // AI 建议（PR5）：输入为空、设置开启、有对话上下文时，prefetch 下一步建议。
+  // key 取上下文尾部指纹——新消息到达 key 变化自然重取，服务端 60s 缓存与限流兜底成本。
+  const settingsQuery = useQuery(composerSettingsQueryOptions());
+  const aiEnabled = settingsQuery.data?.aiEnabled === true;
+  const contextKey = (aiContext ?? [])
+    .map(
+      (message) =>
+        `${message.role}:${message.text.length}:${message.text.slice(0, 40)}`,
+    )
+    .join("|");
+  const showAi =
+    aiEnabled && text.length === 0 && !hasChips && contextKey.length > 0;
+  const aiQuery = useQuery(
+    composerAiSuggestionsQueryOptions(
+      botId,
+      showAi ? contextKey : "",
+      aiContext ?? [],
+    ),
+  );
+
+  const local =
+    text.length > 0 && text === prefix && !hasChips ? (query.data ?? []) : [];
+  const ai = showAi ? (aiQuery.data?.suggestions ?? []) : [];
+  const seen = new Set<string>();
+  const candidates: ComposerCandidate[] = [];
+  for (const candidate of [...local, ...ai]) {
+    const key = candidate.text.replace(/\s+/g, " ").trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(candidate);
+    if (candidates.length >= 5) break;
+  }
   return <CandidateStrip candidates={candidates} onAccept={onAccept} />;
 }

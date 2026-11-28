@@ -13,6 +13,7 @@
 import {
   type ModelScenario,
   resolveScenarioRoute,
+  type ScenarioRouteConsumer,
   type ScenarioRouteEventInput,
   scenarioRouteOverrides,
 } from "../../../shared/model-scenario-routing";
@@ -69,8 +70,11 @@ export function createScenarioCompleter(options: {
   completerFor: (
     resolveConnection: RuntimeModelResolver,
   ) => (prompt: string, signal?: AbortSignal) => Promise<string>;
+  /** 决策日志里的消费方标签；历史调用方（审批审查）缺省为 review。 */
+  consumer?: ScenarioRouteConsumer;
   log?: ScenarioEventLogger;
 }): (prompt: string, signal?: AbortSignal) => Promise<string> {
+  const consumer = options.consumer ?? "review";
   return async (prompt, signal) => {
     const config = await options.routing.config().catch(() => null);
     const route = config
@@ -99,7 +103,7 @@ export function createScenarioCompleter(options: {
         void options
           .log?.({
             scenario: options.scenario,
-            consumer: "review",
+            consumer,
             configured: true,
             chain,
             chosenModel: modelId,
@@ -118,7 +122,7 @@ export function createScenarioCompleter(options: {
     void options
       .log?.({
         scenario: options.scenario,
-        consumer: "review",
+        consumer,
         configured: true,
         chain,
         chosenModel: null,

@@ -160,8 +160,8 @@
 标签：`type: feat` · `area: chat` · `P1` · `status: in-progress`
 
 - 来源：RokBot 全量对照审查确认的 P0 真实差距。清洁室实现，不复制 RokBot 代码；隐私红线：per-owner/per-bot 隔离、学习可关闭可清空、draft 不进日志。
-- [ ] **PR4 quick phrases + 本地候选**：常用语 CRUD/排序 + per-bot 高频输入本地匹配，零模型调用，点选填入不直接发送。
-- [ ] **PR5 AI 输入建议**：回复完成后 prefetch 2–4 条下一步建议，per-bot cache，feedback 记账，usage kind=`suggestions`。
+- [x] **PR4 quick phrases + 本地候选**（#610 已合并）：常用语 CRUD/排序 + per-bot 高频输入本地匹配，零模型调用，点选填入不直接发送。
+- [x] **PR5 AI 输入建议**（本 PR）：回复完成后 prefetch 2–4 条下一步建议，per-(owner,bot) 60s 内存缓存 + 限流 + 在飞去重，suggestions 场景路由；feedback 记账留 PR7。
 - [ ] **PR6 行内补全**：ghost text、debounce/abort、IME composition 安全、只追加 suffix、usage kind=`completion`。
 - [ ] **PR7 习惯学习**：发送历史与采纳/忽略反馈影响排序；可关闭、可清空、不跨用户不跨 Bot。
 

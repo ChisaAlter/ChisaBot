@@ -345,6 +345,7 @@ export const SCENARIO_ROUTE_CONSUMERS = [
   "review",
   "title",
   "vision",
+  "suggestions",
   "dry-run",
 ] as const;
 export type ScenarioRouteConsumer = (typeof SCENARIO_ROUTE_CONSUMERS)[number];

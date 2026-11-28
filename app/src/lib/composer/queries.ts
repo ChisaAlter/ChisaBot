@@ -26,7 +26,7 @@ export type QuickPhrase = {
 };
 
 export type ComposerCandidate = {
-  source: "phrase" | "habit";
+  source: "phrase" | "habit" | "ai";
   text: string;
   useCount: number;
 };
@@ -37,6 +37,8 @@ export const composerKeys = {
   phrases: () => ["composer", "quick-phrases"] as const,
   candidates: (botId: string | null, prefix: string) =>
     ["composer", "candidates", { botId, prefix }] as const,
+  aiSuggestions: (botId: string | null, text: string) =>
+    ["composer", "ai-suggestions", { botId, text }] as const,
 };
 
 export function composerSettingsQueryOptions() {
@@ -78,5 +80,29 @@ export function composerCandidatesQueryOptions(
       }),
     enabled: prefix.trim().length > 0,
     staleTime: 30_000,
+  });
+}
+
+/**
+ * AI 输入建议（PR5）：上下文尾部进 key，服务器端已限流 / 去重 / 缓存，
+ * 浏览器只在 aiEnabled 开启、输入为空且有对话上下文时查询；返回空或失败都静默，
+ * 候选条是被动的，从不为建议打扰输入。
+ */
+export function composerAiSuggestionsQueryOptions(
+  botId: string | null,
+  contextKey: string,
+  context: readonly { role: "user" | "bot"; text: string }[],
+) {
+  return queryOptions({
+    queryKey: composerKeys.aiSuggestions(botId, contextKey),
+    queryFn: (): Promise<{ suggestions: ComposerCandidate[] }> =>
+      client("/api/composer/ai-suggestions", "suggestions", {
+        method: "POST",
+        body: { botId, context },
+        fallback: "无法加载 AI 输入建议。",
+      }),
+    enabled: Boolean(botId) && contextKey.length > 0,
+    staleTime: 30_000,
+    retry: false,
   });
 }

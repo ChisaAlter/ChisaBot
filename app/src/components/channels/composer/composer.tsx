@@ -333,6 +333,8 @@ export type ComposerProps = {
    * 不传（undefined）= 本表面完全关闭候选——默认值，也是测试与无 Provider 表面的安全态。
    */
   candidatesBotId?: string | null;
+  /** AI 建议的对话上下文（PR5）：由有消息数据的表面传入；不传则 AI 建议不出。 */
+  candidatesAiContext?: readonly { role: "user" | "bot"; text: string }[];
   /**
    * There is a run on the wire for Stop to reach.
    *
@@ -496,6 +498,7 @@ function ComposerImpl({
   channelId,
   chatFileAgentId,
   candidatesBotId,
+  candidatesAiContext,
   stoppable,
   stopping = false,
   stopFailed = false,
@@ -700,6 +703,7 @@ function ComposerImpl({
     candidatesBotId === undefined ? null : (
       <ComposerCandidates
         botId={candidatesBotId}
+        {...(candidatesAiContext ? { aiContext: candidatesAiContext } : {})}
         hasChips={hasChips(value)}
         onAccept={acceptCandidate}
         text={segmentsToPlainText(value).trim()}

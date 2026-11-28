@@ -21,9 +21,9 @@ import {
 import { ComposerDock } from "@/components/channels/composer/dock";
 import { useExternalConnection } from "@/hooks";
 import { releaseStagedAttachment as releaseStagedAttachmentRow } from "@/lib/channels/staged-attachment";
-import { deleteChatFile } from "@/lib/chat-files";
 import type { Attachment } from "@/lib/chat/attachment-state";
 import type { SentAtReading } from "@/lib/chat/send-scroll";
+import { deleteChatFile } from "@/lib/chat-files";
 import type { BusySendMode } from "@/lib/conversations/send-mode";
 import { newId } from "../../lib/new-id";
 
@@ -530,6 +530,40 @@ export function ConversationView({
    */
   const composerBoxRef = useRef<HTMLDivElement | null>(null);
   /*
+   * AI 输入建议（PR5）的对话上下文：最近几条用户/助手消息的纯文本，防御性提取
+   * （字符串或 parts 数组），空文本与工具/系统消息不进。服务端再截断清洗，
+   * 这里只是尽早给出稳定引用，避免每个流式 chunk 都让候选条重渲染。
+   */
+  const candidatesAiContext = useMemo(() => {
+    const textOf = (content: unknown): string => {
+      if (typeof content === "string") return content;
+      if (Array.isArray(content)) {
+        return content
+          .map((part) =>
+            part && typeof part === "object" && "text" in part
+              ? String((part as { text: unknown }).text ?? "")
+              : "",
+          )
+          .join("");
+      }
+      return "";
+    };
+    const out: { role: "user" | "bot"; text: string }[] = [];
+    for (const message of messages.slice(-6)) {
+      const role =
+        message.role === "user"
+          ? "user"
+          : message.role === "assistant"
+            ? "bot"
+            : null;
+      if (!role) continue;
+      const text = textOf((message as { content?: unknown }).content).trim();
+      if (!text) continue;
+      out.push({ role, text: text.slice(0, 500) });
+    }
+    return out;
+  }, [messages]);
+  /*
    * 交给 Composer（memo）和 ChatTranscript 的回调要稳定（审查 01 第 4 条 / jank FIX-PLAN §5 / P2-1）：
    * 以前这里每次渲染都新建箭头函数，流式时每个 chunk 都让整个输入框跟着重渲染。
    * 经一个「最新值」引用转一下，函数本身不变，调到的永远是这次渲染的。
@@ -652,7 +686,10 @@ export function ConversationView({
           agents={agents}
           autoFocus={autoFocus}
           {...(agentId ? { chatFileAgentId: agentId } : {})}
-          {...(agentId !== undefined ? { candidatesBotId: agentId ?? null } : {})}
+          {...(agentId !== undefined
+            ? { candidatesBotId: agentId ?? null }
+            : {})}
+          {...(agentId !== undefined ? { candidatesAiContext } : {})}
           {...(channelId ? { channelId } : {})}
           {...(draftKey ? { draftKey } : {})}
           {...(onAttachWithoutChannel ? { onAttachWithoutChannel } : {})}
