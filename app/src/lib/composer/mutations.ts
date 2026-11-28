@@ -1,6 +1,10 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
-import { type ComposerSettings, type QuickPhrase, composerKeys } from "./queries";
+import {
+  type ComposerSettings,
+  composerKeys,
+  type QuickPhrase,
+} from "./queries";
 
 /** The sentence for every write here, since they all fail the same way to a reader. */
 const FALLBACK = "输入框设置操作失败，请稍后重试。";
@@ -15,7 +19,9 @@ function invalidateComposer(queryClient: QueryClient) {
   return queryClient.invalidateQueries({ queryKey: composerKeys.all });
 }
 
-export function updateComposerSettingsMutationOptions(queryClient: QueryClient) {
+export function updateComposerSettingsMutationOptions(
+  queryClient: QueryClient,
+) {
   return mutationOptions({
     mutationFn: (input: ComposerSettingsInput): Promise<ComposerSettings> =>
       client("/api/composer/settings", "settings", {
@@ -41,7 +47,10 @@ export function createQuickPhraseMutationOptions(queryClient: QueryClient) {
 
 export function updateQuickPhraseMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
-    mutationFn: (variables: { id: string; input: QuickPhraseInput }): Promise<QuickPhrase> =>
+    mutationFn: (variables: {
+      id: string;
+      input: QuickPhraseInput;
+    }): Promise<QuickPhrase> =>
       client(`/api/composer/quick-phrases/${variables.id}`, "phrase", {
         method: "PATCH",
         body: variables.input,

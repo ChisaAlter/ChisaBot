@@ -45,8 +45,8 @@ import {
   updateQuickPhraseMutationOptions,
 } from "@/lib/composer/mutations";
 import {
-  type QuickPhrase,
   composerSettingsQueryOptions,
+  type QuickPhrase,
   quickPhrasesQueryOptions,
 } from "@/lib/composer/queries";
 
@@ -87,7 +87,11 @@ function ComposerSettingsPage() {
     const target = index + delta;
     if (index < 0 || target < 0 || target >= list.length) return;
     const ids = list.map((phrase) => phrase.id);
-    [ids[index], ids[target]] = [ids[target]!, ids[index]!];
+    const a = ids[index];
+    const b = ids[target];
+    if (a === undefined || b === undefined) return;
+    ids[index] = b;
+    ids[target] = a;
     reorder.mutate(ids);
   };
 
@@ -107,9 +111,7 @@ function ComposerSettingsPage() {
       title={"输入助手"}
     >
       <PageSection
-        description={
-          "关掉「学习习惯」后不再记录新习惯，已记录的也不再出候选。"
-        }
+        description={"关掉「学习习惯」后不再记录新习惯，已记录的也不再出候选。"}
         title={"输入候选"}
       >
         <PageRows>
@@ -360,11 +362,7 @@ function ComposerSettingsPage() {
             />
           </DialogBody>
           <DialogFooter className="mt-4">
-            <Button
-              onClick={() => setEditing(null)}
-              size="sm"
-              variant="ghost"
-            >
+            <Button onClick={() => setEditing(null)} size="sm" variant="ghost">
               {"取消"}
             </Button>
             <Button

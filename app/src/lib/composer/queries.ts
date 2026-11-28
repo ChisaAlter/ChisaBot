@@ -63,7 +63,10 @@ export function quickPhrasesQueryOptions() {
  * 候选随输入逐键变化：prefix 进 key，每个前缀一条缓存。候选条只在有前缀时查询，
  * 空输入不发请求；调用方自行 debounce，避免一键一请求。
  */
-export function composerCandidatesQueryOptions(botId: string | null, prefix: string) {
+export function composerCandidatesQueryOptions(
+  botId: string | null,
+  prefix: string,
+) {
   const params = new URLSearchParams();
   if (botId) params.set("botId", botId);
   params.set("prefix", prefix);

@@ -52,21 +52,12 @@ import {
   shouldClaimPaste,
 } from "@/lib/channels/attachments";
 import { releaseStagedAttachment } from "@/lib/channels/staged-attachment";
-import { deleteChatFile } from "@/lib/chat-files";
 import {
   type Attachment,
   type AttachmentsConfig,
   useAttachments,
 } from "@/lib/chat/attachment-state";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
-import {
-  type BusySendMode,
-  getBusySendMode,
-  reverseBusySendMode,
-  setBusySendMode,
-  useBusySendMode,
-} from "@/lib/conversations/send-mode";
-import { promoteAllQueued, queuedFor } from "@/lib/conversations/thread-inbox";
 import {
   mergeDraftAttachments,
   type PersistedDraftFile,
@@ -96,13 +87,25 @@ import {
   threadUi,
   wasJustSent,
 } from "@/lib/chat/ui-memory";
+import { deleteChatFile } from "@/lib/chat-files";
 import { tryClient } from "@/lib/client";
-import { composerCandidatesQueryOptions } from "@/lib/composer/queries";
 import { recordComposerHabit } from "@/lib/composer/mutations";
+import { composerCandidatesQueryOptions } from "@/lib/composer/queries";
 import { objectConnectionKey } from "@/lib/connection-key";
 import { SendDeliveryUnknownError } from "@/lib/conversations/connection-drop";
 import { shouldStopOnEscape } from "@/lib/conversations/held-supplements";
-import { inboxState } from "@/lib/conversations/thread-inbox";
+import {
+  type BusySendMode,
+  getBusySendMode,
+  reverseBusySendMode,
+  setBusySendMode,
+  useBusySendMode,
+} from "@/lib/conversations/send-mode";
+import {
+  inboxState,
+  promoteAllQueued,
+  queuedFor,
+} from "@/lib/conversations/thread-inbox";
 import { useKeptVisibility } from "@/lib/kept-visible";
 import { DURATION_MS, useRetainedValue } from "@/lib/motion";
 import { newId } from "@/lib/new-id";
@@ -113,7 +116,6 @@ import { cn } from "@/lib/utils";
 import { chatFileUrl } from "../../../../../shared/chat-files";
 import { Button } from "../../ui/button";
 import { AttachmentStrip, type FailedUpload } from "./attachment-strip";
-import { CandidateStrip } from "./candidate-strip";
 import {
   attachmentsConfigFor,
   chatFileRowId,
@@ -121,6 +123,7 @@ import {
   FILE_PICKER_ACCEPT_WITH_DOCUMENTS,
   stagedRowId,
 } from "./attachments";
+import { CandidateStrip } from "./candidate-strip";
 import { Collapse } from "./collapse";
 import { DictationButton, DictationSurface } from "./dictation-controls";
 import { appendDictation } from "./dictation-draft";
@@ -698,7 +701,10 @@ function ComposerImpl({
     promptAreaRef.current?.focus();
   }, []);
   const candidateStrip = (
-    <CandidateStrip candidates={composerCandidates} onAccept={acceptCandidate} />
+    <CandidateStrip
+      candidates={composerCandidates}
+      onAccept={acceptCandidate}
+    />
   );
   const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(
     () => {
@@ -721,7 +727,9 @@ function ComposerImpl({
   } | null>(threadUi(draftKey)?.restoredSend ?? null);
   const uncertainDraft = useRef(false);
   useExternalConnection(
-    draftKey ? `${draftKey}\0${replyQuote ? objectConnectionKey(replyQuote) : 0}` : false,
+    draftKey
+      ? `${draftKey}\0${replyQuote ? objectConnectionKey(replyQuote) : 0}`
+      : false,
     () => {
       if (!draftKey) return;
       const restored = restoredQuotedSend.current;
@@ -2694,6 +2702,7 @@ function ComposerImpl({
     },
     [
       channelId,
+      chatFileAgentId,
       disabled,
       sendBlocked,
       dictation.session,

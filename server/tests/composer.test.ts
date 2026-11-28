@@ -73,17 +73,29 @@ describe.skipIf(!url)("composer settings / quick phrases / habits", () => {
   });
 
   test("快捷短语增删改与排序持久化", async () => {
-    const first = await service.addPhrase(alice, { text: "帮我总结一下今天的进展" });
+    const first = await service.addPhrase(alice, {
+      text: "帮我总结一下今天的进展",
+    });
     const second = await service.addPhrase(alice, { text: "继续" });
     expect(first.position).toBe(0);
     expect(second.position).toBe(1);
     let phrases = await service.listPhrases(alice);
-    expect(phrases.map((p) => p.text)).toEqual(["帮我总结一下今天的进展", "继续"]);
+    expect(phrases.map((p) => p.text)).toEqual([
+      "帮我总结一下今天的进展",
+      "继续",
+    ]);
     // 重排
-    phrases = await service.reorderPhrases(alice, { ids: [second.id, first.id] });
-    expect(phrases.map((p) => p.text)).toEqual(["继续", "帮我总结一下今天的进展"]);
+    phrases = await service.reorderPhrases(alice, {
+      ids: [second.id, first.id],
+    });
+    expect(phrases.map((p) => p.text)).toEqual([
+      "继续",
+      "帮我总结一下今天的进展",
+    ]);
     // 改
-    const updated = await service.updatePhrase(alice, second.id, { text: "继续往下做" });
+    const updated = await service.updatePhrase(alice, second.id, {
+      text: "继续往下做",
+    });
     expect(updated?.text).toBe("继续往下做");
     // 删
     expect(await service.deletePhrase(alice, first.id)).toBe(true);
@@ -112,14 +124,19 @@ describe.skipIf(!url)("composer settings / quick phrases / habits", () => {
     // bob 不能改/删 alice 的短语
     const alien = alicePhrases[0];
     if (alien) {
-      expect(await service.updatePhrase(bob, alien.id, { text: "x" })).toBeNull();
+      expect(
+        await service.updatePhrase(bob, alien.id, { text: "x" }),
+      ).toBeNull();
       expect(await service.deletePhrase(bob, alien.id)).toBe(false);
     }
   });
 
   test("学习关闭时 recordHabit 不写入", async () => {
     await service.writeSettings(alice, { learningEnabled: false });
-    const result = await service.recordHabit(alice, { botId: bot, text: "帮我看看这个" });
+    const result = await service.recordHabit(alice, {
+      botId: bot,
+      text: "帮我看看这个",
+    });
     expect(result.recorded).toBe(false);
   });
 
@@ -128,7 +145,10 @@ describe.skipIf(!url)("composer settings / quick phrases / habits", () => {
     await service.recordHabit(alice, { botId: bot, text: "帮我看看这个" });
     await service.recordHabit(alice, { botId: bot, text: "帮我看看这个" });
     await service.recordHabit(alice, { botId: bot, text: "帮我整理一下" });
-    const found = await service.candidates(alice, { botId: bot, prefix: "帮我" });
+    const found = await service.candidates(alice, {
+      botId: bot,
+      prefix: "帮我",
+    });
     expect(found.length).toBeGreaterThanOrEqual(2);
     expect(found[0]!.text).toBe("帮我看看这个");
     expect(found[0]!.useCount).toBe(2);
@@ -136,24 +156,37 @@ describe.skipIf(!url)("composer settings / quick phrases / habits", () => {
   });
 
   test("习惯按 bot 隔离", async () => {
-    const found = await service.candidates(alice, { botId: botB, prefix: "帮我" });
+    const found = await service.candidates(alice, {
+      botId: botB,
+      prefix: "帮我",
+    });
     expect(found.length).toBe(0);
   });
 
   test("快捷短语候选优先于习惯候选且去重", async () => {
     await service.addPhrase(alice, { text: "帮我写个周报" });
-    const found = await service.candidates(alice, { botId: bot, prefix: "帮我" });
+    const found = await service.candidates(alice, {
+      botId: bot,
+      prefix: "帮我",
+    });
     expect(found[0]!.source).toBe("phrase");
     expect(found[0]!.text).toBe("帮我写个周报");
     // 完全等于前缀时不候选自己
-    const exact = await service.candidates(alice, { botId: bot, prefix: "帮我写个周报" });
+    const exact = await service.candidates(alice, {
+      botId: bot,
+      prefix: "帮我写个周报",
+    });
     expect(exact.every((c) => c.text !== "帮我写个周报")).toBe(true);
   });
 
   test("清空习惯：按 bot 与全量", async () => {
     const perBot = await service.clearHabits(alice, bot);
     expect(perBot.cleared).toBeGreaterThanOrEqual(2);
-    expect((await service.candidates(alice, { botId: bot, prefix: "帮我" })).every((c) => c.source !== "habit")).toBe(true);
+    expect(
+      (await service.candidates(alice, { botId: bot, prefix: "帮我" })).every(
+        (c) => c.source !== "habit",
+      ),
+    ).toBe(true);
     await service.recordHabit(alice, { botId: bot, text: "再来一次" });
     const all = await service.clearHabits(alice);
     expect(all.cleared).toBeGreaterThanOrEqual(1);
@@ -161,9 +194,16 @@ describe.skipIf(!url)("composer settings / quick phrases / habits", () => {
 
   test("总开关或本地候选关闭时候选为空", async () => {
     await service.writeSettings(alice, { localCompletionEnabled: false });
-    expect((await service.candidates(alice, { botId: bot, prefix: "帮我" })).length).toBe(0);
-    await service.writeSettings(alice, { localCompletionEnabled: true, enabled: false });
-    expect((await service.candidates(alice, { botId: bot, prefix: "帮我" })).length).toBe(0);
+    expect(
+      (await service.candidates(alice, { botId: bot, prefix: "帮我" })).length,
+    ).toBe(0);
+    await service.writeSettings(alice, {
+      localCompletionEnabled: true,
+      enabled: false,
+    });
+    expect(
+      (await service.candidates(alice, { botId: bot, prefix: "帮我" })).length,
+    ).toBe(0);
     await service.writeSettings(alice, { enabled: true });
   });
 });
