@@ -13,8 +13,10 @@
  */
 
 import {
+  isResolvedReasoningEffort,
   isRoutingEffortSetting,
   isValidRoutingModelId,
+  type ResolvedReasoningEffort,
   type RoutingEffortSetting,
 } from "./model-routing";
 
@@ -278,4 +280,63 @@ export function validateScenarioRoutingConfig(
         ? input.updatedBy
         : null,
   };
+}
+
+/**
+ * chat 场景链决议：把场景配置套用到当前默认链解析上。
+ *
+ * 语义（空配置时输出与升级前逐字节一致）：
+ * - `useAdaptive === false`：跳过自适应路由，主模型 = `route.model || baseModel`；
+ * - 自适应开启且给出了 `adaptiveModel`：链首为自适应选择，其后是场景主模型
+ *   （契约语义：场景内仍走自适应，场景配置只覆盖候选模型与强度上限）；
+ * - `route.fallbacks` 非空时整体替代全局备用链，否则沿用全局链；
+ * - 全链按序去重。
+ */
+export function applyChatScenarioRoute(input: {
+  route: ScenarioRoute;
+  adaptiveModel: string | null;
+  baseModel: string;
+  globalFallbacks: readonly string[];
+}): { models: string[]; skipAdaptive: boolean } {
+  const { route, adaptiveModel, baseModel, globalFallbacks } = input;
+  const skipAdaptive = route.useAdaptive === false;
+  const primaryBase = route.model || baseModel;
+  const fallbacks = route.fallbacks.length
+    ? route.fallbacks
+    : globalFallbacks;
+  const chain: string[] = [];
+  if (!skipAdaptive && adaptiveModel) chain.push(adaptiveModel);
+  chain.push(primaryBase);
+  chain.push(...fallbacks);
+  return {
+    models: chain.filter((id, at) => chain.indexOf(id) === at),
+    skipAdaptive,
+  };
+}
+
+/**
+ * 场景思考强度决议：只有具体档位（非 default/auto）才覆盖自适应结果，
+ * default/auto 都表示「继承」——default 是不覆盖任何现状，auto 是交给自适应决定。
+ */
+export function resolveScenarioEffort(
+  routeEffort: RoutingEffortSetting,
+  adaptiveEffort: ResolvedReasoningEffort,
+): ResolvedReasoningEffort {
+  if (
+    routeEffort !== "default" &&
+    routeEffort !== "auto" &&
+    isResolvedReasoningEffort(routeEffort)
+  ) {
+    return routeEffort;
+  }
+  return adaptiveEffort;
+}
+
+/** 场景 maxTokens 上限：与模型自身/窗口推导出的上限取较小者；null 表示不追加约束。 */
+export function capScenarioMaxTokens(
+  derived: number,
+  scenarioMaxTokens: number | null,
+): number {
+  if (scenarioMaxTokens === null) return derived;
+  return Math.max(1, Math.min(derived, scenarioMaxTokens));
 }

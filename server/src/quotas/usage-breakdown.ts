@@ -208,19 +208,19 @@ function finalizeWindow(
   };
 }
 
+function emptyByKind(): Record<UsageKind, UsageBucketTotals> {
+  return Object.fromEntries(
+    USAGE_KINDS.map((kind) => [kind, emptyBucket()]),
+  ) as Record<UsageKind, UsageBucketTotals>;
+}
+
 function aggregateWindow(
   events: readonly { event: UsageEventRecord; localDay: string }[],
   startDay: string,
   endDay: string,
 ): UsageWindowBreakdown {
   const totals = emptyBucket();
-  const byKind: Record<UsageKind, UsageBucketTotals> = {
-    chat: emptyBucket(),
-    summary: emptyBucket(),
-    classifier: emptyBucket(),
-    review: emptyBucket(),
-    test: emptyBucket(),
-  };
+  const byKind = emptyByKind();
   const byModelMap = new Map<string, UsageModelBreakdown>();
   const byDayMap = new Map<string, UsageDayBreakdown>();
 
@@ -254,13 +254,7 @@ function aggregateWindowFromAggregates(
   endDay: string,
 ): UsageWindowBreakdown {
   const totals = emptyBucket();
-  const byKind: Record<UsageKind, UsageBucketTotals> = {
-    chat: emptyBucket(),
-    summary: emptyBucket(),
-    classifier: emptyBucket(),
-    review: emptyBucket(),
-    test: emptyBucket(),
-  };
+  const byKind = emptyByKind();
   const byModelMap = new Map<string, UsageModelBreakdown>();
   const byDayMap = new Map<string, UsageDayBreakdown>();
 

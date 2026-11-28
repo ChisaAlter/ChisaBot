@@ -1272,6 +1272,10 @@ export function createChatFiles(
       agentId: string,
       modelId?: string,
     ) => Promise<boolean | undefined>;
+    /** 场景化路由的 vision 默认（见 media-models.ts 同名选项）。 */
+    scenarioVision?: () => Promise<
+      import("./media-models").EffectiveVision | null
+    >;
     isAdmin?: (userId: string) => Promise<boolean>;
     assertPublic?: (url: string) => Promise<unknown>;
   },
@@ -1285,6 +1289,9 @@ export function createChatFiles(
     env,
     ...(options.mainModelSupportsImages
       ? { mainModelSupportsImages: options.mainModelSupportsImages }
+      : {}),
+    ...(options.scenarioVision
+      ? { scenarioVision: options.scenarioVision }
       : {}),
     ...(options.isAdmin ? { isAdmin: options.isAdmin } : {}),
     ...(options.assertPublic ? { assertPublic: options.assertPublic } : {}),

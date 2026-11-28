@@ -22,6 +22,10 @@ import type { LoadPersonalMemory } from "../memory/tools";
 import type { PromptWorkbenchStore } from "../prompts/workbench-store";
 import type { UsageBreakdownService } from "../quotas/usage-breakdown";
 import type { AdaptiveRouter } from "./adaptive-router";
+import type {
+  ModelScenario,
+  ScenarioRoute,
+} from "../../../shared/model-scenario-routing";
 import type { ModelObservationService } from "./model-observation";
 import type { AgentActor } from "./profile-types";
 
@@ -94,6 +98,7 @@ export type ActorAgentResolverDependencies = {
     actorId: string,
   ) => (agentId: string, part: ToolImagePart) => Promise<string | null>;
   adaptiveRouter?: AdaptiveRouter;
+  scenarioFor?: (scenario: ModelScenario) => Promise<ScenarioRoute>;
   modelObserver?: Pick<ModelObservationService, "isEnabled" | "record">;
   usageBreakdown?: Pick<UsageBreakdownService, "record">;
   promptWorkbench?: PromptWorkbenchStore;
@@ -144,6 +149,7 @@ export function createActorAgentResolver(
       quotaPolicy ||
       describeImageForAgent ||
       deps.adaptiveRouter ||
+      deps.scenarioFor ||
       deps.modelObserver ||
       deps.usageBreakdown ||
       deps.promptWorkbench
@@ -157,6 +163,9 @@ export function createActorAgentResolver(
             ...(describeImageForAgent ? { describeImageForAgent } : {}),
             ...(deps.adaptiveRouter
               ? { adaptiveRouter: deps.adaptiveRouter }
+              : {}),
+            ...(deps.scenarioFor
+              ? { scenarioFor: deps.scenarioFor }
               : {}),
             ...(deps.modelObserver
               ? { modelObserver: deps.modelObserver }

@@ -124,6 +124,11 @@ export function createMediaModels(
       agentId: string,
       modelId?: string,
     ) => Promise<boolean | undefined>;
+    /**
+     * 场景化路由的 vision 主模型（管理员级）：仅在管理员没有配置 custom 识图模型时，
+     * 作为部署级默认参与解析；由接线方用主连接合成，null = 未配置。
+     */
+    scenarioVision?: () => Promise<EffectiveVision | null>;
     /** 某人是不是管理员（决定能不能填内网地址）。 */
     isAdmin?: (userId: string) => Promise<boolean>;
     /** 测试里换掉公网检查。 */
@@ -696,16 +701,23 @@ export function createMediaModels(
       const chosen = await model(mine, "personal");
       if (chosen) return chosen;
     }
-    if (mine?.mode !== "follow" && admin?.mode === "custom") {
-      const chosen = await model(admin, "default");
+    const adminOrScenario = async (): Promise<EffectiveVision | null> => {
+      if (admin?.mode === "custom") {
+        const chosen = await model(admin, "default");
+        if (chosen) return chosen;
+      }
+      return options.scenarioVision
+        ? options.scenarioVision().catch(() => null)
+        : null;
+    };
+    if (mine?.mode !== "follow") {
+      const chosen = await adminOrScenario();
       if (chosen) return chosen;
     }
     const supports = await mainSupports(agentId, modelId);
     if (supports !== false) return { kind: "main" };
-    if (admin?.mode === "custom") {
-      const fallback = await model(admin, "default");
-      if (fallback) return fallback;
-    }
+    const fallback = await adminOrScenario();
+    if (fallback) return fallback;
     return { kind: "none" };
   }
 
