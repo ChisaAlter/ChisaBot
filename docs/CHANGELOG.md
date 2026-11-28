@@ -1,5 +1,9 @@
 ## Unreleased
 
+## 0.1.194 — 2026-11-28
+
+全端版本 `0.1.194`，Android `versionCode 374`：落地场景化模型路由运行时接入（PR #609，CB-144 系列第二棒）——chat / summarization / review / title / vision 五场景按统一路由重组模型链，空配置与升级前逐字节一致，无数据库迁移。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹因 shared 场景路由契约扩展更新为 `8bd6453fff1e8f0f`。
+
 - **场景化模型路由 PR2：运行时接入（CB-144）**：chat / summarization / review / title / vision 接入统一场景路由（链替换、跳过自适应、effort / maxTokens 覆盖、review 主备链切换、usage kind 修正与扩展）；空配置行为不变、无迁移（`server/src/agents/scenario-connection.ts` · `server/src/agents/dsh-runtime.ts` · [scenario-routing.md](scenario-routing.md)）。
 
 
