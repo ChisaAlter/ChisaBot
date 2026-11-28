@@ -32,6 +32,7 @@ import { createContextPolicyStore } from "../../src/agents/context-policy-store"
 import { createHistorySummaryModelService } from "../../src/agents/history-summary-settings";
 import { createRuntimeKernelRoutes } from "../../src/agents/kernel-status";
 import { createModelFallbackService } from "../../src/agents/model-fallback-settings";
+import { createComposerService } from "../../src/composer/index";
 import { createModelObservationService } from "../../src/agents/model-observation";
 import { createScenarioRoutingService } from "../../src/agents/model-scenario-routing";
 import type { AgentProfileStore } from "../../src/agents/profile-store";
@@ -267,6 +268,7 @@ export async function buildInventoryApp(
       adaptiveAvailable: () => false,
     },
   });
+  const composerService = createComposerService(hole);
   const conversationInteractions = createConversationInteractions(hole, hole);
   const historySummaryModel = createHistorySummaryModelService(hole);
   const contextPolicyStore = createContextPolicyStore(hole);
@@ -424,6 +426,7 @@ export async function buildInventoryApp(
         ],
         ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
         ["/api/admin/scenario-routing", scenarioRouting.routes(requireUser)],
+        ["/api/composer", composerService.routes(requireUser)],
         [
           "/api/conversation-interactions",
           conversationInteractions.routes(requireUser),
