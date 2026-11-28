@@ -112,6 +112,10 @@ export function createComposerAiSuggester(options: {
   rateLimitMs?: number;
   timeoutMs?: number;
   maxEntries?: number;
+  /** 自定义 prompt 组装（默认：下一步建议）；行内补全等变体注入自己的。 */
+  promptFor?: (context: readonly AiSuggestContextMessage[]) => string;
+  /** 自定义输出解析（默认：多行建议列表）。 */
+  parseOutput?: (raw: string, context: readonly AiSuggestContextMessage[]) => string[];
 }) {
   const now = options.now ?? (() => Date.now());
   const cacheTtlMs = options.cacheTtlMs ?? AI_SUGGEST_CACHE_TTL_MS;
@@ -145,10 +149,10 @@ export function createComposerAiSuggester(options: {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const raw = await options.completer(
-        buildAiSuggestPrompt(context),
+        (options.promptFor ?? buildAiSuggestPrompt)(context),
         controller.signal,
       );
-      const suggestions = parseAiSuggestions(raw);
+      const suggestions = (options.parseOutput ?? ((r: string) => parseAiSuggestions(r)))(raw, context);
       cache.set(key, { expires: now() + cacheTtlMs, suggestions });
       pruneCache();
       return suggestions;

@@ -82,7 +82,10 @@ function cleanId(input: unknown): string {
 
 export function createComposerService(
   database: Database,
-  deps?: { aiSuggester?: ComposerAiSuggester },
+  deps?: {
+    aiSuggester?: ComposerAiSuggester;
+    completionSuggester?: ComposerAiSuggester;
+  },
 ) {
   const sql = database.$client;
 
@@ -433,6 +436,29 @@ export function createComposerService(
     };
   }
 
+  /**
+   * 行内补全（PR6）：预判草稿续写，只返回可追加的 suffix。
+   * 门槛：总开关 + completionEnabled 都开；文本至少 2 字。
+   * 与 AI 建议同一套静默回落：任何失败都是没有补全。
+   */
+  async function inlineCompletion(
+    owner: string,
+    input: unknown,
+  ): Promise<{ completion: string | null }> {
+    const settings = await readSettings(owner);
+    if (!settings.enabled || !settings.completionEnabled)
+      return { completion: null };
+    if (!deps?.completionSuggester) return { completion: null };
+    const body = (input ?? {}) as Record<string, unknown>;
+    const text = cleanText(body.text);
+    if ([...text].length < 2) return { completion: null };
+    const result = await deps.completionSuggester
+      .suggest(owner, "inline", [{ role: "user", text }])
+      .catch(() => null);
+    const completion = result?.suggestions[0] ?? null;
+    return { completion };
+  }
+
   // ------------------------------------------------------------------ routes
 
   function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
@@ -552,6 +578,20 @@ export function createComposerService(
         throw error;
       }
     });
+    app.post("/inline-completion", async (context) => {
+      try {
+        return context.json(
+          await inlineCompletion(
+            owner(context),
+            await context.req.json().catch(() => null),
+          ),
+        );
+      } catch (error) {
+        if (error instanceof ComposerValidationError)
+          return context.json({ error: error.message }, error.status);
+        throw error;
+      }
+    });
     app.post("/habits/record", async (context) => {
       try {
         return context.json(
@@ -596,6 +636,7 @@ export function createComposerService(
     candidates,
     clearHabits,
     aiSuggestions,
+    inlineCompletion,
     routes,
   };
 }

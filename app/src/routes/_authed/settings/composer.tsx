@@ -203,7 +203,7 @@ function ComposerSettingsPage() {
                   <ItemTitle>{"AI 建议"}</ItemTitle>
                   <ItemDescription>
                     {settings.data.aiEnabled
-                      ? "起草中的文本会发给部署方配置的模型，给出可能想发送的完整消息。"
+                      ? "最近几条对话会发给部署方配置的模型，预判你下一步想发送的消息。"
                       : "起草内容不离开本机，不出 AI 建议。"}
                   </ItemDescription>
                 </ItemContent>
