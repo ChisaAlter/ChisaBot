@@ -21,6 +21,7 @@ import {
   capScenarioMaxTokens,
   defaultScenarioRoute,
   resolveScenarioEffort,
+  type ModelScenario,
   type ScenarioRoute,
 } from "../../../shared/model-scenario-routing";
 import { CHISABOT_WAITING_METADATA } from "../approvals/native-context";
@@ -118,8 +119,8 @@ export type DshRuntimeConfiguration = {
     signal: AbortSignal,
   ) => Promise<readonly GrantedTool[]>;
   adaptiveRouter?: AdaptiveRouter;
-  /** chat 场景路由（30 秒缓存的服务读取）；缺省或读取失败时完全沿用现状链。 */
-  chatScenario?: () => Promise<ScenarioRoute>;
+  /** 按场景读取路由（30 秒缓存的服务读取）；缺省或读取失败时完全沿用现状链。 */
+  scenarioFor?: (scenario: ModelScenario) => Promise<ScenarioRoute>;
   modelObserver?: Pick<ModelObservationService, "isEnabled" | "record">;
   usageBreakdown?: Pick<UsageBreakdownService, "record">;
   promptWorkbench?: PromptWorkbenchStore;
@@ -514,29 +515,32 @@ export class DshRuntimeAgent extends AbstractAgent {
         const anyNeedsImages = rawPreparedInput.messages.some((message) =>
           messageHasImages(message),
         );
-        const chatRoute =
-          this.configuration.chatScenario && !this.configuration.plan
-            ? await this.configuration.chatScenario().catch(() => null)
+        const forwardedProps = input.forwardedProps as
+          | { isSummarizationSession?: unknown }
+          | undefined;
+        const isSummarizationSession =
+          forwardedProps?.isSummarizationSession === true;
+        const scenarioRoute =
+          this.configuration.scenarioFor && !this.configuration.plan
+            ? await this.configuration
+                .scenarioFor(isSummarizationSession ? "summarization" : "chat")
+                .catch(() => null)
             : null;
         let routedEffort: ResolvedReasoningEffort = "default";
         let adaptiveModel: string | null = null;
         if (
           this.configuration.adaptiveRouter &&
           !this.configuration.plan &&
-          chatRoute?.useAdaptive !== false
+          scenarioRoute?.useAdaptive !== false
         ) {
-          const forwarded = input.forwardedProps as
-            | { isSummarizationSession?: unknown }
-            | undefined;
           const decision = await this.configuration.adaptiveRouter
             .decideRoute({
               messages: rawPreparedInput.messages,
               fallbackModel:
-                chatRoute?.model || this.configuration.connection.model,
+                scenarioRoute?.model || this.configuration.connection.model,
               providerKind: this.configuration.connection.provider,
               ownerUserId: scope.actorId,
-              isSummarizationSession:
-                forwarded?.isSummarizationSession === true,
+              isSummarizationSession,
               signal: active.toolAbort.signal,
             })
             .catch(() => null);
@@ -545,12 +549,15 @@ export class DshRuntimeAgent extends AbstractAgent {
             routedEffort = decision.effort;
           }
         }
-        if (chatRoute)
-          routedEffort = resolveScenarioEffort(chatRoute.effort, routedEffort);
+        if (scenarioRoute)
+          routedEffort = resolveScenarioEffort(
+            scenarioRoute.effort,
+            routedEffort,
+          );
         const requestedModels = this.configuration.plan
           ? [this.configuration.plan.provider]
           : applyChatScenarioRoute({
-              route: chatRoute ?? defaultScenarioRoute(),
+              route: scenarioRoute ?? defaultScenarioRoute(),
               adaptiveModel,
               baseModel: this.configuration.connection.model,
               globalFallbacks: await this.configuration.fallbacks(),
@@ -637,7 +644,7 @@ export class DshRuntimeAgent extends AbstractAgent {
           model: model.id,
           maxTokens: capScenarioMaxTokens(
             Math.min(model.maxTokens, Math.floor(contextWindow / 4)),
-            chatRoute?.maxTokens ?? null,
+            scenarioRoute?.maxTokens ?? null,
           ),
           ...(index === 0 && routedEffort !== "default"
             ? { reasoningEffort: routedEffort }
@@ -698,7 +705,9 @@ export class DshRuntimeAgent extends AbstractAgent {
                 ...(this.configuration.usageBreakdown
                   ? {
                       ownerUserId: scope.actorId,
-                      usageKind: "chat" as const,
+                      usageKind: isSummarizationSession
+                        ? ("summary" as const)
+                        : ("chat" as const),
                       onUsageBreakdown: (event) =>
                         this.configuration.usageBreakdown?.record(event),
                     }

@@ -13,6 +13,11 @@ export const USAGE_KINDS = [
   "classifier",
   "review",
   "test",
+  "suggestions",
+  "completion",
+  "title",
+  "vision",
+  "automation",
 ] as const;
 export type UsageKind = (typeof USAGE_KINDS)[number];
 
@@ -22,6 +27,11 @@ export const USAGE_KIND_LABELS: Record<UsageKind, string> = {
   classifier: "难度路由分类",
   review: "内容审查",
   test: "连通性 / 试跑测试",
+  suggestions: "输入建议",
+  completion: "行内补全",
+  title: "标题生成",
+  vision: "图像理解",
+  automation: "自动化任务",
 };
 
 export type UsageBucketTotals = {

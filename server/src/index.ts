@@ -87,6 +87,10 @@ import {
   createScenarioRoutingService,
   createScenarioRoutingStore,
 } from "./agents/model-scenario-routing";
+import {
+  createScenarioCompleter,
+  scenarioConnectionResolver,
+} from "./agents/scenario-connection";
 import { createModelObservationService } from "./agents/model-observation";
 import { createAgentModelService } from "./agents/model-selection";
 import { createPrimaryAgentService } from "./agents/primary-agent-service";
@@ -249,6 +253,7 @@ import {
   setModelSummaryThresholdResolver,
   setModelVisionResolver,
   setPreviousRunUsageResolver,
+  type RuntimeModelResolver,
   type ToolSelection,
 } from "./conversation-runtime";
 import { createConversationBindings } from "./conversations/bindings";
@@ -426,7 +431,10 @@ import {
   createPgWebhookPanelStore,
   createWebhookPanelRoutes,
 } from "./responsibilities/webhook-panel-routes";
-import { createModelCompleter } from "./routing/model";
+import {
+  createModelCompleter,
+  runtimeModelEndpoint,
+} from "./routing/model";
 import {
   createInternalQuiesceRoutes,
   getRuntimeQuiesceController,
@@ -972,7 +980,7 @@ const approvalService = createApprovalService(
       signal,
     });
   },
-  { review: (prompt, signal) => chooseSkills(prompt, signal) },
+  { review: (prompt, signal) => reviewModel(prompt, signal) },
 );
 // Housekeeping on a schedule: audit rows when asked for, screenshots always, one timer. See audit-retention.ts.
 const retentionSweeps = startRetentionSweeps(
@@ -1790,6 +1798,26 @@ const chooseSkills = createModelCompleter({
     }),
 });
 
+const reviewModelConnection = (resolveConnection: RuntimeModelResolver) =>
+  createModelCompleter({
+    model: runtimeModel,
+    resolveConnection,
+    resolveApiKey: () =>
+      resolveModelApiKey({
+        encryptionKey: config.keyEncryptionKey,
+        reader: credentialStore,
+        provider: runtimeModel.provider,
+        keyId: tenantPackage.model.credentialSecretRef,
+        environment: config.environment,
+      }),
+  });
+const reviewModel = createScenarioCompleter({
+  scenario: "review",
+  routing: scenarioRouting,
+  baseConnection: resolveRuntimeConnection,
+  completerFor: reviewModelConnection,
+});
+
 // Named collaborators are bound once in actorAgentResolver for chat, hops, and headless turns.
 
 // PC 节点（docs/pc-node.md）：设备登记在数据库，在线连接在内存里的 hub。
@@ -2036,6 +2064,26 @@ const chatFiles = createChatFiles(database, {
   // 识图模型（DESIGN.md §59）：主模型能不能看图看模型目录（Magpie 的 input modalities），不知道就当能。
   // 看这一轮实际用的模型（审查 #417）：调用方给了就用它（备用模型、已经解析好的这一轮模型）；没给就和建机器人
   // 用同一个解析——同一请求里的快照，含面板 / 个人选的模型和机器人自己的设置，所以提示词和发过去的东西一致。
+  scenarioVision: async () => {
+    const routes = await scenarioRouting.config().catch(() => null);
+    const route = routes ? resolveScenarioRoute(routes, "vision") : null;
+    if (!route?.model) return null;
+    const connection = await resolveRuntimeConnection().catch(() => null);
+    // 识图走 OpenAI 兼容端点（vision-provider.ts）；Anthropic 原生端点形状不同，
+    // 场景 vision 只在主连接是 OpenAI 兼容形状时合成，其余情况由管理员在媒体设置里单独配。
+    if (!connection || connection.model.provider !== "openai") return null;
+    if (!connection.apiKey && connection.model.useApiKey !== false) return null;
+    const endpoint = runtimeModelEndpoint(connection.model);
+    const baseUrl = endpoint.endsWith("/chat/completions")
+      ? endpoint.slice(0, -"/chat/completions".length)
+      : endpoint;
+    return {
+      kind: "model" as const,
+      config: { baseUrl, model: route.model, apiKey: connection.apiKey ?? "" },
+      source: "default" as const,
+      label: route.model,
+    };
+  },
   mainModelSupportsImages: async (agentId, modelId) => {
     const id =
       modelId ??
@@ -4248,8 +4296,8 @@ const actorAgentResolver = createActorAgentResolver({
     recordUsage: quotaService.recordUsage,
   },
   adaptiveRouter,
-  chatScenario: async () =>
-    resolveScenarioRoute(await scenarioRouting.config(), "chat"),
+  scenarioFor: async (scenario) =>
+    resolveScenarioRoute(await scenarioRouting.config(), scenario),
   modelObserver: modelObservationService,
   usageBreakdown: usageBreakdownService,
   promptWorkbench: promptWorkbenchStore,
@@ -5439,7 +5487,11 @@ const channelSummaries = {
   title: createChannelTitler({
     model: runtimeModel.defaultModel,
     resolveApiKey: resolveRuntimeModelApiKey,
-    resolveConnection: resolveRuntimeConnection,
+    resolveConnection: scenarioConnectionResolver(
+      "title",
+      resolveRuntimeConnection,
+      scenarioRouting,
+    ),
   }),
   owner: workOwner("summariser"),
 };

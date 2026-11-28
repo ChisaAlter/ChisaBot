@@ -13,7 +13,10 @@ import {
   WORK_STYLE_GUIDANCE,
 } from "../../shared/bot-prompt";
 import type { AdaptiveRouter } from "./agents/adaptive-router";
-import type { ScenarioRoute } from "../../shared/model-scenario-routing";
+import type {
+  ModelScenario,
+  ScenarioRoute,
+} from "../../shared/model-scenario-routing";
 import {
   type ActorAgentResolver,
   CoworkerUnavailableError,
@@ -218,7 +221,7 @@ export type RuntimeModelPolicy = {
     part: ToolImagePart,
   ) => Promise<string | null>;
   adaptiveRouter?: AdaptiveRouter;
-  chatScenario?: () => Promise<ScenarioRoute>;
+  scenarioFor?: (scenario: ModelScenario) => Promise<ScenarioRoute>;
   modelObserver?: Pick<ModelObservationService, "isEnabled" | "record">;
   usageBreakdown?: Pick<UsageBreakdownService, "record">;
   promptWorkbench?: PromptWorkbenchStore;
@@ -1524,8 +1527,8 @@ async function buildAgent(
       ...(runtimePolicy?.adaptiveRouter
         ? { adaptiveRouter: runtimePolicy.adaptiveRouter }
         : {}),
-      ...(runtimePolicy?.chatScenario
-        ? { chatScenario: runtimePolicy.chatScenario }
+      ...(runtimePolicy?.scenarioFor
+        ? { scenarioFor: runtimePolicy.scenarioFor }
         : {}),
       ...(runtimePolicy?.modelObserver
         ? { modelObserver: runtimePolicy.modelObserver }
