@@ -104,7 +104,7 @@ export function ComposerCandidates({
 
   const local =
     text.length > 0 && text === prefix && !hasChips ? (query.data ?? []) : [];
-  const ai = showAi ? (aiQuery.data?.suggestions ?? []) : [];
+  const ai = showAi ? (aiQuery.data ?? []) : [];
   const seen = new Set<string>();
   const candidates: ComposerCandidate[] = [];
   for (const candidate of [...local, ...ai]) {

@@ -95,7 +95,7 @@ export function composerAiSuggestionsQueryOptions(
 ) {
   return queryOptions({
     queryKey: composerKeys.aiSuggestions(botId, contextKey),
-    queryFn: (): Promise<{ suggestions: ComposerCandidate[] }> =>
+    queryFn: (): Promise<ComposerCandidate[]> =>
       client("/api/composer/ai-suggestions", "suggestions", {
         method: "POST",
         body: { botId, context },
@@ -114,7 +114,7 @@ export function composerAiSuggestionsQueryOptions(
 export function composerInlineCompletionQueryOptions(text: string) {
   return queryOptions({
     queryKey: ["composer", "inline-completion", { text }] as const,
-    queryFn: (): Promise<{ completion: string | null }> =>
+    queryFn: (): Promise<string | null> =>
       client("/api/composer/inline-completion", "completion", {
         method: "POST",
         body: { text },
