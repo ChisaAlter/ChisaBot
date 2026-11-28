@@ -1,5 +1,7 @@
 ## Unreleased
 
+- **输入助手 PR7：习惯反馈记账与排序加权（CB-145）**：候选条自动记账——habit 候选出现记 shown、点选记 accepted、出现后未点消失记 ignored，3s 合批上报、失败静默；排序按 use_count + accepted×2 − ignored 加权（零反馈的老习惯行为不变），被采纳的越排越前、被无视的自然下沉；反馈只对已存在的习惯行记账（行只能由真实发送产生），按 (owner, bot) 严格隔离（`server/src/composer/index.ts` · `app/src/components/channels/composer/candidate-strip.tsx` · `server/tests/composer-habit-feedback.test.ts`）。
+
 ## 0.1.197 — 2026-11-28
 
 全端版本 `0.1.197`，Android `versionCode 377`：输入助手第三层行内补全（PR #616）。PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹 `b2904c8285475e5b`。

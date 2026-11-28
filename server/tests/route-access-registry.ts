@@ -721,6 +721,7 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "POST /api/confirmations/rules": { access: "user" },
   "POST /api/composer/ai-suggestions": { access: "user" },
   "POST /api/composer/inline-completion": { access: "user" },
+  "POST /api/composer/habits/feedback": { access: "user" },
   "POST /api/composer/habits/record": { access: "user" },
   "POST /api/composer/quick-phrases": { access: "user" },
   "POST /api/composer/quick-phrases/reorder": { access: "user" },

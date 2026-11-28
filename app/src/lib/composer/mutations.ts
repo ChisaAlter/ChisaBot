@@ -114,3 +114,18 @@ export async function recordComposerHabit(input: {
     // 习惯记录永远不该打断发送后的任何路径；丢一条习惯只是候选少一条。
   }
 }
+
+/** 习惯反馈批量上报（PR7）：被动记账，失败静默——不值得为计数打扰输入。 */
+export function reportHabitFeedbackMutationOptions() {
+  return mutationOptions({
+    mutationFn: (input: {
+      botId: string;
+      events: { kind: "shown" | "accepted" | "ignored"; text: string }[];
+    }): Promise<{ recorded: number }> =>
+      client("/api/composer/habits/feedback", "feedback", {
+        method: "POST",
+        body: input,
+        fallback: "习惯反馈上报失败。",
+      }),
+  });
+}

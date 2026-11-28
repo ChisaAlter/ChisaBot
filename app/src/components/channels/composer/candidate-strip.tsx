@@ -1,6 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { useTimeout } from "@/hooks";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useRef, useState } from "react";
+import { useElementSync, useInterval, useTimeout } from "@/hooks";
+import { reportHabitFeedbackMutationOptions } from "@/lib/composer/mutations";
 import {
   type ComposerCandidate,
   composerAiSuggestionsQueryOptions,
@@ -113,5 +114,65 @@ export function ComposerCandidates({
     candidates.push(candidate);
     if (candidates.length >= 5) break;
   }
-  return <CandidateStrip candidates={candidates} onAccept={onAccept} />;
+  /*
+   * 习惯反馈记账（PR7）：只对 habit 来源候选计数（phrase 是用户自维护、ai 无习惯行）。
+   * shown：候选进入条时记一次；accepted：点选时记；ignored：候选从条上消失且未被点选时记。
+   * useElementSync 的 cleanup 天然是「消失」的语义——候选列表变化或组件卸载都会触发。
+   * 事件进队列按 3s 合批上报；被动记账，失败静默。
+   */
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const queueRef = useRef<
+    { kind: "shown" | "accepted" | "ignored"; text: string }[]
+  >([]);
+  const shownPendingRef = useRef(new Set<string>());
+  const feedback = useMutation(reportHabitFeedbackMutationOptions());
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  useInterval(() => {
+    const queue = queueRef.current;
+    if (!botId || queue.length === 0) return;
+    queueRef.current = [];
+    feedbackRef.current.mutate({ botId, events: queue }, { onError: () => {} });
+  }, 3_000);
+  const candidatesKey = candidates.map((c) => c.text).join("|");
+  const prevHabitsRef = useRef(new Set<string>());
+  useElementSync(stripRef, candidatesKey, () => {
+    const current = new Set(
+      candidates.filter((c) => c.source === "habit").map((c) => c.text),
+    );
+    for (const text of current) {
+      if (!prevHabitsRef.current.has(text)) {
+        queueRef.current.push({ kind: "shown", text });
+        shownPendingRef.current.add(text);
+      }
+    }
+    for (const text of prevHabitsRef.current) {
+      if (!current.has(text) && shownPendingRef.current.has(text)) {
+        shownPendingRef.current.delete(text);
+        queueRef.current.push({ kind: "ignored", text });
+      }
+    }
+    prevHabitsRef.current = current;
+    return () => {
+      // 组件卸载：仍在展示的 habit 候选按 ignored 收尾（近似语义，被动记账可接受）。
+      for (const text of shownPendingRef.current) {
+        queueRef.current.push({ kind: "ignored", text });
+      }
+      shownPendingRef.current.clear();
+      prevHabitsRef.current = new Set();
+    };
+  });
+  const acceptWithFeedback = (text: string) => {
+    if (shownPendingRef.current.has(text)) {
+      shownPendingRef.current.delete(text);
+      queueRef.current.push({ kind: "accepted", text });
+    }
+    onAccept(text);
+  };
+
+  return (
+    <div ref={stripRef}>
+      <CandidateStrip candidates={candidates} onAccept={acceptWithFeedback} />
+    </div>
+  );
 }
