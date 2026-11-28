@@ -240,7 +240,7 @@ export function buildUsageCsv(events: readonly UsageEventRecord[]): string {
         .join(","),
     );
   }
-  return lines.join("\r\n") + "\r\n";
+  return `${lines.join("\r\n")}\r\n`;
 }
 
 /** 明细分页的 metadata-only 投影（剔除 ownerUserId 等内部字段后形状即全部）。 */
