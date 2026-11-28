@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { useTimeout } from "@/hooks";
+import { useRef, useState } from "react";
+import { useElementEvent, useElementSync, useTimeout } from "@/hooks";
 import {
   composerInlineCompletionQueryOptions,
   composerSettingsQueryOptions,
@@ -91,12 +91,14 @@ export function InlineCompletionGhost({
   const query = useQuery(composerInlineCompletionQueryOptions(stable));
   const suffix = stable ? (query.data?.completion ?? null) : null;
 
-  // 排版 / 几何同步：suffix 出现时把编辑器计算样式抄到 mirror 上，并按编辑器
-  // 相对包裹元素的实时几何摆放 overlay。rect 相减对任何嵌套结构都正确。
+  /*
+   * 排版 / 几何同步：把编辑器计算样式抄到 mirror 上，并按编辑器相对包裹元素的
+   * 实时几何摆放 overlay。rect 相减对任何嵌套结构都正确；text 进同步值是因为
+   * 它会改变编辑器几何（折行 / 高度），几何必须随每次输入重量。
+   */
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: text 变化会改变编辑器几何（折行/高度），必须重量，虽然 effect 体不直接引用它
-  useEffect(() => {
+  useElementSync(containerRef, { suffix, text }, () => {
     const mirror = mirrorRef.current;
     const overlay = overlayRef.current;
     const editor = resolveEditor(containerRef.current);
@@ -114,27 +116,33 @@ export function InlineCompletionGhost({
     overlay.style.width = `${editorRect.width}px`;
     overlay.style.height = `${editorRect.height}px`;
     overlay.style.opacity = "1";
-  }, [containerRef, suffix, text]);
+  });
 
-  // 接受 / 丢弃：capture 阶段监听编辑器按键。Tab 或行尾右箭头接受；
-  // 只在 caret 位于末尾时接受，否则放行编辑器默认行为。
+  /*
+   * 接受 / 丢弃：capture 阶段监听 composer 容器按键（编辑器在容器内，
+   * capture 语义相同）。Tab 或行尾右箭头接受；只在 caret 位于末尾时接受，
+   * 否则放行编辑器默认行为。rebindKey=suffix：补全出现 / 变化时重绑。
+   */
   const suffixRef = useRef<string | null>(null);
   suffixRef.current = suffix;
-  useEffect(() => {
-    const editor = resolveEditor(containerRef.current);
-    if (!editor || !suffix) return;
-    const onKeydown = (event: KeyboardEvent) => {
-      const current = suffixRef.current;
-      if (!current) return;
-      if (event.key !== "Tab" && event.key !== "ArrowRight") return;
-      if (!caretAtEnd(editor)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onAccept(current);
-    };
-    editor.addEventListener("keydown", onKeydown, true);
-    return () => editor.removeEventListener("keydown", onKeydown, true);
-  }, [containerRef, suffix, onAccept]);
+  useElementEvent(
+    containerRef,
+    "keydown",
+    suffix
+      ? (event) => {
+          const current = suffixRef.current;
+          const editor = resolveEditor(containerRef.current);
+          if (!current || !editor) return;
+          if (event.key !== "Tab" && event.key !== "ArrowRight") return;
+          if (!caretAtEnd(editor)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          onAccept(current);
+        }
+      : null,
+    true,
+    suffix ?? "none",
+  );
 
   if (!suffix || !containerRef.current) return null;
   return (
