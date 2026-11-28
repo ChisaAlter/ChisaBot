@@ -6,6 +6,7 @@ import {
   IconCloudDownload,
   IconDeviceDesktop,
   IconListDetails,
+  IconKeyboard,
   IconLock,
   IconMessageChatbot,
   IconPhoto,
@@ -395,6 +396,32 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
   },
 
   // ── 助手能力 ──────────────────────────────────────────
+  {
+    id: "composer",
+    group: "bots",
+    title: "输入助手",
+    sub: "快捷短语、输入候选与学习习惯",
+    icon: IconKeyboard,
+    to: "/settings/composer",
+    keywords: ["srzs", "shuru", "composer", "输入", "快捷短语", "候选", "phrases"],
+    items: [
+      {
+        id: "composer-enabled",
+        title: "输入助手",
+        description: "输入时显示快捷短语与常用输入候选",
+        find: "输入候选",
+        keywords: ["开关", "候选"],
+      },
+      {
+        id: "composer-learning",
+        title: "学习习惯",
+        description: "发送过的消息按机器人记住，可清空",
+        find: "学习习惯",
+        keywords: ["学习", "清空", "learning"],
+      },
+    ],
+  },
+
   {
     id: "memory",
     group: "bots",

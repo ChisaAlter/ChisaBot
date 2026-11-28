@@ -10,9 +10,11 @@ import {
 import { useReducedMotion } from "motion/react";
 import { PromptArea, type PromptAreaHandle } from "prompt-area";
 import {
+  hasChips,
   isSegmentsEmpty,
   mergeAdjacentTextSegments,
   type Segment,
+  segmentsToPlainText,
   text,
 } from "prompt-area/helpers";
 import {
@@ -49,21 +51,12 @@ import {
   shouldClaimPaste,
 } from "@/lib/channels/attachments";
 import { releaseStagedAttachment } from "@/lib/channels/staged-attachment";
-import { deleteChatFile } from "@/lib/chat-files";
 import {
   type Attachment,
   type AttachmentsConfig,
   useAttachments,
 } from "@/lib/chat/attachment-state";
 import { useConversationScope } from "@/lib/chat/conversation-scope";
-import {
-  type BusySendMode,
-  getBusySendMode,
-  reverseBusySendMode,
-  setBusySendMode,
-  useBusySendMode,
-} from "@/lib/conversations/send-mode";
-import { promoteAllQueued, queuedFor } from "@/lib/conversations/thread-inbox";
 import {
   mergeDraftAttachments,
   type PersistedDraftFile,
@@ -93,11 +86,24 @@ import {
   threadUi,
   wasJustSent,
 } from "@/lib/chat/ui-memory";
+import { deleteChatFile } from "@/lib/chat-files";
 import { tryClient } from "@/lib/client";
+import { recordComposerHabit } from "@/lib/composer/mutations";
 import { objectConnectionKey } from "@/lib/connection-key";
 import { SendDeliveryUnknownError } from "@/lib/conversations/connection-drop";
 import { shouldStopOnEscape } from "@/lib/conversations/held-supplements";
-import { inboxState } from "@/lib/conversations/thread-inbox";
+import {
+  type BusySendMode,
+  getBusySendMode,
+  reverseBusySendMode,
+  setBusySendMode,
+  useBusySendMode,
+} from "@/lib/conversations/send-mode";
+import {
+  inboxState,
+  promoteAllQueued,
+  queuedFor,
+} from "@/lib/conversations/thread-inbox";
 import { useKeptVisibility } from "@/lib/kept-visible";
 import { DURATION_MS, useRetainedValue } from "@/lib/motion";
 import { newId } from "@/lib/new-id";
@@ -115,6 +121,7 @@ import {
   FILE_PICKER_ACCEPT_WITH_DOCUMENTS,
   stagedRowId,
 } from "./attachments";
+import { ComposerCandidates } from "./candidate-strip";
 import { Collapse } from "./collapse";
 import { DictationButton, DictationSurface } from "./dictation-controls";
 import { appendDictation } from "./dictation-draft";
@@ -322,6 +329,11 @@ export type ComposerProps = {
   /** 当前对话所属机器人 id；存在时允许直传 ≤20MB 的 PDF / DOCX 文档至 `/api/chat-files`。 */
   chatFileAgentId?: string | null;
   /**
+   * 输入候选按哪个机器人出（习惯按机器人隔离）；`null` 只出快捷短语。
+   * 不传（undefined）= 本表面完全关闭候选——默认值，也是测试与无 Provider 表面的安全态。
+   */
+  candidatesBotId?: string | null;
+  /**
    * There is a run on the wire for Stop to reach.
    *
    * Not the same question as `pending`, and telling them apart is the whole reason this exists. A
@@ -483,6 +495,7 @@ function ComposerImpl({
   autoFocus = false,
   channelId,
   chatFileAgentId,
+  candidatesBotId,
   stoppable,
   stopping = false,
   stopFailed = false,
@@ -670,6 +683,28 @@ function ComposerImpl({
   );
   const composerFormRef = useMemo(() => presenceRef("has-composer"), []);
   const promptAreaRef = useRef<PromptAreaHandle>(null);
+  /*
+   * 本地输入候选（快捷短语 + 高频习惯）：跟着整份草稿的纯文本走，防抖 180ms 后按前缀问服务器。
+   * 带 chip（@ / 命令）的草稿不出候选——填入是整框替换，chip 会被抹掉，宁可不出也不毁字。
+   * 候选条只在文本稳定（防抖追平）时显示，打字中途不闪旧候选。
+   */
+  const acceptCandidate = useCallback((phrase: string) => {
+    promptAreaRef.current?.setText(phrase);
+    promptAreaRef.current?.focus();
+  }, []);
+  /*
+   * 候选条按表面显式启用（candidatesBotId !== undefined）：Composer 是叶子组件，
+   * 没有 QueryClientProvider 的测试与表面照样渲染它，查询只在容器组件里发生。
+   */
+  const candidateStrip =
+    candidatesBotId === undefined ? null : (
+      <ComposerCandidates
+        botId={candidatesBotId}
+        hasChips={hasChips(value)}
+        onAccept={acceptCandidate}
+        text={segmentsToPlainText(value).trim()}
+      />
+    );
   const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(
     () => {
       const draft = threadUi(draftKey);
@@ -691,7 +726,9 @@ function ComposerImpl({
   } | null>(threadUi(draftKey)?.restoredSend ?? null);
   const uncertainDraft = useRef(false);
   useExternalConnection(
-    draftKey ? `${draftKey}\0${replyQuote ? objectConnectionKey(replyQuote) : 0}` : false,
+    draftKey
+      ? `${draftKey}\0${replyQuote ? objectConnectionKey(replyQuote) : 0}`
+      : false,
     () => {
       if (!draftKey) return;
       const restored = restoredQuotedSend.current;
@@ -2568,6 +2605,12 @@ function ComposerImpl({
         // Released first, for the reason the queue branch above gives: the message carries these
         // rows now, and a reconciler that saw the chips go without being told would delete
         // attachments that have just been sent.
+        if (chatFileAgentId && rawSubmitted.text) {
+          void recordComposerHabit({
+            botId: chatFileAgentId,
+            text: rawSubmitted.text,
+          });
+        }
         releaseStagedRows(submitted.attachments);
         for (const id of riding) {
           removeAttachment(id);
@@ -2658,6 +2701,7 @@ function ComposerImpl({
     },
     [
       channelId,
+      chatFileAgentId,
       disabled,
       sendBlocked,
       dictation.session,
@@ -3169,6 +3213,7 @@ function ComposerImpl({
           <DictationSurface dictation={dictation} canSend={canSendRecording}>
             {filePicker}
             {replyQuoteBar}
+            {candidateStrip}
             <div className={expanded ? "min-w-0" : "glass-composer-bar"}>
               {!expanded ? attachButton : null}
               <PromptArea
@@ -3298,6 +3343,7 @@ function ComposerImpl({
               progress={progressStore}
             />
             {replyQuoteBar}
+            {candidateStrip}
             <PromptArea
               aria-label={"消息"}
               /*

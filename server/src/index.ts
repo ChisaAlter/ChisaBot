@@ -88,6 +88,7 @@ import {
   createScenarioRoutingService,
   createScenarioRoutingStore,
 } from "./agents/model-scenario-routing";
+import { createComposerService } from "./composer/index";
 import { createAgentModelService } from "./agents/model-selection";
 import { createPrimaryAgentService } from "./agents/primary-agent-service";
 import { createAgentProfileStore } from "./agents/profile-store";
@@ -1510,6 +1511,10 @@ const scenarioRouting = createScenarioRoutingService({
       (await routingLogStorage.readPolicy()).mode === "adaptive",
   },
 });
+
+// 输入框效率第一层：快捷短语 + 本地候选（CB-145）；表开机 ensure，全部 owner 隔离。
+const composerService = createComposerService(database);
+await composerService.ensure();
 // 估算每轮 token 的上下文窗口来自模型目录（经 modelInfo 下发给内核）。
 // 注意：「摘要模型」设置（下方 historySummaryModel）在 DSH 内核下没有读取方——connectionSummarizer /
 // compactHistory 无调用者，是 Hermes 时代的遗留链路，待决定删除或接回。
@@ -6423,6 +6428,7 @@ const app = createApp(
       ],
       ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
       ["/api/admin/scenario-routing", scenarioRouting.routes(requireUser)],
+      ["/api/composer", composerService.routes(requireUser)],
       [
         "/api/conversation-interactions",
         conversationInteractions.routes(requireUser),
