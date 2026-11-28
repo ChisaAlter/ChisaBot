@@ -82,6 +82,10 @@ import {
   createModelFallbackService,
   createModelFallbackStore,
 } from "./agents/model-fallback-settings";
+import {
+  createScenarioRoutingService,
+  createScenarioRoutingStore,
+} from "./agents/model-scenario-routing";
 import { createModelObservationService } from "./agents/model-observation";
 import { createAgentModelService } from "./agents/model-selection";
 import { createPrimaryAgentService } from "./agents/primary-agent-service";
@@ -1471,6 +1475,11 @@ const modelFallbacks = createModelFallbackService({
   store: createModelFallbackStore(database),
 });
 setModelFallbackList(() => modelFallbacks.models());
+// 场景化模型路由（chat / review / title / vision / suggestions / completion …）：
+// 本 PR 只接线存储与管理员 API，运行时消费方逐个接入；空配置 = 全部场景继承当前行为。
+const scenarioRouting = createScenarioRoutingService({
+  store: createScenarioRoutingStore(database),
+});
 // 估算每轮 token 的上下文窗口来自模型目录（经 modelInfo 下发给内核）。
 // 注意：「摘要模型」设置（下方 historySummaryModel）在 DSH 内核下没有读取方——connectionSummarizer /
 // compactHistory 无调用者，是 Hermes 时代的遗留链路，待决定删除或接回。
@@ -6325,6 +6334,7 @@ const app = createApp(
         }),
       ],
       ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
+      ["/api/admin/scenario-routing", scenarioRouting.routes(requireUser)],
       [
         "/api/conversation-interactions",
         conversationInteractions.routes(requireUser),

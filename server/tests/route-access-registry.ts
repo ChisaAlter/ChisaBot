@@ -56,6 +56,10 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
     access: "admin",
     reason: "use() mount enforces administrator",
   },
+  "ALL /api/admin/scenario-routing/*": {
+    access: "admin",
+    reason: "use() mount enforces administrator",
+  },
   "ALL /api/admin/observation/*": {
     access: "admin",
     reason: "use() mount enforces administrator",
@@ -238,6 +242,7 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/admin/routing/logs": { access: "admin" },
   "GET /api/admin/routing/policy": { access: "admin" },
   "GET /api/admin/runtime-kernel": { access: "admin" },
+  "GET /api/admin/scenario-routing": { access: "admin" },
   "GET /api/admin/status": { access: "admin" },
   "GET /api/admin/system-update": { access: "admin" },
   "GET /api/agents": { access: "user" },
@@ -1035,6 +1040,7 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "PUT /api/admin/prompts/:role": { access: "admin" },
   "PUT /api/admin/quotas/:userId": { access: "admin" },
   "PUT /api/admin/routing/policy": { access: "admin" },
+  "PUT /api/admin/scenario-routing": { access: "admin" },
   "PUT /api/agents/:agentId/model": { access: "user" },
   "PUT /api/apps/:id/config": { access: "admin" },
   "PUT /api/apps/:id/oauth": { access: "admin" },
