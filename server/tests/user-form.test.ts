@@ -26,7 +26,9 @@ describe("CB-147 表单字段定义校验", () => {
 
   test("凭据味字段一律拒收", () => {
     for (const id of ["password", "api_token", "secret_key", "apiKey"]) {
-      const verdict = validateUserFormFields([{ type: "text", id, label: "x" }]);
+      const verdict = validateUserFormFields([
+        { type: "text", id, label: "x" },
+      ]);
       expect(verdict.ok).toBe(false);
       if (!verdict.ok) expect(verdict.error).toContain("保管库");
     }
@@ -37,10 +39,12 @@ describe("CB-147 表单字段定义校验", () => {
   });
 
   test("重复 id 拒收；非法结构拒收", () => {
+    expect(validateUserFormFields([textField, { ...textField }]).ok).toBe(
+      false,
+    );
     expect(
-      validateUserFormFields([textField, { ...textField }]).ok,
+      validateUserFormFields([{ type: "password", id: "x", label: "x" }]).ok,
     ).toBe(false);
-    expect(validateUserFormFields([{ type: "password", id: "x", label: "x" }]).ok).toBe(false);
     expect(validateUserFormFields([]).ok).toBe(false);
     expect(validateUserFormFields("nope").ok).toBe(false);
   });

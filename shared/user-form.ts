@@ -65,7 +65,8 @@ export type UserFormField = z.infer<typeof userFormFieldSchema>;
 export const userFormFieldsSchema = z.array(userFormFieldSchema).min(1).max(20);
 
 /** 凭据味字段拒收：type 不存在 password，但 id/label 夹带同样违规。 */
-const FORBIDDEN_PATTERN = /password|passwd|token|secret|credential|api[_-]?key/i;
+const FORBIDDEN_PATTERN =
+  /password|passwd|token|secret|credential|api[_-]?key/i;
 
 export function forbiddenFormFieldReason(field: UserFormField): string | null {
   if (FORBIDDEN_PATTERN.test(field.id) || FORBIDDEN_PATTERN.test(field.label)) {
@@ -75,9 +76,9 @@ export function forbiddenFormFieldReason(field: UserFormField): string | null {
 }
 
 /** 整表校验：schema 合法 + id 唯一 + 无凭据味字段；返回中文错误串或 null。 */
-export function validateUserFormFields(fields: unknown):
-  | { ok: true; fields: UserFormField[] }
-  | { ok: false; error: string } {
+export function validateUserFormFields(
+  fields: unknown,
+): { ok: true; fields: UserFormField[] } | { ok: false; error: string } {
   const parsed = userFormFieldsSchema.safeParse(fields);
   if (!parsed.success) {
     return { ok: false, error: "表单字段定义不合法。" };
@@ -98,7 +99,9 @@ export function validateUserFormFields(fields: unknown):
 export function validateFieldAnswer(
   field: UserFormField,
   raw: unknown,
-): { ok: true; value: string | string[] | boolean } | { ok: false; error: string } {
+):
+  | { ok: true; value: string | string[] | boolean }
+  | { ok: false; error: string } {
   const required = field.required !== false;
   switch (field.type) {
     case "text":
@@ -138,7 +141,10 @@ export function validateFieldAnswer(
         ? raw.filter((item): item is string => typeof item === "string")
         : [];
       if (list.length === 0) {
-        if (required && (!field.defaultValue || field.defaultValue.length === 0)) {
+        if (
+          required &&
+          (!field.defaultValue || field.defaultValue.length === 0)
+        ) {
           return { ok: false, error: `「${field.label}」至少选一项。` };
         }
         return { ok: true, value: field.defaultValue ?? [] };

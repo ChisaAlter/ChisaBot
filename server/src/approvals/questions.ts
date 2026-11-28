@@ -119,7 +119,11 @@ export function createApprovalQuestions(
       response: string,
       rawAnswers?: Record<string, unknown>,
     ) {
-      let answer = z.string().trim().max(6000).parse(response ?? "");
+      let answer = z
+        .string()
+        .trim()
+        .max(6000)
+        .parse(response ?? "");
       const [current] = await database
         .select()
         .from(workItems)
@@ -133,13 +137,18 @@ export function createApprovalQuestions(
         );
       await authorise(parsed.data);
       // CB-147：超时显式终态——过期问题拒绝回答（作废/恢复都不会发生）。
-      if (parsed.data.expiresAt && Date.parse(parsed.data.expiresAt) <= Date.now()) {
+      if (
+        parsed.data.expiresAt &&
+        Date.parse(parsed.data.expiresAt) <= Date.now()
+      ) {
         throw new ApprovalRefusedError("This question has expired.");
       }
       // CB-147：表单问题必须提交结构化答案；逐字段校验后渲染为人读文本恢复原 run，
       // 键值对本体一并存进 payload（metadata——表单禁凭据字段，见 shared/user-form.ts）。
-      let structuredAnswers: Record<string, string | string[] | boolean> | null =
-        null;
+      let structuredAnswers: Record<
+        string,
+        string | string[] | boolean
+      > | null = null;
       if (parsed.data.fields) {
         const normalized: Record<string, string | string[] | boolean> = {};
         for (const field of parsed.data.fields) {

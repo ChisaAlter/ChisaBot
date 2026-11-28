@@ -19,11 +19,11 @@
  */
 
 import { z } from "zod";
+import { PUT_TO } from "../../../shared/handoff-markers";
 import {
   type UserFormField,
   validateUserFormFields,
 } from "../../../shared/user-form";
-import { PUT_TO } from "../../../shared/handoff-markers";
 import {
   type AuditInitiator,
   type AuditStore,
@@ -89,7 +89,13 @@ const parameters = z.object({
     .array(
       z
         .object({
-          type: z.enum(["text", "textarea", "select", "multiselect", "confirm"]),
+          type: z.enum([
+            "text",
+            "textarea",
+            "select",
+            "multiselect",
+            "confirm",
+          ]),
           id: z.string(),
           label: z.string(),
         })

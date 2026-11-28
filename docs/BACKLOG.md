@@ -183,9 +183,9 @@
 标签：`type: feat` · `area: chat` · `area: agents` · `P1` · `status: in-progress`
 
 - 来源：RokBot 对照审查 P2 项；在现有 ask_person / PendingQuestion 基础上演进，不照抄 RokBot userForm。
-- [ ] text / textarea / select / multiselect / confirm 五类字段 + 必填校验 + 默认值。
-- [ ] 提交后原 run 恢复、取消 / 超时显式终态、重复提交幂等。
-- [ ] 群聊与共享会话 audience 检查；禁止 password/token 字段（凭据走 vault 专用路径）。
+- [x] text / textarea / select / multiselect / confirm 五类字段 + 必填校验 + 默认值（本 PR）。
+- [x] 提交后原 run 恢复、取消 / 超时显式终态、重复提交幂等（本 PR：expiresAfterMinutes + 过期拒答 + 事务内 finishedAt 幂等）。
+- [x] 群聊与共享会话 audience 检查（既有 authorise 链覆盖）；禁止 password/token 字段（id/label 凭据味即拒，凭据走 vault 专用路径）。
 
 ## CB-143
 
