@@ -13,14 +13,22 @@
 import {
   type ModelScenario,
   resolveScenarioRoute,
+  type ScenarioRouteEventInput,
+  scenarioRouteOverrides,
 } from "../../../shared/model-scenario-routing";
 import type { RuntimeModelResolver } from "../conversation-runtime";
 import type { ScenarioRoutingService } from "./model-scenario-routing";
+
+/** 决策日志回调：由 composition root 注入落库策略；缺省不记。 */
+export type ScenarioEventLogger = (
+  event: ScenarioRouteEventInput,
+) => Promise<void> | void;
 
 export function scenarioConnectionResolver(
   scenario: ModelScenario,
   base: RuntimeModelResolver,
   routing: Pick<ScenarioRoutingService, "config">,
+  log?: ScenarioEventLogger,
 ): RuntimeModelResolver {
   return async () => {
     const [connection, config] = await Promise.all([
@@ -29,6 +37,14 @@ export function scenarioConnectionResolver(
     ]);
     const route = config ? resolveScenarioRoute(config, scenario) : null;
     if (!route?.model) return connection;
+    void log?.({
+      scenario,
+      consumer: scenario === "title" ? "title" : "chat",
+      configured: scenarioRouteOverrides(route).length > 0,
+      chain: [route.model],
+      chosenModel: route.model,
+      outcome: "resolved",
+    })?.catch?.(() => {});
     return {
       ...connection,
       model: { ...connection.model, defaultModel: route.model },
@@ -53,18 +69,21 @@ export function createScenarioCompleter(options: {
   completerFor: (
     resolveConnection: RuntimeModelResolver,
   ) => (prompt: string, signal?: AbortSignal) => Promise<string>;
+  log?: ScenarioEventLogger;
 }): (prompt: string, signal?: AbortSignal) => Promise<string> {
   return async (prompt, signal) => {
     const config = await options.routing.config().catch(() => null);
     const route = config
       ? resolveScenarioRoute(config, options.scenario)
       : null;
-    const chain = route ? [route.model, ...route.fallbacks].filter(Boolean) : [];
+    const chain = route
+      ? [route.model, ...route.fallbacks].filter(Boolean)
+      : [];
     if (!chain.length) {
       return options.completerFor(options.baseConnection)(prompt, signal);
     }
     let lastError: unknown = new Error("没有可用的模型。");
-    for (const modelId of chain) {
+    for (const [index, modelId] of chain.entries()) {
       const resolveConnection: RuntimeModelResolver = async () => {
         const connection = await options.baseConnection();
         return {
@@ -73,11 +92,40 @@ export function createScenarioCompleter(options: {
         };
       };
       try {
-        return await options.completerFor(resolveConnection)(prompt, signal);
+        const text = await options.completerFor(resolveConnection)(
+          prompt,
+          signal,
+        );
+        void options
+          .log?.({
+            scenario: options.scenario,
+            consumer: "review",
+            configured: true,
+            chain,
+            chosenModel: modelId,
+            outcome: index === 0 ? "resolved" : "fallback",
+            detail:
+              index === 0
+                ? null
+                : `主模型 ${chain[0]} 失败，由链上第 ${index + 1} 位接管。`,
+          })
+          ?.catch?.(() => {});
+        return text;
       } catch (error) {
         lastError = error;
       }
     }
+    void options
+      .log?.({
+        scenario: options.scenario,
+        consumer: "review",
+        configured: true,
+        chain,
+        chosenModel: null,
+        outcome: "failed",
+        detail: "链上全部模型调用失败。",
+      })
+      ?.catch?.(() => {});
     throw lastError;
   };
 }

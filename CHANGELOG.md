@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **场景化模型路由 PR3：管理员 UI、Dry-run 与决策日志（CB-144 系列第三棒）**：白盒调优工作台新增「场景化模型路由」面板——十一个场景逐行摘要（覆盖几项 / 全部继承）+ 对话框逐字段编辑，整表一份草稿一次保存；Dry-run 用当前未保存草稿走纯函数决议（不调用任何模型、不持久化），输出有序链、覆盖字段、接线状态与逐条中文解释，自适应选择以符号占位；30 天决策日志按「有信号才记」落库（配置覆盖生效 / fallback / 失败 / 试跑），只存决议元数据绝无 prompt 内容。新增管理员端点 POST /api/admin/scenario-routing/dry-run 与 GET .../logs（`shared/model-scenario-routing.ts` · `server/src/agents/scenario-route-log.ts` · `server/src/agents/model-scenario-routing.ts` · `app/src/components/settings/scenario-routing-panel.tsx` · `app/src/lib/scenario-routing/` · `server/tests/scenario-route-log.test.ts` · [docs/scenario-routing.md](docs/scenario-routing.md)）。
+
 ## 0.1.194 — 2026-11-28
 
 全端版本 `0.1.194`，Android `versionCode 374`：落地场景化模型路由运行时接入（PR #609，CB-144 系列第二棒）——chat / summarization / review / title / vision 五场景按统一路由重组模型链，空配置与升级前逐字节一致，无数据库迁移。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹因 shared 场景路由契约扩展更新为 `8bd6453fff1e8f0f`。

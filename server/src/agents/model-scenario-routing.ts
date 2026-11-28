@@ -13,15 +13,21 @@ import { eq } from "drizzle-orm";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import {
-  type ModelScenarioRoutingConfig,
-  ScenarioRoutingValidationError,
   defaultScenarioRoutingConfig,
+  isModelScenario,
+  type ModelScenarioRoutingConfig,
+  resolveScenarioDryRun,
+  type ScenarioRouteEvent,
+  type ScenarioRouteEventInput,
+  ScenarioRoutingValidationError,
   validateScenarioRoutingConfig,
 } from "../../../shared/model-scenario-routing";
 import type { AppVariables } from "../auth/guards";
 import { requireAdmin } from "../auth/guards";
 import type { Database } from "../db/client";
 import { enterpriseSettings } from "../db/schema";
+import type { ScenarioRouteLogQuery } from "./scenario-route-log";
+import { SCENARIO_ROUTE_LOG_MAX_LIMIT } from "./scenario-route-log";
 
 export const SCENARIO_ROUTING_KEY = "model_scenario_routes";
 
@@ -53,7 +59,11 @@ export function createScenarioRoutingStore(
       const value = { version: 1, scenarios: config.scenarios };
       await database
         .insert(enterpriseSettings)
-        .values({ key: SCENARIO_ROUTING_KEY, value, updatedBy: actorUserId ?? null })
+        .values({
+          key: SCENARIO_ROUTING_KEY,
+          value,
+          updatedBy: actorUserId ?? null,
+        })
         .onConflictDoUpdate({
           target: enterpriseSettings.key,
           set: { value, updatedBy: actorUserId ?? null, updatedAt: new Date() },
@@ -76,10 +86,27 @@ export type ScenarioRoutingService = {
   ): Hono<{ Variables: AppVariables }>;
 };
 
+export type ScenarioDryRunContext = {
+  /** 部署默认聊天模型与全局备用链——dry-run 纯函数需要的运行时输入。 */
+  baseModel(): Promise<string> | string;
+  globalFallbacks(): Promise<readonly string[]> | readonly string[];
+  adaptiveAvailable(): Promise<boolean> | boolean;
+};
+
 export function createScenarioRoutingService(options: {
   store: ScenarioRoutingStore;
   now?: () => number;
   cacheMs?: number;
+  /** PR3：决策日志存储；缺省时 logs / dry-run 端点不挂载、事件不落库。 */
+  log?: {
+    append(entry: ScenarioRouteEventInput): Promise<unknown>;
+    list(query?: ScenarioRouteLogQuery): Promise<{
+      items: ScenarioRouteEvent[];
+      total: number;
+    }>;
+  };
+  /** PR3：dry-run 运行时输入；与 log 同时提供才挂载 dry-run 端点。 */
+  dryRunContext?: ScenarioDryRunContext;
 }): ScenarioRoutingService {
   const now = options.now ?? Date.now;
   const cacheMs = options.cacheMs ?? 30_000;
@@ -136,6 +163,81 @@ export function createScenarioRoutingService(options: {
           );
         }
       });
+      if (options.log) {
+        const log = options.log;
+        routes.get("/logs", async (context) => {
+          const scenarioParam = context.req.query("scenario");
+          const consumerParam = context.req.query("consumer");
+          const limitParam = Number(context.req.query("limit"));
+          const query: ScenarioRouteLogQuery = {
+            limit: Number.isFinite(limitParam)
+              ? Math.max(1, Math.min(limitParam, SCENARIO_ROUTE_LOG_MAX_LIMIT))
+              : undefined,
+            scenario:
+              scenarioParam && isModelScenario(scenarioParam)
+                ? scenarioParam
+                : undefined,
+            consumer:
+              consumerParam === "chat" ||
+              consumerParam === "review" ||
+              consumerParam === "title" ||
+              consumerParam === "vision" ||
+              consumerParam === "dry-run"
+                ? consumerParam
+                : undefined,
+          };
+          return context.json(await log.list(query));
+        });
+      }
+      if (options.log && options.dryRunContext) {
+        const log = options.log;
+        const dryRunContext = options.dryRunContext;
+        routes.post("/dry-run", async (context) => {
+          const body = await context.req.json().catch(() => null);
+          const scenario = body?.scenario;
+          if (!isModelScenario(scenario)) {
+            return context.json({ error: "scenario 必须是已知场景键。" }, 400);
+          }
+          let config: ModelScenarioRoutingConfig;
+          try {
+            config =
+              body?.config != null
+                ? validateScenarioRoutingConfig(body.config)
+                : await service.config();
+          } catch (error) {
+            if (error instanceof ScenarioRoutingValidationError) {
+              return context.json({ error: error.message }, 400);
+            }
+            throw error;
+          }
+          const [baseModel, globalFallbacks, adaptiveAvailable] =
+            await Promise.all([
+              Promise.resolve(dryRunContext.baseModel()),
+              Promise.resolve(dryRunContext.globalFallbacks()),
+              Promise.resolve(dryRunContext.adaptiveAvailable()),
+            ]);
+          const result = resolveScenarioDryRun({
+            scenario,
+            config,
+            baseModel,
+            globalFallbacks,
+            adaptiveAvailable,
+          });
+          await log
+            .append({
+              scenario,
+              consumer: "dry-run",
+              configured: result.configured,
+              chain: result.chain.filter((id) => !id.startsWith("〈")),
+              chosenModel: result.primary,
+              outcome: result.configured ? "resolved" : "inherited",
+              detail: null,
+              dryRun: true,
+            })
+            .catch(() => null);
+          return context.json(result);
+        });
+      }
       return routes;
     },
   };

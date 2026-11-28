@@ -243,6 +243,8 @@ export const ROUTE_ACCESS: Readonly<Record<string, RouteAccessEntry>> = {
   "GET /api/admin/routing/policy": { access: "admin" },
   "GET /api/admin/runtime-kernel": { access: "admin" },
   "GET /api/admin/scenario-routing": { access: "admin" },
+  "GET /api/admin/scenario-routing/logs": { access: "admin" },
+  "POST /api/admin/scenario-routing/dry-run": { access: "admin" },
   "GET /api/admin/status": { access: "admin" },
   "GET /api/admin/system-update": { access: "admin" },
   "GET /api/agents": { access: "user" },

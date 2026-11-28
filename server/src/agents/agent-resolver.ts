@@ -1,4 +1,9 @@
 import type { AbstractAgent } from "@ag-ui/client";
+import type {
+  ModelScenario,
+  ScenarioRoute,
+  ScenarioRouteEventInput,
+} from "../../../shared/model-scenario-routing";
 import type { AuditInitiator } from "../audit";
 import type { AgentFetch, StallGuard } from "../channels/stall-guard";
 import {
@@ -22,10 +27,6 @@ import type { LoadPersonalMemory } from "../memory/tools";
 import type { PromptWorkbenchStore } from "../prompts/workbench-store";
 import type { UsageBreakdownService } from "../quotas/usage-breakdown";
 import type { AdaptiveRouter } from "./adaptive-router";
-import type {
-  ModelScenario,
-  ScenarioRoute,
-} from "../../../shared/model-scenario-routing";
 import type { ModelObservationService } from "./model-observation";
 import type { AgentActor } from "./profile-types";
 
@@ -99,6 +100,7 @@ export type ActorAgentResolverDependencies = {
   ) => (agentId: string, part: ToolImagePart) => Promise<string | null>;
   adaptiveRouter?: AdaptiveRouter;
   scenarioFor?: (scenario: ModelScenario) => Promise<ScenarioRoute>;
+  scenarioLog?: (event: ScenarioRouteEventInput) => Promise<void> | void;
   modelObserver?: Pick<ModelObservationService, "isEnabled" | "record">;
   usageBreakdown?: Pick<UsageBreakdownService, "record">;
   promptWorkbench?: PromptWorkbenchStore;
@@ -150,6 +152,7 @@ export function createActorAgentResolver(
       describeImageForAgent ||
       deps.adaptiveRouter ||
       deps.scenarioFor ||
+      deps.scenarioLog ||
       deps.modelObserver ||
       deps.usageBreakdown ||
       deps.promptWorkbench
@@ -164,9 +167,8 @@ export function createActorAgentResolver(
             ...(deps.adaptiveRouter
               ? { adaptiveRouter: deps.adaptiveRouter }
               : {}),
-            ...(deps.scenarioFor
-              ? { scenarioFor: deps.scenarioFor }
-              : {}),
+            ...(deps.scenarioFor ? { scenarioFor: deps.scenarioFor } : {}),
+            ...(deps.scenarioLog ? { scenarioLog: deps.scenarioLog } : {}),
             ...(deps.modelObserver
               ? { modelObserver: deps.modelObserver }
               : {}),

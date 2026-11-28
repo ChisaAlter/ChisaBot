@@ -245,9 +245,7 @@ export function validateScenarioRoutingConfig(
   }
   const input = raw as Record<string, unknown>;
   if (input.version !== undefined && input.version !== 1) {
-    throw new ScenarioRoutingValidationError(
-      "场景路由配置版本仅支持 1。",
-    );
+    throw new ScenarioRoutingValidationError("场景路由配置版本仅支持 1。");
   }
   const rawScenarios = input.scenarios ?? {};
   if (
@@ -301,9 +299,7 @@ export function applyChatScenarioRoute(input: {
   const { route, adaptiveModel, baseModel, globalFallbacks } = input;
   const skipAdaptive = route.useAdaptive === false;
   const primaryBase = route.model || baseModel;
-  const fallbacks = route.fallbacks.length
-    ? route.fallbacks
-    : globalFallbacks;
+  const fallbacks = route.fallbacks.length ? route.fallbacks : globalFallbacks;
   const chain: string[] = [];
   if (!skipAdaptive && adaptiveModel) chain.push(adaptiveModel);
   chain.push(primaryBase);
@@ -339,4 +335,262 @@ export function capScenarioMaxTokens(
 ): number {
   if (scenarioMaxTokens === null) return derived;
   return Math.max(1, Math.min(derived, scenarioMaxTokens));
+}
+
+/* ─────────────────────────── 路由决策日志（PR3） ─────────────────────────── */
+
+/** 路由事件的消费方：决议发生在哪条链路。 */
+export const SCENARIO_ROUTE_CONSUMERS = [
+  "chat",
+  "review",
+  "title",
+  "vision",
+  "dry-run",
+] as const;
+export type ScenarioRouteConsumer = (typeof SCENARIO_ROUTE_CONSUMERS)[number];
+
+export const SCENARIO_ROUTE_OUTCOMES = [
+  "inherited",
+  "resolved",
+  "fallback",
+  "failed",
+] as const;
+export type ScenarioRouteOutcome = (typeof SCENARIO_ROUTE_OUTCOMES)[number];
+
+/**
+ * 一条场景路由决策事件。只记决议元数据——链、命中、覆盖来源；
+ * 绝不记录 prompt、对话内容或任何用户输入。
+ */
+export type ScenarioRouteEvent = {
+  id: string;
+  createdAt: string;
+  scenario: ModelScenario;
+  consumer: ScenarioRouteConsumer;
+  /** 该场景在配置里有任何字段覆盖（非全继承）。 */
+  configured: boolean;
+  /** 决议出的有序模型链（单模型消费方只有一项）。 */
+  chain: string[];
+  /** 实际命中的模型；决议在选出前失败时为 null。 */
+  chosenModel: string | null;
+  outcome: ScenarioRouteOutcome;
+  /** 脱敏短注记（如 fallback 原因），无内容数据。 */
+  detail: string | null;
+  dryRun: boolean;
+};
+
+export type ScenarioRouteEventInput = {
+  scenario: ModelScenario;
+  consumer: ScenarioRouteConsumer;
+  configured: boolean;
+  chain: string[];
+  chosenModel: string | null;
+  outcome: ScenarioRouteOutcome;
+  detail?: string | null;
+  dryRun?: boolean;
+};
+
+/* ───────────────────────────── Dry-run（PR3） ───────────────────────────── */
+
+/**
+ * 场景的接线状态：dry-run 需要告诉管理员这个场景的决议当前是否真的被消费。
+ * wired-chain = chat 类链式消费；wired-single = 单次调用覆盖默认模型；
+ * wired-completer = 主备链依次尝试；wired-vision = 视觉合成回退位；
+ * unwired = 消费方尚未落地（配置已保存待生效）；excluded = 刻意不接入。
+ */
+export const SCENARIO_WIRING: Record<
+  ModelScenario,
+  {
+    state:
+      | "wired-chain"
+      | "wired-single"
+      | "wired-completer"
+      | "wired-vision"
+      | "unwired"
+      | "excluded";
+    note: string;
+  }
+> = {
+  chat: { state: "wired-chain", note: "对话每一轮的主模型链决议。" },
+  suggestions: {
+    state: "unwired",
+    note: "消费方随输入建议 PR 落地，当前配置已保存待生效。",
+  },
+  completion: {
+    state: "unwired",
+    note: "消费方随行内补全 PR 落地，当前配置已保存待生效。",
+  },
+  summarization: {
+    state: "wired-chain",
+    note: "压缩 / 摘要会话改用本场景链而非 chat。",
+  },
+  memoryExtraction: {
+    state: "unwired",
+    note: "消费方尚未落地，当前配置已保存待生效。",
+  },
+  review: {
+    state: "wired-completer",
+    note: "审批审查按主备链依次尝试，任一成功即返回。",
+  },
+  subagent: {
+    state: "unwired",
+    note: "消费方尚未落地，当前配置已保存待生效。",
+  },
+  automation: {
+    state: "unwired",
+    note: "消费方尚未落地，当前配置已保存待生效。",
+  },
+  title: { state: "wired-single", note: "标题生成连接的默认模型按场景覆盖。" },
+  vision: {
+    state: "wired-vision",
+    note: "未显式配置识图模型时，场景主模型合成部署级默认。",
+  },
+  test: {
+    state: "excluded",
+    note: "刻意不接入：自检测的就是表单里指定的那个模型。",
+  },
+};
+
+export type ScenarioDryRunInput = {
+  scenario: ModelScenario;
+  /** 已校验的（假设性或当前）配置。 */
+  config: ModelScenarioRoutingConfig;
+  /** 部署默认聊天模型。 */
+  baseModel: string;
+  /** 全局备用模型链。 */
+  globalFallbacks: readonly string[];
+  /** 自适应难度路由是否启用。 */
+  adaptiveAvailable: boolean;
+};
+
+export type ScenarioDryRunResult = {
+  scenario: ModelScenario;
+  wiring: (typeof SCENARIO_WIRING)[ModelScenario]["state"];
+  wiringNote: string;
+  /** 该场景是否有任何字段覆盖。 */
+  configured: boolean;
+  /** 被覆盖的字段名列表。 */
+  overrides: string[];
+  /** 决议出的有序模型链（消费方未接线时仍按 chat 类语义展示假设链）。 */
+  chain: string[];
+  /** 自适应开启时链首会有分类器选择（dry-run 不做真实分类，仅符号标记）。 */
+  adaptiveFirst: boolean;
+  skipAdaptive: boolean;
+  primary: string;
+  effort: string;
+  timeoutMs: number | null;
+  maxTokens: number | null;
+  /** 逐条中文解释决议如何得出。 */
+  trace: string[];
+};
+
+/** 列出场景路由里实际被覆盖（非继承）的字段。 */
+export function scenarioRouteOverrides(route: ScenarioRoute): string[] {
+  const overrides: string[] = [];
+  if (route.model) overrides.push("model");
+  if (route.fallbacks.length) overrides.push("fallbacks");
+  if (route.effort !== "default") overrides.push("effort");
+  if (route.timeoutMs !== null) overrides.push("timeoutMs");
+  if (route.maxTokens !== null) overrides.push("maxTokens");
+  if (route.useAdaptive === false) overrides.push("useAdaptive");
+  return overrides;
+}
+
+/**
+ * Dry-run 纯函数：对给定场景与（假设性）配置跑出决议链与逐条解释，
+ * 不发起任何模型调用。chat 类场景的自适应选择以符号标记表示。
+ */
+export function resolveScenarioDryRun(
+  input: ScenarioDryRunInput,
+): ScenarioDryRunResult {
+  const route = resolveScenarioRoute(input.config, input.scenario);
+  const overrides = scenarioRouteOverrides(route);
+  const configured = overrides.length > 0;
+  const wiring = SCENARIO_WIRING[input.scenario];
+  const trace: string[] = [];
+
+  const primaryBase = route.model || input.baseModel;
+  if (route.model) {
+    trace.push(`主模型：场景配置覆盖为 ${route.model}。`);
+  } else {
+    trace.push(`主模型：场景未配置，继承部署默认 ${input.baseModel}。`);
+  }
+
+  const fallbacks = route.fallbacks.length
+    ? route.fallbacks
+    : input.globalFallbacks;
+  if (route.fallbacks.length) {
+    trace.push(
+      `备用链：场景配置整体替代全局链（${route.fallbacks.join(" → ") || "空"}）。`,
+    );
+  } else if (input.globalFallbacks.length) {
+    trace.push(`备用链：继承全局链（${input.globalFallbacks.join(" → ")}）。`);
+  } else {
+    trace.push("备用链：全局未配置，且无场景覆盖。");
+  }
+
+  const chainSemantics = ["chat", "summarization"].includes(input.scenario);
+  const skipAdaptive = chainSemantics && route.useAdaptive === false;
+  const adaptiveFirst =
+    chainSemantics && !skipAdaptive && input.adaptiveAvailable;
+  if (chainSemantics) {
+    if (skipAdaptive) {
+      trace.push("自适应：场景配置 useAdaptive=false，跳过难度分类。");
+    } else if (input.adaptiveAvailable) {
+      trace.push(
+        "自适应：启用，链首为分类器实时选择（dry-run 不做真实分类）。",
+      );
+    } else {
+      trace.push("自适应：未启用，链首即主模型。");
+    }
+  }
+
+  const chain: string[] = [];
+  if (adaptiveFirst) chain.push("〈自适应选择〉");
+  chain.push(primaryBase);
+  chain.push(...fallbacks);
+  const deduped = chain.filter((id, at) => chain.indexOf(id) === at);
+
+  let effort: string;
+  if (route.effort !== "default" && route.effort !== "auto") {
+    effort = route.effort;
+    trace.push(`思考强度：场景覆盖为 ${route.effort}。`);
+  } else if (route.effort === "auto") {
+    effort = "auto（交给自适应决定）";
+    trace.push("思考强度：auto，由自适应分类决定。");
+  } else {
+    effort = "继承（不覆盖）";
+    trace.push("思考强度：未覆盖，继承自适应结果或模型默认。");
+  }
+
+  if (route.timeoutMs !== null) {
+    trace.push(
+      `超时：场景覆盖为 ${route.timeoutMs}ms（仅对有逐次超时机制的消费方生效）。`,
+    );
+  }
+  if (route.maxTokens !== null) {
+    trace.push(
+      `输出上限：场景覆盖为 ${route.maxTokens}，与模型/窗口推导上限取小。`,
+    );
+  }
+  if (wiring.state === "unwired") {
+    trace.push(`接线状态：${wiring.note}`);
+  } else if (wiring.state === "excluded") {
+    trace.push(`接线状态：${wiring.note}`);
+  }
+
+  return {
+    scenario: input.scenario,
+    wiring: wiring.state,
+    wiringNote: wiring.note,
+    configured,
+    overrides,
+    chain: deduped,
+    adaptiveFirst,
+    skipAdaptive,
+    primary: primaryBase,
+    effort,
+    timeoutMs: route.timeoutMs,
+    maxTokens: route.maxTokens,
+    trace,
+  };
 }

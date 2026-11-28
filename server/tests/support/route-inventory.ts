@@ -32,8 +32,8 @@ import { createContextPolicyStore } from "../../src/agents/context-policy-store"
 import { createHistorySummaryModelService } from "../../src/agents/history-summary-settings";
 import { createRuntimeKernelRoutes } from "../../src/agents/kernel-status";
 import { createModelFallbackService } from "../../src/agents/model-fallback-settings";
-import { createScenarioRoutingService } from "../../src/agents/model-scenario-routing";
 import { createModelObservationService } from "../../src/agents/model-observation";
+import { createScenarioRoutingService } from "../../src/agents/model-scenario-routing";
 import type { AgentProfileStore } from "../../src/agents/profile-store";
 import type { AgentProfile } from "../../src/agents/profile-types";
 import { createRoutingAdminRoutes } from "../../src/agents/routing-log";
@@ -254,7 +254,19 @@ export async function buildInventoryApp(
   // `.routes()` output does not depend on it.
   const dshToolGateway = createDshToolGateway(hole);
   const modelFallbacks = createModelFallbackService(hole);
-  const scenarioRouting = createScenarioRoutingService(hole);
+  const scenarioRouting = createScenarioRoutingService({
+    store: hole,
+    // /logs 与 /dry-run 是条件挂载（依赖存在才注册），必须显式给依赖才能进清单。
+    log: {
+      append: async () => undefined,
+      list: async () => ({ items: [], total: 0 }),
+    },
+    dryRunContext: {
+      baseModel: () => "inventory-model",
+      globalFallbacks: () => [],
+      adaptiveAvailable: () => false,
+    },
+  });
   const conversationInteractions = createConversationInteractions(hole, hole);
   const historySummaryModel = createHistorySummaryModelService(hole);
   const contextPolicyStore = createContextPolicyStore(hole);
