@@ -3,7 +3,9 @@ import { useState } from "react";
 import { useTimeout } from "@/hooks";
 import {
   type ComposerCandidate,
+  composerAiSuggestionsQueryOptions,
   composerCandidatesQueryOptions,
+  composerSettingsQueryOptions,
 } from "@/lib/composer/queries";
 
 /**
@@ -44,6 +46,9 @@ export function CandidateStrip({
           title={candidate.text}
           type="button"
         >
+          {candidate.source === "ai" ? (
+            <span className="mr-1 text-primary/70">AI</span>
+          ) : null}
           {preview(candidate.text)}
         </button>
       ))}
@@ -72,9 +77,34 @@ export function ComposerCandidates({
   const [prefix, setPrefix] = useState("");
   useTimeout(() => setPrefix(text), 180, text);
   const query = useQuery(composerCandidatesQueryOptions(botId, prefix));
-  const candidates =
-    text.length > 0 && text === prefix && !hasChips
-      ? (query.data ?? []).slice(0, 5)
+
+  // AI 建议（PR5）：比本地候选更慢的防抖——每一次触发都是一次潜在的模型调用。
+  // 只在设置里显式打开 aiEnabled 时才查询；文本未稳定（还在敲）时不用过期 key。
+  const [aiSettled, setAiSettled] = useState("");
+  useTimeout(() => setAiSettled(text), 600, text);
+  const settingsQuery = useQuery(composerSettingsQueryOptions());
+  const aiEnabled = settingsQuery.data?.aiEnabled === true;
+  const aiQuery = useQuery(
+    composerAiSuggestionsQueryOptions(
+      botId,
+      aiEnabled && aiSettled.length > 0 && aiSettled === text ? aiSettled : "",
+    ),
+  );
+
+  const local =
+    text.length > 0 && text === prefix && !hasChips ? (query.data ?? []) : [];
+  const ai =
+    text.length > 0 && !hasChips && aiEnabled
+      ? (aiQuery.data?.suggestions ?? [])
       : [];
+  const seen = new Set<string>();
+  const candidates: ComposerCandidate[] = [];
+  for (const candidate of [...local, ...ai]) {
+    const key = candidate.text.replace(/\s+/g, " ").trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(candidate);
+    if (candidates.length >= 5) break;
+  }
   return <CandidateStrip candidates={candidates} onAccept={onAccept} />;
 }

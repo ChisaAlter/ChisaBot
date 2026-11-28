@@ -89,6 +89,7 @@ import {
   createScenarioRoutingStore,
 } from "./agents/model-scenario-routing";
 import { createComposerService } from "./composer/index";
+import { createComposerAiSuggester } from "./composer/ai-suggestions";
 import { createAgentModelService } from "./agents/model-selection";
 import { createPrimaryAgentService } from "./agents/primary-agent-service";
 import { createAgentProfileStore } from "./agents/profile-store";
@@ -1513,7 +1514,31 @@ const scenarioRouting = createScenarioRoutingService({
 });
 
 // 输入框效率第一层：快捷短语 + 本地候选（CB-145）；表开机 ensure，全部 owner 隔离。
-const composerService = createComposerService(database);
+// 第二层 AI 建议（PR5）：经场景路由 suggestions 场景的单次文本调用，由建议器自带
+// 限流 / 在飞去重 / 60s 缓存 / 8s 超时兜住成本；未配置场景时逐字节沿用部署默认模型。
+const composerSuggestModel = createScenarioCompleter({
+  scenario: "suggestions",
+  consumer: "suggestions",
+  routing: scenarioRouting,
+  baseConnection: resolveRuntimeConnection,
+  completerFor: (resolveConnection) =>
+    createModelCompleter({
+      model: runtimeModel,
+      resolveConnection,
+      resolveApiKey: () =>
+        resolveModelApiKey({
+          encryptionKey: config.keyEncryptionKey,
+          reader: credentialStore,
+          provider: runtimeModel.provider,
+          keyId: tenantPackage.model.credentialSecretRef,
+          environment: config.environment,
+        }),
+    }),
+  log: logScenarioRouteEvent,
+});
+const composerService = createComposerService(database, {
+  aiSuggester: createComposerAiSuggester({ completer: composerSuggestModel }),
+});
 await composerService.ensure();
 // 估算每轮 token 的上下文窗口来自模型目录（经 modelInfo 下发给内核）。
 // 注意：「摘要模型」设置（下方 historySummaryModel）在 DSH 内核下没有读取方——connectionSummarizer /

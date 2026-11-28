@@ -4,6 +4,7 @@ import {
   IconBulb,
   IconKeyboard,
   IconPlus,
+  IconSparkles,
   IconTrash,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -55,8 +56,8 @@ export const Route = createFileRoute("/_authed/settings/composer")({
 });
 
 /**
- * 设置 → 输入助手（CB-144 PR4）：本地候选、快捷短语与学习习惯的开关和维护。
- * AI 建议与行内补全的开关在对应功能上线（PR5/PR6）时才出现在这里——现在摆出来的话是假开关。
+ * 设置 → 输入助手（CB-144 PR4/PR5）：本地候选、快捷短语、学习习惯与 AI 建议的开关和维护。
+ * 行内补全的开关在对应功能上线（PR6）时才出现在这里——现在摆出来的话是假开关。
  */
 function ComposerSettingsPage() {
   const queryClient = useQueryClient();
@@ -189,6 +190,30 @@ function ComposerSettingsPage() {
                     disabled={updateSettings.isPending}
                     onCheckedChange={(learningEnabled) =>
                       updateSettings.mutate({ learningEnabled })
+                    }
+                  />
+                </ItemActions>
+              </Item>
+              <Separator />
+              <Item size="sm">
+                <ItemMedia variant="icon">
+                  <IconSparkles />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>{"AI 建议"}</ItemTitle>
+                  <ItemDescription>
+                    {settings.data.aiEnabled
+                      ? "起草中的文本会发给部署方配置的模型，给出可能想发送的完整消息。"
+                      : "起草内容不离开本机，不出 AI 建议。"}
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Switch
+                    aria-label={"AI 建议"}
+                    checked={settings.data.aiEnabled}
+                    disabled={updateSettings.isPending}
+                    onCheckedChange={(aiEnabled) =>
+                      updateSettings.mutate({ aiEnabled })
                     }
                   />
                 </ItemActions>
