@@ -39,6 +39,7 @@ ChisaBot 是以 DSH 为执行内核的中文私人助手：服务器持续执行
 | [decisions.md](decisions.md)     | 所有者的长期规则（发布流程、测试安全、版本号、界面原则），带日期               |
 | [CHANGELOG.md](CHANGELOG.md)     | 按发版标签分组的版本与 PR 记录                                                 |
 | [prokbot-comparison.md](prokbot-comparison.md) | ProkBot 全量代码级对比清单与 Wave 1–10 落地总台账                    |
+| [scenario-routing.md](scenario-routing.md)     | 场景化模型路由：场景全集、配置模型、存储 API 与分阶段接入状态        |
 | [adr/](adr/README.md)            | 架构决策记录 0001–0014（0012 号空缺）                                          |
 | [pipeline-runs/](pipeline-runs/) | 带日期的实施、验收与发布证据                                                   |
 

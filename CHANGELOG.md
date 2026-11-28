@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **场景化模型路由 PR1：契约、存储与管理员 API（CB-144，无行为变化）**：新增 `shared/model-scenario-routing.ts`——闭集场景键（chat / suggestions / completion / summarization / memoryExtraction / review / subagent / automation / title / vision / test）与全字段继承语义校验；`enterprise_settings` 单行存储（key `model_scenario_routes`，回滚到旧镜像时被忽略）+ 30 秒缓存 + 管理员 `GET/PUT /api/admin/scenario-routing`（非法输入 400 逐条说明）。纯增量能力：无界面、无运行时行为变化、无数据库迁移，空配置与升级前完全一致；运行时消费方在后续 PR 接入（`shared/model-scenario-routing.ts` · `server/src/agents/model-scenario-routing.ts` · `server/src/index.ts` · `server/tests/model-scenario-routing.test.ts` · [docs/scenario-routing.md](docs/scenario-routing.md)）。
+
 ## 0.1.192 — 2026-11-27
 
 全端版本 `0.1.192`，Android `versionCode 372`：合入全量六模块审查优化（PR #599–#604：服务端核心/迁移 `0071`/性能治理、部署更新链与 CI 提速、Web 体验与首屏瘦身降耗、PC 桌面端与 Android 原生壳加固）、聊天输入框图片点击预览与对话弹跳结构性根治、附件草稿恢复与容器 `agent-runtime` 依赖修复，以及设置页切页延迟专项修复（PR #605）。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `1bcf7830ebace34c`；含 1 项非破坏性自动索引迁移 `0071_tool_operations_run_created_idx.sql`（自动执行，无需手动操作）。

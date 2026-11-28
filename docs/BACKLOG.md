@@ -15,6 +15,10 @@
 
 | ID                | 标题                                                                              | 里程碑                | 标签                                                                                          |
 | ----------------- | --------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| [CB-144](#cb-144) | 场景化模型路由：按场景独立配置主模型 / 备用链 / 思考强度 / 超时 / 输出上限 | 成熟度 Maturity       | `type: feat` · `area: agents` · `area: settings` · `P1` · `status: in-progress`（分支 `feat/scenario-model-routing`） |
+| [CB-145](#cb-145) | 输入框智能：quick phrases、本地候选、AI 输入建议、行内补全与按 Bot 习惯学习 | 成熟度 Maturity       | `type: feat` · `area: chat` · `P1` · `status: in-progress` |
+| [CB-146](#cb-146) | 用量分析深化：provider/agent/scenario 维度、成本估算、request detail 与 CSV 导出 | 成熟度 Maturity       | `type: feat` · `area: settings` · `P1` · `status: in-progress` |
+| [CB-147](#cb-147) | 结构化用户表单：schema 化多字段表单从问答闭环恢复执行 | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: agents` · `P1` · `status: in-progress` |
 | [CB-143](#cb-143) | 回复中途阶段感知实时插话与前后端全链路丝滑优化（Wave 1–3）                        | 成熟度 Maturity       | `type: feat` · `type: perf` · `area: chat` · `area: agents` · `P1` · `status: done`（#572 · `v0.1.177`）           |
 | [CB-142](#cb-142) | ProkBot 全量对标：多端 AI 交互体验、多模态/实时语音、微应用生态、本机桥接与底座安全加固（Wave 1–10） | 成熟度 Maturity       | `type: feat` · `area: chat` · `area: agents` · `area: devices` · `area: infra` · `P1` · `status: done`（`v0.1.170`） |
 | [CB-141](#cb-141) | 用户链接预览卡片与消息右沿对齐                                                    | 成熟度 Maturity       | `type: bug` · `area: chat` · `P1` · `status: done`（`v0.1.170` · 从 `wip/link-card-align-recovered` 提取合入 `main`） |
@@ -137,6 +141,51 @@
 | [CB-096](#cb-096) | 引导页标题和「继续」按钮被天空背景遮住                                            | 成熟度 Maturity       | `type: bug` · `area: web` · `P2` · `status: done`                                             |
 
 > CB-089…CB-095 来自 2026-10-25 对 Hark 网页版与 Grok Bot 桌面端的实测对标（只收有截图 / DOM 证据、且与 DESIGN.md 不冲突的项）。破冰卡、机器人主题色、衬线标题、环境时钟、吉祥物头像等与 §46.2 / §9.3 / §7.4 / §74 冲突的项不进 backlog，等所有者决定。
+
+## CB-144
+
+**场景化模型路由：按场景独立配置主模型 / 备用链 / 思考强度 / 超时 / 输出上限**
+
+标签：`type: feat` · `area: agents` · `area: settings` · `P1` · `status: in-progress`
+
+- 来源：RokBot 全量对照审查（2026-11-27 修订版）确认的 P1 真实差距；设计见 [scenario-routing.md](scenario-routing.md)。
+- [ ] **PR1 契约与存储**：`shared/model-scenario-routing.ts` 闭集场景键 + 全字段继承语义校验；`enterprise_settings` 单行存储 + 30s 缓存 + 管理员 GET/PUT API；空配置与升级前行为完全一致。
+- [ ] **PR2 运行时接入**：review / title / summarization / vision / chat 逐个场景读路由表；默认配置下行为零变化；usage kind 扩展。
+- [ ] **PR3 管理 UI**：场景路由面板 + Dry-run + 按场景路由日志；非法配置保存前拒绝。
+
+## CB-145
+
+**输入框智能：quick phrases、本地候选、AI 输入建议、行内补全与按 Bot 习惯学习**
+
+标签：`type: feat` · `area: chat` · `P1` · `status: in-progress`
+
+- 来源：RokBot 全量对照审查确认的 P0 真实差距。清洁室实现，不复制 RokBot 代码；隐私红线：per-owner/per-bot 隔离、学习可关闭可清空、draft 不进日志。
+- [ ] **PR4 quick phrases + 本地候选**：常用语 CRUD/排序 + per-bot 高频输入本地匹配，零模型调用，点选填入不直接发送。
+- [ ] **PR5 AI 输入建议**：回复完成后 prefetch 2–4 条下一步建议，per-bot cache，feedback 记账，usage kind=`suggestions`。
+- [ ] **PR6 行内补全**：ghost text、debounce/abort、IME composition 安全、只追加 suffix、usage kind=`completion`。
+- [ ] **PR7 习惯学习**：发送历史与采纳/忽略反馈影响排序；可关闭、可清空、不跨用户不跨 Bot。
+
+## CB-146
+
+**用量分析深化：provider/agent/scenario 维度、成本估算、request detail 与 CSV 导出**
+
+标签：`type: feat` · `area: settings` · `P1` · `status: in-progress`
+
+- 来源：RokBot 对照审查确认的 P1 差距；在现有 `chisabot_usage_events` 账本（本地时区 / kind / reasoning）上扩展。
+- [ ] provider / agent / scenario 维度分组与自定义时间范围。
+- [ ] 成本估算、失败率与耗时分布。
+- [ ] metadata-only request detail 与管理员 CSV 导出（不含任何 prompt / 输入 / 输出内容）。
+
+## CB-147
+
+**结构化用户表单：schema 化多字段表单从问答闭环恢复执行**
+
+标签：`type: feat` · `area: chat` · `area: agents` · `P1` · `status: in-progress`
+
+- 来源：RokBot 对照审查 P2 项；在现有 ask_person / PendingQuestion 基础上演进，不照抄 RokBot userForm。
+- [ ] text / textarea / select / multiselect / confirm 五类字段 + 必填校验 + 默认值。
+- [ ] 提交后原 run 恢复、取消 / 超时显式终态、重复提交幂等。
+- [ ] 群聊与共享会话 audience 检查；禁止 password/token 字段（凭据走 vault 专用路径）。
 
 ## CB-143
 

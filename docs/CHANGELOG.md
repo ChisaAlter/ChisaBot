@@ -1,5 +1,7 @@
 ## Unreleased
 
+- **场景化模型路由 PR1：契约 / 存储 / 管理员 API（CB-144，PR 号待补）**：闭集场景键与继承语义校验（`shared/model-scenario-routing.ts`）、`enterprise_settings` 单行存储 + 缓存 + `/api/admin/scenario-routing`；无行为变化、无迁移；运行时接入与管理员 UI 在后续 PR（`server/src/agents/model-scenario-routing.ts` · `server/src/index.ts` · `server/tests/model-scenario-routing.test.ts` · [scenario-routing.md](scenario-routing.md)）。
+
 ## 0.1.192 — 2026-11-27
 
 - 全端发版：`0.1.192`，Android `versionCode 372`；PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹更新为 `1bcf7830ebace34c`；含 1 项非破坏性自动索引迁移 `0071_tool_operations_run_created_idx.sql`（自动执行，无需手动操作）。

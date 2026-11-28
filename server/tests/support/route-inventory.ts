@@ -32,6 +32,7 @@ import { createContextPolicyStore } from "../../src/agents/context-policy-store"
 import { createHistorySummaryModelService } from "../../src/agents/history-summary-settings";
 import { createRuntimeKernelRoutes } from "../../src/agents/kernel-status";
 import { createModelFallbackService } from "../../src/agents/model-fallback-settings";
+import { createScenarioRoutingService } from "../../src/agents/model-scenario-routing";
 import { createModelObservationService } from "../../src/agents/model-observation";
 import type { AgentProfileStore } from "../../src/agents/profile-store";
 import type { AgentProfile } from "../../src/agents/profile-types";
@@ -253,6 +254,7 @@ export async function buildInventoryApp(
   // `.routes()` output does not depend on it.
   const dshToolGateway = createDshToolGateway(hole);
   const modelFallbacks = createModelFallbackService(hole);
+  const scenarioRouting = createScenarioRoutingService(hole);
   const conversationInteractions = createConversationInteractions(hole, hole);
   const historySummaryModel = createHistorySummaryModelService(hole);
   const contextPolicyStore = createContextPolicyStore(hole);
@@ -409,6 +411,7 @@ export async function buildInventoryApp(
           ),
         ],
         ["/api/admin/model-fallbacks", modelFallbacks.routes(requireUser)],
+        ["/api/admin/scenario-routing", scenarioRouting.routes(requireUser)],
         [
           "/api/conversation-interactions",
           conversationInteractions.routes(requireUser),
