@@ -57,7 +57,7 @@ export const Route = createFileRoute("/_authed/settings/composer")({
 
 /**
  * 设置 → 输入助手（CB-144 PR4/PR5）：本地候选、快捷短语、学习习惯与 AI 建议的开关和维护。
- * 行内补全的开关在对应功能上线（PR6）时才出现在这里——现在摆出来的话是假开关。
+ * 全部开关均为真实开关。
  */
 function ComposerSettingsPage() {
   const queryClient = useQueryClient();
@@ -203,7 +203,7 @@ function ComposerSettingsPage() {
                   <ItemTitle>{"AI 建议"}</ItemTitle>
                   <ItemDescription>
                     {settings.data.aiEnabled
-                      ? "起草中的文本会发给部署方配置的模型，给出可能想发送的完整消息。"
+                      ? "最近几条对话会发给部署方配置的模型，预判你下一步想发送的消息。"
                       : "起草内容不离开本机，不出 AI 建议。"}
                   </ItemDescription>
                 </ItemContent>
@@ -214,6 +214,30 @@ function ComposerSettingsPage() {
                     disabled={updateSettings.isPending}
                     onCheckedChange={(aiEnabled) =>
                       updateSettings.mutate({ aiEnabled })
+                    }
+                  />
+                </ItemActions>
+              </Item>
+              <Separator />
+              <Item size="sm">
+                <ItemMedia variant="icon">
+                  <IconSparkles />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>{"行内补全"}</ItemTitle>
+                  <ItemDescription>
+                    {settings.data.completionEnabled
+                      ? "打字停顿时草稿会发给部署方配置的模型，灰色续写接在文本末尾，Tab 接受。"
+                      : "不出行内续写。"}
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Switch
+                    aria-label={"行内补全"}
+                    checked={settings.data.completionEnabled}
+                    disabled={updateSettings.isPending}
+                    onCheckedChange={(completionEnabled) =>
+                      updateSettings.mutate({ completionEnabled })
                     }
                   />
                 </ItemActions>

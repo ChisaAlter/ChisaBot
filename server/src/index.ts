@@ -199,6 +199,7 @@ import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
 import { createComposerAiSuggester } from "./composer/ai-suggestions";
 import { createComposerService } from "./composer/index";
+import { createInlineCompletionSuggester } from "./composer/inline-completion";
 import { withComputerActivity } from "./computer/activity-recorder";
 import {
   createActivityStore as createComputerActivityStore,
@@ -1536,8 +1537,29 @@ const composerSuggestModel = createScenarioCompleter({
     }),
   log: logScenarioRouteEvent,
 });
+const composerCompletionModel = createScenarioCompleter({
+  scenario: "completion",
+  consumer: "completion",
+  routing: scenarioRouting,
+  baseConnection: resolveRuntimeConnection,
+  completerFor: (resolveConnection) =>
+    createModelCompleter({
+      model: runtimeModel,
+      resolveConnection,
+      resolveApiKey: () =>
+        resolveModelApiKey({
+          encryptionKey: config.keyEncryptionKey,
+          reader: credentialStore,
+          provider: runtimeModel.provider,
+          keyId: tenantPackage.model.credentialSecretRef,
+          environment: config.environment,
+        }),
+    }),
+  log: logScenarioRouteEvent,
+});
 const composerService = createComposerService(database, {
   aiSuggester: createComposerAiSuggester({ completer: composerSuggestModel }),
+  completionSuggester: createInlineCompletionSuggester(composerCompletionModel),
 });
 await composerService.ensure();
 // 估算每轮 token 的上下文窗口来自模型目录（经 modelInfo 下发给内核）。
