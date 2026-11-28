@@ -1,5 +1,10 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import {
+  renderFormAnswersText,
+  userFormFieldsSchema,
+  validateFieldAnswer,
+} from "../../../shared/user-form";
 import type { Database } from "../db/client";
 import { workItems } from "../db/schema/work";
 import { ApprovalNotFoundError, ApprovalRefusedError } from "./types";
@@ -12,6 +17,10 @@ const questionSchema = z.object({
   question: z.string().min(1).max(6000),
   why: z.string().max(6000).optional(),
   mode: z.literal("completed_question"),
+  /** CB-147：结构化表单字段；存在时回答必须按 schema 校验的键值对而非自由文本。 */
+  fields: userFormFieldsSchema.optional(),
+  /** CB-147：显式超时终态——过期问题拒答并在 UI 呈「已过期」（ISO 时间串；缺省不过期）。 */
+  expiresAt: z.string().datetime().optional(),
   sourceBotId: z.string().min(1).optional(),
   channelId: z.string().min(1).optional(),
   /**
@@ -74,6 +83,8 @@ export function createApprovalQuestions(
                 channelId: value.data.channelId ?? null,
                 question: value.data.question,
                 why: value.data.why,
+                fields: value.data.fields ?? null,
+                expiresAt: value.data.expiresAt ?? null,
                 initiatorKind: value.data.initiator?.kind ?? "person",
                 createdAt: row.createdAt,
               }
@@ -102,8 +113,13 @@ export function createApprovalQuestions(
         .returning({ key: workItems.key });
       return closed.length;
     },
-    async respond(owner: string, id: string, response: string) {
-      const answer = z.string().trim().min(1).max(6000).parse(response);
+    async respond(
+      owner: string,
+      id: string,
+      response: string,
+      rawAnswers?: Record<string, unknown>,
+    ) {
+      let answer = z.string().trim().max(6000).parse(response ?? "");
       const [current] = await database
         .select()
         .from(workItems)
@@ -116,6 +132,27 @@ export function createApprovalQuestions(
           "This question has no completed conversation to continue.",
         );
       await authorise(parsed.data);
+      // CB-147：超时显式终态——过期问题拒绝回答（作废/恢复都不会发生）。
+      if (parsed.data.expiresAt && Date.parse(parsed.data.expiresAt) <= Date.now()) {
+        throw new ApprovalRefusedError("This question has expired.");
+      }
+      // CB-147：表单问题必须提交结构化答案；逐字段校验后渲染为人读文本恢复原 run，
+      // 键值对本体一并存进 payload（metadata——表单禁凭据字段，见 shared/user-form.ts）。
+      let structuredAnswers: Record<string, string | string[] | boolean> | null =
+        null;
+      if (parsed.data.fields) {
+        const normalized: Record<string, string | string[] | boolean> = {};
+        for (const field of parsed.data.fields) {
+          const verdict = validateFieldAnswer(field, rawAnswers?.[field.id]);
+          if (!verdict.ok) throw new ApprovalRefusedError(verdict.error);
+          normalized[field.id] = verdict.value;
+        }
+        structuredAnswers = normalized;
+        answer = renderFormAnswersText(parsed.data.fields, normalized);
+      }
+      if (!answer) {
+        throw new ApprovalRefusedError("Answer the question before sending.");
+      }
       return database.transaction(async (tx) => {
         const [row] = await tx
           .select()
@@ -135,6 +172,7 @@ export function createApprovalQuestions(
               ownerUserId: owner,
               question: parsed.data,
               response: answer,
+              ...(structuredAnswers ? { answers: structuredAnswers } : {}),
             },
           })
           .onConflictDoNothing();
