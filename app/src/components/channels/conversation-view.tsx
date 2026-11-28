@@ -652,6 +652,7 @@ export function ConversationView({
           agents={agents}
           autoFocus={autoFocus}
           {...(agentId ? { chatFileAgentId: agentId } : {})}
+          {...(agentId !== undefined ? { candidatesBotId: agentId ?? null } : {})}
           {...(channelId ? { channelId } : {})}
           {...(draftKey ? { draftKey } : {})}
           {...(onAttachWithoutChannel ? { onAttachWithoutChannel } : {})}

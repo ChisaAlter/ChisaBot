@@ -1,4 +1,10 @@
-import type { ComposerCandidate } from "@/lib/composer/queries";
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useTimeout } from "@/hooks";
+import {
+  type ComposerCandidate,
+  composerCandidatesQueryOptions,
+} from "@/lib/composer/queries";
 
 /**
  * 本地输入候选条：快捷短语与高频习惯，按服务器的排序原样渲染。
@@ -43,4 +49,32 @@ export function CandidateStrip({
       ))}
     </div>
   );
+}
+
+/**
+ * 候选条的容器：防抖、查询、门控全部收在这里。Composer 本体不直接碰查询——
+ * 它是叶子组件，测试与若干表面在没有 QueryClientProvider 的地方渲染它；
+ * 只有显式传了 candidatesBotId 的表面才会挂载本组件，查询也只在这里发生。
+ */
+export function ComposerCandidates({
+  botId,
+  text,
+  hasChips,
+  onAccept,
+}: {
+  botId: string | null;
+  /** 当前草稿纯文本（trim 后）；空串不出候选。 */
+  text: string;
+  /** 草稿带 @/命令 chip 时不出候选：填入是整框替换，不能毁字。 */
+  hasChips: boolean;
+  onAccept: (text: string) => void;
+}) {
+  const [prefix, setPrefix] = useState("");
+  useTimeout(() => setPrefix(text), 180, text);
+  const query = useQuery(composerCandidatesQueryOptions(botId, prefix));
+  const candidates =
+    text.length > 0 && text === prefix && !hasChips
+      ? (query.data ?? []).slice(0, 5)
+      : [];
+  return <CandidateStrip candidates={candidates} onAccept={onAccept} />;
 }

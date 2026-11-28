@@ -7,7 +7,6 @@ import {
   IconSparkles,
   IconX,
 } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
 import { useReducedMotion } from "motion/react";
 import { PromptArea, type PromptAreaHandle } from "prompt-area";
 import {
@@ -90,7 +89,6 @@ import {
 import { deleteChatFile } from "@/lib/chat-files";
 import { tryClient } from "@/lib/client";
 import { recordComposerHabit } from "@/lib/composer/mutations";
-import { composerCandidatesQueryOptions } from "@/lib/composer/queries";
 import { objectConnectionKey } from "@/lib/connection-key";
 import { SendDeliveryUnknownError } from "@/lib/conversations/connection-drop";
 import { shouldStopOnEscape } from "@/lib/conversations/held-supplements";
@@ -123,7 +121,7 @@ import {
   FILE_PICKER_ACCEPT_WITH_DOCUMENTS,
   stagedRowId,
 } from "./attachments";
-import { CandidateStrip } from "./candidate-strip";
+import { ComposerCandidates } from "./candidate-strip";
 import { Collapse } from "./collapse";
 import { DictationButton, DictationSurface } from "./dictation-controls";
 import { appendDictation } from "./dictation-draft";
@@ -331,6 +329,11 @@ export type ComposerProps = {
   /** 当前对话所属机器人 id；存在时允许直传 ≤20MB 的 PDF / DOCX 文档至 `/api/chat-files`。 */
   chatFileAgentId?: string | null;
   /**
+   * 输入候选按哪个机器人出（习惯按机器人隔离）；`null` 只出快捷短语。
+   * 不传（undefined）= 本表面完全关闭候选——默认值，也是测试与无 Provider 表面的安全态。
+   */
+  candidatesBotId?: string | null;
+  /**
    * There is a run on the wire for Stop to reach.
    *
    * Not the same question as `pending`, and telling them apart is the whole reason this exists. A
@@ -492,6 +495,7 @@ function ComposerImpl({
   autoFocus = false,
   channelId,
   chatFileAgentId,
+  candidatesBotId,
   stoppable,
   stopping = false,
   stopFailed = false,
@@ -684,28 +688,23 @@ function ComposerImpl({
    * 带 chip（@ / 命令）的草稿不出候选——填入是整框替换，chip 会被抹掉，宁可不出也不毁字。
    * 候选条只在文本稳定（防抖追平）时显示，打字中途不闪旧候选。
    */
-  const candidateText = segmentsToPlainText(value).trim();
-  const [candidatePrefix, setCandidatePrefix] = useState("");
-  useTimeout(() => setCandidatePrefix(candidateText), 180, candidateText);
-  const candidatesQuery = useQuery(
-    composerCandidatesQueryOptions(chatFileAgentId ?? null, candidatePrefix),
-  );
-  const composerCandidates =
-    candidateText.length > 0 &&
-    candidateText === candidatePrefix &&
-    !hasChips(value)
-      ? (candidatesQuery.data ?? []).slice(0, 5)
-      : [];
   const acceptCandidate = useCallback((phrase: string) => {
     promptAreaRef.current?.setText(phrase);
     promptAreaRef.current?.focus();
   }, []);
-  const candidateStrip = (
-    <CandidateStrip
-      candidates={composerCandidates}
-      onAccept={acceptCandidate}
-    />
-  );
+  /*
+   * 候选条按表面显式启用（candidatesBotId !== undefined）：Composer 是叶子组件，
+   * 没有 QueryClientProvider 的测试与表面照样渲染它，查询只在容器组件里发生。
+   */
+  const candidateStrip =
+    candidatesBotId === undefined ? null : (
+      <ComposerCandidates
+        botId={candidatesBotId}
+        hasChips={hasChips(value)}
+        onAccept={acceptCandidate}
+        text={segmentsToPlainText(value).trim()}
+      />
+    );
   const [replyQuote, setReplyQuote] = useState<ComposerQuotePayload | null>(
     () => {
       const draft = threadUi(draftKey);
