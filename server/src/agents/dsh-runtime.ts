@@ -16,6 +16,13 @@ import {
 import { filesFromToolResult } from "../../../shared/chat-files";
 import { RENDER_UI_SHOWN } from "../../../shared/json-render/catalog";
 import type { ResolvedReasoningEffort } from "../../../shared/model-routing";
+import {
+  applyChatScenarioRoute,
+  capScenarioMaxTokens,
+  defaultScenarioRoute,
+  resolveScenarioEffort,
+  type ScenarioRoute,
+} from "../../../shared/model-scenario-routing";
 import { CHISABOT_WAITING_METADATA } from "../approvals/native-context";
 import type { ApprovalContinuation } from "../approvals/types";
 import type { HeadlessTool } from "../computer/headless-tools";
@@ -111,6 +118,8 @@ export type DshRuntimeConfiguration = {
     signal: AbortSignal,
   ) => Promise<readonly GrantedTool[]>;
   adaptiveRouter?: AdaptiveRouter;
+  /** chat 场景路由（30 秒缓存的服务读取）；缺省或读取失败时完全沿用现状链。 */
+  chatScenario?: () => Promise<ScenarioRoute>;
   modelObserver?: Pick<ModelObservationService, "isEnabled" | "record">;
   usageBreakdown?: Pick<UsageBreakdownService, "record">;
   promptWorkbench?: PromptWorkbenchStore;
@@ -505,16 +514,25 @@ export class DshRuntimeAgent extends AbstractAgent {
         const anyNeedsImages = rawPreparedInput.messages.some((message) =>
           messageHasImages(message),
         );
-        let routedModel = this.configuration.connection.model;
+        const chatRoute =
+          this.configuration.chatScenario && !this.configuration.plan
+            ? await this.configuration.chatScenario().catch(() => null)
+            : null;
         let routedEffort: ResolvedReasoningEffort = "default";
-        if (this.configuration.adaptiveRouter && !this.configuration.plan) {
+        let adaptiveModel: string | null = null;
+        if (
+          this.configuration.adaptiveRouter &&
+          !this.configuration.plan &&
+          chatRoute?.useAdaptive !== false
+        ) {
           const forwarded = input.forwardedProps as
             | { isSummarizationSession?: unknown }
             | undefined;
           const decision = await this.configuration.adaptiveRouter
             .decideRoute({
               messages: rawPreparedInput.messages,
-              fallbackModel: this.configuration.connection.model,
+              fallbackModel:
+                chatRoute?.model || this.configuration.connection.model,
               providerKind: this.configuration.connection.provider,
               ownerUserId: scope.actorId,
               isSummarizationSession:
@@ -523,17 +541,20 @@ export class DshRuntimeAgent extends AbstractAgent {
             })
             .catch(() => null);
           if (decision) {
-            routedModel = decision.model || routedModel;
+            adaptiveModel = decision.model || null;
             routedEffort = decision.effort;
           }
         }
+        if (chatRoute)
+          routedEffort = resolveScenarioEffort(chatRoute.effort, routedEffort);
         const requestedModels = this.configuration.plan
           ? [this.configuration.plan.provider]
-          : [
-              routedModel,
-              this.configuration.connection.model,
-              ...(await this.configuration.fallbacks()),
-            ].filter((id, at, all) => all.indexOf(id) === at);
+          : applyChatScenarioRoute({
+              route: chatRoute ?? defaultScenarioRoute(),
+              adaptiveModel,
+              baseModel: this.configuration.connection.model,
+              globalFallbacks: await this.configuration.fallbacks(),
+            }).models;
         const catalog = await Promise.all(
           requestedModels.map(async (id) => {
             const info = this.configuration.plan
@@ -614,7 +635,10 @@ export class DshRuntimeAgent extends AbstractAgent {
         const [primary, ...fallbacks] = definitions.map((model, index) => ({
           provider: "configured",
           model: model.id,
-          maxTokens: Math.min(model.maxTokens, Math.floor(contextWindow / 4)),
+          maxTokens: capScenarioMaxTokens(
+            Math.min(model.maxTokens, Math.floor(contextWindow / 4)),
+            chatRoute?.maxTokens ?? null,
+          ),
           ...(index === 0 && routedEffort !== "default"
             ? { reasoningEffort: routedEffort }
             : {}),

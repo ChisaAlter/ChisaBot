@@ -8,6 +8,7 @@ import { z } from "zod";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
 import { DICTATION_HTTP_IDLE_SECONDS } from "../../shared/dictation";
 import { RENDER_UI_TOOL } from "../../shared/json-render/catalog";
+import { resolveScenarioRoute } from "../../shared/model-scenario-routing";
 import { guardedFetch } from "../../shared/net/guarded-fetch";
 import { OPS_CODES } from "../../shared/ops-codes";
 import { bumpOps } from "../../shared/ops-counters";
@@ -4247,6 +4248,8 @@ const actorAgentResolver = createActorAgentResolver({
     recordUsage: quotaService.recordUsage,
   },
   adaptiveRouter,
+  chatScenario: async () =>
+    resolveScenarioRoute(await scenarioRouting.config(), "chat"),
   modelObserver: modelObservationService,
   usageBreakdown: usageBreakdownService,
   promptWorkbench: promptWorkbenchStore,
