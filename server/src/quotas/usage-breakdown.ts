@@ -25,6 +25,11 @@ import {
 } from "../../../shared/model-routing";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
+import {
+  buildUsageAnalytics,
+  buildUsageCsv,
+  toUsageDetailRow,
+} from "./usage-analytics";
 
 export type UsageEventInput = {
   ownerUserId: string;
@@ -35,6 +40,18 @@ export type UsageEventInput = {
   outputTokens: number;
   reasoningTokens?: number;
   createdAt?: Date | number;
+  /** 上游提供商标识（openai/anthropic 等连接类型或自定义 baseUrl 宿主），未知记空串。 */
+  provider?: string;
+  /** 产生该用量的 agent/bot id；非 agent 场景记空串。 */
+  agentId?: string;
+  /** 场景化路由场景名（chat/summary/suggestions/completion 等），未知记空串。 */
+  scenario?: string;
+  /** 请求端到端耗时（毫秒）；失败事件也记。 */
+  durationMs?: number;
+  /** ok | error——失败也记账才能算失败率。 */
+  status?: string;
+  /** 失败类别（http_429/timeout/aborted 等脱敏标签），成功记空串。 */
+  errorKind?: string;
 };
 
 export type UsageEventRecord = {
@@ -47,6 +64,12 @@ export type UsageEventRecord = {
   outputTokens: number;
   reasoningTokens: number;
   createdAt: string;
+  provider: string;
+  agentId: string;
+  scenario: string;
+  durationMs: number;
+  status: "ok" | "error";
+  errorKind: string;
 };
 
 export type UsageAggregateRow = {
@@ -106,6 +129,17 @@ function normalizeKind(raw: unknown): UsageKind {
 
 function normalizeEffort(raw: unknown): ResolvedReasoningEffort {
   return isResolvedReasoningEffort(raw) ? raw : "default";
+}
+
+function normalizeLabel(raw: unknown, maxLen = 80): string {
+  if (typeof raw !== "string") return "";
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  return trimmed.slice(0, maxLen);
+}
+
+function normalizeStatus(raw: unknown): "ok" | "error" {
+  return raw === "error" ? "error" : "ok";
 }
 
 /** 校验 IANA 时区字符串；省略时默认 "UTC"，非法时抛出 UsageTimeZoneError（400）。 */
@@ -352,6 +386,12 @@ type UsageEventRow = {
   output_tokens: number | string;
   reasoning_tokens: number | string;
   created_at: Date | string;
+  provider?: string | null;
+  agent_id?: string | null;
+  scenario?: string | null;
+  duration_ms?: number | string | null;
+  status?: string | null;
+  error_kind?: string | null;
 };
 
 function mapEventRow(row: UsageEventRow): UsageEventRecord {
@@ -365,6 +405,12 @@ function mapEventRow(row: UsageEventRow): UsageEventRecord {
     outputTokens: clampInt(Number(row.output_tokens)),
     reasoningTokens: clampInt(Number(row.reasoning_tokens)),
     createdAt: new Date(row.created_at).toISOString(),
+    provider: normalizeLabel(row.provider),
+    agentId: normalizeLabel(row.agent_id),
+    scenario: normalizeLabel(row.scenario),
+    durationMs: clampInt(Number(row.duration_ms ?? 0)),
+    status: normalizeStatus(row.status),
+    errorKind: normalizeLabel(row.error_kind),
   };
 }
 
@@ -413,6 +459,12 @@ export function createPgUsageBreakdownStorage(
         );
         CREATE INDEX IF NOT EXISTS idx_chisabot_usage_events_user_created
           ON chisabot_usage_events (owner_user_id, created_at DESC);
+        ALTER TABLE chisabot_usage_events ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT '';
+        ALTER TABLE chisabot_usage_events ADD COLUMN IF NOT EXISTS agent_id text NOT NULL DEFAULT '';
+        ALTER TABLE chisabot_usage_events ADD COLUMN IF NOT EXISTS scenario text NOT NULL DEFAULT '';
+        ALTER TABLE chisabot_usage_events ADD COLUMN IF NOT EXISTS duration_ms bigint NOT NULL DEFAULT 0;
+        ALTER TABLE chisabot_usage_events ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'ok';
+        ALTER TABLE chisabot_usage_events ADD COLUMN IF NOT EXISTS error_kind text NOT NULL DEFAULT '';
       `);
     },
 
@@ -434,13 +486,20 @@ export function createPgUsageBreakdownStorage(
         outputTokens: clampInt(input.outputTokens),
         reasoningTokens: clampInt(input.reasoningTokens ?? 0),
         createdAt: new Date(createdAtMs).toISOString(),
+        provider: normalizeLabel(input.provider),
+        agentId: normalizeLabel(input.agentId),
+        scenario: normalizeLabel(input.scenario),
+        durationMs: clampInt(input.durationMs ?? 0),
+        status: normalizeStatus(input.status),
+        errorKind: normalizeLabel(input.errorKind),
       };
       await sql.unsafe(
         `INSERT INTO chisabot_usage_events (
            id, owner_user_id, kind, model_id, effort,
-           input_tokens, output_tokens, reasoning_tokens, created_at
+           input_tokens, output_tokens, reasoning_tokens, created_at,
+           provider, agent_id, scenario, duration_ms, status, error_kind
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
         [
           record.id,
           record.ownerUserId,
@@ -451,6 +510,12 @@ export function createPgUsageBreakdownStorage(
           record.outputTokens,
           record.reasoningTokens,
           record.createdAt,
+          record.provider,
+          record.agentId,
+          record.scenario,
+          record.durationMs,
+          record.status,
+          record.errorKind,
         ],
       );
       return record;
@@ -459,7 +524,8 @@ export function createPgUsageBreakdownStorage(
     async listEventsSince(ownerUserId, sinceIso) {
       const rows = await sql.unsafe<UsageEventRow[]>(
         `SELECT id, owner_user_id, kind, model_id, effort,
-                input_tokens, output_tokens, reasoning_tokens, created_at
+                input_tokens, output_tokens, reasoning_tokens, created_at,
+                provider, agent_id, scenario, duration_ms, status, error_kind
          FROM chisabot_usage_events
          WHERE owner_user_id = $1 AND created_at >= $2
          ORDER BY created_at DESC`,
@@ -515,6 +581,12 @@ export function createMemoryUsageBreakdownStorage(options?: {
         outputTokens: clampInt(input.outputTokens),
         reasoningTokens: clampInt(input.reasoningTokens ?? 0),
         createdAt: new Date(createdAtMs).toISOString(),
+        provider: normalizeLabel(input.provider),
+        agentId: normalizeLabel(input.agentId),
+        scenario: normalizeLabel(input.scenario),
+        durationMs: clampInt(input.durationMs ?? 0),
+        status: normalizeStatus(input.status),
+        errorKind: normalizeLabel(input.errorKind),
       };
       rows.push(record);
       return { ...record };
@@ -527,6 +599,7 @@ export function createMemoryUsageBreakdownStorage(options?: {
             row.ownerUserId === ownerUserId &&
             Date.parse(row.createdAt) >= cutoffMs,
         )
+        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
         .map((row) => ({ ...row }));
     },
   };
@@ -586,6 +659,123 @@ export function createUsageBreakdownService(
     routes(requireUser) {
       const routes = new Hono<{ Variables: AppVariables }>();
       routes.use("*", requireUser);
+      // CB-146：维度化分析（provider/agent/scenario/model/kind 分组 + 失败率 + 耗时分布 + 成本估算）。
+      routes.get("/extended", async (context) => {
+        context.header("Cache-Control", "no-store");
+        const actor = context.var.actor;
+        const requestedUserId = context.req.query("userId")?.trim();
+        const targetUserId =
+          actor.role === "admin" && requestedUserId
+            ? requestedUserId
+            : actor.id;
+        const daysRaw = Number(context.req.query("days") ?? "30");
+        const days =
+          Number.isFinite(daysRaw) && daysRaw > 0
+            ? Math.min(Math.floor(daysRaw), 90)
+            : 30;
+        // 自定义范围优先于 days：since/until 为 YYYY-MM-DD 或 ISO；until 纯日期串含当日整日。
+        const sinceRaw = context.req.query("since")?.trim();
+        const untilRaw = context.req.query("until")?.trim();
+        const sinceParsed = sinceRaw ? Date.parse(sinceRaw) : Number.NaN;
+        const untilParsed = untilRaw ? Date.parse(untilRaw) : Number.NaN;
+        const effSinceMs = Number.isFinite(sinceParsed)
+          ? sinceParsed
+          : nowFn() - days * 86_400_000;
+        const sinceIso = new Date(effSinceMs).toISOString();
+        try {
+          let events = await storage.listEventsSince(targetUserId, sinceIso);
+          if (Number.isFinite(untilParsed)) {
+            const endMs =
+              untilRaw && untilRaw.length <= 10
+                ? untilParsed + 86_400_000 - 1
+                : untilParsed;
+            events = events.filter(
+              (event) => Date.parse(event.createdAt) <= endMs,
+            );
+          }
+          // 内存与 PG 统一在此截断：窗口事件过万时只取最新一万条，保统计有界。
+          const capped = events.slice(0, 10_000);
+          return context.json({
+            analytics: buildUsageAnalytics(capped),
+            window: {
+              days,
+              sinceIso,
+              eventCount: capped.length,
+              truncated: events.length > capped.length,
+            },
+          });
+        } catch {
+          return context.json(
+            { error: "用量分析暂时无法读取，请稍后重试。" },
+            503,
+          );
+        }
+      });
+      // CB-146：metadata-only 请求明细（按 createdAt 倒序分页，before 游标）。
+      routes.get("/detail", async (context) => {
+        context.header("Cache-Control", "no-store");
+        const actor = context.var.actor;
+        const requestedUserId = context.req.query("userId")?.trim();
+        const targetUserId =
+          actor.role === "admin" && requestedUserId
+            ? requestedUserId
+            : actor.id;
+        const limitRaw = Number(context.req.query("limit") ?? "50");
+        const limit =
+          Number.isFinite(limitRaw) && limitRaw > 0
+            ? Math.min(Math.floor(limitRaw), 200)
+            : 50;
+        const beforeRaw = context.req.query("before")?.trim();
+        const beforeMs = beforeRaw ? Date.parse(beforeRaw) : Number.NaN;
+        const sinceIso = new Date(nowFn() - 90 * 86_400_000).toISOString();
+        try {
+          const events = await storage.listEventsSince(targetUserId, sinceIso);
+          const filtered = Number.isFinite(beforeMs)
+            ? events.filter((event) => Date.parse(event.createdAt) < beforeMs)
+            : events;
+          const page = filtered.slice(0, limit);
+          return context.json({
+            events: page.map(toUsageDetailRow),
+            hasMore: filtered.length > page.length,
+          });
+        } catch {
+          return context.json(
+            { error: "用量明细暂时无法读取，请稍后重试。" },
+            503,
+          );
+        }
+      });
+      // CB-146：管理员 CSV 导出（metadata-only，绝不含 prompt/输入/输出内容）。
+      routes.get("/export.csv", async (context) => {
+        const actor = context.var.actor;
+        if (actor.role !== "admin") {
+          return context.json({ error: "仅管理员可导出用量 CSV。" }, 403);
+        }
+        const requestedUserId = context.req.query("userId")?.trim();
+        const targetUserId = requestedUserId || actor.id;
+        const daysRaw = Number(context.req.query("days") ?? "30");
+        const days =
+          Number.isFinite(daysRaw) && daysRaw > 0
+            ? Math.min(Math.floor(daysRaw), 365)
+            : 30;
+        const sinceIso = new Date(nowFn() - days * 86_400_000).toISOString();
+        try {
+          const events = await storage.listEventsSince(targetUserId, sinceIso);
+          const capped = events.slice(0, 20_000);
+          context.header("Cache-Control", "no-store");
+          context.header("Content-Type", "text/csv; charset=utf-8");
+          context.header(
+            "Content-Disposition",
+            `attachment; filename="usage-${days}d.csv"`,
+          );
+          return context.body(buildUsageCsv(capped));
+        } catch {
+          return context.json(
+            { error: "用量导出暂时不可用，请稍后重试。" },
+            503,
+          );
+        }
+      });
       routes.get("/breakdown", async (context) => {
         context.header("Cache-Control", "no-store");
         const tz = context.req.query("tz");

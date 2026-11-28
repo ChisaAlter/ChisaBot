@@ -724,6 +724,10 @@ export class DshRuntimeAgent extends AbstractAgent {
                       usageKind: isSummarizationSession
                         ? ("summary" as const)
                         : ("chat" as const),
+                      agentId: scope.botId,
+                      scenario: isSummarizationSession
+                        ? "summarization"
+                        : "chat",
                       onUsageBreakdown: (event) =>
                         this.configuration.usageBreakdown?.record(event),
                     }
