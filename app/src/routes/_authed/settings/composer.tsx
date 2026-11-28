@@ -112,6 +112,7 @@ function ComposerSettingsPage() {
     >
       <PageSection
         description={"关掉「学习习惯」后不再记录新习惯，已记录的也不再出候选。"}
+        settingItem="composer.composer-enabled"
         title={"输入候选"}
       >
         <PageRows>
@@ -121,7 +122,7 @@ function ComposerSettingsPage() {
             <PageEmpty>{"无法加载输入助手设置。"}</PageEmpty>
           ) : (
             <>
-              <Item data-setting-item="composer.enabled" size="sm">
+              <Item size="sm">
                 <ItemMedia variant="icon">
                   <IconKeyboard />
                 </ItemMedia>
@@ -145,7 +146,7 @@ function ComposerSettingsPage() {
                 </ItemActions>
               </Item>
               <Separator />
-              <Item data-setting-item="composer.local" size="sm">
+              <Item size="sm">
                 <ItemMedia variant="icon">
                   <IconBulb />
                 </ItemMedia>
@@ -169,7 +170,7 @@ function ComposerSettingsPage() {
                 </ItemActions>
               </Item>
               <Separator />
-              <Item data-setting-item="composer.learning" size="sm">
+              <Item size="sm">
                 <ItemMedia variant="icon">
                   <IconBulb />
                 </ItemMedia>
@@ -315,10 +316,11 @@ function ComposerSettingsPage() {
         description={
           "习惯按机器人隔离，只来自你实际发送的消息；未发送的草稿从不记录。"
         }
+        settingItem="composer.composer-learning"
         title={"学习习惯"}
       >
         <PageRows>
-          <Item data-setting-item="composer.clearHabits" size="sm">
+          <Item size="sm">
             <ItemMedia variant="icon">
               <IconTrash />
             </ItemMedia>
