@@ -1,5 +1,9 @@
 ## Unreleased
 
+## 0.1.200 — 2026-11-28
+
+全端版本 `0.1.200`，Android `versionCode 380`：结构化用户表单（PR #622，CB-147）——ask_person 可携带 schema 化多字段表单（text / textarea / select / multiselect / confirm + 必填校验 + 默认值），答案经服务端严校验后渲染恢复执行，超时显式终态，凭据味字段一律拒收走 vault。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `7307c25b0c5318aa`。
+
 - **结构化用户表单（CB-147）**：ask_person 升级为可携带 schema 化多字段表单——text / textarea / select / multiselect / confirm 五类字段 + 必填校验 + 默认值；提交按字段 spec 服务端严校验后渲染为人读文本恢复原 run（initiator 同型保留），键值对本体入 payload；重复提交幂等（事务内 finishedAt 检查天然保证）；取消（作废）与超时（expiresAfterMinutes，过期拒答 + UI 显式「已过期」终态）齐备；群聊/共享会话 audience 由既有 authorise 链覆盖；**凭据味字段一律拒收**（id/label 含 password/token/secret/apikey 即拒并引导走 vault 专用路径）；会话内 PendingQuestion 渲染五控件表单，multiselect 胶囊复用快捷选项样式（`shared/user-form.ts` · `server/src/agents/escalation.ts` · `server/src/approvals/questions.ts` · `app/src/components/approvals/user-form-fields.tsx` · `app/src/components/approvals/pending-question.tsx` · `server/tests/user-form.test.ts` · `app/tests/user-form-question.test.tsx`）。
 
 ## 0.1.199 — 2026-11-28
