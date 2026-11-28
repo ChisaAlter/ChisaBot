@@ -239,7 +239,8 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
       {
         id: "busy-send-mode",
         title: "回复中途发消息",
-        description: "AI 正在回复时按 Enter 的默认方式（立即插话引导或排到下一轮）",
+        description:
+          "AI 正在回复时按 Enter 的默认方式（立即插话引导或排到下一轮）",
         find: "回复中途发消息",
         keywords: [
           "对话",
@@ -292,7 +293,8 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
       {
         id: "privacy-mask",
         title: "隐私遮罩模式",
-        description: "一键模糊账号、密钥提示与机器人名称等敏感信息（Ctrl+Shift+P）",
+        description:
+          "一键模糊账号、密钥提示与机器人名称等敏感信息（Ctrl+Shift+P）",
         find: "隐私遮罩模式",
         keywords: [
           "隐私",
@@ -348,7 +350,14 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
         description: "查看当前桌面端、网页与服务端版本号及同步状态",
         find: "当前版本",
         weight: 15,
-        keywords: ["版本号", "当前版本", "客户端版本", "服务端版本", "version", "about"],
+        keywords: [
+          "版本号",
+          "当前版本",
+          "客户端版本",
+          "服务端版本",
+          "version",
+          "about",
+        ],
       },
       {
         id: "desktop-client",
@@ -372,7 +381,15 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
         title: "端侧诊断日志",
         description: "查看最近 500 条本机脱敏诊断事件并导出排障包",
         find: "端侧诊断日志",
-        keywords: ["诊断", "日志", "排障", "diagnostics", "logs", "export", "zdrz"],
+        keywords: [
+          "诊断",
+          "日志",
+          "排障",
+          "diagnostics",
+          "logs",
+          "export",
+          "zdrz",
+        ],
       },
     ],
   },
@@ -964,7 +981,8 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
       {
         id: "context-policy",
         title: "上下文容量与摘要阈值",
-        description: "按模型 ID 手动覆写上下文窗口大小与长对话摘要触发阈值（支持 1M / 400K）",
+        description:
+          "按模型 ID 手动覆写上下文窗口大小与长对话摘要触发阈值（支持 1M / 400K）",
         find: "上下文容量与摘要阈值",
         keywords: [
           "上下文",
@@ -1117,6 +1135,24 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
           "dry-run",
           "试跑",
           "路由日志",
+        ],
+      },
+      {
+        id: "scenario-routing",
+        title: "场景化模型路由",
+        description:
+          "十一个场景独立指定主模型、备用链与思考强度，支持草稿 Dry-run 与 30 天决策日志",
+        find: "场景化模型路由",
+        keywords: [
+          "场景路由",
+          "场景化",
+          "scenario",
+          "chat",
+          "review",
+          "审批审查",
+          "标题",
+          "摘要",
+          "识图",
         ],
       },
       {

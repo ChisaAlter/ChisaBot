@@ -4,6 +4,7 @@ import { PageShell } from "@/components/layout/page-shell";
 import { AdaptiveRoutingPanel } from "@/components/settings/adaptive-routing-panel";
 import { HarnessAndObservationPanel } from "@/components/settings/harness-and-observation";
 import { PromptWorkbench } from "@/components/settings/prompt-workbench";
+import { ScenarioRoutingPanel } from "@/components/settings/scenario-routing-panel";
 import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/_authed/admin/enterprise")({
@@ -33,6 +34,7 @@ function WhiteboxWorkbenchPage() {
     >
       <div className="space-y-10" data-testid="whitebox-workbench-page">
         <AdaptiveRoutingPanel />
+        <ScenarioRoutingPanel />
         <PromptWorkbench />
         <HarnessAndObservationPanel />
       </div>

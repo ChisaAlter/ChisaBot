@@ -20,9 +20,11 @@ import {
   applyChatScenarioRoute,
   capScenarioMaxTokens,
   defaultScenarioRoute,
-  resolveScenarioEffort,
   type ModelScenario,
+  resolveScenarioEffort,
   type ScenarioRoute,
+  type ScenarioRouteEventInput,
+  scenarioRouteOverrides,
 } from "../../../shared/model-scenario-routing";
 import { CHISABOT_WAITING_METADATA } from "../approvals/native-context";
 import type { ApprovalContinuation } from "../approvals/types";
@@ -121,6 +123,8 @@ export type DshRuntimeConfiguration = {
   adaptiveRouter?: AdaptiveRouter;
   /** 按场景读取路由（30 秒缓存的服务读取）；缺省或读取失败时完全沿用现状链。 */
   scenarioFor?: (scenario: ModelScenario) => Promise<ScenarioRoute>;
+  /** PR3：场景路由决议日志回调（composition root 注入落库策略）；缺省不记。 */
+  scenarioLog?: (event: ScenarioRouteEventInput) => Promise<void> | void;
   modelObserver?: Pick<ModelObservationService, "isEnabled" | "record">;
   usageBreakdown?: Pick<UsageBreakdownService, "record">;
   promptWorkbench?: PromptWorkbenchStore;
@@ -562,6 +566,18 @@ export class DshRuntimeAgent extends AbstractAgent {
               baseModel: this.configuration.connection.model,
               globalFallbacks: await this.configuration.fallbacks(),
             }).models;
+        if (scenarioRoute && !this.configuration.plan) {
+          void this.configuration
+            .scenarioLog?.({
+              scenario: isSummarizationSession ? "summarization" : "chat",
+              consumer: "chat",
+              configured: scenarioRouteOverrides(scenarioRoute).length > 0,
+              chain: requestedModels.slice(),
+              chosenModel: requestedModels[0] ?? null,
+              outcome: "resolved",
+            })
+            ?.catch?.(() => {});
+        }
         const catalog = await Promise.all(
           requestedModels.map(async (id) => {
             const info = this.configuration.plan

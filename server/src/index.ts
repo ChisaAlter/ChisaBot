@@ -83,15 +83,11 @@ import {
   createModelFallbackService,
   createModelFallbackStore,
 } from "./agents/model-fallback-settings";
+import { createModelObservationService } from "./agents/model-observation";
 import {
   createScenarioRoutingService,
   createScenarioRoutingStore,
 } from "./agents/model-scenario-routing";
-import {
-  createScenarioCompleter,
-  scenarioConnectionResolver,
-} from "./agents/scenario-connection";
-import { createModelObservationService } from "./agents/model-observation";
 import { createAgentModelService } from "./agents/model-selection";
 import { createPrimaryAgentService } from "./agents/primary-agent-service";
 import { createAgentProfileStore } from "./agents/profile-store";
@@ -102,6 +98,11 @@ import {
   createRoutingAdminRoutes,
 } from "./agents/routing-log";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
+import {
+  createScenarioCompleter,
+  scenarioConnectionResolver,
+} from "./agents/scenario-connection";
+import { createPgScenarioRouteLogStorage } from "./agents/scenario-route-log";
 import { createCoworkerService } from "./agents/service";
 import {
   createWakeUpRunner,
@@ -242,6 +243,7 @@ import {
   type IdentifyUser,
   mountConversationRuntime,
   normalizeModelBaseUrls,
+  type RuntimeModelResolver,
   runtimeModelForEnvironment,
   setAgentKernel,
   setHistorySummaries,
@@ -253,7 +255,6 @@ import {
   setModelSummaryThresholdResolver,
   setModelVisionResolver,
   setPreviousRunUsageResolver,
-  type RuntimeModelResolver,
   type ToolSelection,
 } from "./conversation-runtime";
 import { createConversationBindings } from "./conversations/bindings";
@@ -431,10 +432,7 @@ import {
   createPgWebhookPanelStore,
   createWebhookPanelRoutes,
 } from "./responsibilities/webhook-panel-routes";
-import {
-  createModelCompleter,
-  runtimeModelEndpoint,
-} from "./routing/model";
+import { createModelCompleter, runtimeModelEndpoint } from "./routing/model";
 import {
   createInternalQuiesceRoutes,
   getRuntimeQuiesceController,
@@ -1485,9 +1483,32 @@ const modelFallbacks = createModelFallbackService({
 });
 setModelFallbackList(() => modelFallbacks.models());
 // 场景化模型路由（chat / review / title / vision / suggestions / completion …）：
-// 本 PR 只接线存储与管理员 API，运行时消费方逐个接入；空配置 = 全部场景继承当前行为。
+// 运行时消费方已接入 chat / summarization / review / title / vision；空配置 = 全部场景继承当前行为。
+// PR3：决策日志只记有信号的事件（配置了覆盖、走了 fallback、失败或 dry-run 本身），
+// 全继承的常规决议不落库，避免每轮聊天一行噪音。
+const scenarioRouteLogStorage = createPgScenarioRouteLogStorage(database);
+const logScenarioRouteEvent = async (
+  event: import("../../shared/model-scenario-routing").ScenarioRouteEventInput,
+) => {
+  if (
+    !event.configured &&
+    event.outcome !== "fallback" &&
+    event.outcome !== "failed" &&
+    !event.dryRun
+  )
+    return;
+  await scenarioRouteLogStorage.append(event).catch(() => {});
+};
 const scenarioRouting = createScenarioRoutingService({
   store: createScenarioRoutingStore(database),
+  log: scenarioRouteLogStorage,
+  dryRunContext: {
+    baseModel: async () =>
+      (await resolveRuntimeConnection()).model.defaultModel,
+    globalFallbacks: () => modelFallbacks.models(),
+    adaptiveAvailable: async () =>
+      (await routingLogStorage.readPolicy()).mode === "adaptive",
+  },
 });
 // 估算每轮 token 的上下文窗口来自模型目录（经 modelInfo 下发给内核）。
 // 注意：「摘要模型」设置（下方 historySummaryModel）在 DSH 内核下没有读取方——connectionSummarizer /
@@ -1816,6 +1837,7 @@ const reviewModel = createScenarioCompleter({
   routing: scenarioRouting,
   baseConnection: resolveRuntimeConnection,
   completerFor: reviewModelConnection,
+  log: logScenarioRouteEvent,
 });
 
 // Named collaborators are bound once in actorAgentResolver for chat, hops, and headless turns.
@@ -2077,6 +2099,14 @@ const chatFiles = createChatFiles(database, {
     const baseUrl = endpoint.endsWith("/chat/completions")
       ? endpoint.slice(0, -"/chat/completions".length)
       : endpoint;
+    void logScenarioRouteEvent({
+      scenario: "vision",
+      consumer: "vision",
+      configured: true,
+      chain: [route.model],
+      chosenModel: route.model,
+      outcome: "resolved",
+    });
     return {
       kind: "model" as const,
       config: { baseUrl, model: route.model, apiKey: connection.apiKey ?? "" },
@@ -2219,6 +2249,7 @@ const promptWorkbenchStore = createPromptWorkbenchStore(
 );
 await Promise.all([
   routingLogStorage.ensure(),
+  scenarioRouteLogStorage.ensure(),
   usageBreakdownService.ensure(),
   harnessSettingsService.ensure(),
   promptWorkbenchStore.ensure(),
@@ -4298,6 +4329,7 @@ const actorAgentResolver = createActorAgentResolver({
   adaptiveRouter,
   scenarioFor: async (scenario) =>
     resolveScenarioRoute(await scenarioRouting.config(), scenario),
+  scenarioLog: logScenarioRouteEvent,
   modelObserver: modelObservationService,
   usageBreakdown: usageBreakdownService,
   promptWorkbench: promptWorkbenchStore,
@@ -5491,6 +5523,7 @@ const channelSummaries = {
       "title",
       resolveRuntimeConnection,
       scenarioRouting,
+      logScenarioRouteEvent,
     ),
   }),
   owner: workOwner("summariser"),

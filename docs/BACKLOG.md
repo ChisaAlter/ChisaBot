@@ -149,9 +149,9 @@
 标签：`type: feat` · `area: agents` · `area: settings` · `P1` · `status: in-progress`
 
 - 来源：RokBot 全量对照审查（2026-11-27 修订版）确认的 P1 真实差距；设计见 [scenario-routing.md](scenario-routing.md)。
-- [ ] **PR1 契约与存储**：`shared/model-scenario-routing.ts` 闭集场景键 + 全字段继承语义校验；`enterprise_settings` 单行存储 + 30s 缓存 + 管理员 GET/PUT API；空配置与升级前行为完全一致。
-- [ ] **PR2 运行时接入**：review / title / summarization / vision / chat 逐个场景读路由表；默认配置下行为零变化；usage kind 扩展。
-- [ ] **PR3 管理 UI**：场景路由面板 + Dry-run + 按场景路由日志；非法配置保存前拒绝。
+- [x] **PR1 契约与存储**（#607 已合并）：`shared/model-scenario-routing.ts` 闭集场景键 + 全字段继承语义校验；`enterprise_settings` 单行存储 + 30s 缓存 + 管理员 GET/PUT API；空配置与升级前行为完全一致。
+- [x] **PR2 运行时接入**（#609 已合并）：review / title / summarization / vision / chat 逐个场景读路由表；默认配置下行为零变化；usage kind 扩展。
+- [x] **PR3 管理 UI**（本 PR）：场景路由面板 + Dry-run + 按场景路由日志；非法配置保存前拒绝。
 
 ## CB-145
 
