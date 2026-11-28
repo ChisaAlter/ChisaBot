@@ -67,6 +67,10 @@ export type ApprovalInboxData = {
     why?: string;
     initiatorKind?: string;
     createdAt: string;
+    /** CB-147：结构化表单字段；非空时回答须按 schema 提交键值对。 */
+    fields?: import("../../../shared/user-form").UserFormField[] | null;
+    /** CB-147：超时终态——过期问题不可答，UI 呈「已过期」。 */
+    expiresAt?: string | null;
   }[];
 };
 export const APPROVALS_ACTIVE_POLL_MS = 10_000;
@@ -157,10 +161,14 @@ export const revokeTeamApprovalRule = (id: string) =>
     method: "DELETE",
     fallback: "团队规则无法移除。",
   });
-export const answerPersonQuestion = (id: string, response: string) =>
+export const answerPersonQuestion = (
+  id: string,
+  response: string,
+  answers?: Record<string, unknown>,
+) =>
   client(`/api/approvals/questions/${encodeURIComponent(id)}/respond`, {
     method: "POST",
-    body: { response },
+    body: answers ? { response, answers } : { response },
     fallback: "您的回答无法保存。",
   });
 /**
