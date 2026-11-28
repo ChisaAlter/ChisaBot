@@ -72,6 +72,41 @@ describe.skipIf(!url)("composer settings / quick phrases / habits", () => {
     expect(settings.learningEnabled).toBe(true);
   });
 
+  /*
+   * HTTP 形状回归：客户端统一按信封拆包（body["settings"]），路由必须回信封。
+   * 曾经路由回扁平对象而客户端拆 "settings" 键——查询永远 undefined，
+   * AI/补全开关在真实界面全部失效；服务层测试不测 HTTP 形状所以漏网。
+   */
+  test("settings 路由 GET/PUT 都回信封形状", async () => {
+    const actorOwner = alice;
+    const fakeRequireUser = async (
+      context: { set: (key: string, value: unknown) => void },
+      next: () => Promise<void>,
+    ) => {
+      context.set("actor", { id: actorOwner });
+      await next();
+    };
+    const app = service.routes(fakeRequireUser as never);
+    const got = await app.request("http://test/settings");
+    expect(got.status).toBe(200);
+    const gotBody = (await got.json()) as Record<string, unknown>;
+    expect(gotBody.settings).toBeObject();
+    expect((gotBody.settings as { enabled: boolean }).enabled).toBe(true);
+
+    const put = await app.request("http://test/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ completionEnabled: true }),
+    });
+    expect(put.status).toBe(200);
+    const putBody = (await put.json()) as Record<string, unknown>;
+    expect(putBody.settings).toBeObject();
+    expect(
+      (putBody.settings as { completionEnabled: boolean }).completionEnabled,
+    ).toBe(true);
+    await service.writeSettings(alice, { completionEnabled: false });
+  });
+
   test("快捷短语增删改与排序持久化", async () => {
     const first = await service.addPhrase(alice, {
       text: "帮我总结一下今天的进展",

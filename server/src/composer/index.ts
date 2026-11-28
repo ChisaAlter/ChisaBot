@@ -512,16 +512,16 @@ export function createComposerService(
     const owner = (context: { var: AppVariables }) => context.var.actor.id;
 
     app.get("/settings", async (context) =>
-      context.json(await readSettings(owner(context))),
+      context.json({ settings: await readSettings(owner(context)) }),
     );
     app.put("/settings", async (context) => {
       try {
-        return context.json(
-          await writeSettings(
+        return context.json({
+          settings: await writeSettings(
             owner(context),
             await context.req.json().catch(() => null),
           ),
-        );
+        });
       } catch (error) {
         if (error instanceof ComposerValidationError)
           return context.json({ error: error.message }, error.status);
