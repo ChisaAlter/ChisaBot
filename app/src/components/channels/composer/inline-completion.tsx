@@ -25,7 +25,11 @@ function resolveEditor(container: HTMLElement | null): HTMLElement | null {
   return container?.querySelector("[contenteditable]") ?? null;
 }
 
-/** caret 是否处于编辑器的绝对末尾：把全文档 range 起点裁到 caret，若坍塌则在末尾。 */
+/**
+ * caret 是否处于编辑器的绝对末尾：caret 之后不再有任何内容即在末尾。
+ * 不能用 range.collapsed——(textNode,6) 与 (editor,1) 视觉等价但结构上是
+ * 两个边界点，typed-at-end 的常见路径下 collapsed 恒 false（PR10 实机确诊）。
+ */
 export function caretAtEnd(editor: HTMLElement): boolean {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0 || !selection.isCollapsed)
@@ -35,7 +39,11 @@ export function caretAtEnd(editor: HTMLElement): boolean {
   const range = document.createRange();
   range.selectNodeContents(editor);
   range.setStart(selection.anchorNode, selection.anchorOffset);
-  return range.collapsed;
+  if (range.toString().length > 0) return false;
+  const fragment = range.cloneContents();
+  return ![...fragment.childNodes].some(
+    (node) => node.nodeType === Node.ELEMENT_NODE,
+  );
 }
 
 function copyTypography(source: HTMLElement, target: HTMLElement) {
@@ -89,7 +97,13 @@ export function InlineCompletionGhost({
       ? settled
       : "";
   const query = useQuery(composerInlineCompletionQueryOptions(stable));
-  const suffix = stable ? (query.data?.completion ?? null) : null;
+  /*
+   * Esc 丢弃：记录被丢弃时的 stable 文本，同一段文本的补全不再出现；
+   * 文本一旦变化 stable 随之变化，匹配自然失效、补全可以重新出。
+   */
+  const [dismissed, setDismissed] = useState("");
+  const rawSuffix = stable ? (query.data ?? null) : null;
+  const suffix = rawSuffix && dismissed !== stable ? rawSuffix : null;
 
   /*
    * 排版 / 几何同步：把编辑器计算样式抄到 mirror 上，并按编辑器相对包裹元素的
@@ -125,6 +139,8 @@ export function InlineCompletionGhost({
    */
   const suffixRef = useRef<string | null>(null);
   suffixRef.current = suffix;
+  const stableRef = useRef(stable);
+  stableRef.current = stable;
   useElementEvent(
     containerRef,
     "keydown",
@@ -133,6 +149,12 @@ export function InlineCompletionGhost({
           const current = suffixRef.current;
           const editor = resolveEditor(containerRef.current);
           if (!current || !editor) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            setDismissed(stableRef.current);
+            return;
+          }
           if (event.key !== "Tab" && event.key !== "ArrowRight") return;
           if (!caretAtEnd(editor)) return;
           event.preventDefault();
