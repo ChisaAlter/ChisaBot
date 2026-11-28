@@ -373,7 +373,7 @@ export function createComposerService(
     if (input.botId && settings.learningEnabled && prefix) {
       const botId = cleanId(input.botId);
       const habits = await sql.unsafe(
-        "SELECT text, use_count FROM chisabot_composer_habit_items WHERE owner_user_id = $1 AND agent_id = $2 AND normalized_text LIKE $3 ORDER BY use_count DESC, last_used_at DESC NULLS LAST LIMIT $4",
+        "SELECT text, use_count FROM chisabot_composer_habit_items WHERE owner_user_id = $1 AND agent_id = $2 AND normalized_text LIKE $3 ORDER BY (use_count + accepted_count * 2 - ignored_count) DESC, last_used_at DESC NULLS LAST LIMIT $4",
         [owner, botId, `${prefix}%`, COMPOSER_CANDIDATES_MAX],
       );
       for (const row of habits as Record<string, unknown>[]) {
@@ -404,6 +404,47 @@ export function createComposerService(
       [owner],
     );
     return { cleared: rows.length };
+  }
+
+  /**
+   * 习惯反馈记账（PR7）：候选条上报 shown / accepted / ignored 事件，批量累加计数。
+   * 只对已存在的习惯行记账（行只能由真实发送产生），未知文本一律 no-op；
+   * 学习关闭时不再接受新记账，但不清空已有计数。
+   */
+  async function recordHabitFeedback(
+    owner: string,
+    input: unknown,
+  ): Promise<{ recorded: number }> {
+    const body = (input ?? {}) as Record<string, unknown>;
+    const botId = cleanId(body.botId);
+    const events = Array.isArray(body.events) ? body.events : null;
+    if (!events || events.length === 0)
+      throw new ComposerValidationError("请提供反馈事件列表。");
+    if (events.length > 50)
+      throw new ComposerValidationError("一次最多上报 50 条反馈。");
+    let recorded = 0;
+    for (const event of events.slice(0, 50)) {
+      if (!event || typeof event !== "object") continue;
+      const kind = (event as Record<string, unknown>).kind;
+      if (kind !== "shown" && kind !== "accepted" && kind !== "ignored")
+        continue;
+      const rawText = (event as Record<string, unknown>).text;
+      if (typeof rawText !== "string" || !rawText.trim()) continue;
+      if ([...rawText].length > COMPOSER_TEXT_MAX) continue;
+      const normalized = normalizeComposerText(rawText);
+      const column =
+        kind === "shown"
+          ? "shown_count"
+          : kind === "accepted"
+            ? "accepted_count"
+            : "ignored_count";
+      const rows = await sql.unsafe(
+        `UPDATE chisabot_composer_habit_items SET ${column} = ${column} + 1, updated_at = now() WHERE owner_user_id = $1 AND agent_id = $2 AND normalized_text = $3 RETURNING id`,
+        [owner, botId, normalized],
+      );
+      recorded += rows.length;
+    }
+    return { recorded };
   }
 
   /**
@@ -592,6 +633,20 @@ export function createComposerService(
         throw error;
       }
     });
+    app.post("/habits/feedback", async (context) => {
+      try {
+        return context.json(
+          await recordHabitFeedback(
+            owner(context),
+            await context.req.json().catch(() => null),
+          ),
+        );
+      } catch (error) {
+        if (error instanceof ComposerValidationError)
+          return context.json({ error: error.message }, error.status);
+        throw error;
+      }
+    });
     app.post("/habits/record", async (context) => {
       try {
         return context.json(
@@ -633,6 +688,7 @@ export function createComposerService(
     deletePhrase,
     reorderPhrases,
     recordHabit,
+    recordHabitFeedback,
     candidates,
     clearHabits,
     aiSuggestions,
