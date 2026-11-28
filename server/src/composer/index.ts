@@ -18,7 +18,10 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
-import type { ComposerAiSuggester } from "./ai-suggestions";
+import {
+  type ComposerAiSuggester,
+  cleanAiSuggestContext,
+} from "./ai-suggestions";
 
 export const COMPOSER_TEXT_MAX = 500;
 export const COMPOSER_PHRASES_MAX = 200;
@@ -401,8 +404,9 @@ export function createComposerService(
   }
 
   /**
-   * AI 输入建议（PR5）：把草稿交给部署方模型（suggestions 场景路由）生成候选。
-   * 门槛：总开关 + aiEnabled 都开；文本至少 2 字（更短不值得一次模型调用）。
+   * AI 输入建议（PR5）：回复完成后预判用户下一步可能发送的消息。
+   * 上下文由客户端带来（浏览器本来就有最近消息），服务端无状态不回读会话库；
+   * 门槛：总开关 + aiEnabled 都开，且有非空对话上下文。
    * 模型失败 / 超时 / 限流一律回落空数组，候选条被动增强绝不打扰输入。
    */
   async function aiSuggestions(
@@ -414,10 +418,10 @@ export function createComposerService(
     if (!deps?.aiSuggester) return { suggestions: [] };
     const body = (input ?? {}) as Record<string, unknown>;
     const botId = cleanId(body.botId);
-    const text = cleanText(body.text);
-    if ([...text].length < 2) return { suggestions: [] };
+    const context = cleanAiSuggestContext(body.context);
+    if (!context.length) return { suggestions: [] };
     const result = await deps.aiSuggester
-      .suggest(owner, botId, text)
+      .suggest(owner, botId, context)
       .catch(() => null);
     if (!result) return { suggestions: [] };
     return {

@@ -88,8 +88,6 @@ import {
   createScenarioRoutingService,
   createScenarioRoutingStore,
 } from "./agents/model-scenario-routing";
-import { createComposerService } from "./composer/index";
-import { createComposerAiSuggester } from "./composer/ai-suggestions";
 import { createAgentModelService } from "./agents/model-selection";
 import { createPrimaryAgentService } from "./agents/primary-agent-service";
 import { createAgentProfileStore } from "./agents/profile-store";
@@ -199,6 +197,8 @@ import { createChatShots } from "./chat-shots";
 import { createHeadlessComponentTools } from "./components/headless";
 import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
+import { createComposerAiSuggester } from "./composer/ai-suggestions";
+import { createComposerService } from "./composer/index";
 import { withComputerActivity } from "./computer/activity-recorder";
 import {
   createActivityStore as createComputerActivityStore,

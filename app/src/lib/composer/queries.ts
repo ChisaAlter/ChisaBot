@@ -84,26 +84,24 @@ export function composerCandidatesQueryOptions(
 }
 
 /**
- * AI 输入建议（PR5）：草稿整体进 key，服务器端已限流 / 去重 / 缓存，
- * 浏览器只在 aiEnabled 开启且文本够长时查询；返回空或失败都静默，
+ * AI 输入建议（PR5）：上下文尾部进 key，服务器端已限流 / 去重 / 缓存，
+ * 浏览器只在 aiEnabled 开启、输入为空且有对话上下文时查询；返回空或失败都静默，
  * 候选条是被动的，从不为建议打扰输入。
  */
 export function composerAiSuggestionsQueryOptions(
   botId: string | null,
-  text: string,
+  contextKey: string,
+  context: readonly { role: "user" | "bot"; text: string }[],
 ) {
   return queryOptions({
-    queryKey: composerKeys.aiSuggestions(botId, text),
+    queryKey: composerKeys.aiSuggestions(botId, contextKey),
     queryFn: (): Promise<{ suggestions: ComposerCandidate[] }> =>
       client("/api/composer/ai-suggestions", "suggestions", {
         method: "POST",
-        body: { botId, text },
+        body: { botId, context },
         fallback: "无法加载 AI 输入建议。",
       }),
-    enabled:
-      Boolean(botId) &&
-      text.trim().length >= 2 &&
-      [...text].length <= 480,
+    enabled: Boolean(botId) && contextKey.length > 0,
     staleTime: 30_000,
     retry: false,
   });

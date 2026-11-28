@@ -65,9 +65,12 @@ export function ComposerCandidates({
   botId,
   text,
   hasChips,
+  aiContext,
   onAccept,
 }: {
   botId: string | null;
+  /** 最近对话上下文（AI 建议用，PR5）：输入为空且设置开启时出下一步建议。 */
+  aiContext?: readonly { role: "user" | "bot"; text: string }[];
   /** 当前草稿纯文本（trim 后）；空串不出候选。 */
   text: string;
   /** 草稿带 @/命令 chip 时不出候选：填入是整框替换，不能毁字。 */
@@ -78,25 +81,29 @@ export function ComposerCandidates({
   useTimeout(() => setPrefix(text), 180, text);
   const query = useQuery(composerCandidatesQueryOptions(botId, prefix));
 
-  // AI 建议（PR5）：比本地候选更慢的防抖——每一次触发都是一次潜在的模型调用。
-  // 只在设置里显式打开 aiEnabled 时才查询；文本未稳定（还在敲）时不用过期 key。
-  const [aiSettled, setAiSettled] = useState("");
-  useTimeout(() => setAiSettled(text), 600, text);
+  // AI 建议（PR5）：输入为空、设置开启、有对话上下文时，prefetch 下一步建议。
+  // key 取上下文尾部指纹——新消息到达 key 变化自然重取，服务端 60s 缓存与限流兜底成本。
   const settingsQuery = useQuery(composerSettingsQueryOptions());
   const aiEnabled = settingsQuery.data?.aiEnabled === true;
+  const contextKey = (aiContext ?? [])
+    .map(
+      (message) =>
+        `${message.role}:${message.text.length}:${message.text.slice(0, 40)}`,
+    )
+    .join("|");
+  const showAi =
+    aiEnabled && text.length === 0 && !hasChips && contextKey.length > 0;
   const aiQuery = useQuery(
     composerAiSuggestionsQueryOptions(
       botId,
-      aiEnabled && aiSettled.length > 0 && aiSettled === text ? aiSettled : "",
+      showAi ? contextKey : "",
+      aiContext ?? [],
     ),
   );
 
   const local =
     text.length > 0 && text === prefix && !hasChips ? (query.data ?? []) : [];
-  const ai =
-    text.length > 0 && !hasChips && aiEnabled
-      ? (aiQuery.data?.suggestions ?? [])
-      : [];
+  const ai = showAi ? (aiQuery.data?.suggestions ?? []) : [];
   const seen = new Set<string>();
   const candidates: ComposerCandidate[] = [];
   for (const candidate of [...local, ...ai]) {
