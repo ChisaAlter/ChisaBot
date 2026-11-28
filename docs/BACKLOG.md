@@ -172,9 +172,9 @@
 标签：`type: feat` · `area: settings` · `P1` · `status: in-progress`
 
 - 来源：RokBot 对照审查确认的 P1 差距；在现有 `chisabot_usage_events` 账本（本地时区 / kind / reasoning）上扩展。
-- [ ] provider / agent / scenario 维度分组与自定义时间范围。
-- [ ] 成本估算、失败率与耗时分布。
-- [ ] metadata-only request detail 与管理员 CSV 导出（不含任何 prompt / 输入 / 输出内容）。
+- [x] provider / agent / scenario 维度分组与自定义时间范围（本 PR）。
+- [x] 成本估算、失败率与耗时分布（本 PR：内置单价表 + 两个失败 seam 记账 + p50/p95/峰值）。
+- [x] metadata-only request detail 与管理员 CSV 导出（本 PR；账本结构本身不含任何 prompt / 输入 / 输出内容）。
 
 ## CB-147
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **用量分析深化（CB-146）**：provider / agent / scenario / model / kind 五维分组 + 自定义时间范围（预设 7/30/90 天或起止日期）、失败率与耗时分布（p50/p95/峰值）、内置单价表成本估算（未收录模型不计入并如实标注覆盖率）；metadata-only 请求明细节（游标分页）与管理员 CSV 导出——账本结构本身不含任何 prompt / 输入 / 输出内容。记账 enrichment：成功事件记 provider 与端到端耗时，传输异常与 HTTP 失败两个 seam 记 status=error + errorKind（失败率从此有信号）；chat/summary 主流水路穿线 agent 与 scenario 维度；修复内存存储缺 ORDER BY 与 PG 行为不一致的既有缺陷（`server/src/quotas/usage-analytics.ts` · `server/src/quotas/usage-breakdown.ts` · `server/src/conversations/model-connection-proxy.ts` · `shared/usage-pricing.ts` · `app/src/components/settings/usage-analytics-card.tsx` · `server/tests/usage-analytics.test.ts`）。
+
 ## 0.1.198 — 2026-11-28
 
 全端版本 `0.1.198`，Android `versionCode 378`：输入助手习惯反馈记账与排序加权（PR #618，CB-145 系列第七棒）——候选条自动记账 shown/accepted/ignored，被采纳的越排越前、被无视的自然下沉，零反馈行为不变，无数据库迁移。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `8dee5d1db8cbcec3`。

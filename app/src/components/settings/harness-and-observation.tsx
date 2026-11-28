@@ -13,6 +13,7 @@ import {
   PageSection,
   PageSkeleton,
 } from "@/components/layout/page-shell";
+import { UsageAnalyticsCard } from "@/components/settings/usage-analytics-card";
 import { useAsyncAction } from "@/components/ui/async-action";
 import { Button } from "@/components/ui/button";
 import { ContentEnter } from "@/components/ui/motion-primitives";
@@ -503,6 +504,7 @@ export function HarnessAndObservationPanel() {
       </PageSection>
 
       <UsageBreakdownCard />
+      <UsageAnalyticsCard />
     </div>
   );
 }

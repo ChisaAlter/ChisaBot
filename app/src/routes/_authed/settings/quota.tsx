@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageShell } from "@/components/layout/page-shell";
 import { UsageBreakdownCard } from "@/components/settings/harness-and-observation";
 import { MyQuotaSection } from "@/components/settings/my-quota-section";
+import { UsageAnalyticsCard } from "@/components/settings/usage-analytics-card";
 
 export const Route = createFileRoute("/_authed/settings/quota")({
   component: QuotaPage,
@@ -17,6 +18,7 @@ function QuotaPage() {
       <div className="space-y-8">
         <MyQuotaSection />
         <UsageBreakdownCard />
+        <UsageAnalyticsCard />
       </div>
     </PageShell>
   );

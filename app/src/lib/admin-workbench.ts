@@ -44,6 +44,10 @@ export const workbenchKeys = {
   observation: ["admin-workbench", "observation"] as const,
   usageBreakdown: (tz: string) =>
     ["admin-workbench", "usage-breakdown", tz] as const,
+  usageExtended: (params: { days?: number; since?: string; until?: string }) =>
+    ["admin-workbench", "usage-extended", params] as const,
+  usageDetail: (cursor?: string) =>
+    ["admin-workbench", "usage-detail", cursor ?? ""] as const,
 };
 
 export function detectBrowserTimeZone(): string {
@@ -291,4 +295,130 @@ export function usageBreakdownQueryOptions(tz: string) {
     queryFn: ({ signal }) => fetchUsageBreakdown(tz, signal),
     staleTime: 15_000,
   });
+}
+
+// ---- CB-146 用量分析深化 ----
+
+export type UsageAnalyticsBucket = {
+  key: string;
+  requests: number;
+  errors: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  costUsd: number | null;
+  costCoverage: number;
+  avgDurationMs: number;
+};
+
+export type UsageAnalyticsSummary = {
+  requests: number;
+  errors: number;
+  failureRate: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  costUsd: number | null;
+  costCoverage: number;
+  latency: {
+    avgMs: number;
+    p50Ms: number;
+    p95Ms: number;
+    maxMs: number;
+    samples: number;
+  };
+};
+
+export type UsageAnalyticsReport = {
+  summary: UsageAnalyticsSummary;
+  byProvider: UsageAnalyticsBucket[];
+  byAgent: UsageAnalyticsBucket[];
+  byScenario: UsageAnalyticsBucket[];
+  byModel: UsageAnalyticsBucket[];
+  byKind: UsageAnalyticsBucket[];
+};
+
+export type UsageExtendedResponse = {
+  analytics: UsageAnalyticsReport;
+  window: {
+    days: number;
+    sinceIso: string;
+    eventCount: number;
+    truncated: boolean;
+  };
+};
+
+export type UsageDetailEvent = {
+  id: string;
+  kind: string;
+  modelId: string;
+  effort: string;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  createdAt: string;
+  provider: string;
+  agentId: string;
+  scenario: string;
+  durationMs: number;
+  status: "ok" | "error";
+  errorKind: string;
+};
+
+export function usageExtendedQueryOptions(params: {
+  days?: number;
+  since?: string;
+  until?: string;
+}) {
+  return queryOptions({
+    queryKey: workbenchKeys.usageExtended(params),
+    queryFn: ({ signal }): Promise<UsageExtendedResponse> => {
+      const search = new URLSearchParams();
+      if (params.since) search.set("since", params.since);
+      if (params.until) search.set("until", params.until);
+      if (!params.since && params.days) search.set("days", String(params.days));
+      const qs = search.toString();
+      // 响应含 analytics + window 两个并列键，不能走单键拆包——手动 parse。
+      return client(`/api/usage/extended${qs ? `?${qs}` : ""}`, {
+        fallback: "无法加载用量分析",
+        cache: "no-store",
+        ...(signal ? { signal } : {}),
+      }).then((response) => response.json() as Promise<UsageExtendedResponse>);
+    },
+    staleTime: 15_000,
+  });
+}
+
+/** 明细拉页：plain function 而非 query——游标分页是「这一次」的读取，不做缓存键。 */
+export async function fetchUsageDetailPage(params?: {
+  limit?: number;
+  before?: string;
+}): Promise<{ events: UsageDetailEvent[]; hasMore: boolean }> {
+  const search = new URLSearchParams();
+  search.set("limit", String(params?.limit ?? 50));
+  if (params?.before) search.set("before", params.before);
+  const response = await client(`/api/usage/detail?${search.toString()}`, {
+    fallback: "无法加载用量明细",
+    cache: "no-store",
+  });
+  return (await response.json()) as {
+    events: UsageDetailEvent[];
+    hasMore: boolean;
+  };
+}
+
+/** CSV 导出：经 client 拉文本再 blob 下载（凭据走 client 一致路径）。 */
+export async function downloadUsageCsv(days: number): Promise<void> {
+  const response = await client(
+    `/api/usage/export.csv?days=${Math.floor(days)}`,
+    { fallback: "无法导出用量 CSV", cache: "no-store" },
+  );
+  const text = await response.text();
+  const blob = new Blob(["﻿", text], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `usage-${Math.floor(days)}d.csv`;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

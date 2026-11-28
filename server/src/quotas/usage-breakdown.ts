@@ -673,10 +673,26 @@ export function createUsageBreakdownService(
           Number.isFinite(daysRaw) && daysRaw > 0
             ? Math.min(Math.floor(daysRaw), 90)
             : 30;
-        const sinceMs = nowFn() - days * 86_400_000;
-        const sinceIso = new Date(sinceMs).toISOString();
+        // 自定义范围优先于 days：since/until 为 YYYY-MM-DD 或 ISO；until 纯日期串含当日整日。
+        const sinceRaw = context.req.query("since")?.trim();
+        const untilRaw = context.req.query("until")?.trim();
+        const sinceParsed = sinceRaw ? Date.parse(sinceRaw) : Number.NaN;
+        const untilParsed = untilRaw ? Date.parse(untilRaw) : Number.NaN;
+        const effSinceMs = Number.isFinite(sinceParsed)
+          ? sinceParsed
+          : nowFn() - days * 86_400_000;
+        const sinceIso = new Date(effSinceMs).toISOString();
         try {
-          const events = await storage.listEventsSince(targetUserId, sinceIso);
+          let events = await storage.listEventsSince(targetUserId, sinceIso);
+          if (Number.isFinite(untilParsed)) {
+            const endMs =
+              untilRaw && untilRaw.length <= 10
+                ? untilParsed + 86_400_000 - 1
+                : untilParsed;
+            events = events.filter(
+              (event) => Date.parse(event.createdAt) <= endMs,
+            );
+          }
           // 内存与 PG 统一在此截断：窗口事件过万时只取最新一万条，保统计有界。
           const capped = events.slice(0, 10_000);
           return context.json({
