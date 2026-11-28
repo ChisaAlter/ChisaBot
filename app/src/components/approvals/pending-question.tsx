@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { UserFormFields } from "@/components/approvals/user-form-fields";
 import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/components/ui/confirm";
 import { SmoothCollapse } from "@/components/ui/motion-primitives";
@@ -43,7 +44,9 @@ export function extractQuestionOptions(questionText: string): string[] {
     return [];
   }
   return slice
-    .map((m) => `${m[1]}. ${(m[2] ?? "").trim().replace(/[；;，,。、/]+$/, "")}`)
+    .map(
+      (m) => `${m[1]}. ${(m[2] ?? "").trim().replace(/[；;，,。、/]+$/, "")}`,
+    )
     .filter((item) => item.length > 3 && item.length <= 80);
 }
 
@@ -56,7 +59,9 @@ export function PendingQuestion({
 }) {
   const cache = useQueryClient();
   const visibility = useKeptVisibility();
-  const inbox = useQuery(approvalInboxOptions({ poll: () => visibility.get() }));
+  const inbox = useQuery(
+    approvalInboxOptions({ poll: () => visibility.get() }),
+  );
   const bots = useQuery(agentListQueryOptions());
   const [text, setText] = useState("");
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
@@ -80,14 +85,20 @@ export function PendingQuestion({
       id: string;
       response: string;
       initiatorKind?: string;
+      answers?: Record<string, unknown>;
     }) => {
-      if (onAnswer && input.initiatorKind !== "responsibility") {
+      // CB-147：结构化表单答案必须经服务端 schema 校验与渲染——不走会话消息捷径。
+      if (
+        !input.answers &&
+        onAnswer &&
+        input.initiatorKind !== "responsibility"
+      ) {
         await dismissPersonQuestion(input.id).catch(() => null);
         await settled();
         await onAnswer(input.response);
         return;
       }
-      await answerPersonQuestion(input.id, input.response);
+      await answerPersonQuestion(input.id, input.response, input.answers);
     },
     onSuccess: settled,
     // The usual reason this fails is that the conversation it belongs to is gone, which is what
@@ -106,6 +117,9 @@ export function PendingQuestion({
   const name =
     bots.data?.find((bot) => bot.id === shown.botId)?.name ?? "机器人";
   const busy = answer.isPending || dismiss.isPending;
+  const expired = Boolean(
+    shown.expiresAt && Date.parse(shown.expiresAt) <= Date.now(),
+  );
   const options = extractQuestionOptions(shown.question);
   const submit = (value: string, option?: string) => {
     const trimmed = value.trim();
@@ -146,9 +160,38 @@ export function PendingQuestion({
           </Button>
         </div>
         {shown.why ? <p className="chat-question-s">{shown.why}</p> : null}
-        {options.length > 0 ? (
+        {expired ? (
+          <p
+            className="text-muted-foreground text-sm"
+            data-testid="question-expired"
+          >
+            {"已过期——这个问题不再接受回答。"}
+          </p>
+        ) : shown.fields && shown.fields.length > 0 ? (
+          <UserFormFields
+            busy={busy}
+            expired={false}
+            fields={shown.fields}
+            onSubmit={(answers) => {
+              if (busy) return;
+              answer.mutate({
+                id: shown.id,
+                response: "",
+                initiatorKind: shown.initiatorKind,
+                answers,
+              });
+            }}
+          />
+        ) : null}
+        {expired ||
+        (shown.fields && shown.fields.length > 0) ? null : options.length >
+          0 ? (
           // biome-ignore lint/a11y/useSemanticElements: 自绘 ARIA 控件（分段 / 分组 / 列表），样式与 roving-tabindex 键盘约定见 ui/segmented.tsx，原生元素换不了
-          <div className="chat-question-opts" role="group" aria-label="快捷选项">
+          <div
+            className="chat-question-opts"
+            role="group"
+            aria-label="快捷选项"
+          >
             {options.map((opt) => (
               <button
                 key={opt}
@@ -163,33 +206,35 @@ export function PendingQuestion({
             ))}
           </div>
         ) : null}
-        <div className="chat-question-row">
-          <Textarea
-            aria-label="你的回答"
-            data-unsent-watch
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                !event.shiftKey &&
-                !event.nativeEvent.isComposing
-              ) {
-                event.preventDefault();
-                submit(text);
-              }
-            }}
-            placeholder="输入回答（也可直接在下方输入框回复）…"
-            rows={1}
-            value={text}
-          />
-          <Button
-            disabled={busy || !text.trim()}
-            onClick={() => submit(text)}
-            size="sm"
-          >
-            {answer.isPending ? "发送中…" : "发送"}
-          </Button>
-        </div>
+        {expired || (shown.fields && shown.fields.length > 0) ? null : (
+          <div className="chat-question-row">
+            <Textarea
+              aria-label="你的回答"
+              data-unsent-watch
+              onChange={(event) => setText(event.target.value)}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !event.nativeEvent.isComposing
+                ) {
+                  event.preventDefault();
+                  submit(text);
+                }
+              }}
+              placeholder="输入回答（也可直接在下方输入框回复）…"
+              rows={1}
+              value={text}
+            />
+            <Button
+              disabled={busy || !text.trim()}
+              onClick={() => submit(text)}
+              size="sm"
+            >
+              {answer.isPending ? "发送中…" : "发送"}
+            </Button>
+          </div>
+        )}
       </section>
     </SmoothCollapse>
   );

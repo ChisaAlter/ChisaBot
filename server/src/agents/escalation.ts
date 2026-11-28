@@ -21,6 +21,10 @@
 import { z } from "zod";
 import { PUT_TO } from "../../../shared/handoff-markers";
 import {
+  type UserFormField,
+  validateUserFormFields,
+} from "../../../shared/user-form";
+import {
   type AuditInitiator,
   type AuditStore,
   recordAuditEvent,
@@ -51,6 +55,10 @@ export type EscalationRoute = (input: {
   initiator?: AuditInitiator;
   question: string;
   why?: string;
+  /** CB-147：结构化表单字段（已经过 validateUserFormFields 校验）；存在时问题以表单形态呈现。 */
+  fields?: UserFormField[];
+  /** CB-147：超时终态（ISO）；过期后问题不可答、UI 呈「已过期」。 */
+  expiresAt?: string;
 }) => Promise<{ reached: string } | { refusal: string }>;
 
 /**
@@ -74,6 +82,37 @@ const parameters = z.object({
     .optional()
     .describe(
       "Why this needs a person rather than you: what you cannot settle on your own",
+    ),
+  // CB-147：结构化表单——不止一个问题要一次问清时给字段 schema，人以表单作答而非自由文本。
+  // 宽松接收（模型产出），execute 内 validateUserFormFields 严校，凭据味字段一律拒。
+  fields: z
+    .array(
+      z
+        .object({
+          type: z.enum([
+            "text",
+            "textarea",
+            "select",
+            "multiselect",
+            "confirm",
+          ]),
+          id: z.string(),
+          label: z.string(),
+        })
+        .passthrough(),
+    )
+    .max(20)
+    .optional()
+    .describe(
+      "Structured form fields when you need several answers at once: text/textarea/select/multiselect/confirm, each with id+label, select types need options, required defaults true. Never ask for passwords or tokens—those belong in the vault.",
+    ),
+  expiresAfterMinutes: z
+    .number()
+    .min(1)
+    .max(10080)
+    .optional()
+    .describe(
+      "Minutes after which this question expires unanswered (max 7 days). Omit when the answer should wait as long as it takes.",
     ),
 });
 
@@ -152,6 +191,15 @@ export function escalationTool(options: {
       let thrown: string | undefined;
       let outcome: { reached: string } | { refusal: string };
       try {
+        // CB-147：fields 严校——不合法（含凭据味字段）时按本模块教义拒成答案而非抛出。
+        let formFields: UserFormField[] | undefined;
+        if (parsed.data.fields) {
+          const verdict = validateUserFormFields(parsed.data.fields);
+          if (!verdict.ok) {
+            return `That was not put to anybody: ${verdict.error}`;
+          }
+          formFields = verdict.fields;
+        }
         outcome = await route({
           actorId: from.actorId,
           botId: from.botId,
@@ -160,6 +208,14 @@ export function escalationTool(options: {
           ...(from.initiator ? { initiator: from.initiator } : {}),
           question,
           ...(parsed.data.why ? { why: parsed.data.why } : {}),
+          ...(formFields ? { fields: formFields } : {}),
+          ...(typeof parsed.data.expiresAfterMinutes === "number"
+            ? {
+                expiresAt: new Date(
+                  Date.now() + parsed.data.expiresAfterMinutes * 60_000,
+                ).toISOString(),
+              }
+            : {}),
         });
       } catch (error) {
         /*

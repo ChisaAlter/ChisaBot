@@ -445,6 +445,19 @@ describe.skipIf(!url)("github", () => {
       expect(new URL(s.url).hostname).toBe("api.github.com");
   });
 
+  async function waitForPendingAction() {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const [row] = await database.$client.unsafe<{ id: string }[]>(
+        "SELECT id FROM chisabot_github_actions WHERE owner_user_id = $1 AND status = 'pending'",
+        [owner],
+      );
+      if (row) return row;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error("pending github action never appeared");
+  }
+
   test("writes wait for the user's yes; no runs without it", async () => {
     const tools = await github.tools(owner, "bot", { kind: "person" });
     const create = tools.find((t) => t.name === "github_create_issue")!;
@@ -454,12 +467,8 @@ describe.skipIf(!url)("github", () => {
       title: "新 Issue",
       body: "正文",
     });
-    await new Promise((r) => setTimeout(r, 300));
+    const row = await waitForPendingAction();
     expect(seen.filter((s) => s.method === "POST").length).toBe(before); // 还没确认，什么都没发
-    const [row] = await database.$client.unsafe<{ id: string }[]>(
-      "SELECT id FROM chisabot_github_actions WHERE owner_user_id = $1 AND status = 'pending'",
-      [owner],
-    );
     const done = await github.decide(owner, row!.id, true);
     expect(done.status).toBe("done");
     expect(done.result?.number).toBe(7);
@@ -470,12 +479,8 @@ describe.skipIf(!url)("github", () => {
     expect(seen.filter((s) => s.method === "POST")).toHaveLength(before + 1);
 
     const second = create.execute({ repo: "octo/demo", title: "另一个" });
-    await new Promise((r) => setTimeout(r, 300));
-    const [row2] = await database.$client.unsafe<{ id: string }[]>(
-      "SELECT id FROM chisabot_github_actions WHERE owner_user_id = $1 AND status = 'pending'",
-      [owner],
-    );
-    expect((await github.decide(owner, row2!.id, false)).status).toBe(
+    const row2 = await waitForPendingAction();
+    expect((await github.decide(owner, row2.id, false)).status).toBe(
       "rejected",
     );
     expect(await second).toContain("拒绝");

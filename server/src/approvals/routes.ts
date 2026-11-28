@@ -294,13 +294,18 @@ export function createApprovalRoutes(
   });
   routes.post("/questions/:id/respond", async (context) => {
     const input = z
-      .strictObject({ response: z.string().trim().min(1).max(6000) })
+      .strictObject({
+        // 自由文本答案；表单问题可空串——结构化键值对在 answers 里。
+        response: z.string().trim().max(6000),
+        answers: z.record(z.string(), z.unknown()).optional(),
+      })
       .parse(await context.req.json());
     return context.json(
       await service.answerQuestion(
         context.var.actor.id,
         context.req.param("id"),
         input.response,
+        input.answers,
       ),
     );
   });
