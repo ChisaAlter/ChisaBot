@@ -1,5 +1,9 @@
 ## Unreleased
 
+## 0.1.195 — 2026-11-28
+
+全端版本 `0.1.195`，Android `versionCode 375`：场景化模型路由管理员面（PR #612）+ 输入助手第一层（PR #610）。PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹 `f5794ebe6d243762`。
+
 - **输入助手 PR4：快捷短语 + 本地输入候选端到端（CB-144）**：零模型成本的第一层输入智能——`chisabot_composer_settings` / `chisabot_quick_phrases` / `chisabot_composer_habit_items` 三表 runtime ensure（按 owner 与 (owner, bot) 严格隔离，未发送草稿从不记录）；候选条跟在输入框上方，输入前缀防抖 180ms 后本地匹配快捷短语优先、高频习惯其次，点选整句填入输入框（不直接发送，带 @/命令 chip 的草稿不出候选以保字）；发送成功后按机器人记录习惯；设置 → 输入助手页提供总开关 / 本地候选 / 学习习惯三个真实开关、快捷短语增删改排序与一键清空习惯；AI 建议与行内补全的开关在 PR5/PR6 上线前不出现（无假开关）（`server/src/composer/index.ts` · `app/src/lib/composer/` · `app/src/components/channels/composer/candidate-strip.tsx` · `app/src/routes/_authed/settings/composer.tsx` · `server/tests/composer.test.ts`）。
 
 - **场景化模型路由 PR3：管理员 UI / Dry-run / 决策日志（CB-144）**：白盒工作台场景编辑面板 + 草稿级 Dry-run 纯函数试跑 + 30 天有信号决策日志；新端点 dry-run / logs（`server/src/agents/scenario-route-log.ts` · `app/src/components/settings/scenario-routing-panel.tsx` · [scenario-routing.md](scenario-routing.md)）。

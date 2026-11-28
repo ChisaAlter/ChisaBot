@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.195 — 2026-11-28
+
+全端版本 `0.1.195`，Android `versionCode 375`：落地场景化模型路由管理员面（PR #612，CB-144 系列第三棒）与输入助手第一层（PR #610）——白盒工作台场景编辑 / 草稿级 Dry-run / 30 天决策日志，快捷短语与本地输入候选零模型成本上线。PC 外壳指纹 `7314f9105596bec5` 不变（Windows 原地自动更新，无需重装），客户端代码指纹更新为 `f5794ebe6d243762`。
+
 - **输入助手 PR4：快捷短语 + 本地输入候选端到端（CB-144）**：零模型成本的第一层输入智能——`chisabot_composer_settings` / `chisabot_quick_phrases` / `chisabot_composer_habit_items` 三表 runtime ensure（按 owner 与 (owner, bot) 严格隔离，未发送草稿从不记录）；候选条跟在输入框上方，输入前缀防抖 180ms 后本地匹配快捷短语优先、高频习惯其次，点选整句填入输入框（不直接发送，带 @/命令 chip 的草稿不出候选以保字）；发送成功后按机器人记录习惯；设置 → 输入助手页提供总开关 / 本地候选 / 学习习惯三个真实开关、快捷短语增删改排序与一键清空习惯；AI 建议与行内补全的开关在 PR5/PR6 上线前不出现（无假开关）（`server/src/composer/index.ts` · `app/src/lib/composer/` · `app/src/components/channels/composer/candidate-strip.tsx` · `app/src/routes/_authed/settings/composer.tsx` · `server/tests/composer.test.ts`）。
 
 - **场景化模型路由 PR3：管理员 UI、Dry-run 与决策日志（CB-144 系列第三棒）**：白盒调优工作台新增「场景化模型路由」面板——十一个场景逐行摘要（覆盖几项 / 全部继承）+ 对话框逐字段编辑，整表一份草稿一次保存；Dry-run 用当前未保存草稿走纯函数决议（不调用任何模型、不持久化），输出有序链、覆盖字段、接线状态与逐条中文解释，自适应选择以符号占位；30 天决策日志按「有信号才记」落库（配置覆盖生效 / fallback / 失败 / 试跑），只存决议元数据绝无 prompt 内容。新增管理员端点 POST /api/admin/scenario-routing/dry-run 与 GET .../logs（`shared/model-scenario-routing.ts` · `server/src/agents/scenario-route-log.ts` · `server/src/agents/model-scenario-routing.ts` · `app/src/components/settings/scenario-routing-panel.tsx` · `app/src/lib/scenario-routing/` · `server/tests/scenario-route-log.test.ts` · [docs/scenario-routing.md](docs/scenario-routing.md)）。
