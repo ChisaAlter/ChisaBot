@@ -106,3 +106,22 @@ export function composerAiSuggestionsQueryOptions(
     retry: false,
   });
 }
+
+/**
+ * 行内补全（PR6）：草稿文本进 key，服务端限流 / 缓存兜底；
+ * 只在 completionEnabled 开启且文本稳定（调用方防抖）时查询。
+ */
+export function composerInlineCompletionQueryOptions(text: string) {
+  return queryOptions({
+    queryKey: ["composer", "inline-completion", { text }] as const,
+    queryFn: (): Promise<{ completion: string | null }> =>
+      client("/api/composer/inline-completion", "completion", {
+        method: "POST",
+        body: { text },
+        fallback: "无法加载行内补全。",
+      }),
+    enabled: text.trim().length >= 2 && [...text].length <= 480,
+    staleTime: 10_000,
+    retry: false,
+  });
+}

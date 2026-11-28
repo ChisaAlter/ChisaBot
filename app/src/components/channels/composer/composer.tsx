@@ -134,6 +134,7 @@ import {
   retractRestoredDraft,
   toDraft,
 } from "./draft";
+import { InlineCompletionGhost } from "./inline-completion";
 import {
   LONG_PASTE_CHARS,
   pastedTextFile,
@@ -695,6 +696,17 @@ function ComposerImpl({
     promptAreaRef.current?.setText(phrase);
     promptAreaRef.current?.focus();
   }, []);
+  /*
+   * 行内补全接受（PR6）：suffix 只追加——无 chip 是出 ghost 的前置条件，
+   * 纯文本拼接不毁任何字；setText 之后焦点与 caret 回到编辑器末尾。
+   */
+  const acceptInlineCompletion = useCallback(
+    (suffix: string) => {
+      promptAreaRef.current?.setText(`${segmentsToPlainText(value)}${suffix}`);
+      promptAreaRef.current?.focus();
+    },
+    [value],
+  );
   /*
    * 候选条按表面显式启用（candidatesBotId !== undefined）：Composer 是叶子组件，
    * 没有 QueryClientProvider 的测试与表面照样渲染它，查询只在容器组件里发生。
@@ -3218,6 +3230,15 @@ function ComposerImpl({
             {filePicker}
             {replyQuoteBar}
             {candidateStrip}
+            {candidatesBotId === undefined ? null : (
+              <InlineCompletionGhost
+                composing={composing}
+                containerRef={containerRef}
+                hasChips={hasChips(value)}
+                onAccept={acceptInlineCompletion}
+                text={segmentsToPlainText(value)}
+              />
+            )}
             <div className={expanded ? "min-w-0" : "glass-composer-bar"}>
               {!expanded ? attachButton : null}
               <PromptArea
