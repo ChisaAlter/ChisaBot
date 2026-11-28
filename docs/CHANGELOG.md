@@ -1,5 +1,9 @@
 ## Unreleased
 
+## 0.1.197 — 2026-11-28
+
+全端版本 `0.1.197`，Android `versionCode 377`：输入助手第三层行内补全（PR #616）。PC 外壳指纹 `7314f9105596bec5` 不变（原地自动更新），客户端代码指纹 `b2904c8285475e5b`。
+
 - **输入助手 PR6：行内补全 ghost text（CB-145）**：打字停顿 400ms 后预判草稿续写，灰色投影经 mirror-overlay 精确接在文本末尾（复制编辑器排版与几何，浏览器自然折行对齐，零 caret 像素测量）；Tab / 行尾右箭头接受（只追加不毁字）、Esc 或继续输入丢弃；IME composition 期间不出不接受、caret 必须在末尾、带 chip 不出；服务端 completion 场景路由 + 与 AI 建议同一套限流/缓存/超时/静默护栏，completionEnabled 默认关、设置页显式开放；设置页 AI 开关文案修正为与实际行为一致（`server/src/composer/inline-completion.ts` · `app/src/components/channels/composer/inline-completion.tsx` · `server/tests/composer-inline-completion.test.ts`）。
 
 ## 0.1.196 — 2026-11-28
