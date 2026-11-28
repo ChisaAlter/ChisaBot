@@ -42,6 +42,12 @@ export type ModelProxyUsageBreakdownReporter = (input: {
   outputTokens: number;
   reasoningTokens: number;
   createdAt: number;
+  provider?: string;
+  agentId?: string;
+  scenario?: string;
+  durationMs?: number;
+  status?: "ok" | "error";
+  errorKind?: string;
 }) => Promise<unknown> | unknown;
 
 export type ModelConnectionProxyOptions = {
@@ -59,6 +65,9 @@ export type ModelConnectionProxyOptions = {
   onUsageBreakdown?: ModelProxyUsageBreakdownReporter;
   usageKind?: UsageKind;
   ownerUserId?: string;
+  /** 用量分析维度：产生用量的 agent/bot id 与路由场景名（CB-146）。 */
+  agentId?: string;
+  scenario?: string;
 };
 
 const RETRYABLE_KEY_STATUSES = new Set([429, 402, 401, 403]);
@@ -103,6 +112,10 @@ function createUsageTracker(input: {
   usageKind?: UsageKind;
   ownerUserId?: string;
   effort?: ResolvedReasoningEffort;
+  startedAt?: number;
+  provider?: string;
+  agentId?: string;
+  scenario?: string;
 }) {
   let inputTokens: number | undefined;
   let outputTokens: number | undefined;
@@ -322,6 +335,13 @@ function createUsageTracker(input: {
             outputTokens: finalOutputTokens,
             reasoningTokens,
             createdAt: settledAt,
+            ...(input.provider ? { provider: input.provider } : {}),
+            ...(input.agentId ? { agentId: input.agentId } : {}),
+            ...(input.scenario ? { scenario: input.scenario } : {}),
+            ...(typeof input.startedAt === "number"
+              ? { durationMs: Math.max(0, settledAt - input.startedAt) }
+              : {}),
+            status: "ok",
           }),
         ).catch(() => {});
       }
@@ -595,6 +615,8 @@ export function createModelConnectionProxy(
       }
     } catch (error) {
       releaseReservation();
+      const errorKind =
+        error instanceof Error ? error.name || "transport_error" : "error";
       if (options?.observer?.isEnabled()) {
         options.observer.record({
           provider: connection.provider,
@@ -603,9 +625,29 @@ export function createModelConnectionProxy(
           status: null,
           durationMs: Math.max(0, nowFn() - requestStartedAt),
           requestBody: outboundBody,
-          errorCode:
-            error instanceof Error ? error.name || "transport_error" : "error",
+          errorCode: errorKind,
         });
+      }
+      const breakdownUserId = options?.ownerUserId ?? options?.quota?.userId;
+      if (options?.onUsageBreakdown && breakdownUserId) {
+        Promise.resolve(
+          options.onUsageBreakdown({
+            ownerUserId: breakdownUserId,
+            kind: options.usageKind ?? "chat",
+            modelId: request.model,
+            effort: options.reasoningEffort ?? "default",
+            inputTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+            createdAt: nowFn(),
+            provider: connection.provider,
+            ...(options.agentId ? { agentId: options.agentId } : {}),
+            ...(options.scenario ? { scenario: options.scenario } : {}),
+            durationMs: Math.max(0, nowFn() - requestStartedAt),
+            status: "error",
+            errorKind,
+          }),
+        ).catch(() => {});
       }
       throw error;
     }
@@ -634,6 +676,29 @@ export function createModelConnectionProxy(
     const shouldTrackUsage = Boolean(
       options?.quota || options?.onUsageBreakdown,
     );
+    if (!response.ok && options?.onUsageBreakdown) {
+      const breakdownUserId = options.ownerUserId ?? options.quota?.userId;
+      if (breakdownUserId) {
+        Promise.resolve(
+          options.onUsageBreakdown({
+            ownerUserId: breakdownUserId,
+            kind: options.usageKind ?? "chat",
+            modelId: request.model,
+            effort: options.reasoningEffort ?? "default",
+            inputTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+            createdAt: nowFn(),
+            provider: connection.provider,
+            ...(options.agentId ? { agentId: options.agentId } : {}),
+            ...(options.scenario ? { scenario: options.scenario } : {}),
+            durationMs: Math.max(0, nowFn() - requestStartedAt),
+            status: "error",
+            errorKind: `http_${response.status}`,
+          }),
+        ).catch(() => {});
+      }
+    }
     if (!shouldTrackUsage || !response.ok) {
       releaseReservation();
       return new Response(response.body, {
@@ -655,6 +720,10 @@ export function createModelConnectionProxy(
       ...(options?.usageKind ? { usageKind: options.usageKind } : {}),
       ...(options?.ownerUserId ? { ownerUserId: options.ownerUserId } : {}),
       ...(options?.reasoningEffort ? { effort: options.reasoningEffort } : {}),
+      startedAt: requestStartedAt,
+      provider: connection.provider,
+      ...(options?.agentId ? { agentId: options.agentId } : {}),
+      ...(options?.scenario ? { scenario: options.scenario } : {}),
     });
     reservation = null;
 
