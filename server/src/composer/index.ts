@@ -209,7 +209,10 @@ export function createComposerService(database: Database) {
     }));
   }
 
-  async function addPhrase(owner: string, input: unknown): Promise<QuickPhrase> {
+  async function addPhrase(
+    owner: string,
+    input: unknown,
+  ): Promise<QuickPhrase> {
     const text = cleanText((input as Record<string, unknown>)?.text);
     const normalized = normalizeComposerText(text);
     const count = await sql.unsafe(
@@ -217,7 +220,9 @@ export function createComposerService(database: Database) {
       [owner],
     );
     if ((count[0] as { n: number }).n >= COMPOSER_PHRASES_MAX)
-      throw new ComposerValidationError(`快捷短语最多 ${COMPOSER_PHRASES_MAX} 条。`);
+      throw new ComposerValidationError(
+        `快捷短语最多 ${COMPOSER_PHRASES_MAX} 条。`,
+      );
     const exists = await sql.unsafe(
       "SELECT id FROM chisabot_quick_phrases WHERE owner_user_id = $1 AND normalized_text = $2",
       [owner, normalized],
@@ -393,18 +398,14 @@ export function createComposerService(database: Database) {
 
   // ------------------------------------------------------------------ routes
 
-  function routes(
-    requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
-  ) {
+  function routes(requireUser: MiddlewareHandler<{ Variables: AppVariables }>) {
     const app = new Hono<{ Variables: AppVariables }>();
     app.use("*", requireUser);
     app.use("*", async (context, next) => {
       context.header("Cache-Control", "no-store");
       await next();
     });
-    const owner = (context: {
-      var: AppVariables;
-    }) => context.var.actor.id;
+    const owner = (context: { var: AppVariables }) => context.var.actor.id;
 
     app.get("/settings", async (context) =>
       context.json(await readSettings(owner(context))),
